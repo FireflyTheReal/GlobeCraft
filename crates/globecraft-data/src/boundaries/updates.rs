@@ -56,10 +56,14 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
                 Some(staging) => {
                     data.municipal_detail_max_km = staging.detail_max_km;
                     data.municipal_major_cells = staging.major_cells;
+                    data.world_cities_country = staging.country_lines;
+                    data.municipal_country_cells = staging.country_cells;
                 }
                 None => {
                     data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
                     data.municipal_major_cells = Arc::default();
+                    data.world_cities_country = Vec::new();
+                    data.municipal_country_cells = Arc::default();
                 }
             }
             // Drop previously staged municipal labels (ranks 9-10); base

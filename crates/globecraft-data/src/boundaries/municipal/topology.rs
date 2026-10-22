@@ -19,6 +19,9 @@ pub(super) const OUTER: u8 = 0;
 pub(super) const INTERIOR: u8 = 1;
 pub(super) const MAJOR: u8 = 2;
 pub(super) const DROP: u8 = 3;
+/// A border between two countries' municipalities. Above `MAJOR` so `merge` keeps it
+/// when two copies disagree; `DROP` still wins.
+pub(super) const COUNTRY: u8 = 4;
 
 /// Two outlines closer than this share a border. Covers the 0.005° server-side
 /// simplification on both sides, and stays well below the width of a municipality.
@@ -54,12 +57,13 @@ pub(super) struct Parent {
     pub(super) state: Option<u64>,
 }
 impl Parent {
-    /// Whether a border between municipalities of these parents is a state or
-    /// country border. Unknown on either side counts as interior.
-    fn is_major_border(self, other: Self) -> bool {
+    /// The class of a border between municipalities of these parents: a country
+    /// border, a state border, or interior. Unknown on either side counts as interior.
+    fn border_class(self, other: Self) -> u8 {
         match (self.country, other.country) {
-            (Some(a), Some(b)) if a != b => true,
-            _ => matches!((self.state, other.state), (Some(a), Some(b)) if a != b),
+            (Some(a), Some(b)) if a != b => COUNTRY,
+            _ if matches!((self.state, other.state), (Some(a), Some(b)) if a != b) => MAJOR,
+            _ => INTERIOR,
         }
     }
 }
@@ -119,11 +123,7 @@ pub(super) fn classify(lines: &[Line], parents: &[Parent]) -> Vec<Vec<u8>> {
                         Some((other, _)) => {
                             let own = parents.get(ring).copied().unwrap_or_default();
                             let theirs = parents.get(other).copied().unwrap_or_default();
-                            if own.is_major_border(theirs) {
-                                MAJOR
-                            } else {
-                                INTERIOR
-                            }
+                            own.border_class(theirs)
                         }
                     }
                 })
@@ -330,20 +330,26 @@ fn segment_distance(
     }
 }
 
-/// Splits rings into runs of drawn segments: state-border runs and everything else.
-pub(super) fn split(line: &Line, classes: &[u8], major: &mut Vec<Line>, interior: &mut Vec<Line>) {
+/// Drawn municipal segments, as runs by kind of border.
+#[derive(Default)]
+pub(super) struct SplitLines {
+    pub(super) country: Vec<Line>,
+    pub(super) major: Vec<Line>,
+    pub(super) interior: Vec<Line>,
+}
+
+/// Splits rings into runs of drawn segments: country-border runs, state-border runs
+/// and everything else.
+pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
     let mut run: Vec<(f64, f64)> = Vec::new();
     let mut run_class = None;
-    let flush = |run: &mut Vec<(f64, f64)>,
-                 class: Option<u8>,
-                 major: &mut Vec<Line>,
-                 interior: &mut Vec<Line>| {
+    let flush = |run: &mut Vec<(f64, f64)>, class: Option<u8>, out: &mut SplitLines| {
         if run.len() >= 2 {
             let line = std::sync::Arc::new(std::mem::take(run));
-            if class == Some(MAJOR) {
-                major.push(line);
-            } else {
-                interior.push(line);
+            match class {
+                Some(COUNTRY) => out.country.push(line),
+                Some(MAJOR) => out.major.push(line),
+                _ => out.interior.push(line),
             }
         }
         run.clear();
@@ -351,11 +357,11 @@ pub(super) fn split(line: &Line, classes: &[u8], major: &mut Vec<Line>, interior
     for (segment, pair) in line.windows(2).enumerate() {
         let class = match classes.get(segment).copied().unwrap_or(OUTER) {
             DROP => None,
-            MAJOR => Some(MAJOR),
+            class @ (MAJOR | COUNTRY) => Some(class),
             _ => Some(INTERIOR),
         };
         if class != run_class {
-            flush(&mut run, run_class, major, interior);
+            flush(&mut run, run_class, out);
             run_class = class;
         }
         if class.is_some() {
@@ -365,7 +371,7 @@ pub(super) fn split(line: &Line, classes: &[u8], major: &mut Vec<Line>, interior
             run.push(pair[1]);
         }
     }
-    flush(&mut run, run_class, major, interior);
+    flush(&mut run, run_class, out);
 }
 
 /// Area in km² of a closed ring (zero for open lines), on a local equirectangular plane.
@@ -468,20 +474,24 @@ mod tests {
     #[test]
     fn split_keeps_runs_and_merge_prefers_dropping() {
         let ring = square(0.0, 0.0, 1.0);
-        let (mut major, mut interior) = (Vec::new(), Vec::new());
-        split(
-            &ring,
-            &[MAJOR, MAJOR, DROP, OUTER],
-            &mut major,
-            &mut interior,
+        let mut out = SplitLines::default();
+        split(&ring, &[MAJOR, MAJOR, DROP, OUTER], &mut out);
+        assert_eq!(out.major.len(), 1);
+        assert_eq!(out.major[0].len(), 3);
+        assert_eq!(out.interior.len(), 1);
+        assert_eq!(out.interior[0].len(), 2);
+        let mut out = SplitLines::default();
+        split(&ring, &[COUNTRY, MAJOR, INTERIOR, COUNTRY], &mut out);
+        assert_eq!(
+            (out.country.len(), out.major.len(), out.interior.len()),
+            (2, 1, 1)
         );
-        assert_eq!(major.len(), 1);
-        assert_eq!(major[0].len(), 3);
-        assert_eq!(interior.len(), 1);
-        assert_eq!(interior[0].len(), 2);
-        let mut seen = vec![OUTER, INTERIOR, MAJOR, OUTER];
-        merge(&mut seen, &[INTERIOR, DROP, OUTER, OUTER]);
-        assert_eq!(seen, [INTERIOR, DROP, MAJOR, OUTER]);
+        let mut seen = vec![OUTER, INTERIOR, MAJOR, OUTER, COUNTRY];
+        merge(&mut seen, &[INTERIOR, DROP, OUTER, OUTER, DROP]);
+        assert_eq!(seen, [INTERIOR, DROP, MAJOR, OUTER, DROP]);
+        let mut seen = vec![MAJOR];
+        merge(&mut seen, &[COUNTRY]);
+        assert_eq!(seen, [COUNTRY]);
     }
 
     #[test]
@@ -514,7 +524,7 @@ mod tests {
         let (east, west) = (1, 3);
         let shared = [classes[0][east], classes[1][west]];
         assert!(
-            shared.contains(&MAJOR) && shared.contains(&DROP),
+            shared.contains(&COUNTRY) && shared.contains(&DROP),
             "{shared:?}"
         );
         assert_eq!(
@@ -523,7 +533,7 @@ mod tests {
         );
         assert_eq!(classes[0], classes[2]);
         // Same country, states unknown: interior.
-        assert!(!germany.is_major_border(germany));
+        assert_eq!(germany.border_class(germany), INTERIOR);
     }
 
     #[test]

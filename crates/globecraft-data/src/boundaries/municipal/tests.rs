@@ -262,3 +262,56 @@ async fn leaving_the_altitude_band_publishes_an_empty_layer() {
     .unwrap();
     assert!(patch.layer == Layer::WorldCities && patch.lines.is_empty());
 }
+
+#[test]
+fn borders_between_two_countries_units_become_country_borders() {
+    // A French and a German cell, one commune each, sharing the edge at 8°E.
+    let west = line(&[
+        (48.0, 7.5),
+        (48.0, 8.0),
+        (48.5, 8.0),
+        (48.5, 7.5),
+        (48.0, 7.5),
+    ]);
+    let east = line(&[
+        (48.0, 8.0),
+        (48.0, 8.5),
+        (48.5, 8.5),
+        (48.5, 8.0),
+        (48.0, 8.0),
+    ]);
+    let detail = |ring: Line, state: u64| Detail {
+        lines: vec![ring],
+        labels: vec![],
+        features: 1,
+        parents: vec![Some(state)],
+    };
+    let mut store = Store::default();
+    let (first, _) = UnitData::new(detail(west, 67), (48.25, 7.75), Some(*b"FRA"), &[]);
+    store.units.insert(Unit::Country(*b"FRA"), first);
+    let area = GeoBounds::of(&east).unwrap();
+    let neighbours = store.neighbours(Unit::Country(*b"DEU"), area.expanded(0.02));
+    let (second, upgrades) =
+        UnitData::new(detail(east, 8), (48.25, 8.25), Some(*b"DEU"), &neighbours);
+    store.units.insert(Unit::Country(*b"DEU"), second);
+    store.apply(upgrades);
+    let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
+    let staging = patch.municipal.unwrap();
+    // The shared edge is a country border, drawn once, and not a state border.
+    assert_eq!(
+        staging.country_lines.len(),
+        1,
+        "{:?}",
+        staging.country_lines
+    );
+    assert!(
+        staging.country_lines[0]
+            .iter()
+            .all(|p| (p.1 - 8.0).abs() < 1e-9)
+    );
+    assert!(patch.lines_big.is_empty());
+    assert!(staging.country_cells.covers(48.25, 8.0));
+    // State lines give way along country borders as well.
+    assert!(staging.major_cells.covers(48.25, 8.0));
+    assert!(!staging.country_cells.covers(48.25, 7.6));
+}

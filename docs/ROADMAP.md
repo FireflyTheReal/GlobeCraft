@@ -361,20 +361,22 @@ are kept now (99.4 % of shared admin-1 polygon edges covered, checked against th
 | 13.9 | **Wayback**: a drop-down calendar of the available release dates, and a **swipe compare** of two dates with a slider across the globe | M | The release list is already loaded; compare needs two imagery requests per frame |
 | 13.10 | **Remove the metropolitan regions layer**: municipal borders cover it. Optionally, a country picker for municipal borders (only the selected countries load) | S | **Removal done 2026-10-22** (layer, IBGE metro pass, Overture metro slices and their scripts). **Country picker done 2026-10-22:** `layer.municipalCountries` and a Countries line under Municipal borders in the Layers pane (Only this country, Add this country, All countries); the choice is saved |
 | 13.11 | **GlobeCraft repository**: fresh history, English only, straightforward README for non-technical users, every source credited in CREDITS.md | S | Done 2026-10-22 |
-| 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. Still open: country borders |
+| 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. **Country borders done 2026-10-22** where both neighbours are loaded. Still open: one-sided country edges |
 
 **13.12 Instant border handover.** Where two versions of a border meet, exactly one is
 drawn, and the switch between them happens between two frames:
 
 - **Natural Earth state lines → municipal state borders**: done (see the table).
-- **Natural Earth country lines → municipal country borders**: still open. Where both
-  neighbours' municipal data is loaded, their shared border is drawn as a municipal state
-  border under the solid country line, so two lines show from 402 km down. Next: a
-  country class in the municipal topology, those segments drawn in the country style,
-  and the same exact cut on the Natural Earth country line. Where only one side is loaded,
-  its outline along the country border is an interior line next to the country line below
-  the detail altitude; classifying it needs the Natural Earth country lines in the
-  municipal publisher.
+- **Natural Earth country lines → municipal country borders**: done where both
+  neighbours' municipal data is loaded. Their shared segments have a country class
+  (`COUNTRY`, above `MAJOR`), draw as `BorderKind::CityCountry` in the country style from
+  402 km down, and the Natural Earth country line is cut exactly where they run. With
+  country borders hidden they draw as ordinary municipal state borders.
+- **One-sided country edges**: still open. Where only one side is loaded (the other
+  country deselected in the picker, or its source failed), that side's outline along the
+  border is an unmatched (`OUTER`) segment, drawn as an interior line next to the country
+  line below the detail altitude. Classifying it needs the Natural Earth country lines in
+  the municipal publisher.
 - **Natural Earth detail levels** (1:110m → 1:50m → 1:10m countries and states): already
   replaced in one patch, so the swap is a single frame; keep it that way.
 - Arrival fades stay only for layers that replace nothing (interior municipal lines,

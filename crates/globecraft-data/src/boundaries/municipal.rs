@@ -715,17 +715,26 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
                 .cloned(),
         );
     }
-    let (mut major, mut interior) = (Vec::new(), Vec::new());
+    let mut split = topology::SplitLines::default();
     for id in order {
         let (line, classes) = &rings[&id];
-        topology::split(line, classes, &mut major, &mut interior);
+        topology::split(line, classes, &mut split);
     }
+    let topology::SplitLines {
+        country,
+        major,
+        interior,
+    } = split;
     let mean_area_km2 = if area_count > 0 {
         area_sum / area_count as f64
     } else {
         0.0
     };
-    let major_cells = Arc::new(topology::MajorCells::of(&major));
+    // Natural Earth state lines also give way along municipal country borders.
+    let major_cells = Arc::new(topology::MajorCells::of(
+        &major.iter().chain(&country).cloned().collect::<Vec<_>>(),
+    ));
+    let country_cells = Arc::new(topology::MajorCells::of(&country));
     Patch {
         layer: Layer::WorldCities,
         lines: interior,
@@ -739,6 +748,8 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
                 MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM,
             ),
             major_cells,
+            country_lines: country,
+            country_cells,
         }),
     }
 }
