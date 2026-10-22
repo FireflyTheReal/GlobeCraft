@@ -198,6 +198,6 @@ pub(super) async fn load_brazil(log: &StatusLog, tx: &mpsc::Sender<Patch>, inclu
         // This patch is appended: a replacing Cities patch would also drop the
         // base populated-place labels that share this layer.
         replace: false,
-        municipal_detail_max_km: None,
+        municipal: None,
     });
 }

@@ -52,9 +52,16 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
         Layer::WorldCities => {
             data.world_cities = patch.lines;
             data.world_cities_major = patch.lines_big;
-            data.municipal_detail_max_km = patch
-                .municipal_detail_max_km
-                .unwrap_or(MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM);
+            match patch.municipal {
+                Some(staging) => {
+                    data.municipal_detail_max_km = staging.detail_max_km;
+                    data.municipal_major_cells = staging.major_cells;
+                }
+                None => {
+                    data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+                    data.municipal_major_cells = Arc::default();
+                }
+            }
             // Drop previously staged municipal labels (ranks 9-10); base
             // populated places (rank 0-8) and other kinds survive.
             data.labels.retain(|label| {
@@ -135,7 +142,7 @@ mod tests {
             }],
             regions: vec![],
             replace: false,
-            municipal_detail_max_km: None,
+            municipal: None,
         };
         tx.send(patch("First", 5)).unwrap();
         wakes.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -186,7 +193,7 @@ mod tests {
                 )],
                 regions: vec![],
                 replace: false,
-                municipal_detail_max_km: None,
+                municipal: None,
             },
         );
         assert!(data.labels.iter().any(|label| label.en == "Base city"));
@@ -228,7 +235,7 @@ mod tests {
                 labels: vec![label("New country", LabelKind::Country, 0)],
                 regions: vec![],
                 replace: true,
-                municipal_detail_max_km: None,
+                municipal: None,
             },
         );
         assert_eq!(data.countries.len(), 2);
@@ -248,7 +255,7 @@ mod tests {
                 labels: vec![],
                 regions: vec![],
                 replace: false,
-                municipal_detail_max_km: None,
+                municipal: None,
             },
         );
         assert_eq!(data.countries.len(), 3);
@@ -281,7 +288,7 @@ mod tests {
                 labels: vec![label("New world city", 3)],
                 regions: vec![],
                 replace: true,
-                municipal_detail_max_km: None,
+                municipal: None,
             },
         );
         assert!(!data.labels.iter().any(|l| l.en == "World city"));

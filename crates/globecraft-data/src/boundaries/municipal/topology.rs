@@ -22,7 +22,7 @@ pub(super) const DROP: u8 = 3;
 
 /// Two outlines closer than this share a border. Covers the 0.005° server-side
 /// simplification on both sides, and stays well below the width of a municipality.
-const SHARED_TOLERANCE_DEG: f64 = 0.012;
+pub(super) const SHARED_TOLERANCE_DEG: f64 = 0.012;
 /// Spatial hash cell for the neighbour search.
 const GRID_DEG: f64 = 0.05;
 /// Municipalities that should fit on screen before the interior lines and the small
@@ -46,9 +46,27 @@ pub(super) fn ring_id(line: &Line) -> u64 {
     hasher.finish()
 }
 
-/// Per-segment classes for every ring. `parents[i]` names ring `i`'s state (or
-/// country, when the source has no state code); `None` matches nothing.
-pub(super) fn classify(lines: &[Line], parents: &[Option<u64>]) -> Vec<Vec<u8>> {
+/// Where a municipality belongs: its country (from the unit that loaded it) and its
+/// state, when the source names one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Parent {
+    pub(super) country: Option<[u8; 3]>,
+    pub(super) state: Option<u64>,
+}
+impl Parent {
+    /// Whether a border between municipalities of these parents is a state or
+    /// country border. Unknown on either side counts as interior.
+    fn is_major_border(self, other: Self) -> bool {
+        match (self.country, other.country) {
+            (Some(a), Some(b)) if a != b => true,
+            _ => matches!((self.state, other.state), (Some(a), Some(b)) if a != b),
+        }
+    }
+}
+
+/// Per-segment classes for every ring. `parents[i]` is ring `i`'s parent (default
+/// when unknown). Copies of the same ring (same `ring_id`) never count as neighbours.
+pub(super) fn classify(lines: &[Line], parents: &[Parent]) -> Vec<Vec<u8>> {
     let ids: Vec<u64> = lines.iter().map(ring_id).collect();
     let mut grid: HashMap<(i32, i32), Vec<(u32, u32)>> = HashMap::new();
     let cell = |value: f64| (value / GRID_DEG).floor() as i32;
@@ -86,7 +104,7 @@ pub(super) fn classify(lines: &[Line], parents: &[Option<u64>]) -> Vec<Vec<u8>> 
                         .get(&(cell(mid.0), cell(mid.1)))
                         .into_iter()
                         .flatten()
-                        .filter(|(other, _)| *other as usize != ring)
+                        .filter(|(other, _)| ids[*other as usize] != ids[ring])
                         .map(|&(other, segment)| {
                             let points = &lines[other as usize];
                             let (a, b) = (points[segment as usize], points[segment as usize + 1]);
@@ -99,12 +117,12 @@ pub(super) fn classify(lines: &[Line], parents: &[Option<u64>]) -> Vec<Vec<u8>> 
                         // The ring with the smaller id draws a shared border.
                         Some((other, _)) if ids[other] < ids[ring] => DROP,
                         Some((other, _)) => {
-                            match (
-                                parents.get(ring).copied().flatten(),
-                                parents.get(other).copied().flatten(),
-                            ) {
-                                (Some(own), Some(theirs)) if own != theirs => MAJOR,
-                                _ => INTERIOR,
+                            let own = parents.get(ring).copied().unwrap_or_default();
+                            let theirs = parents.get(other).copied().unwrap_or_default();
+                            if own.is_major_border(theirs) {
+                                MAJOR
+                            } else {
+                                INTERIOR
                             }
                         }
                     }
@@ -141,6 +159,55 @@ pub(super) fn merge(into: &mut [u8], other: &[u8]) {
         } else {
             (*class).max(*seen)
         };
+    }
+}
+
+/// A segment whose class was `OUTER` (no neighbour seen) takes the class found once
+/// the neighbouring unit loaded; anything already decided stays.
+pub(super) fn upgrade_outer(into: &mut [u8], found: &[u8]) {
+    for (class, new) in into.iter_mut().zip(found) {
+        if *class == OUTER {
+            *class = *new;
+        }
+    }
+}
+
+/// Grid cell size of [`MajorCells`], about 5 km.
+pub const MAJOR_CELL_DEG: f64 = 0.05;
+
+/// The grid cells crossed by state and country borders traced by municipalities,
+/// so renderers can hide the coarser Natural Earth state lines where these exist.
+#[derive(Clone, Debug, Default)]
+pub struct MajorCells(std::collections::HashSet<(i32, i32)>);
+impl MajorCells {
+    pub fn of(lines: &[Line]) -> Self {
+        let mut cells = std::collections::HashSet::new();
+        for line in lines {
+            for pair in line.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let span = (b.0 - a.0).abs().max((b.1 - a.1).abs());
+                let steps = (span / (MAJOR_CELL_DEG / 2.0)).ceil().max(1.0) as usize;
+                for i in 0..=steps {
+                    let t = i as f64 / steps as f64;
+                    cells.insert(Self::cell(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+                }
+            }
+        }
+        Self(cells)
+    }
+    fn cell(lat: f64, lon: f64) -> (i32, i32) {
+        (
+            (lat / MAJOR_CELL_DEG).floor() as i32,
+            (lon / MAJOR_CELL_DEG).floor() as i32,
+        )
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// Whether a municipal state or country border passes within about one cell.
+    pub fn near(&self, lat: f64, lon: f64) -> bool {
+        let (y, x) = Self::cell(lat, lon);
+        (-1..=1).any(|dy| (-1..=1).any(|dx| self.0.contains(&(y + dy, x + dx))))
     }
 }
 
@@ -235,7 +302,11 @@ mod tests {
         let b = square(48.0, 8.1, 0.1);
         let c = square(48.0, 8.2, 0.1);
         let lines = vec![a.clone(), b.clone(), c.clone()];
-        let classes = classify(&lines, &[Some(1), Some(1), Some(2)]);
+        let state = |code| Parent {
+            country: Some(*b"FRA"),
+            state: Some(code),
+        };
+        let classes = classify(&lines, &[state(1), state(1), state(2)]);
         // Segment 1 of each square is its east side, segment 3 its west side.
         let (east, west) = (1, 3);
         // A–B: interior, drawn by exactly one of them.
@@ -262,7 +333,11 @@ mod tests {
             (10.1, 20.198),
             (10.0, 20.204),
         ]);
-        let classes = classify(&[a, b], &[Some(1), Some(2)]);
+        let state = |code| Parent {
+            country: None,
+            state: Some(code),
+        };
+        let classes = classify(&[a, b], &[state(1), state(2)]);
         let shared = [classes[0][1], classes[1][3], classes[1][4]];
         assert!(
             shared.iter().all(|class| matches!(*class, MAJOR | DROP)),
@@ -301,5 +376,50 @@ mod tests {
         assert_eq!(detail_altitude_km(0.01, 402.0), DETAIL_MIN_ALTITUDE_KM);
         let area = ring_area_km2(&square(0.0, 0.0, 1.0));
         assert!((area - KM_PER_DEGREE * KM_PER_DEGREE).abs() < 1.0, "{area}");
+    }
+
+    #[test]
+    fn country_borders_are_major_and_duplicate_copies_are_not_neighbours() {
+        let a = square(48.0, 8.0, 0.1);
+        let b = square(48.0, 8.1, 0.1);
+        let germany = Parent {
+            country: Some(*b"DEU"),
+            state: None,
+        };
+        let france = Parent {
+            country: Some(*b"FRA"),
+            state: None,
+        };
+        // A second copy of `a`, as a neighbouring unit returns it.
+        let classes = classify(&[a.clone(), b, a], &[germany, france, germany]);
+        let (east, west) = (1, 3);
+        let shared = [classes[0][east], classes[1][west]];
+        assert!(
+            shared.contains(&MAJOR) && shared.contains(&DROP),
+            "{shared:?}"
+        );
+        assert_eq!(
+            classes[0][west], OUTER,
+            "a copy of the same ring is no neighbour"
+        );
+        assert_eq!(classes[0], classes[2]);
+        // Same country, states unknown: interior.
+        assert!(!germany.is_major_border(germany));
+    }
+
+    #[test]
+    fn outer_segments_take_the_class_found_later() {
+        let mut classes = vec![OUTER, INTERIOR, OUTER, DROP];
+        upgrade_outer(&mut classes, &[MAJOR, OUTER, DROP, OUTER]);
+        assert_eq!(classes, [MAJOR, INTERIOR, DROP, DROP]);
+    }
+
+    #[test]
+    fn major_cells_mark_the_border_and_its_neighbourhood() {
+        let cells = MajorCells::of(&[Arc::new(vec![(48.0, 8.0), (48.0, 9.0)])]);
+        assert!(cells.near(48.0, 8.5));
+        assert!(cells.near(48.04, 8.5), "within one cell");
+        assert!(!cells.near(48.3, 8.5));
+        assert!(!cells.near(48.0, 9.3));
     }
 }

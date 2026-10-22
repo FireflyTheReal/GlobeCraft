@@ -431,10 +431,10 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
         });
         let state = Color32::from_rgba_unmultiplied(150, 205, 240, 120);
         let country = Color32::from_rgba_unmultiplied(255, 255, 255, 245);
-        let mut colors = [Color32::TRANSPARENT; 5];
+        let mut colors = [Color32::TRANSPARENT; 6];
         colors[BorderKind::State as usize] = state;
         colors[BorderKind::Country as usize] = country;
-        let expected = |colors: [Color32; 5]| -> Vec<_> {
+        let expected = |colors: [Color32; 6]| -> Vec<_> {
             // egui draws the kinds in declaration order; `project_borders` emits them so.
             let mut shapes: Vec<_> = segments
                 .iter()
@@ -475,7 +475,7 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
         // A fully faded kind adds no triangles at all.
         colors[BorderKind::State as usize] = Color32::TRANSPARENT;
         assert_eq!(meshes.tinted(colors).vertices, expected(colors));
-        colors = [Color32::TRANSPARENT; 5];
+        colors = [Color32::TRANSPARENT; 6];
         assert!(meshes.tinted(colors).is_empty());
     });
 }

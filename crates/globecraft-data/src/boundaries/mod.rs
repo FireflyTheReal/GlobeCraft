@@ -14,6 +14,7 @@ mod world;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
 pub use municipal::MunicipalView;
+pub use municipal::topology::{MAJOR_CELL_DEG, MajorCells};
 pub use updates::{BoundarySnapshot, BoundaryUpdates};
 pub type Line = Arc<Vec<(f64, f64)>>;
 
@@ -43,6 +44,20 @@ impl GeoBounds {
             min_lon,
             max_lon,
         })
+    }
+    fn expanded(self, margin: f64) -> Self {
+        Self {
+            min_lat: self.min_lat - margin,
+            max_lat: self.max_lat + margin,
+            min_lon: self.min_lon - margin,
+            max_lon: self.max_lon + margin,
+        }
+    }
+    fn overlaps(self, other: Self) -> bool {
+        self.min_lat <= other.max_lat
+            && self.max_lat >= other.min_lat
+            && self.min_lon <= other.max_lon
+            && self.max_lon >= other.min_lon
     }
     fn union(self, other: Self) -> Self {
         Self {
@@ -122,6 +137,8 @@ pub struct BoundaryData {
     pub world_cities_major: Vec<Line>,
     /// Below this altitude `world_cities` and the small municipal names appear.
     pub municipal_detail_max_km: f64,
+    /// Cells crossed by `world_cities_major`; see [`MajorCells`].
+    pub municipal_major_cells: Arc<MajorCells>,
     pub labels: Vec<MapLabel>,
     country_regions: Vec<CountryRegion>,
     countries_loaded: bool,
@@ -333,9 +350,19 @@ pub struct Patch {
     /// A coarser detail level is upgraded to a finer one through this flag, so
     /// the two sets never accumulate.
     pub replace: bool,
-    /// For `Layer::WorldCities`: the altitude below which interior municipal lines and
-    /// small names appear (set from the municipalities' size).
-    pub municipal_detail_max_km: Option<f64>,
+    /// For `Layer::WorldCities`: the staging of the municipal layer.
+    pub municipal: Option<MunicipalStaging>,
+}
+
+/// How the municipal layer is staged, sent with each `WorldCities` patch.
+#[derive(Clone, Debug)]
+pub struct MunicipalStaging {
+    /// Below this altitude interior municipal lines and small names appear (set
+    /// from the municipalities' size).
+    pub detail_max_km: f64,
+    /// Where municipal state and country borders run, so the coarser Natural
+    /// Earth state lines can hand over to them.
+    pub major_cells: Arc<MajorCells>,
 }
 
 #[derive(Default)]

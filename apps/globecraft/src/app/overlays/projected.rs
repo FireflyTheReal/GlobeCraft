@@ -157,6 +157,7 @@ fn faded_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         BorderKind::State => policy.arrival.states,
         BorderKind::StateBig => policy.arrival.states_big,
         BorderKind::City | BorderKind::CityMajor => policy.arrival.municipal,
+        BorderKind::StateCovered => policy.arrival.states,
         BorderKind::Country => ARRIVAL_FADE_STEPS,
     };
     let arrival = smoothstep(f64::from(arrived) / f64::from(ARRIVAL_FADE_STEPS));
@@ -186,6 +187,12 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         BorderKind::State => smoothstep(
             (state_max_km - altitude_km) / (state_max_km * (1.0 - STATE_FADE_FULL_RATIO)),
         ),
+        // Covered state lines give way to the municipal state borders, which
+        // trace the same borders more accurately.
+        BorderKind::StateCovered => {
+            layer_opacity(BorderKind::State, policy)
+                * (1.0 - layer_opacity(BorderKind::CityMajor, policy))
+        }
         BorderKind::CityMajor => smoothstep(
             (MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM - altitude_km)
                 / (MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM - MUNICIPAL_FADE_FULL_ALTITUDE_KM),
@@ -200,10 +207,11 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
 }
 
 /// Every border kind, in `BorderKind` declaration order (so `kind as usize` indexes it).
-pub(super) const BORDER_KINDS: [BorderKind; 5] = [
+pub(super) const BORDER_KINDS: [BorderKind; 6] = [
     BorderKind::Country,
     BorderKind::StateBig,
     BorderKind::State,
+    BorderKind::StateCovered,
     BorderKind::CityMajor,
     BorderKind::City,
 ];
@@ -213,16 +221,22 @@ fn border_color(kind: BorderKind) -> Color32 {
         BorderKind::Country => Color32::from_rgba_unmultiplied(255, 255, 255, 245),
         // States and municipalities share one visual so the handoff
         // between them reads as continuous linework.
-        BorderKind::State | BorderKind::StateBig | BorderKind::CityMajor | BorderKind::City => {
-            Color32::from_rgba_unmultiplied(150, 205, 240, 225)
-        }
+        BorderKind::State
+        | BorderKind::StateBig
+        | BorderKind::StateCovered
+        | BorderKind::CityMajor
+        | BorderKind::City => Color32::from_rgba_unmultiplied(150, 205, 240, 225),
     }
 }
 
 pub(super) fn border_width(kind: BorderKind) -> f32 {
     match kind {
         BorderKind::Country => 1.6,
-        BorderKind::State | BorderKind::StateBig | BorderKind::CityMajor | BorderKind::City => 1.0,
+        BorderKind::State
+        | BorderKind::StateBig
+        | BorderKind::StateCovered
+        | BorderKind::CityMajor
+        | BorderKind::City => 1.0,
     }
 }
 
@@ -454,5 +468,19 @@ mod fade_tests {
             ),
             1.0
         );
+    }
+
+    #[test]
+    fn covered_state_lines_hand_over_to_municipal_state_borders() {
+        let at = |kind, altitude_km| layer_opacity(kind, policy(altitude_km, 1609.0, 75.0));
+        // Above the municipal band the covered lines look like any state line.
+        assert_eq!(
+            at(BorderKind::StateCovered, 500.0),
+            at(BorderKind::State, 500.0)
+        );
+        // Once the municipal state borders are full, the covered lines are gone.
+        assert_eq!(at(BorderKind::StateCovered, 300.0), 0.0);
+        let mid = at(BorderKind::StateCovered, 360.0);
+        assert!(mid > 0.0 && mid < 1.0, "{mid}");
     }
 }

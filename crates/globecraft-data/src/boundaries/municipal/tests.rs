@@ -1,11 +1,12 @@
 use super::*;
 
-fn view(lat: f64, lon: f64, altitude_km: f64) -> MunicipalView {
+fn view(lat: f64, lon: f64, altitude_km: f64) -> MunicipalView<'static> {
     MunicipalView {
         enabled: true,
         altitude_km,
         lat,
         lon,
+        countries: &[],
     }
 }
 
@@ -97,6 +98,22 @@ fn plan_covers_the_view_nearest_first_and_skips_the_sea() {
     assert!(at_sea.is_empty());
 }
 
+#[test]
+fn only_the_selected_countries_load() {
+    let germany = ["DEU".to_owned()];
+    let only_germany = MunicipalView {
+        countries: &germany,
+        ..view(47.0, 4.9, 150.0)
+    };
+    let (_, units) = plan(only_germany, 150.0 * 0.8 / 111.32, &europe, &HashSet::new());
+    assert!(!units.is_empty());
+    assert!(
+        units
+            .iter()
+            .all(|u| matches!(u, Unit::Cell { iso3, .. } if iso3 == b"DEU"))
+    );
+}
+
 fn line(points: &[(f64, f64)]) -> Line {
     Arc::new(points.to_vec())
 }
@@ -135,7 +152,7 @@ fn assembly_clips_to_the_area_and_keeps_shared_rings_once() {
                 y: 96,
                 size_mdeg: 500,
             },
-            UnitData::new(detail, centre),
+            UnitData::new(detail, centre, Some(*b"FRA"), &[]).0,
         );
     }
     let patch = assemble(&store, GeoBox::around(48.2, 2.3, 1.0));
@@ -157,7 +174,7 @@ fn eviction_keeps_the_units_nearest_the_view() {
         parents: vec![],
     };
     for (y, lat) in [(0, 0.0), (10, 10.0), (20, 20.0)] {
-        let data = UnitData::new(big(lat), (lat, 0.0));
+        let data = UnitData::new(big(lat), (lat, 0.0), None, &[]).0;
         store.vertices += data.vertices;
         store.units.insert(Unit::OsmCell { x: 0, y }, data);
     }
@@ -165,6 +182,56 @@ fn eviction_keeps_the_units_nearest_the_view() {
     assert!(store.vertices <= STORE_VERTEX_BUDGET);
     assert!(store.units.contains_key(&Unit::OsmCell { x: 0, y: 0 }));
     assert!(!store.units.contains_key(&Unit::OsmCell { x: 0, y: 20 }));
+}
+
+#[test]
+fn borders_between_units_are_classified_when_the_second_unit_loads() {
+    // Two Brazilian states, one municipality each, sharing the edge at lon -45.
+    let west = line(&[
+        (-20.0, -45.5),
+        (-20.0, -45.0),
+        (-19.5, -45.0),
+        (-19.5, -45.5),
+        (-20.0, -45.5),
+    ]);
+    let east = line(&[
+        (-20.0, -45.0),
+        (-20.0, -44.5),
+        (-19.5, -44.5),
+        (-19.5, -45.0),
+        (-20.0, -45.0),
+    ]);
+    let detail = |ring: Line, state: u64| Detail {
+        lines: vec![ring],
+        labels: vec![],
+        features: 1,
+        parents: vec![Some(state)],
+    };
+    let mut store = Store::default();
+    let (first, _) = UnitData::new(detail(west, 31), (-19.75, -45.25), Some(*b"BRA"), &[]);
+    store.units.insert(Unit::BrazilState(31), first);
+    // Alone, the state's edge has no neighbour: nothing is a state border yet.
+    let alone = assemble(&store, GeoBox::around(-19.75, -45.0, 2.0));
+    assert!(alone.lines_big.is_empty());
+
+    let area = GeoBounds::of(&east).unwrap();
+    let neighbours = store.neighbours(Unit::BrazilState(35), area.expanded(0.02));
+    assert_eq!(neighbours.len(), 1);
+    let (second, upgrades) = UnitData::new(
+        detail(east, 35),
+        (-19.75, -44.75),
+        Some(*b"BRA"),
+        &neighbours,
+    );
+    store.units.insert(Unit::BrazilState(35), second);
+    store.apply(upgrades);
+    let patch = assemble(&store, GeoBox::around(-19.75, -45.0, 2.0));
+    // The shared edge is now a state border, drawn once.
+    assert_eq!(patch.lines_big.len(), 1, "{:?}", patch.lines_big);
+    assert!(patch.lines_big[0].iter().all(|p| (p.1 + 45.0).abs() < 1e-9));
+    let staging = patch.municipal.unwrap();
+    assert!(staging.major_cells.near(-19.75, -45.0));
+    assert!(!staging.major_cells.near(-19.75, -44.6));
 }
 
 const _: () = {

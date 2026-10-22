@@ -177,7 +177,7 @@ impl BoundaryLoader {
         Some(geometry)
     }
     /// Municipal outlines around the view, streamed by area (see `municipal`).
-    pub fn request_municipal(&mut self, view: MunicipalView, boundaries: &super::BoundaryData) {
+    pub fn request_municipal(&mut self, view: MunicipalView<'_>, boundaries: &super::BoundaryData) {
         self.municipal.update(view, |lat, lon| {
             boundaries.country_at(lat, lon).map(str::to_owned)
         });
@@ -371,7 +371,7 @@ async fn load_polygon_layer(
         labels: output.labels,
         regions: output.regions,
         replace: false,
-        municipal_detail_max_km: None,
+        municipal: None,
     })
 }
 async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch> {
@@ -424,7 +424,7 @@ async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch
         labels,
         regions: vec![],
         replace: true,
-        municipal_detail_max_km: None,
+        municipal: None,
     })
 }
 
@@ -469,7 +469,7 @@ async fn load_disputed(log: &StatusLog, sources: &[FeatureSource]) -> Option<Pat
         labels: vec![],
         regions: vec![],
         replace: false,
-        municipal_detail_max_km: None,
+        municipal: None,
     })
 }
 

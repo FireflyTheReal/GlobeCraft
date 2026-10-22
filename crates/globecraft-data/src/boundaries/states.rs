@@ -179,7 +179,7 @@ pub(super) async fn load_stage(log: &StatusLog, stage: StateStage) -> Option<Pat
         labels,
         regions: vec![],
         replace: true,
-        municipal_detail_max_km: None,
+        municipal: None,
     })
 }
 

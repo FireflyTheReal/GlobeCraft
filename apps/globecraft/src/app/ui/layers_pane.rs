@@ -330,6 +330,7 @@ impl App {
         let lang = self.lang;
         match layer {
             MapLayer::StateBorders => self.state_altitude_control(ui),
+            MapLayer::MunicipalBorders => self.municipal_countries_control(ui, t),
             MapLayer::Terrain => {
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT + 46.0);
@@ -425,6 +426,66 @@ impl App {
 
     /// The altitude below which state lines show, edited in the active distance unit and
     /// stored in kilometres.
+    /// Which countries' municipal borders load (13.10): all, or a chosen few.
+    fn municipal_countries_control(&mut self, ui: &mut Ui, t: &Tokens) {
+        let lang = self.lang;
+        let chosen = if self.settings.municipal_countries.is_empty() {
+            lang.text("layers-municipal-countries-all").to_owned()
+        } else {
+            self.settings.municipal_countries.join(", ")
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(INDENT + 46.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {chosen}",
+                    lang.text("layers-municipal-countries-label")
+                ))
+                .size(11.5)
+                .color(t.text_dim),
+            );
+        });
+        let here = self
+            .boundaries
+            .country_at(self.cam.lat, self.cam.lon)
+            .map(str::to_owned);
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(INDENT + 46.0);
+            if let Some(here) = here {
+                if ui
+                    .small_button(lang.text("layers-municipal-only-here"))
+                    .clicked()
+                {
+                    self.run_reporting(
+                        "layer.municipalCountries",
+                        serde_json::json!({"countries": [here]}),
+                    );
+                }
+                if !self.settings.municipal_countries.is_empty()
+                    && !self.settings.municipal_countries.contains(&here)
+                    && ui
+                        .small_button(lang.text("layers-municipal-add-here"))
+                        .clicked()
+                {
+                    self.run_reporting(
+                        "layer.municipalCountries",
+                        serde_json::json!({"add": here}),
+                    );
+                }
+            }
+            if !self.settings.municipal_countries.is_empty()
+                && ui
+                    .small_button(lang.text("layers-municipal-all-countries"))
+                    .clicked()
+            {
+                self.run_reporting(
+                    "layer.municipalCountries",
+                    serde_json::json!({"countries": []}),
+                );
+            }
+        });
+    }
+
     fn state_altitude_control(&mut self, ui: &mut Ui) {
         use globecraft_core::units::{DistanceUnits, KM_PER_MILE};
         let imperial = matches!(self.distance_units(), DistanceUnits::Imperial);

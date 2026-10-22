@@ -12,7 +12,7 @@ use super::{
     Detail, GeoBounds, Layer, Line, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, MapLabel, Patch, StatusLog,
     adm, brazil, log_status, national, world,
 };
-mod topology;
+pub(crate) mod topology;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, mpsc};
@@ -142,6 +142,14 @@ impl Unit {
             Self::Country(_) => None,
         }
     }
+    /// The country whose municipalities this unit loads; OSM cells can span several.
+    fn country(self) -> Option<[u8; 3]> {
+        match self {
+            Self::Cell { iso3, .. } | Self::Country(iso3) => Some(iso3),
+            Self::BrazilState(_) => Some(*b"BRA"),
+            Self::OsmCell { .. } => None,
+        }
+    }
     fn is_overpass(self) -> bool {
         matches!(self, Self::OsmCell { .. })
     }
@@ -181,7 +189,25 @@ struct UnitLine {
     id: u64,
     /// One `topology` class per segment.
     classes: Arc<[u8]>,
+    parent: topology::Parent,
     area_km2: f64,
+}
+
+/// A ring already in the store near a unit that is being classified.
+struct Neighbour {
+    unit: Unit,
+    index: usize,
+    id: u64,
+    line: Line,
+    parent: topology::Parent,
+}
+
+/// Classes found for a stored ring once its neighbouring unit loaded.
+struct Upgrade {
+    unit: Unit,
+    index: usize,
+    id: u64,
+    classes: Vec<u8>,
 }
 
 struct UnitData {
@@ -191,30 +217,117 @@ struct UnitData {
     centre: (f64, f64),
 }
 impl UnitData {
-    /// Classifies every segment; CPU work, so it runs on the feature pool.
-    fn new(detail: Detail, centre: (f64, f64)) -> Self {
+    /// Classifies every segment against the unit's own rings and the stored rings of
+    /// neighbouring units, and returns the classes those neighbours gain (their
+    /// segments on the shared edge were `OUTER` until now). CPU work, so it runs on
+    /// the feature pool.
+    fn new(
+        detail: Detail,
+        centre: (f64, f64),
+        country: Option<[u8; 3]>,
+        neighbours: &[Neighbour],
+    ) -> (Self, Vec<Upgrade>) {
         let vertices = detail.lines.iter().map(|line| line.len()).sum();
-        let classes = topology::classify(&detail.lines, &detail.parents);
+        let own = detail.lines.len();
+        let mut parents: Vec<topology::Parent> = (0..own)
+            .map(|i| topology::Parent {
+                country,
+                state: detail.parents.get(i).copied().flatten(),
+            })
+            .collect();
+        let own_ids: HashSet<u64> = detail.lines.iter().map(topology::ring_id).collect();
+        // Copies of this unit's own rings stored by another unit add nothing.
+        let others: Vec<&Neighbour> = neighbours
+            .iter()
+            .filter(|n| !own_ids.contains(&n.id))
+            .collect();
+        let mut combined = detail.lines.clone();
+        combined.extend(others.iter().map(|n| n.line.clone()));
+        parents.extend(others.iter().map(|n| n.parent));
+        let mut classes = topology::classify(&combined, &parents);
+        let upgrades = classes
+            .drain(own..)
+            .zip(&others)
+            .map(|(classes, n)| Upgrade {
+                unit: n.unit,
+                index: n.index,
+                id: n.id,
+                classes,
+            })
+            .collect();
         let lines = detail
             .lines
             .into_iter()
             .zip(classes)
-            .filter_map(|(line, classes)| {
+            .zip(parents)
+            .filter_map(|((line, classes), parent)| {
                 let bounds = GeoBounds::of(&line)?;
                 Some(UnitLine {
                     id: topology::ring_id(&line),
                     area_km2: topology::ring_area_km2(&line),
                     classes: classes.into(),
+                    parent,
                     line,
                     bounds,
                 })
             })
             .collect();
+        (
+            Self {
+                lines,
+                labels: detail.labels,
+                vertices,
+                centre,
+            },
+            upgrades,
+        )
+    }
+    fn empty(centre: (f64, f64)) -> Self {
         Self {
-            lines,
-            labels: detail.labels,
-            vertices,
+            lines: Vec::new(),
+            labels: Vec::new(),
+            vertices: 0,
             centre,
+        }
+    }
+}
+
+impl Store {
+    /// Stored rings within `margin` of `area`, from units other than `unit`.
+    fn neighbours(&self, unit: Unit, area: GeoBounds) -> Vec<Neighbour> {
+        let mut out = Vec::new();
+        for (&other, data) in &self.units {
+            if other == unit {
+                continue;
+            }
+            for (index, ring) in data.lines.iter().enumerate() {
+                if ring.bounds.overlaps(area) {
+                    out.push(Neighbour {
+                        unit: other,
+                        index,
+                        id: ring.id,
+                        line: ring.line.clone(),
+                        parent: ring.parent,
+                    });
+                }
+            }
+        }
+        out
+    }
+    /// Applies classes found for stored rings, if they are still stored.
+    fn apply(&mut self, upgrades: Vec<Upgrade>) {
+        for upgrade in upgrades {
+            let Some(ring) = self
+                .units
+                .get_mut(&upgrade.unit)
+                .and_then(|data| data.lines.get_mut(upgrade.index))
+                .filter(|ring| ring.id == upgrade.id)
+            else {
+                continue;
+            };
+            let mut classes = ring.classes.to_vec();
+            topology::upgrade_outer(&mut classes, &upgrade.classes);
+            ring.classes = classes.into();
         }
     }
 }
@@ -264,11 +377,13 @@ fn distance_sq(a: (f64, f64), b: (f64, f64)) -> f64 {
 
 /// What the camera shows, from the app, once per frame.
 #[derive(Clone, Copy, Debug)]
-pub struct MunicipalView {
+pub struct MunicipalView<'a> {
     pub enabled: bool,
     pub altitude_km: f64,
     pub lat: f64,
     pub lon: f64,
+    /// ISO3 codes of the countries to load; empty loads every country.
+    pub countries: &'a [String],
 }
 
 /// The request derived from a view, compared between frames so an unchanged view
@@ -279,6 +394,8 @@ struct Request {
     lon_cell: i64,
     radius_cell: i64,
     completed: u64,
+    /// Hash of the country selection, so a change re-plans.
+    countries: u64,
 }
 
 pub(super) struct MunicipalStreamer {
@@ -325,7 +442,7 @@ impl MunicipalStreamer {
     /// missing ones, and moves the published area. Cheap when nothing changed.
     pub(super) fn update(
         &mut self,
-        view: MunicipalView,
+        view: MunicipalView<'_>,
         country_at: impl Fn(f64, f64) -> Option<String>,
     ) {
         let Ok(mut store) = self.store.lock() else {
@@ -350,6 +467,12 @@ impl MunicipalStreamer {
             lon_cell: (view.lon / PROBE_STEP_DEG * 4.0).round() as i64,
             radius_cell: (view_radius / PROBE_STEP_DEG * 4.0).round() as i64,
             completed: store.completed,
+            countries: {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::hash::DefaultHasher::new();
+                view.countries.hash(&mut hasher);
+                hasher.finish()
+            },
         };
         if self.last == Some(request) {
             return;
@@ -392,7 +515,7 @@ impl MunicipalStreamer {
 
 /// The published area around the view and the units covering it, nearest first.
 fn plan(
-    view: MunicipalView,
+    view: MunicipalView<'_>,
     view_radius: f64,
     country_at: &impl Fn(f64, f64) -> Option<String>,
     osm_countries: &HashSet<[u8; 3]>,
@@ -413,6 +536,9 @@ fn plan(
             let Some(iso3) = country_at(lat, lon) else {
                 continue;
             };
+            if !view.countries.is_empty() && !view.countries.contains(&iso3) {
+                continue;
+            }
             let Some(unit) = units_at(&iso3, lat, lon, osm_countries) else {
                 continue;
             };
@@ -493,8 +619,20 @@ async fn load(
     let centre = unit.centre().unwrap_or(view_centre);
     let result = match load_unit(unit).await {
         Ok(detail) => {
+            // Rings already stored around this unit, so borders between units are
+            // classified too (Brazilian states, countries, cells).
+            let area = detail
+                .lines
+                .iter()
+                .filter_map(|line| GeoBounds::of(line))
+                .reduce(GeoBounds::union)
+                .map(|bounds| bounds.expanded(topology::SHARED_TOLERANCE_DEG));
+            let neighbours = match (area, store.lock()) {
+                (Some(area), Ok(store)) => store.neighbours(unit, area),
+                _ => Vec::new(),
+            };
             crate::cpu::run(crate::cpu::Service::Features, move || {
-                Ok(UnitData::new(detail, centre))
+                Ok(UnitData::new(detail, centre, unit.country(), &neighbours))
             })
             .await
         }
@@ -507,7 +645,7 @@ async fn load(
         store.inflight.remove(&unit);
         store.completed += 1;
         match result {
-            Ok(data) if !data.lines.is_empty() => {
+            Ok((data, upgrades)) if !data.lines.is_empty() => {
                 log_status(
                     &log,
                     format!(
@@ -520,14 +658,13 @@ async fn load(
                 );
                 store.vertices += data.vertices;
                 store.units.insert(unit, data);
+                store.apply(upgrades);
                 store.evict(view_centre);
                 store.revision += 1;
             }
             Ok(_) => {
                 // An empty answer (open sea, an unmapped area) is final for this unit.
-                store
-                    .units
-                    .insert(unit, UnitData::new(Detail::default(), centre));
+                store.units.insert(unit, UnitData::empty(centre));
             }
             Err(error) => {
                 log_status(&log, format!("✖ {}: {error}", describe(unit)));
@@ -588,6 +725,7 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
     } else {
         0.0
     };
+    let major_cells = Arc::new(topology::MajorCells::of(&major));
     Patch {
         layer: Layer::WorldCities,
         lines: interior,
@@ -595,10 +733,13 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
         labels,
         regions: vec![],
         replace: true,
-        municipal_detail_max_km: Some(topology::detail_altitude_km(
-            mean_area_km2,
-            MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM,
-        )),
+        municipal: Some(super::MunicipalStaging {
+            detail_max_km: topology::detail_altitude_km(
+                mean_area_km2,
+                MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM,
+            ),
+            major_cells,
+        }),
     }
 }
 
@@ -632,7 +773,7 @@ async fn publish(
                     labels: vec![],
                     regions: vec![],
                     replace: true,
-                    municipal_detail_max_km: None,
+                    municipal: None,
                 },
             }
         };

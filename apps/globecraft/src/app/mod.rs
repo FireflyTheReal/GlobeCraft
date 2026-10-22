@@ -543,6 +543,7 @@ impl eframe::App for App {
                 altitude_km: self.cam.alt,
                 lat: self.cam.lat,
                 lon: self.cam.lon,
+                countries: &self.settings.municipal_countries,
             },
             &self.boundaries,
         );

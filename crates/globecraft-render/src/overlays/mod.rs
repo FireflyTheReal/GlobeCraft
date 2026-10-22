@@ -49,6 +49,9 @@ pub enum BorderKind {
     /// across its own band, but with the same color, width and dash.
     StateBig,
     State,
+    /// State lines (regular or big-country) where municipal state borders were loaded:
+    /// they fade out as `CityMajor` fades in, so the accurate lines take over.
+    StateCovered,
     /// Municipal segments on state borders: the accurate version of the state lines,
     /// drawn from the municipal altitude down.
     CityMajor,
@@ -62,7 +65,7 @@ fn dash_pattern(kind: BorderKind) -> Option<(f32, f32)> {
         BorderKind::State | BorderKind::StateBig => {
             Some((STATE_DASH_ON_POINTS, STATE_DASH_OFF_POINTS))
         }
-        BorderKind::City | BorderKind::CityMajor => {
+        BorderKind::City | BorderKind::CityMajor | BorderKind::StateCovered => {
             Some((STATE_DASH_ON_POINTS, STATE_DASH_OFF_POINTS))
         }
         BorderKind::Country => None,
@@ -140,12 +143,9 @@ pub fn project_borders(
         ),
         None => emit(kind, segment),
     };
-    let mut draw_lines =
-        |lines: &[globecraft_data::boundaries::Line], kind: BorderKind, max_step_deg: f64| {
-            for line in lines {
-                if visible.is_some_and(|set| !set.contains_line(line)) {
-                    continue;
-                }
+    let mut draw_line = |line: &[(f64, f64)], kind: BorderKind, max_step_deg: f64| {
+        {
+            {
                 let mut anchor: Option<Pos2> = None;
                 for pair in line.array_windows::<2>() {
                     let (lat1, lon1) = pair[0];
@@ -196,12 +196,49 @@ pub fn project_borders(
                     }
                 }
             }
-        };
+        }
+    };
     let close_zoom = view.altitude_km <= CLOSE_BORDER_ALTITUDE_KM;
     // Municipal outlines only make sense at close range; data loads below
     // `MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM` and the app fades them in from there
     // to `MUNICIPAL_FADE_FULL_ALTITUDE_KM`.
     let municipal_visible = view.altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+    // Where municipal state borders were loaded, the coarse state lines hand over to
+    // them; elsewhere both stay, since municipal data rarely covers the whole view.
+    let cells = &boundaries.municipal_major_cells;
+    let handover = view.layers.cities && municipal_visible && !cells.is_empty();
+    let mut draw_lines =
+        |lines: &[globecraft_data::boundaries::Line], kind: BorderKind, max_step_deg: f64| {
+            for line in lines {
+                if visible.is_some_and(|set| !set.contains_line(line)) {
+                    continue;
+                }
+                let state = matches!(kind, BorderKind::State | BorderKind::StateBig);
+                if !(handover && state) {
+                    draw_line(line, kind, max_step_deg);
+                    continue;
+                }
+                // Runs of vertices near (or away from) a municipal state border.
+                let covered = |p: &(f64, f64)| cells.near(p.0, p.1);
+                let mut start = 0;
+                while start + 1 < line.len() {
+                    let run_covered = covered(&line[start]) && covered(&line[start + 1]);
+                    let mut end = start + 1;
+                    while end + 1 < line.len()
+                        && (covered(&line[end]) && covered(&line[end + 1])) == run_covered
+                    {
+                        end += 1;
+                    }
+                    let run_kind = if run_covered {
+                        BorderKind::StateCovered
+                    } else {
+                        kind
+                    };
+                    draw_line(&line[start..=end], run_kind, max_step_deg);
+                    start = end;
+                }
+            }
+        };
     // State/province lines stay under the municipal outlines. Municipal data now
     // streams per area, so it rarely covers the whole view; hiding the states
     // wherever any municipal line was loaded left the rest of the view without
@@ -400,5 +437,60 @@ mod tests {
         assert_eq!(dash_pattern(BorderKind::Country), None);
         assert!(dash_pattern(BorderKind::State).is_some());
         assert!(dash_pattern(BorderKind::City).is_some());
+    }
+
+    #[test]
+    fn state_lines_hand_over_only_where_municipal_state_borders_were_loaded() {
+        use globecraft_core::camera::Cam;
+        use std::sync::Arc;
+        // A state line along 48°N from 8°E to 10°E; municipal state borders cover
+        // only its western half.
+        let mut data = BoundaryData::default();
+        data.states = vec![Arc::new(
+            (0..=40)
+                .map(|i| (48.0, 8.0 + f64::from(i) * 0.05))
+                .collect(),
+        )];
+        data.municipal_major_cells =
+            Arc::new(globecraft_data::boundaries::MajorCells::of(&[Arc::new(
+                vec![(48.0, 8.0), (48.0, 9.0)],
+            )]));
+        let basis = Cam {
+            lat: 48.0,
+            lon: 9.0,
+            heading: 0.0,
+            alt: 300.0,
+        }
+        .basis(1.0);
+        let layers = OverlayLayers {
+            countries: false,
+            states: true,
+            cities: true,
+            labels: false,
+        };
+        let project = |layers: OverlayLayers| {
+            let view = OverlayProjection {
+                basis: &basis,
+                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
+                altitude_km: 300.0,
+                state_visible_max_km: 1609.0,
+                layers,
+            };
+            let (mut covered, mut open) = (0, 0);
+            project_borders(&view, &data, None, |kind, _| match kind {
+                BorderKind::StateCovered => covered += 1,
+                BorderKind::State => open += 1,
+                _ => {}
+            });
+            (covered, open)
+        };
+        let (covered, open) = project(layers);
+        assert!(covered > 0 && open > 0, "{covered} covered, {open} open");
+        // Without the municipal layer nothing hands over.
+        let (covered, _) = project(OverlayLayers {
+            cities: false,
+            ..layers
+        });
+        assert_eq!(covered, 0);
     }
 }
