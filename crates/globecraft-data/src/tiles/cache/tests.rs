@@ -70,6 +70,26 @@ fn cache_evicts_least_recently_used_with_a_byte_weighted_target() {
 }
 
 #[test]
+fn unavailable_tiles_are_never_requested_again() {
+    let (cache, _rx) = test_cache(4);
+    assert!(cache.request(1));
+    cache.complete(1, Err(TileFailure::Unavailable));
+    assert!(matches!(cache.lookup(1), Lookup::Unavailable));
+    assert_eq!(cache.inflight(), 0);
+    assert!(!cache.request(1));
+    // Other requests finishing must not forget it.
+    cache.complete(2, Err("network failure".into()));
+    assert!(matches!(cache.lookup(1), Lookup::Unavailable));
+}
+
+#[test]
+fn only_the_exact_esri_placeholder_counts_as_missing() {
+    assert!(!is_placeholder(&[0; 2_521]));
+    assert!(!is_placeholder(&[]));
+    assert!(!is_placeholder(&[0xff, 0xd8, 0xff]));
+}
+
+#[test]
 fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weight() {
     let (cache, _rx) = test_cache(4);
     cache.complete(1, Err("network failure".into()));

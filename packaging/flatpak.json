@@ -15,7 +15,7 @@
     "name": "globecraft",
     "buildsystem": "simple",
     "build-commands": [
-      "cargo build -p globecraft --release --no-default-features --locked --offline",
+      "CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 cargo build -p globecraft --release --no-default-features --locked --offline",
       "install -Dm755 target/release/globecraft /app/bin/globecraft",
       "install -Dm644 assets/packaging/icon_256.png /app/share/icons/hicolor/256x256/apps/io.github.fireflythereal.globecraft.png",
       "install -Dm644 LICENSE /app/share/licenses/globecraft/LICENSE",

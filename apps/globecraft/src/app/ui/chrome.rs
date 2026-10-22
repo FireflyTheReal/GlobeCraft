@@ -1,12 +1,14 @@
-//! Window chrome: the header (logo, Quick Access Toolbar, title, place search and command
-//! search) and the status bar (cursor, camera, altitude, heading, tiles, updates and status).
+//! Window chrome: the header row (logo, File, ribbon tabs, Quick Access Toolbar, place search,
+//! command search and the ribbon collapse button) and the status bar (cursor, camera, altitude, heading, tiles, updates and status).
 //!
 //! The layout follows RustGIS's chrome (`crates/ui-egui/src/chrome.rs`, Apache-2.0).
-use super::theme::{Tokens, regular, semibold};
+use super::ribbon::COLLAPSE_W;
+use super::theme::{Tokens, regular};
 use super::widgets::{icon_command, text_w};
 use super::{icons, status};
 use crate::app::App;
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use globecraft_core::commands::Tab;
 use serde_json::Value;
 
 pub(in crate::app) const HEADER_HEIGHT: f32 = 38.0;
@@ -14,48 +16,57 @@ const HEADER_PAD: f32 = 10.0;
 const STATUS_HEIGHT: f32 = 26.0;
 /// Width of the place search box in the header, before UI scaling.
 const PLACE_SEARCH_WIDTH: f32 = 300.0;
+/// The place search never shrinks below this; the tabs scroll instead.
+const MIN_PLACE_SEARCH_WIDTH: f32 = 140.0;
+/// Quick Access Toolbar commands, in order.
+const QAT_COMMANDS: [&str; 5] = [
+    "places.open",
+    "places.save",
+    "edit.undo",
+    "edit.redo",
+    "file.screenshot",
+];
+const QAT_GAP: f32 = 2.0;
+/// Five 26-point icon buttons and their gaps.
+const QAT_WIDTH: f32 = 5.0 * 26.0 + 4.0 * QAT_GAP;
+/// Smallest padding per tab before the tabs scroll.
+const TAB_MIN_PAD: f32 = 8.0;
 /// Room the cursor readout keeps in the status bar.
 const CURSOR_READOUT_WIDTH: f32 = 250.0;
 
 impl App {
+    /// The single header row: logo, File, the ribbon tabs, the Quick Access Toolbar, the
+    /// place search, the command search and the ribbon collapse button. What is open
+    /// goes to the window title instead of taking room here.
     pub(in crate::app) fn header(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
         let mut field_rect = Rect::NOTHING;
-        egui::Panel::top("header")
+        self.update_window_title(ui.ctx());
+        let header = egui::Panel::top("header")
             .exact_size(HEADER_HEIGHT)
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
-                    .fill(t.header)
+                    .fill(t.tab_strip)
                     .inner_margin(egui::Margin::symmetric(HEADER_PAD as i8, 0)),
             )
             .show(ui, |ui| {
                 let full = ui.max_rect();
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                    let (r, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
+                    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
                     icons::paint(ui.painter(), r, "logo", t.icon, t.accent);
+                    resp.on_hover_text("GlobeCraft");
                     ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new("GlobeCraft")
-                            .font(semibold(13.0))
-                            .color(t.text),
-                    );
-                    ui.add_space(10.0);
-                    // Quick Access Toolbar.
-                    for id in [
-                        "places.open",
-                        "places.save",
-                        "edit.undo",
-                        "edit.redo",
-                        "file.screenshot",
-                    ] {
-                        icon_command(ui, self, id, Value::Null);
-                    }
-                    let qat_end = ui.cursor().min.x + 8.0;
-                    // Right side, measured: command search, then the place search.
+                    self.file_button(ui);
+                    ui.add_space(6.0);
+                    // Right side, measured from the window edge: collapse button, command
+                    // search, place search and the Quick Access Toolbar.
                     let right = full.max.x;
+                    let left = ui.cursor().min.x;
+                    let tabs_min =
+                        self.tab_captions_width(ui) + Tab::ALL.len() as f32 * TAB_MIN_PAD;
                     let label = lang.text("cmd-ui-command-search");
                     let hint = if cfg!(target_os = "macos") {
                         "⌘K"
@@ -65,14 +76,21 @@ impl App {
                     let full_cmd_w =
                         (text_w(ui, label, regular(12.0)) + text_w(ui, hint, regular(11.0)) + 60.0)
                             .clamp(170.0, 230.0);
-                    let room = right - qat_end;
-                    let search_w = (PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0))
-                        .min((room - 200.0).max(140.0));
-                    let cmd_w = if room >= full_cmd_w + search_w + 220.0 {
+                    let fixed = COLLAPSE_W + 8.0 + 10.0 + 10.0 + QAT_WIDTH + 8.0;
+                    let room = right - left - fixed - tabs_min;
+                    let wanted_search = PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0);
+                    let cmd_w = if room >= full_cmd_w + wanted_search {
                         full_cmd_w
                     } else {
                         26.0
                     };
+                    let search_w = (room - cmd_w).clamp(MIN_PLACE_SEARCH_WIDTH, wanted_search);
+                    let collapse = Rect::from_center_size(
+                        pos2(right - COLLAPSE_W / 2.0, full.center().y),
+                        vec2(COLLAPSE_W, COLLAPSE_W),
+                    );
+                    self.collapse_button(ui, &t, collapse);
+                    let right = collapse.min.x - 8.0;
                     let cr = Rect::from_min_max(
                         pos2(right - cmd_w, full.center().y - 12.0),
                         pos2(right, full.center().y + 12.0),
@@ -149,36 +167,41 @@ impl App {
                     );
                     field_rect = self.search_bar(&mut child);
                     field_rect = field_rect.union(sr);
-                    // Title: what is open, centred in the free gap when it fits.
-                    let world = match self.explorer.active {
-                        globecraft_core::body::Body::Earth => lang.text("top-earth"),
-                        globecraft_core::body::Body::Moon => lang.text("top-moon"),
-                        globecraft_core::body::Body::Custom => lang.text("top-custom-planet"),
-                    };
-                    let file = std::path::Path::new(&self.kml_path)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let title = if file.is_empty() {
-                        world.to_string()
-                    } else {
-                        format!("{file}  —  {world}")
-                    };
-                    let tw = text_w(ui, &title, semibold(12.5));
-                    let (a, b) = (qat_end + 8.0, sr.min.x - 16.0);
-                    if b - a >= tw {
-                        let cx = (full.center().x - tw / 2.0).min(b - tw).max(a);
-                        ui.painter().text(
-                            pos2(cx, full.center().y),
-                            Align2::LEFT_CENTER,
-                            &title,
-                            semibold(12.5),
-                            t.text_dim,
-                        );
+                    // Quick Access Toolbar, left of the place search.
+                    let qat = Rect::from_min_max(
+                        pos2(sr.min.x - 10.0 - QAT_WIDTH, full.min.y),
+                        pos2(sr.min.x - 10.0, full.max.y),
+                    );
+                    let mut qat_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(qat)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
+                    qat_ui.spacing_mut().item_spacing = vec2(QAT_GAP, 0.0);
+                    for id in QAT_COMMANDS {
+                        icon_command(&mut qat_ui, self, id, Value::Null);
                     }
+                    // The tabs take what is left; they scroll when the window is narrow.
+                    self.tab_buttons(ui, &t, qat.min.x - 8.0 - left);
                 });
             });
+        self.tab_strip_rect = Some(header.response.rect);
         self.suggestion_popup(ui, field_rect);
+    }
+
+    /// The window title names the open file and the body shown, so the header does not.
+    fn update_window_title(&mut self, ctx: &egui::Context) {
+        let lang = self.lang;
+        let world = match self.explorer.active {
+            globecraft_core::body::Body::Earth => lang.text("top-earth"),
+            globecraft_core::body::Body::Moon => lang.text("top-moon"),
+            globecraft_core::body::Body::Custom => lang.text("top-custom-planet"),
+        };
+        let title = window_title(&self.kml_path, world);
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
     }
 
     pub(in crate::app) fn status_bar(&mut self, ui: &mut Ui) {
@@ -315,4 +338,29 @@ impl App {
 fn separator(ui: &mut Ui, t: &Tokens) {
     let (r, _) = ui.allocate_exact_size(vec2(1.0, 14.0), Sense::hover());
     ui.painter().rect_filled(r, 0.0, t.border_strong);
+}
+
+/// "placemarks.kml — Earth — GlobeCraft", or "Earth — GlobeCraft" with no file open.
+fn window_title(kml_path: &str, world: &str) -> String {
+    let file = std::path::Path::new(kml_path)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if file.is_empty() {
+        format!("{world} — GlobeCraft")
+    } else {
+        format!("{file} — {world} — GlobeCraft")
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    #[test]
+    fn window_title_names_the_file_and_the_body() {
+        assert_eq!(
+            super::window_title("/home/a/placemarks.kml", "Earth"),
+            "placemarks.kml — Earth — GlobeCraft"
+        );
+        assert_eq!(super::window_title("", "Moon"), "Moon — GlobeCraft");
+    }
 }

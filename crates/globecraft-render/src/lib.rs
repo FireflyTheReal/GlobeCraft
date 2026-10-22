@@ -76,6 +76,8 @@ enum LocalTile {
     Ready(Arc<Tile>),
     Pending,
     Absent(f32),
+    /// The source has no tile here; coarser levels stand in and nothing waits for it.
+    Unavailable,
 }
 impl<F: Fn(TileKey) -> Lookup> Local<'_, F> {
     fn tile_color(&mut self, k: TileKey, dist: f32, u: f64, v: f64, stride: f32) -> Option<Vec4> {
@@ -83,9 +85,10 @@ impl<F: Fn(TileKey) -> Lookup> Local<'_, F> {
             Lookup::Ready(tile) => LocalTile::Ready(tile),
             Lookup::Pending => LocalTile::Pending,
             Lookup::Absent => LocalTile::Absent(dist),
+            Lookup::Unavailable => LocalTile::Unavailable,
         }) {
             LocalTile::Ready(tile) => Some(tile.sample(u, v, stride)),
-            LocalTile::Pending => None,
+            LocalTile::Pending | LocalTile::Unavailable => None,
             LocalTile::Absent(nearest) => {
                 *nearest = nearest.min(dist);
                 None
@@ -388,7 +391,7 @@ fn render_pixels_into(
             loc.map
                 .into_iter()
                 .filter_map(|(key, tile)| match tile {
-                    LocalTile::Ready(_) => None,
+                    LocalTile::Ready(_) | LocalTile::Unavailable => None,
                     LocalTile::Pending => Some((key, None)),
                     LocalTile::Absent(distance) => Some((key, Some(distance))),
                 })

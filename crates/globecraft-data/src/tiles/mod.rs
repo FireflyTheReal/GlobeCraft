@@ -111,7 +111,9 @@ impl Provider {
         match self {
             Provider::Wayback => wayback_tile_url(rel, z, x, y),
             Provider::Satellite => format!(
-                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                // `blankTile=false`: missing tiles answer 404 instead of the
+                // "Map data not yet available" image, so coarser imagery stands in.
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false"
             ),
             Provider::Streets => format!("https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
             Provider::Topo => format!("https://tile.opentopomap.org/{z}/{x}/{y}.png"),

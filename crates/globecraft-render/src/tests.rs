@@ -275,6 +275,29 @@ fn tracked_frames_watch_pending_tiles_without_enqueuing_them_again() {
 }
 
 #[test]
+fn unavailable_tiles_fall_back_to_coarser_levels_without_waiting() {
+    let case = &batch_references()[0];
+    let cfg = batch_reference_config(case.provider);
+    let basis = case.cam.basis(case.width as f64 / case.height as f64);
+    // Only the root tile exists; every finer level is unavailable at the source.
+    let root = Arc::new(Tile::decode(include_bytes!("../tests/fixtures/tile.png")).unwrap());
+    let lookup = |key: TileKey| {
+        if unkey(key).1 == 0 {
+            Lookup::Ready(root.clone())
+        } else {
+            Lookup::Unavailable
+        }
+    };
+    let (_, missing, waiting) =
+        render_pixels_tracked(case.width, case.height, &basis, &cfg, &lookup);
+    assert!(
+        missing.is_empty(),
+        "unavailable tiles must not be requested"
+    );
+    assert!(waiting.is_empty(), "nothing is left to wait for");
+}
+
+#[test]
 fn reused_buffers_overwrite_all_pixels_and_preserve_allocation() {
     let case = &batch_references()[0];
     let cfg = batch_reference_config(case.provider);

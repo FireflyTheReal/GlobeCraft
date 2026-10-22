@@ -336,15 +336,21 @@ and timeline (H) and the point-layer engine (I).
 
 ## 13. Second batch from the user (2026-10-22)
 
+Fix 2026-10-22: state borders had gaps (Texas–New Mexico, Montana–Dakotas, French regions,
+Russian oblasts, Chinese provinces). Natural Earth's 1:10m lines file splits real state
+borders into several classes and only one was kept, dropping 21 % of them; all real classes
+are kept now (99.4 % of shared admin-1 polygon edges covered, checked against the polygons).
+
+
 | # | Item | Size | Why / notes |
 | --- | --- | --- | --- |
 | 13.1 | **Municipal takeover and staging** (3.1 d): municipal outlines replace the coarse state and country lines first, where municipalities sit on those borders; interior municipalities and their names appear only at a narrower zoom, biggest first | M | **First slice implemented 2026-10-22.** Segments are classified per loaded unit (state border, interior, shared); state-border segments draw from 402 km, interior lines and small names only below an altitude set by the municipalities' mean size (about 75 km for Germany), and shared borders are drawn once instead of twice. Still open: country borders across two national sources (the units never see each other), fading the Natural Earth state lines out where municipal state borders cover them, and checking on the Mac |
-| 13.2 | **One header row**: merge the logo and Quick Access Toolbar row with the File / Home / Layers… tab row; drop the "placemarks.kml — Earth" title | S | More globe, less chrome. The document name can move to the window title |
+| 13.2 | **One header row**: merge the logo and Quick Access Toolbar row with the File / Home / Layers… tab row; drop the "placemarks.kml — Earth" title | S | **Done 2026-10-22.** Logo, File, tabs, Quick Access Toolbar, both searches and the collapse button share one 38-pt row; the file and body names moved to the window title |
 | 13.3 | **All planets and moons, streamed**: NASA Solar System Treks WMTS (Moon, Mars, Mercury, Vesta, Ceres, Titan…), USGS Astrogeology and GIBS where they serve tiles; one `TileSource` per body (1.2), with elevation where available (1.10) | M–L | Today the Moon and custom planets are single images. Credits per body in CREDITS.md |
 | 13.4 | **Borders in the dark**: when Night lights / sunlight are on, draw land borders at full strength all around the night side (today they follow the lit-side styling) | S | Pairs with 3.2 and 8.4 |
 | 13.5 | **Navigator in the Fusion 360 style**: a small view cube or mini globe that shows orientation, click a face or pole to snap, with compact move and zoom controls beside it | M | Replaces the large ring, pad and slider stack |
 | 13.6 | **Small, simple live symbols**: one minimal glyph per category for aircraft (by size class), ships (by AIS ship type: cargo, tanker, passenger, fishing, sailing…) and satellites (by group); satellites drawn at their real altitude above the globe | M | Uses the category fields the feeds already send. Pairs with 1.8 smooth motion |
-| 13.7 | **"Map data not yet available" at maximum zoom**: detect Esri's placeholder tiles (they come back as normal images) and treat them as missing, so the deepest real level is upsampled instead (overzoom) | S–M | The placeholder replaces real but coarser imagery today |
+| 13.7 | **"Map data not yet available" at maximum zoom**: detect Esri's placeholder tiles (they come back as normal images) and treat them as missing, so the deepest real level is upsampled instead (overzoom) | S–M | **Done 2026-10-22.** Requests carry `blankTile=false`, so Esri answers 404 where it has no tile; 404s and placeholders already in the disk cache mark the tile unavailable for the session, and renderers show the deepest real level without waiting or re-requesting |
 | 13.8 | **Style settings**: colour, thickness and dash pattern per line type (country, state, municipal), label sizes per kind, and a reset button | M | All values are named constants already; they become settings with commands |
 | 13.9 | **Wayback**: a drop-down calendar of the available release dates, and a **swipe compare** of two dates with a slider across the globe | M | The release list is already loaded; compare needs two imagery requests per frame |
 | 13.10 | **Remove the metropolitan regions layer**: municipal borders cover it. Optionally, a country picker for municipal borders (only the selected countries load) | S | **Removal done 2026-10-22** (layer, IBGE metro pass, Overture metro slices and their scripts). The country picker is still open |
@@ -371,7 +377,7 @@ terrain (34–42 ms).
 | # | Opportunity | Expected gain | Size |
 | --- | --- | --- | --- |
 | 14.1 | **GPU globe by default where it is proven** (8.2): the raster moves off the CPU entirely | The largest single gain: frame cost from ~10–40 ms CPU to a few ms GPU, and lower power use | XL |
-| 14.2 | **Release profile**: `lto = "fat"`, `codegen-units = 1`, `panic = "abort"` | Typically 10–20 % smaller and a few % faster | S |
+| 14.2 | **Release profile**: `lto = "fat"`, `codegen-units = 1` for published builds (release workflow and Flatpak); local `--release` keeps thin LTO for quick rebuilds. `panic = "abort"` is ruled out: the assistant and background tasks recover from panics. **Done 2026-10-22**, size gain to be measured on the next release | Typically 10–20 % smaller and a few % faster | S |
 | 14.3 | **Lighter presentation**: build without the GPU renderer feature by default until 14.1 lands, or use eframe's glow backend for CPU builds | Likely 8–15 MB smaller and faster startup | S–M |
 | 14.4 | **Download big assets on first use** (Milky Way, Moon, easter egg) instead of embedding them, keeping a tiny fallback | ~3 MB smaller binary | S |
 | 14.5 | **Fewer, smaller dependencies**: audit the 535-crate tree (`cargo tree -d` duplicates, unused features of `self_update`, `image`, `reqwest`, `tokio`) | Faster builds, a few MB | M |

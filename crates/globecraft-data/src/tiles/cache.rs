@@ -20,19 +20,53 @@ pub const MAX_INFLIGHT: usize = 48;
 enum RequestState {
     Loading(u64),
     Failed(Instant),
+    /// The source answered that it has no tile here (Esri's "Map data not yet
+    /// available"); never requested again this session.
+    Unavailable,
 }
 impl RequestState {
     fn is_pending(&self) -> bool {
         match self {
-            Self::Loading(_) => true,
+            Self::Loading(_) | Self::Unavailable => true,
             Self::Failed(time) => time.elapsed() < FAILED_TILE_RETRY_DELAY,
         }
     }
 }
+
+/// Why a tile did not load.
+pub(super) enum TileFailure {
+    /// The source has no tile at this position and level: renderers use the
+    /// deepest coarser level instead (overzoom).
+    Unavailable,
+    /// A network, disk or decoding error: retried after `FAILED_TILE_RETRY_DELAY`.
+    Error,
+}
+impl<E: Into<crate::Error>> From<E> for TileFailure {
+    fn from(_: E) -> Self {
+        Self::Error
+    }
+}
+
+/// Esri World Imagery's "Map data not yet available" placeholder: a normal
+/// 256×256 JPEG, 2,521 bytes, FNV-1a 64 `0x484ab5da02f7864f`. Requests carry
+/// `blankTile=false` so the server answers 404 instead, but tiles cached by
+/// earlier versions may still hold it.
+const ESRI_PLACEHOLDER_LEN: usize = 2_521;
+const ESRI_PLACEHOLDER_FNV: u64 = 0x484a_b5da_02f7_864f;
+
+pub(super) fn is_placeholder(bytes: &[u8]) -> bool {
+    bytes.len() == ESRI_PLACEHOLDER_LEN
+        && bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+        }) == ESRI_PLACEHOLDER_FNV
+}
+
 pub enum Lookup {
     Ready(Arc<Tile>),
     Pending,
     Absent,
+    /// The source has no tile here; use a coarser level and do not request it.
+    Unavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,6 +206,7 @@ impl TileCache {
             return Lookup::Ready(tile);
         }
         match self.requests.lock().unwrap().get(&key) {
+            Some(RequestState::Unavailable) => Lookup::Unavailable,
             Some(state) if state.is_pending() => Lookup::Pending,
             _ => Lookup::Absent,
         }
@@ -256,7 +291,7 @@ impl TileCache {
                 Some(RequestState::Failed(time)) => {
                     Some(FAILED_TILE_RETRY_DELAY.saturating_sub(time.elapsed()))
                 }
-                Some(RequestState::Loading(_)) => None,
+                Some(RequestState::Loading(_) | RequestState::Unavailable) => None,
                 None if self.inflight() < MAX_INFLIGHT && !self.ready.contains_key(key) => {
                     Some(Duration::ZERO)
                 }
@@ -274,7 +309,8 @@ impl TileCache {
         Some((key, *epoch))
     }
 
-    fn complete(&self, key: TileKey, result: Result<Tile, crate::Error>) {
+    fn complete(&self, key: TileKey, result: Result<Tile, TileFailure>) {
+        let unavailable = matches!(result, Err(TileFailure::Unavailable));
         let admitted = match result {
             Ok(tile) if tile.px.len() <= self.budget => {
                 self.ready.insert(key, Arc::new(tile));
@@ -290,7 +326,9 @@ impl TileCache {
         self.queue.lock().unwrap().retain(|&queued| queued != key);
         let was_loading = matches!(requests.remove(&key), Some(RequestState::Loading(_)));
         requests.retain(|_, state| state.is_pending());
-        if !admitted {
+        if unavailable {
+            requests.insert(key, RequestState::Unavailable);
+        } else if !admitted {
             requests.insert(key, RequestState::Failed(Instant::now()));
         }
         if was_loading {
@@ -328,10 +366,14 @@ async fn decode(bytes: Vec<u8>) -> Result<(Tile, Vec<u8>), crate::Error> {
     })
     .await
 }
-async fn fetch_tile(k: TileKey, disk: &DiskCache) -> Result<FetchedTile, crate::Error> {
+async fn fetch_tile(k: TileKey, disk: &DiskCache) -> Result<FetchedTile, TileFailure> {
     let (provider, zoom, x, y, release) = unkey(k);
     let path = disk.path(k)?;
     if let Some(bytes) = disk.read(&path).await {
+        if is_placeholder(&bytes) {
+            let _ = disk.invalidate(&path).await;
+            return Err(TileFailure::Unavailable);
+        }
         match decode(bytes).await {
             Ok((tile, _)) => {
                 return Ok(FetchedTile {
@@ -346,13 +388,23 @@ async fn fetch_tile(k: TileKey, disk: &DiskCache) -> Result<FetchedTile, crate::
     }
     let url = provider.url(zoom, x, y, release);
     if url.is_empty() {
-        return Err("empty tile URL".into());
+        return Err(crate::Error::from("empty tile URL").into());
     }
-    let bytes = crate::http::body(
+    let bytes = match crate::http::body(
         crate::http::client(crate::http::Policy::Tile)?.get(url),
         MAX_TILE_RESPONSE_BYTES,
     )
-    .await?;
+    .await
+    {
+        Ok(bytes) if is_placeholder(&bytes) => return Err(TileFailure::Unavailable),
+        Ok(bytes) => bytes,
+        Err(crate::Error::Http(error))
+            if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
+        {
+            return Err(TileFailure::Unavailable);
+        }
+        Err(error) => return Err(error.into()),
+    };
     let (tile, bytes) = decode(bytes).await?;
     Ok(FetchedTile {
         tile,

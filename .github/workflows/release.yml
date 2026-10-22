@@ -17,6 +17,13 @@ on:
 permissions:
   contents: read
 
+# Published builds trade build time for a smaller, faster binary (roadmap 14.2).
+# Local `cargo build --release` keeps the quicker thin LTO from Cargo.toml.
+# Unwinding stays on: the assistant and background tasks recover from panics.
+env:
+  CARGO_PROFILE_RELEASE_LTO: fat
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

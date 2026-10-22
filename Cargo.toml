@@ -73,6 +73,9 @@ all = "warn"
 [profile.dev]
 opt-level = 2
 
+# Thin LTO keeps local release builds quick; the release workflow switches to fat
+# LTO with one codegen unit for published binaries. Panics keep unwinding, since the
+# assistant and background tasks catch them.
 [profile.release]
 opt-level = 3
 lto = "thin"

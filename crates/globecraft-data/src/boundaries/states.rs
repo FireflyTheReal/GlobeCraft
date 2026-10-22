@@ -54,14 +54,23 @@ impl StateStage {
     }
 }
 
-/// Admin-1 line features that are real state/province borders. Natural Earth also
-/// ships statistical and grouping lines that coincide with them.
+/// Admin-1 line features that are real state/province borders.
+///
+/// The 1:10m file stores each border once and splits them into classes: besides
+/// "Admin-1 boundary", the region, statistical and "statistical meta" classes are
+/// also state borders (Texas–New Mexico, French regions, Russian oblasts, Chinese
+/// provinces); keeping only the first class dropped about a fifth of all state
+/// borders. Only the short "indicator" ticks and unrecognized (disputed) lines are
+/// left out.
 fn is_state_border(feature: &serde_json::Value) -> bool {
     let class = feature
         .get("properties")
         .and_then(|p| p.get("FEATURECLA").or_else(|| p.get("featurecla")))
         .and_then(|v| v.as_str());
-    matches!(class, None | Some("Admin-1 boundary"))
+    !matches!(
+        class,
+        Some("Admin-1 boundary indicator" | "Unrecognized Admin-1 boundary")
+    )
 }
 
 #[derive(Default)]
@@ -198,9 +207,16 @@ mod tests {
     #[test]
     fn only_real_state_borders_are_kept() {
         let line = |class: &str| serde_json::json!({"properties": {"FEATURECLA": class}});
-        assert!(is_state_border(&line("Admin-1 boundary")));
-        assert!(!is_state_border(&line("Admin-1 statistical boundary")));
-        assert!(!is_state_border(&line("Admin-1 region boundary")));
+        for class in [
+            "Admin-1 boundary",
+            "Admin-1 region boundary",
+            "Admin-1 statistical boundary",
+            "Admin-1 statistical meta bounds",
+        ] {
+            assert!(is_state_border(&line(class)), "{class}");
+        }
+        assert!(!is_state_border(&line("Admin-1 boundary indicator")));
+        assert!(!is_state_border(&line("Unrecognized Admin-1 boundary")));
         assert!(is_state_border(&serde_json::json!({"properties": {}})));
     }
 

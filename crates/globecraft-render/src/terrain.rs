@@ -96,6 +96,7 @@ fn dem_tile(
                 Lookup::Ready(tile) => LocalTile::Ready(tile),
                 Lookup::Pending => LocalTile::Pending,
                 Lookup::Absent => LocalTile::Absent(dist),
+                Lookup::Unavailable => LocalTile::Unavailable,
             });
         match tile {
             LocalTile::Ready(tile) => {
@@ -107,7 +108,7 @@ fn dem_tile(
                     ty,
                 });
             }
-            LocalTile::Pending => {}
+            LocalTile::Pending | LocalTile::Unavailable => {}
             LocalTile::Absent(nearest) => *nearest = nearest.min(dist),
         }
     }

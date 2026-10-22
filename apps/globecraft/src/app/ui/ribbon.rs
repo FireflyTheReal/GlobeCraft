@@ -18,21 +18,12 @@ use globecraft_core::{
 use serde_json::{Value, json};
 
 const SCROLL_BUTTON_W: f32 = 18.0;
-const COLLAPSE_W: f32 = 24.0;
-const TAB_STRIP_H: f32 = 32.0;
+pub(in crate::app) const COLLAPSE_W: f32 = 24.0;
 
 impl App {
     pub(in crate::app) fn ribbon(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
-        egui::Panel::top("tabs")
-            .exact_size(TAB_STRIP_H)
-            .show_separator_line(false)
-            .frame(
-                egui::Frame::NONE
-                    .fill(t.tab_strip)
-                    .inner_margin(egui::Margin::symmetric(8, 0)),
-            )
-            .show(ui, |ui| self.tab_strip(ui, &t));
+        // The tabs live in the header row (`chrome.rs`); this is only the ribbon body.
         if self.settings.workspace.ribbon_minimized && !self.ribbon_peek {
             return;
         }
@@ -87,156 +78,165 @@ impl App {
         }
     }
 
-    fn tab_strip(&mut self, ui: &mut Ui, t: &Tokens) {
+    /// The File button, which opens the file menu as the Project button does in RustGIS.
+    pub(in crate::app) fn file_button(&mut self, ui: &mut Ui) {
         let lang = self.lang;
-        ui.horizontal_centered(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-            // The File button opens the file menu, as the Project button does in RustGIS.
-            let file = lang.text("ribbon-file");
-            let pw = text_w(ui, file, semibold(12.5)) + 26.0;
-            let (pr, presp) = ui.allocate_exact_size(vec2(pw, 26.0), Sense::click());
-            presp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, file));
-            let fill = if presp.hovered() { BRAND_DARK } else { BRAND };
-            ui.painter().rect_filled(pr, CornerRadius::same(6), fill);
-            ui.painter().text(
-                pr.center(),
-                Align2::CENTER_CENTER,
-                file,
-                semibold(12.5),
-                egui::Color32::WHITE,
-            );
-            let presp = presp.on_hover_text(lang.text("ribbon-file-help"));
-            egui::Popup::menu(&presp).show(|ui| {
-                ui.set_min_width(220.0);
-                for id in ["places.open", "places.save", "places.saveAs"] {
-                    menu_item(ui, self, id, Value::Null);
-                }
-                ui.separator();
-                menu_item(ui, self, "file.screenshot", Value::Null);
-                ui.separator();
-                menu_item(ui, self, "ui.settings", Value::Null);
-                menu_item(ui, self, "ui.about", Value::Null);
-                ui.separator();
-                menu_item(ui, self, "app.quit", Value::Null);
-            });
-            ui.add_space(6.0);
-            let room = (ui.available_width() - COLLAPSE_W - 8.0).max(60.0);
-            let captions: Vec<(Tab, &str)> = Tab::ALL
-                .into_iter()
-                .map(|tab| (tab, lang.text(tab.label_key())))
-                .collect();
-            let text: f32 = captions
-                .iter()
-                .map(|(_, c)| text_w(ui, c, semibold(12.5)))
-                .sum();
-            let pad = ((room - text) / captions.len() as f32).clamp(8.0, 22.0);
-            let scroll = egui::ScrollArea::horizontal()
-                .id_salt("tab_strip")
-                .max_width(room)
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| {
-                    ui.horizontal_centered(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                        for (tab, caption) in &captions {
-                            let active = self.settings.workspace.ribbon_tab == *tab;
-                            let font = if active {
-                                semibold(12.5)
-                            } else {
-                                regular(12.5)
-                            };
-                            let w = text_w(ui, caption, font.clone()) + pad;
-                            let (r, resp) =
-                                ui.allocate_exact_size(vec2(w, TAB_STRIP_H), Sense::click());
-                            resp.widget_info(|| {
-                                egui::WidgetInfo::selected(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    active,
-                                    *caption,
-                                )
-                            });
-                            let body = Rect::from_min_max(pos2(r.min.x, r.min.y + 3.0), r.max);
-                            let top = CornerRadius {
-                                nw: 6,
-                                ne: 6,
-                                sw: 0,
-                                se: 0,
-                            };
-                            let ribbon_open =
-                                !self.settings.workspace.ribbon_minimized || self.ribbon_peek;
-                            if active && ribbon_open {
-                                ui.painter().rect_filled(body, top, t.ribbon);
-                                ui.painter().rect_stroke(
-                                    body,
-                                    top,
-                                    Stroke::new(1.0, t.border),
-                                    egui::StrokeKind::Inside,
-                                );
-                                ui.painter().rect_filled(
-                                    Rect::from_min_max(
-                                        pos2(r.min.x + 1.0, r.max.y - 1.5),
-                                        pos2(r.max.x - 1.0, r.max.y + 1.0),
-                                    ),
-                                    0.0,
-                                    t.ribbon,
-                                );
-                                ui.painter().rect_filled(
-                                    Rect::from_min_max(
-                                        pos2(r.min.x + 8.0, r.max.y - 3.0),
-                                        pos2(r.max.x - 8.0, r.max.y - 1.0),
-                                    ),
-                                    CornerRadius::same(1),
-                                    t.accent,
-                                );
-                            } else if resp.hovered() {
-                                ui.painter().rect_filled(
-                                    body.shrink2(vec2(1.0, 2.0)),
-                                    CornerRadius::same(5),
-                                    t.hover,
-                                );
-                            }
-                            let color = if active { t.text } else { t.text_dim };
-                            ui.painter().text(
-                                pos2(r.center().x, r.center().y + 1.5),
-                                Align2::CENTER_CENTER,
-                                *caption,
-                                font,
-                                color,
-                            );
-                            if resp.double_clicked() {
-                                self.run_reporting("ui.ribbon", Value::Null);
-                            } else if resp.clicked() {
-                                if self.settings.workspace.ribbon_minimized {
-                                    self.ribbon_peek = !(self.ribbon_peek && active);
-                                }
-                                self.settings.workspace.ribbon_tab = *tab;
-                            }
-                        }
-                    });
-                });
-            scroll_buttons(ui, t, &scroll, lang);
-            self.tab_strip_rect = Some(ui.max_rect());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (cr, cresp) =
-                    ui.allocate_exact_size(vec2(COLLAPSE_W, COLLAPSE_W), Sense::click());
-                if cresp.hovered() {
-                    ui.painter().rect_filled(cr, CornerRadius::same(5), t.hover);
-                }
-                let minimized = self.settings.workspace.ribbon_minimized;
-                let icon = if minimized { "chevron_down" } else { "up" };
-                icons::paint(ui.painter(), cr.shrink(5.0), icon, t.text_dim, t.accent);
-                let tip = lang.text(if minimized {
-                    "ribbon-expand-tooltip"
-                } else {
-                    "ribbon-collapse-tooltip"
-                });
-                cresp
-                    .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
-                if cresp.on_hover_text(tip).clicked() {
-                    self.run_reporting("ui.ribbon", Value::Null);
-                }
-            });
+        let file = lang.text("ribbon-file");
+        let pw = text_w(ui, file, semibold(12.5)) + 26.0;
+        let (pr, presp) = ui.allocate_exact_size(vec2(pw, 26.0), Sense::click());
+        presp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, file));
+        let fill = if presp.hovered() { BRAND_DARK } else { BRAND };
+        ui.painter().rect_filled(pr, CornerRadius::same(6), fill);
+        ui.painter().text(
+            pr.center(),
+            Align2::CENTER_CENTER,
+            file,
+            semibold(12.5),
+            egui::Color32::WHITE,
+        );
+        let presp = presp.on_hover_text(lang.text("ribbon-file-help"));
+        egui::Popup::menu(&presp).show(|ui| {
+            ui.set_min_width(220.0);
+            for id in ["places.open", "places.save", "places.saveAs"] {
+                menu_item(ui, self, id, Value::Null);
+            }
+            ui.separator();
+            menu_item(ui, self, "file.screenshot", Value::Null);
+            ui.separator();
+            menu_item(ui, self, "ui.settings", Value::Null);
+            menu_item(ui, self, "ui.about", Value::Null);
+            ui.separator();
+            menu_item(ui, self, "app.quit", Value::Null);
         });
+    }
+
+    /// Sum of the tab captions' widths at the tab font, for the header's layout.
+    pub(in crate::app) fn tab_captions_width(&self, ui: &Ui) -> f32 {
+        Tab::ALL
+            .into_iter()
+            .map(|tab| text_w(ui, self.lang.text(tab.label_key()), semibold(12.5)))
+            .sum()
+    }
+
+    /// The ribbon tabs, in `room` points of the header row; they scroll when it is short.
+    pub(in crate::app) fn tab_buttons(&mut self, ui: &mut Ui, t: &Tokens, room: f32) {
+        let lang = self.lang;
+        let room = room.max(60.0);
+        let strip_h = ui.max_rect().height();
+        let captions: Vec<(Tab, &str)> = Tab::ALL
+            .into_iter()
+            .map(|tab| (tab, lang.text(tab.label_key())))
+            .collect();
+        let text: f32 = captions
+            .iter()
+            .map(|(_, c)| text_w(ui, c, semibold(12.5)))
+            .sum();
+        let pad = ((room - text) / captions.len() as f32).clamp(8.0, 22.0);
+        let scroll = egui::ScrollArea::horizontal()
+            .id_salt("tab_strip")
+            .max_width(room)
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                    for (tab, caption) in &captions {
+                        let active = self.settings.workspace.ribbon_tab == *tab;
+                        let font = if active {
+                            semibold(12.5)
+                        } else {
+                            regular(12.5)
+                        };
+                        let w = text_w(ui, caption, font.clone()) + pad;
+                        let (r, resp) = ui.allocate_exact_size(vec2(w, strip_h), Sense::click());
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Button,
+                                true,
+                                active,
+                                *caption,
+                            )
+                        });
+                        let body = Rect::from_min_max(pos2(r.min.x, r.min.y + 3.0), r.max);
+                        let top = CornerRadius {
+                            nw: 6,
+                            ne: 6,
+                            sw: 0,
+                            se: 0,
+                        };
+                        let ribbon_open =
+                            !self.settings.workspace.ribbon_minimized || self.ribbon_peek;
+                        if active && ribbon_open {
+                            ui.painter().rect_filled(body, top, t.ribbon);
+                            ui.painter().rect_stroke(
+                                body,
+                                top,
+                                Stroke::new(1.0, t.border),
+                                egui::StrokeKind::Inside,
+                            );
+                            ui.painter().rect_filled(
+                                Rect::from_min_max(
+                                    pos2(r.min.x + 1.0, r.max.y - 1.5),
+                                    pos2(r.max.x - 1.0, r.max.y + 1.0),
+                                ),
+                                0.0,
+                                t.ribbon,
+                            );
+                            ui.painter().rect_filled(
+                                Rect::from_min_max(
+                                    pos2(r.min.x + 8.0, r.max.y - 3.0),
+                                    pos2(r.max.x - 8.0, r.max.y - 1.0),
+                                ),
+                                CornerRadius::same(1),
+                                t.accent,
+                            );
+                        } else if resp.hovered() {
+                            ui.painter().rect_filled(
+                                body.shrink2(vec2(1.0, 2.0)),
+                                CornerRadius::same(5),
+                                t.hover,
+                            );
+                        }
+                        let color = if active { t.text } else { t.text_dim };
+                        ui.painter().text(
+                            pos2(r.center().x, r.center().y + 1.5),
+                            Align2::CENTER_CENTER,
+                            *caption,
+                            font,
+                            color,
+                        );
+                        if resp.double_clicked() {
+                            self.run_reporting("ui.ribbon", Value::Null);
+                        } else if resp.clicked() {
+                            if self.settings.workspace.ribbon_minimized {
+                                self.ribbon_peek = !(self.ribbon_peek && active);
+                            }
+                            self.settings.workspace.ribbon_tab = *tab;
+                        }
+                    }
+                });
+            });
+        scroll_buttons(ui, t, &scroll, lang);
+    }
+
+    /// The button that collapses or expands the ribbon body, at `cr`.
+    pub(in crate::app) fn collapse_button(&mut self, ui: &mut Ui, t: &Tokens, cr: Rect) {
+        let lang = self.lang;
+        let cresp = ui.interact(cr, egui::Id::new("ribbon_collapse"), Sense::click());
+        if cresp.hovered() {
+            ui.painter().rect_filled(cr, CornerRadius::same(5), t.hover);
+        }
+        let minimized = self.settings.workspace.ribbon_minimized;
+        let icon = if minimized { "chevron_down" } else { "up" };
+        icons::paint(ui.painter(), cr.shrink(5.0), icon, t.text_dim, t.accent);
+        let tip = lang.text(if minimized {
+            "ribbon-expand-tooltip"
+        } else {
+            "ribbon-collapse-tooltip"
+        });
+        cresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+        if cresp.on_hover_text(tip).clicked() {
+            self.run_reporting("ui.ribbon", Value::Null);
+        }
     }
 
     fn layer_big(&mut self, ui: &mut Ui, layer: MapLayer) {

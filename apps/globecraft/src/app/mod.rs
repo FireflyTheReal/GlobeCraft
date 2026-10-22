@@ -65,6 +65,8 @@ pub(crate) struct App {
     /// The ribbon shown over the globe while collapsed (a tab was clicked).
     ribbon_peek: bool,
     tab_strip_rect: Option<Rect>,
+    /// The title last sent to the window, so it is only sent when it changes.
+    window_title: String,
     /// Fly to the best result when a search completes.
     search_fly: bool,
     /// Focus the place search field on the next frame.
@@ -230,6 +232,7 @@ impl App {
             command_search: None,
             ribbon_peek: false,
             tab_strip_rect: None,
+            window_title: String::new(),
             search_fly: true,
             focus_search: false,
             updater: globecraft_data::updater::UpdateService::new(runtime.handle(), {
