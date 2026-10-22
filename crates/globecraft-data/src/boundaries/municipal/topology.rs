@@ -26,6 +26,14 @@ pub(super) const COUNTRY: u8 = 4;
 /// Two outlines closer than this share a border. Covers the 0.005° server-side
 /// simplification on both sides, and stays well below the width of a municipality.
 pub(super) const SHARED_TOLERANCE_DEG: f64 = 0.012;
+/// Shared borders within one topologically simplified file coincide; this absorbs
+/// rounding only (about 50 m). The wide `SHARED_TOLERANCE_DEG` took the two sides of a
+/// narrow notch in a border for one shared edge.
+const EXACT_TOLERANCE_DEG: f64 = 0.0005;
+/// Two segments can be copies of one shared border only when they run within about 35°
+/// of each other (the cosine of that angle). Without it, an outline passing within the
+/// tolerance of a neighbour's corner was taken as shared and left undrawn.
+const SHARED_MIN_COS: f64 = 0.82;
 /// Spatial hash cell for the neighbour search.
 const GRID_DEG: f64 = 0.05;
 /// Municipalities that should fit on screen before the interior lines and the small
@@ -70,7 +78,24 @@ impl Parent {
 
 /// Per-segment classes for every ring. `parents[i]` is ring `i`'s parent (default
 /// when unknown). Copies of the same ring (same `ring_id`) never count as neighbours.
-pub(super) fn classify(lines: &[Line], parents: &[Parent]) -> Vec<Vec<u8>> {
+/// The first `exact` rings share identical vertices with each other: among them, an
+/// interior border must coincide (`EXACT_TOLERANCE_DEG`), while state borders and borders
+/// with any other ring may differ by `SHARED_TOLERANCE_DEG`.
+#[cfg(test)]
+pub(super) fn classify_at(lines: &[Line], parents: &[Parent], tolerance: f64) -> Vec<Vec<u8>> {
+    classify_with(lines, parents, lines.len(), tolerance)
+}
+
+pub(super) fn classify(lines: &[Line], parents: &[Parent], exact: usize) -> Vec<Vec<u8>> {
+    classify_with(lines, parents, exact, EXACT_TOLERANCE_DEG)
+}
+
+fn classify_with(
+    lines: &[Line],
+    parents: &[Parent],
+    exact: usize,
+    exact_tolerance: f64,
+) -> Vec<Vec<u8>> {
     let ids: Vec<u64> = lines.iter().map(ring_id).collect();
     let mut grid: HashMap<(i32, i32), Vec<(u32, u32)>> = HashMap::new();
     let cell = |value: f64| (value / GRID_DEG).floor() as i32;
@@ -104,38 +129,57 @@ pub(super) fn classify(lines: &[Line], parents: &[Parent]) -> Vec<Vec<u8>> {
                     }
                     let mid = ((pair[0].0 + pair[1].0) / 2.0, (pair[0].1 + pair[1].1) / 2.0);
                     let lon_scale = mid.0.to_radians().cos().max(0.05);
+                    let direction = |a: (f64, f64), b: (f64, f64)| {
+                        let (y, x) = (b.0 - a.0, (b.1 - a.1) * lon_scale);
+                        let length = x.hypot(y);
+                        (y / length, x / length)
+                    };
+                    let own_direction = direction(pair[0], pair[1]);
                     let nearest = grid
                         .get(&(cell(mid.0), cell(mid.1)))
                         .into_iter()
                         .flatten()
                         .filter(|(other, _)| ids[*other as usize] != ids[ring])
-                        .map(|&(other, segment)| {
+                        .filter_map(|&(other, segment)| {
                             let points = &lines[other as usize];
                             let (a, b) = (points[segment as usize], points[segment as usize + 1]);
-                            (other as usize, distance_sq(mid, a, b, lon_scale))
+                            // A shared border runs alongside and overlaps: a neighbour's edge
+                            // that only meets this one at a corner, or continues it end to
+                            // end, is not the same border.
+                            let theirs = direction(a, b);
+                            let cos = own_direction.0 * theirs.0 + own_direction.1 * theirs.1;
+                            let nearest = segment_distance(mid, a, b, lon_scale);
+                            (cos.abs() >= SHARED_MIN_COS && (0.0..=1.0).contains(&nearest.along))
+                                .then_some((other as usize, nearest.distance_sq))
                         })
-                        .filter(|(_, distance)| *distance <= SHARED_TOLERANCE_DEG.powi(2))
+                        .filter(|&(_, distance)| distance <= SHARED_TOLERANCE_DEG.powi(2))
                         .min_by(|a, b| a.1.total_cmp(&b.1));
-                    match nearest {
-                        None => OUTER,
+                    let Some((other, distance)) = nearest else {
+                        return OUTER;
+                    };
+                    let own = parents.get(ring).copied().unwrap_or_default();
+                    let theirs = parents.get(other).copied().unwrap_or_default();
+                    let class = own.border_class(theirs);
+                    // Within one exact file, copies of a border coincide. A pair matched
+                    // only at the wide tolerance is a narrow notch in the country's outline
+                    // (both sides of it in one state) and stays outline; a state border
+                    // stays one, since land is continuous across it.
+                    let loose = ring < exact && other < exact && distance > exact_tolerance.powi(2);
+                    if loose && class == INTERIOR {
+                        return OUTER;
+                    }
+                    match class {
+                        // Both countries keep their copy: which one draws the border
+                        // is decided per border when the layer is assembled.
+                        COUNTRY => COUNTRY,
                         // The ring with the smaller id draws a shared border.
-                        Some((other, _)) if ids[other] < ids[ring] => DROP,
-                        Some((other, _)) => {
-                            let own = parents.get(ring).copied().unwrap_or_default();
-                            let theirs = parents.get(other).copied().unwrap_or_default();
-                            own.border_class(theirs)
-                        }
+                        _ if ids[other] < ids[ring] => DROP,
+                        class => class,
                     }
                 })
                 .collect()
         })
         .collect()
-}
-
-/// Squared distance in degrees (longitude scaled to latitude degrees) from `p` to the
-/// segment `a`–`b`.
-fn distance_sq(p: (f64, f64), a: (f64, f64), b: (f64, f64), lon_scale: f64) -> f64 {
-    segment_distance(p, a, b, lon_scale).distance_sq
 }
 
 /// Two copies of the same ring from different units: a segment is dropped if either
@@ -291,22 +335,22 @@ impl MajorCells {
     }
 }
 
-fn lon_scale(lat: f64) -> f64 {
+pub(super) fn lon_scale(lat: f64) -> f64 {
     lat.to_radians().cos().max(MIN_LON_SCALE)
 }
 
 /// Where a point lies relative to a segment.
-struct SegmentDistance {
+pub(super) struct SegmentDistance {
     /// Squared distance in degrees to the nearest point of the segment.
-    distance_sq: f64,
+    pub(super) distance_sq: f64,
     /// Position of the perpendicular foot along the segment, unclamped: below zero
     /// before the first point, above one past the second.
-    along: f64,
+    pub(super) along: f64,
 }
 
 /// Distance from `p` to the segment `a`–`b` on a local plane (longitude scaled to
 /// latitude degrees).
-fn segment_distance(
+pub(super) fn segment_distance(
     p: (f64, f64),
     a: (f64, f64),
     b: (f64, f64),
@@ -333,15 +377,13 @@ fn segment_distance(
 /// Drawn municipal segments, as runs by kind of border.
 #[derive(Default)]
 pub(super) struct SplitLines {
+    pub(super) country: Vec<Line>,
     pub(super) major: Vec<Line>,
     pub(super) interior: Vec<Line>,
 }
 
-/// Splits rings into runs of drawn segments: state-border runs and everything else.
-/// Borders between two countries' municipalities stay ordinary municipal lines: two
-/// countries' sources rarely trace their border alike, so a municipal version of the
-/// country line would break up where they part, and the Natural Earth country line
-/// stays the one country border.
+/// Splits rings into runs of drawn segments: country-border runs (the side chosen to
+/// draw each border, see `borders`), state-border runs and everything else.
 pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
     let mut run: Vec<(f64, f64)> = Vec::new();
     let mut run_class = None;
@@ -349,6 +391,7 @@ pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
         if run.len() >= 2 {
             let line = std::sync::Arc::new(std::mem::take(run));
             match class {
+                Some(COUNTRY) => out.country.push(line),
                 Some(MAJOR) => out.major.push(line),
                 _ => out.interior.push(line),
             }
@@ -358,7 +401,7 @@ pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
     for (segment, pair) in line.windows(2).enumerate() {
         let class = match classes.get(segment).copied().unwrap_or(OUTER) {
             DROP => None,
-            MAJOR => Some(MAJOR),
+            class @ (MAJOR | COUNTRY) => Some(class),
             _ => Some(INTERIOR),
         };
         if class != run_class {
@@ -432,7 +475,7 @@ mod tests {
             country: Some(*b"FRA"),
             state: Some(code),
         };
-        let classes = classify(&lines, &[state(1), state(1), state(2)]);
+        let classes = classify(&lines, &[state(1), state(1), state(2)], 0);
         // Segment 1 of each square is its east side, segment 3 its west side.
         let (east, west) = (1, 3);
         // A–B: interior, drawn by exactly one of them.
@@ -444,6 +487,53 @@ mod tests {
         // The outer sides have no neighbour.
         assert_eq!(classes[0][west], OUTER);
         assert_eq!(classes[2][east], OUTER);
+    }
+
+    #[test]
+    fn an_outline_passing_a_neighbours_corner_is_not_shared() {
+        // A (west) and B (east) share the edge at 8.1°E between 48.0 and 48.1°N. A's
+        // outline then runs west along 48.1°N, passing B's corner 0.5 km away.
+        // B's own outline continues west of the corner too (as in the real data).
+        let a: Line = Arc::new(vec![
+            (48.0, 8.0),
+            (48.0, 8.1),
+            (48.1, 8.1),
+            (48.104, 8.09),
+            (48.1, 8.0),
+            (48.0, 8.0),
+        ]);
+        let b = square(48.0, 8.1, 0.1);
+        let classes = classify(&[a, b], &[Parent::default(), Parent::default()], 0);
+        // A's side along 8.1°E is shared; its outline past B's corner is not.
+        assert!(matches!(classes[0][1], INTERIOR | DROP), "{:?}", classes[0]);
+        assert_eq!(classes[0][2], OUTER, "{:?}", classes[0]);
+        assert_eq!(classes[0][3], OUTER, "{:?}", classes[0]);
+    }
+
+    #[test]
+    fn in_an_exact_file_a_narrow_notch_stays_outline_but_state_borders_still_match() {
+        // Two municipalities of one state facing each other across a 300 m notch in the
+        // country's outline (the notch belongs to the neighbouring country).
+        let west = square(48.0, 8.0, 0.1);
+        let east = square(48.0, 8.104, 0.1);
+        let same_state = Parent {
+            country: Some(*b"CZE"),
+            state: Some(1),
+        };
+        let exact = classify(&[west.clone(), east.clone()], &[same_state; 2], 2);
+        let (east_side, west_side) = (1, 3);
+        assert_eq!([exact[0][east_side], exact[1][west_side]], [OUTER, OUTER]);
+        // From a source without shared topology, the same pair counts as shared.
+        let loose = classify(&[west.clone(), east.clone()], &[same_state; 2], 0);
+        assert!(loose[0][east_side] != OUTER || loose[1][west_side] != OUTER);
+        // Between two states, the pair is still a state border even in an exact file.
+        let other_state = Parent {
+            state: Some(2),
+            ..same_state
+        };
+        let classes = classify(&[west, east], &[same_state, other_state], 2);
+        let pair = [classes[0][east_side], classes[1][west_side]];
+        assert!(pair.contains(&MAJOR) && pair.contains(&DROP), "{pair:?}");
     }
 
     #[test]
@@ -463,7 +553,7 @@ mod tests {
             country: None,
             state: Some(code),
         };
-        let classes = classify(&[a, b], &[state(1), state(2)]);
+        let classes = classify(&[a, b], &[state(1), state(2)], 0);
         let shared = [classes[0][1], classes[1][3], classes[1][4]];
         assert!(
             shared.iter().all(|class| matches!(*class, MAJOR | DROP)),
@@ -481,10 +571,12 @@ mod tests {
         assert_eq!(out.major[0].len(), 3);
         assert_eq!(out.interior.len(), 1);
         assert_eq!(out.interior[0].len(), 2);
-        // Country borders are drawn like interior lines.
         let mut out = SplitLines::default();
         split(&ring, &[COUNTRY, MAJOR, INTERIOR, COUNTRY], &mut out);
-        assert_eq!((out.major.len(), out.interior.len()), (1, 2));
+        assert_eq!(
+            (out.country.len(), out.major.len(), out.interior.len()),
+            (2, 1, 1)
+        );
         let mut seen = vec![OUTER, INTERIOR, MAJOR, OUTER, COUNTRY];
         merge(&mut seen, &[INTERIOR, DROP, OUTER, OUTER, DROP]);
         assert_eq!(seen, [INTERIOR, DROP, MAJOR, OUTER, DROP]);
@@ -519,13 +611,11 @@ mod tests {
             state: None,
         };
         // A second copy of `a`, as a neighbouring unit returns it.
-        let classes = classify(&[a.clone(), b, a], &[germany, france, germany]);
+        let classes = classify(&[a.clone(), b, a], &[germany, france, germany], 0);
         let (east, west) = (1, 3);
+        // Both countries keep their copy of a country border.
         let shared = [classes[0][east], classes[1][west]];
-        assert!(
-            shared.contains(&COUNTRY) && shared.contains(&DROP),
-            "{shared:?}"
-        );
+        assert_eq!(shared, [COUNTRY, COUNTRY]);
         assert_eq!(
             classes[0][west], OUTER,
             "a copy of the same ring is no neighbour"

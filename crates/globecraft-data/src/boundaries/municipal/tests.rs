@@ -1,5 +1,10 @@
 use super::*;
 
+const NO_BORDERS: CountryBorderLines<'static> = CountryBorderLines {
+    lines: &[],
+    pairs: &[],
+};
+
 fn view(lat: f64, lon: f64, altitude_km: f64) -> MunicipalView<'static> {
     MunicipalView {
         enabled: true,
@@ -142,6 +147,7 @@ fn assembly_clips_to_the_area_and_keeps_shared_rings_once() {
                 line(&[(48.1 + x as f64, 2.1), (48.2 + x as f64, 2.2)]),
             ],
             labels: vec![label("Shared", 48.2, 2.3), label("Far", 60.0, 30.0)],
+            exact_topology: false,
             features: 2,
             parents: vec![],
         };
@@ -170,6 +176,7 @@ fn eviction_keeps_the_units_nearest_the_view() {
     let big = |lat: f64| Detail {
         lines: vec![line(&vec![(lat, 0.0); STORE_VERTEX_BUDGET / 2 + 1])],
         labels: vec![],
+        exact_topology: false,
         features: 1,
         parents: vec![],
     };
@@ -204,6 +211,7 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
     let detail = |ring: Line, state: u64| Detail {
         lines: vec![ring],
         labels: vec![],
+        exact_topology: false,
         features: 1,
         parents: vec![Some(state)],
     };
@@ -250,9 +258,9 @@ async fn leaving_the_altitude_band_publishes_an_empty_layer() {
         Arc::new(|| {}),
     );
     // Over the sea nothing loads, but the area becomes active.
-    streamer.update(view(30.0, -40.0, 300.0), |_, _| None);
+    streamer.update(view(30.0, -40.0, 300.0), NO_BORDERS, |_, _| None);
     assert!(streamer.store.lock().unwrap().active.is_some());
-    streamer.update(view(30.0, -40.0, 5_000.0), |_, _| None);
+    streamer.update(view(30.0, -40.0, 5_000.0), NO_BORDERS, |_, _| None);
     assert!(streamer.store.lock().unwrap().active.is_none());
     let patch = tokio::task::spawn_blocking(move || {
         rx.recv_timeout(Duration::from_secs(5))
@@ -264,8 +272,9 @@ async fn leaving_the_altitude_band_publishes_an_empty_layer() {
 }
 
 #[test]
-fn borders_between_two_countries_stay_municipal_lines() {
-    // A French and a German cell, one commune each, sharing the edge at 8°E.
+fn one_country_draws_a_shared_border_once_the_land_borders_are_indexed() {
+    // A French and a German municipality sharing the edge at 8°E, which Natural
+    // Earth's French–German border line follows.
     let west = line(&[
         (48.0, 7.5),
         (48.0, 8.0),
@@ -283,6 +292,7 @@ fn borders_between_two_countries_stay_municipal_lines() {
     let detail = |ring: Line, state: u64| Detail {
         lines: vec![ring],
         labels: vec![],
+        exact_topology: false,
         features: 1,
         parents: vec![Some(state)],
     };
@@ -295,20 +305,37 @@ fn borders_between_two_countries_stay_municipal_lines() {
         UnitData::new(detail(east, 8), (48.25, 8.25), Some(*b"DEU"), &neighbours);
     store.units.insert(Unit::Country(*b"DEU"), second);
     store.apply(upgrades);
+    let on_edge = |p: &(f64, f64)| (p.1 - 8.0).abs() < 1e-9;
+    let count = |lines: &[Line]| {
+        lines
+            .iter()
+            .flat_map(|line| line.windows(2))
+            .filter(|pair| on_edge(&pair[0]) && on_edge(&pair[1]))
+            .count()
+    };
+    // Before the land borders are indexed: both copies are ordinary municipal lines,
+    // and no country line replaces Natural Earth's.
     let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
     let staging = patch.municipal.unwrap();
-    // The shared edge is drawn once, as an ordinary municipal line: not a state border,
-    // and the Natural Earth country line stays the country border.
-    assert!(patch.lines_big.is_empty());
-    let on_edge = |p: &(f64, f64)| (p.1 - 8.0).abs() < 1e-9;
-    let shared = patch
-        .lines
-        .iter()
-        .flat_map(|line| line.windows(2))
-        .filter(|pair| on_edge(&pair[0]) && on_edge(&pair[1]))
-        .count();
-    assert_eq!(shared, 1, "{:?}", patch.lines);
-    assert!(!staging.major_cells.covers(48.25, 8.0));
+    assert!(staging.country_lines.is_empty());
+    assert!(patch.lines_big.is_empty(), "never a state border");
+    assert_eq!(count(&patch.lines), 2);
+    // Indexed: one side draws the border as a country line, the other copy is hidden.
+    let natural_earth = line(&[(47.9, 8.01), (48.6, 8.01)]);
+    store.borders = Some(Arc::new(borders::CountryBorders::new(vec![(
+        natural_earth,
+        [*b"FRA", *b"DEU"],
+    )])));
+    let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
+    let staging = patch.municipal.unwrap();
+    assert_eq!(
+        count(&staging.country_lines),
+        1,
+        "{:?}",
+        staging.country_lines
+    );
+    assert_eq!(count(&patch.lines), 0, "the other copy is hidden");
+    assert!(staging.country_cells.covers(48.25, 8.01));
 }
 
 /// Real data, outside the repository: set `GLOBECRAFT_MUNICIPAL_CHECK` to a folder
@@ -350,6 +377,59 @@ fn real_countries_classify_their_borders() {
             super::super::parents::States::new(rings)
         });
         let detail = adm::with_parents(file, states.as_ref());
+        if std::env::var("GLOBECRAFT_MUNICIPAL_TOLERANCE").is_ok() {
+            // How far apart the copies of borders matched only at the wide tolerance are.
+            let parents: Vec<topology::Parent> = detail
+                .parents
+                .iter()
+                .map(|state| topology::Parent {
+                    country: None,
+                    state: *state,
+                })
+                .collect();
+            let wide = topology::classify(&detail.lines, &parents, 0);
+            let exact = topology::classify(&detail.lines, &parents, detail.lines.len());
+            let mut widened = 0;
+            for (w, e) in wide.iter().zip(&exact) {
+                for (w, e) in w.iter().zip(e) {
+                    if *e == topology::OUTER && *w != topology::OUTER {
+                        widened += 1;
+                    }
+                }
+            }
+            let count = |classes: &[Vec<u8>], class: u8| -> usize {
+                classes.iter().flatten().filter(|c| **c == class).count()
+            };
+            println!(
+                "{iso}: state-border segments {} at 1.3 km, {} at 50 m; outline {} vs {}",
+                count(&wide, topology::MAJOR),
+                count(&exact, topology::MAJOR),
+                count(&wide, topology::OUTER),
+                count(&exact, topology::OUTER)
+            );
+            for tolerance in [0.001, 0.002, 0.003, 0.005] {
+                let mid = topology::classify_at(&detail.lines, &parents, tolerance);
+                let still: usize = mid
+                    .iter()
+                    .zip(&exact)
+                    .zip(&wide)
+                    .map(|((m, e), w)| {
+                        m.iter()
+                            .zip(e)
+                            .zip(w)
+                            .filter(|((m, e), w)| {
+                                **e == topology::OUTER
+                                    && **w != topology::OUTER
+                                    && **m == topology::OUTER
+                            })
+                            .count()
+                    })
+                    .sum();
+                println!(
+                    "{iso}: {widened} segments shared only at 1.3 km; at {tolerance}°, {still} of them stay unshared"
+                );
+            }
+        }
         let unassigned = detail.parents.iter().filter(|p| p.is_none()).count();
         let lines = detail.lines.len();
         let bounds = detail
@@ -373,7 +453,70 @@ fn real_countries_classify_their_borders() {
             started.elapsed().as_millis()
         );
     }
+    // Natural Earth's land borders with the two countries each separates, as the app
+    // hands them to the streamer.
+    let mut border_lines = Vec::new();
+    for feature in features("ne_10m_admin_0_boundary_lines_land.geojson") {
+        let code = |key: &str| -> Option<[u8; 3]> {
+            feature["properties"][key]
+                .as_str()?
+                .as_bytes()
+                .try_into()
+                .ok()
+        };
+        let (Some(left), Some(right)) = (code("ADM0_A3_L"), code("ADM0_A3_R")) else {
+            continue;
+        };
+        let mut lines = Vec::new();
+        if let Some(coords) = feature.pointer("/geometry/coordinates") {
+            super::super::geojson::collect_geojson_lines(coords, &mut lines);
+        }
+        border_lines.extend(lines.into_iter().map(|line| (line, [left, right])));
+    }
+    store.borders = Some(Arc::new(borders::CountryBorders::new(border_lines)));
+    // Diagnostics: why outline segments near a land border do not match it.
+    let mut unmatched = Vec::new();
+    if let Some(index) = store.borders.as_deref() {
+        let mut by_class = std::collections::BTreeMap::new();
+        for (unit, data) in &store.units {
+            let Some(country) = unit.country() else {
+                continue;
+            };
+            for ring in &data.lines {
+                for (segment, pair) in ring.line.windows(2).enumerate() {
+                    let class = ring.classes[segment];
+                    let matched = index.across(pair[0], pair[1], country).is_some();
+                    *by_class.entry((class, matched)).or_insert(0_usize) += 1;
+                    if !matched && matches!(class, topology::OUTER | topology::COUNTRY) {
+                        unmatched.push(vec![pair[0], pair[1]]);
+                    }
+                }
+            }
+        }
+        println!("segments by (class, matches a land border): {by_class:?}");
+        if let Ok(spot) = std::env::var("GLOBECRAFT_MUNICIPAL_SPOT") {
+            let spot: Vec<f64> = spot.split(',').map(|v| v.parse().unwrap()).collect();
+            for data in store.units.values() {
+                for ring in &data.lines {
+                    for (segment, pair) in ring.line.windows(2).enumerate() {
+                        let mid = ((pair[0].0 + pair[1].0) / 2.0, (pair[0].1 + pair[1].1) / 2.0);
+                        if (mid.0 - spot[0]).abs() < 0.02 && (mid.1 - spot[1]).abs() < 0.03 {
+                            println!(
+                                "ring {:016x} ({} points) segment {segment}: class {} {:?}",
+                                ring.id,
+                                ring.line.len(),
+                                ring.classes[segment],
+                                pair
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let started = std::time::Instant::now();
     let patch = assemble(&store, GeoBox::around(area[0], area[1], area[2]));
+    println!("assembled in {} ms", started.elapsed().as_millis());
     let staging = patch.municipal.unwrap();
     let ne = |name: &str| -> Vec<Line> {
         let mut lines = Vec::new();
@@ -417,12 +560,16 @@ fn real_countries_classify_their_borders() {
         "interior": plain(&patch.lines),
         "ne_state": kept(ne("ne_10m_admin_1_states_provinces_lines.geojson"), &staging.major_cells),
         "ne_state_all": plain(&ne("ne_10m_admin_1_states_provinces_lines.geojson")),
+        "country": plain(&staging.country_lines),
         "ne_country": plain(&ne("ne_10m_admin_0_boundary_lines_land.geojson")),
+        "ne_country_all": plain(&ne("ne_10m_admin_0_boundary_lines_land.geojson")),
+        "unmatched_outline": unmatched,
     });
     std::fs::write(format!("{dir}/check.json"), json.to_string()).unwrap();
     println!(
-        "area: {} state runs, {} interior runs",
+        "area: {} state runs, {} country runs, {} interior runs",
         patch.lines_big.len(),
+        staging.country_lines.len(),
         patch.lines.len()
     );
 }

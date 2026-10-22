@@ -150,6 +150,7 @@ pub(super) fn with_parents(file: MunicipalFile, states: Option<&super::parents::
         municipalities,
     } = file;
     detail.parents = vec![None; detail.lines.len()];
+    detail.exact_topology = true;
     for (index, Municipality { lines, inside }) in municipalities.into_iter().enumerate() {
         let parent = match states {
             Some(states) => inside.and_then(|point| states.containing(point)),

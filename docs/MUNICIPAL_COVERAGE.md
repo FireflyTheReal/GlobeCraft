@@ -12,12 +12,15 @@ one release nest, so a border is a state border exactly where two neighbouring
 municipalities belong to different states, and those borders replace the Natural Earth
 state lines. The state level is the one matching Natural Earth's admin-1 (ADM1, except
 Belgium, Burkina Faso, Bosnia and Herzegovina, Guinea, Greece, Sri Lanka, Malawi and the
-Philippines at ADM2, and Italy and Uganda at ADM3). Country borders keep the Natural Earth
-line: two countries' sources rarely trace their border alike.
+Philippines at ADM2, and Italy and Uganda at ADM3). Country borders are drawn from one
+side's municipal outline only, since two countries' sources rarely trace their border
+alike: a national source beats geoBoundaries, otherwise the lower ISO code; the Natural
+Earth country line is cut where that outline runs and stays where it does not (a
+neighbour's coast, an area not loaded yet).
 
 **Checked on real data (2026-10-22), not yet on screen:** Czechia, Poland, Austria,
 Slovakia and Italy through the actual loading and classification code; every municipality
-found its state, and the state borders come out continuous.
+found its state, and the state and country borders come out continuous.
 
 "Unsure" marks countries where the data itself raises a doubt; any country may still show
 problems on the Mac.

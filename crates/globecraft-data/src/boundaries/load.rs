@@ -178,7 +178,11 @@ impl BoundaryLoader {
     }
     /// Municipal outlines around the view, streamed by area (see `municipal`).
     pub fn request_municipal(&mut self, view: MunicipalView<'_>, boundaries: &super::BoundaryData) {
-        self.municipal.update(view, |lat, lon| {
+        let borders = super::CountryBorderLines {
+            lines: &boundaries.countries,
+            pairs: &boundaries.country_pairs,
+        };
+        self.municipal.update(view, borders, |lat, lon| {
             boundaries.country_at(lat, lon).map(str::to_owned)
         });
     }
@@ -366,6 +370,7 @@ async fn load_polygon_layer(
     );
     Some(Patch {
         layer,
+        pairs: Vec::new(),
         lines: output.lines,
         lines_big: output.lines_big,
         labels: output.labels,
@@ -419,6 +424,7 @@ async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch
     );
     Some(Patch {
         layer: Layer::Cities,
+        pairs: Vec::new(),
         lines: vec![],
         lines_big: vec![],
         labels,
@@ -464,6 +470,7 @@ async fn load_disputed(log: &StatusLog, sources: &[FeatureSource]) -> Option<Pat
     );
     Some(Patch {
         layer: Layer::Countries,
+        pairs: Vec::new(),
         lines,
         lines_big: vec![],
         labels: vec![],
@@ -489,8 +496,9 @@ async fn load_countries(log: &StatusLog, level: DetailLevel) -> Option<Patch> {
     .await?;
     patch.replace = true;
     // Draw shared land borders only; the polygon rings above are lookup data.
-    if let Some(lines) = load_border_lines(log, level).await {
+    if let Some((lines, pairs)) = load_border_lines(log, level).await {
         patch.lines = lines;
+        patch.pairs = pairs;
     }
     // A detail upgrade replaces the previous outlines, so disputed linework must
     // travel in the same patch or it would be discarded with them.
@@ -503,18 +511,35 @@ async fn load_countries(log: &StatusLog, level: DetailLevel) -> Option<Patch> {
     Some(patch)
 }
 
-async fn load_border_lines(log: &StatusLog, level: DetailLevel) -> Option<Vec<Line>> {
+/// The two countries a Natural Earth border line separates.
+fn border_pair(feature: &serde_json::Value) -> Option<super::CountryPair> {
+    let props = feature.get("properties")?;
+    let code = |key: &str| -> Option<[u8; 3]> {
+        let code = props.get(key)?.as_str()?;
+        (code.len() == 3 && code.bytes().all(|b| b.is_ascii_alphabetic()))
+            .then(|| code.to_ascii_uppercase().as_bytes().try_into().ok())?
+    };
+    Some([code("ADM0_A3_L")?, code("ADM0_A3_R")?])
+}
+
+/// Land border lines with the pair of countries each separates.
+async fn load_border_lines(
+    log: &StatusLog,
+    level: DetailLevel,
+) -> Option<(Vec<Line>, Vec<Option<super::CountryPair>>)> {
     let started = std::time::Instant::now();
-    let lines = first_features(
+    let (lines, pairs) = first_features(
         log,
         "Country borders",
         &sources::border_sources(level),
-        |feature: &serde_json::Value, out: &mut Vec<Line>| {
+        |feature: &serde_json::Value,
+         (lines, pairs): &mut (Vec<Line>, Vec<Option<super::CountryPair>>)| {
             if let Some(coords) = feature
                 .get("geometry")
                 .and_then(|geometry| geometry.get("coordinates"))
             {
-                collect_geojson_lines(coords, out);
+                collect_geojson_lines(coords, lines);
+                pairs.resize(lines.len(), border_pair(feature));
             }
         },
     )
@@ -527,7 +552,7 @@ async fn load_border_lines(log: &StatusLog, level: DetailLevel) -> Option<Vec<Li
             started.elapsed().as_millis()
         ),
     );
-    Some(lines)
+    Some((lines, pairs))
 }
 
 #[cfg(test)]
@@ -538,6 +563,14 @@ mod tests {
         let countries = sources::country_sources(DetailLevel::Low);
         assert!(matches!(countries.as_slice(), [FeatureSource::Bundled(_)]));
         assert!(!countries.iter().any(|s| matches!(s, FeatureSource::Url(_))));
+    }
+
+    #[test]
+    fn border_lines_name_the_two_countries() {
+        let feature = serde_json::json!({"properties": {"ADM0_A3_L": "DEU", "ADM0_A3_R": "CZE"}});
+        assert_eq!(border_pair(&feature), Some([*b"DEU", *b"CZE"]));
+        let feature = serde_json::json!({"properties": {"ADM0_A3_L": "-99", "ADM0_A3_R": "CZE"}});
+        assert_eq!(border_pair(&feature), None);
     }
 
     #[test]

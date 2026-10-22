@@ -97,14 +97,17 @@ pub enum BorderKind {
     CityMajor,
     /// Interior municipal lines, drawn only below the data's detail altitude.
     City,
+    /// Municipal country borders, drawn by one side per border, in the country style in
+    /// place of the Natural Earth country line they cover.
+    CityCountry,
 }
 
 impl BorderKind {
-    /// The user-styled line type this kind draws with. Municipal state borders replace
-    /// the state lines up close, so they take the state style.
+    /// The user-styled line type this kind draws with. Municipal state and country
+    /// borders replace the coarse lines up close, so they take those styles.
     pub fn line_type(self) -> LineType {
         match self {
-            Self::Country => LineType::Country,
+            Self::Country | Self::CityCountry => LineType::Country,
             Self::StateBig | Self::State | Self::CityMajor => LineType::State,
             Self::City => LineType::Municipal,
         }
@@ -248,6 +251,9 @@ pub fn project_borders(
     // The sharper state borders belong to the state layer, not to the municipal one.
     let state_cells = Some(&*boundaries.municipal_major_cells)
         .filter(|cells| municipal_visible && view.layers.states && !cells.is_empty());
+    // Likewise for country lines, with the country layer.
+    let country_cells = Some(&*boundaries.municipal_country_cells)
+        .filter(|cells| municipal_visible && view.layers.countries && !cells.is_empty());
     let mut draw_lines =
         |lines: &[globecraft_data::boundaries::Line], kind: BorderKind, max_step_deg: f64| {
             for line in lines {
@@ -256,6 +262,7 @@ pub fn project_borders(
                 }
                 let cells = match kind {
                     BorderKind::State | BorderKind::StateBig => state_cells,
+                    BorderKind::Country => country_cells,
                     _ => None,
                 };
                 let Some(cells) = cells else {
@@ -300,11 +307,22 @@ pub fn project_borders(
         if view.layers.cities && view.altitude_km <= boundaries.municipal_detail_max_km {
             draw_lines(&boundaries.cities, BorderKind::City, step);
             draw_lines(&boundaries.world_cities, BorderKind::City, step);
-            // With the state layer off, the municipal segments on state borders are
-            // ordinary municipal lines; without them the municipalities would have gaps.
+            // With the state or country layer off, the municipal segments on those
+            // borders are ordinary municipal lines; without them the municipalities
+            // would have gaps.
             if !view.layers.states {
                 draw_lines(&boundaries.world_cities_major, BorderKind::City, step);
             }
+            if !view.layers.countries {
+                draw_lines(&boundaries.world_cities_country, BorderKind::City, step);
+            }
+        }
+        if view.layers.countries {
+            draw_lines(
+                &boundaries.world_cities_country,
+                BorderKind::CityCountry,
+                step,
+            );
         }
     }
     // Country outlines are drawn last so they stay legible above any

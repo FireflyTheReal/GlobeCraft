@@ -354,3 +354,12 @@ municipal and state files and assigning every municipality its state took 0.8–
 Czechia (6,361 rings, 14 regions) and Poland (2,584, 16), 0.3 s for Austria and Slovakia,
 and 2.3 s for Italy (8,561 rings, 107 provinces). The tracing reference that this replaced
 (0.4 s and about 60 MB, once per Natural Earth detail change) is gone.
+
+### Municipal country borders (2026-10-22)
+
+Assembling a municipal area now also decides which side draws each country border
+(outline segments tested against an index of Natural Earth's land-border lines, built
+once per detail level on the CPU pool). Release build, 2-core container, real
+geoBoundaries data: 8 ms for Italy and Austria (2,300 rings in view), 15 ms for Czechia
+alone and 30 ms for Czechia, Poland, Austria and Slovakia together (14,600 runs). It runs
+on the municipal publisher, not the frame.

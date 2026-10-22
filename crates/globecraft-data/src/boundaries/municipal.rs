@@ -12,7 +12,9 @@ use super::{
     Detail, GeoBounds, Layer, Line, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, MapLabel, Patch, StatusLog,
     adm, brazil, log_status, national, world,
 };
+mod borders;
 pub(crate) mod topology;
+pub use borders::CountryBorderLines;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, mpsc};
@@ -246,7 +248,8 @@ impl UnitData {
         let mut combined = detail.lines.clone();
         combined.extend(others.iter().map(|n| n.line.clone()));
         parents.extend(others.iter().map(|n| n.parent));
-        let mut classes = topology::classify(&combined, &parents);
+        let exact = if detail.exact_topology { own } else { 0 };
+        let mut classes = topology::classify(&combined, &parents, exact);
         let upgrades = classes
             .drain(own..)
             .zip(&others)
@@ -348,6 +351,8 @@ struct Store {
     revision: u64,
     /// Bumped when any load finishes, so waiting units get their turn.
     completed: u64,
+    /// Natural Earth's land borders, which say which border an outline runs along.
+    borders: Option<Arc<borders::CountryBorders>>,
 }
 impl Store {
     /// Drops the units farthest from `centre` until the vertex budget holds.
@@ -407,6 +412,8 @@ pub(super) struct MunicipalStreamer {
     wake_publisher: Arc<tokio::sync::Notify>,
     repaint: Arc<dyn Fn() + Send + Sync>,
     last: Option<Request>,
+    /// The Natural Earth land borders last indexed (see `CountryBorderLines::key`).
+    borders: Option<(usize, usize)>,
 }
 
 impl MunicipalStreamer {
@@ -431,6 +438,7 @@ impl MunicipalStreamer {
             wake_publisher,
             repaint,
             last: None,
+            borders: None,
         }
     }
 
@@ -445,8 +453,10 @@ impl MunicipalStreamer {
     pub(super) fn update(
         &mut self,
         view: MunicipalView<'_>,
+        borders: CountryBorderLines<'_>,
         country_at: impl Fn(f64, f64) -> Option<String>,
     ) {
+        self.follow_borders(borders);
         let Ok(mut store) = self.store.lock() else {
             return;
         };
@@ -515,6 +525,34 @@ impl MunicipalStreamer {
     }
 }
 
+impl MunicipalStreamer {
+    /// Re-indexes Natural Earth's land borders off this thread when they changed (a
+    /// detail level arrived), then republishes.
+    fn follow_borders(&mut self, lines: CountryBorderLines<'_>) {
+        let key = lines.key();
+        if lines.lines.is_empty() || self.borders == Some(key) {
+            return;
+        }
+        self.borders = Some(key);
+        let lines = lines.to_owned();
+        let (store, wake) = (self.store.clone(), self.wake_publisher.clone());
+        self.runtime.spawn(async move {
+            let Ok(borders) = crate::cpu::run(crate::cpu::Service::Features, move || {
+                Ok(Arc::new(borders::CountryBorders::new(lines)))
+            })
+            .await
+            else {
+                return;
+            };
+            if let Ok(mut store) = store.lock() {
+                store.borders = Some(borders);
+                store.revision += 1;
+            }
+            wake.notify_one();
+        });
+    }
+}
+
 /// The published area around the view and the units covering it, nearest first.
 fn plan(
     view: MunicipalView<'_>,
@@ -579,6 +617,7 @@ async fn load_unit(unit: Unit) -> Result<Detail, crate::Error> {
                 parents: vec![],
                 lines,
                 labels: vec![],
+                exact_topology: false,
             })
         }
         Unit::BrazilState(uf) => brazil::load_state_municipalities(uf).await,
@@ -683,11 +722,22 @@ async fn load(
     repaint();
 }
 
+/// Countries whose municipal borders come from a national service; their outlines
+/// draw the country borders they share with countries loaded from geoBoundaries or OSM.
+const NATIONAL_SOURCES: [[u8; 3]; 6] = [*b"DEU", *b"FRA", *b"ESP", *b"USA", *b"CAN", *b"BRA"];
+
+/// One ring in an assembled area: its points, merged classes and country.
+struct MergedRing {
+    line: Line,
+    classes: Vec<u8>,
+    country: Option<[u8; 3]>,
+}
+
 /// The lines and names of the store inside `area`, with lines shared by
 /// neighbouring units kept once.
 fn assemble(store: &Store, area: GeoBox) -> Patch {
     // The same municipality can come from two units (a cell edge); merge its classes.
-    let mut rings: HashMap<u64, (Line, Vec<u8>)> = HashMap::new();
+    let mut rings: HashMap<u64, MergedRing> = HashMap::new();
     let mut order = Vec::new();
     let mut labels = Vec::new();
     let (mut area_sum, mut area_count) = (0.0, 0_usize);
@@ -698,7 +748,11 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
             }
             match rings.entry(unit_line.id) {
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert((unit_line.line.clone(), unit_line.classes.to_vec()));
+                    entry.insert(MergedRing {
+                        line: unit_line.line.clone(),
+                        classes: unit_line.classes.to_vec(),
+                        country: unit_line.parent.country,
+                    });
                     order.push(unit_line.id);
                     if unit_line.area_km2 > 0.0 {
                         area_sum += unit_line.area_km2;
@@ -706,7 +760,7 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
                     }
                 }
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    topology::merge(&mut entry.get_mut().1, &unit_line.classes);
+                    topology::merge(&mut entry.get_mut().classes, &unit_line.classes);
                 }
             }
         }
@@ -717,20 +771,51 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
                 .cloned(),
         );
     }
+    if let Some(borders) = store.borders.as_deref().filter(|b| !b.is_empty()) {
+        let mut border_rings: Vec<borders::BorderRing<'_>> = rings
+            .values_mut()
+            .map(|ring| borders::BorderRing {
+                line: &ring.line,
+                classes: &mut ring.classes,
+                country: ring.country,
+            })
+            .collect();
+        let national = |country: [u8; 3]| NATIONAL_SOURCES.contains(&country);
+        borders::resolve(&mut border_rings, borders, |a, b| {
+            national(a) && !national(b)
+        });
+    } else {
+        // Natural Earth's land borders are not indexed yet, so nothing decides which
+        // side draws a country border: both copies stay ordinary municipal lines and
+        // the Natural Earth country line stays whole.
+        for ring in rings.values_mut() {
+            for class in &mut ring.classes {
+                if *class == topology::COUNTRY {
+                    *class = topology::INTERIOR;
+                }
+            }
+        }
+    }
     let mut split = topology::SplitLines::default();
     for id in order {
-        let (line, classes) = &rings[&id];
-        topology::split(line, classes, &mut split);
+        let ring = &rings[&id];
+        topology::split(&ring.line, &ring.classes, &mut split);
     }
-    let topology::SplitLines { major, interior } = split;
+    let topology::SplitLines {
+        country,
+        major,
+        interior,
+    } = split;
     let mean_area_km2 = if area_count > 0 {
         area_sum / area_count as f64
     } else {
         0.0
     };
     let major_cells = Arc::new(topology::MajorCells::of(&major));
+    let country_cells = Arc::new(topology::MajorCells::of(&country));
     Patch {
         layer: Layer::WorldCities,
+        pairs: Vec::new(),
         lines: interior,
         lines_big: major,
         labels,
@@ -742,6 +827,8 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
                 MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM,
             ),
             major_cells,
+            country_lines: country,
+            country_cells,
         }),
     }
 }
@@ -771,6 +858,7 @@ async fn publish(
                 Some(area) => assemble(&store, area),
                 None => Patch {
                     layer: Layer::WorldCities,
+                    pairs: Vec::new(),
                     lines: vec![],
                     lines_big: vec![],
                     labels: vec![],

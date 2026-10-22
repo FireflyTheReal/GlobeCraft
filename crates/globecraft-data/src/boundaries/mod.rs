@@ -14,8 +14,11 @@ mod updates;
 mod world;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
-pub use municipal::MunicipalView;
 pub use municipal::topology::{MAJOR_CELL_DEG, MAJOR_COVER_DEG, MajorCells};
+/// The ISO codes of the two countries a land-border line separates.
+pub type CountryPair = [[u8; 3]; 2];
+
+pub use municipal::{CountryBorderLines, MunicipalView};
 pub use updates::{BoundarySnapshot, BoundaryUpdates};
 pub type Line = Arc<Vec<(f64, f64)>>;
 
@@ -140,6 +143,14 @@ pub struct BoundaryData {
     pub municipal_detail_max_km: f64,
     /// Where `world_cities_major` replaces coarser lines; see [`MajorCells`].
     pub municipal_major_cells: Arc<MajorCells>,
+    /// Municipal country borders, drawn by one side per border (see
+    /// `municipal::borders`) in place of the Natural Earth country line they cover.
+    pub world_cities_country: Vec<Line>,
+    /// Where `world_cities_country` replaces the Natural Earth country lines.
+    pub municipal_country_cells: Arc<MajorCells>,
+    /// For each line of `countries`, the two countries it separates (Natural Earth's
+    /// `ADM0_A3_L`/`ADM0_A3_R`), when known.
+    pub country_pairs: Vec<Option<CountryPair>>,
     pub labels: Vec<MapLabel>,
     country_regions: Vec<CountryRegion>,
     countries_loaded: bool,
@@ -347,6 +358,9 @@ pub enum Layer {
 /// One finished piece of overlay data, sent from a loader thread to the UI thread.
 pub struct Patch {
     pub layer: Layer,
+    /// For `Layer::Countries`: the two countries each of `lines` separates, when known
+    /// (shorter than `lines` when the tail has none).
+    pub pairs: Vec<Option<CountryPair>>,
     pub lines: Vec<Line>,
     pub lines_big: Vec<Line>,
     pub labels: Vec<MapLabel>,
@@ -368,6 +382,10 @@ pub struct MunicipalStaging {
     /// Where municipal state and country borders run, so the coarser Natural
     /// Earth state lines can hand over to them.
     pub major_cells: Arc<MajorCells>,
+    /// Municipal country borders.
+    pub country_lines: Vec<Line>,
+    /// Where `country_lines` run, so the Natural Earth country lines hand over too.
+    pub country_cells: Arc<MajorCells>,
 }
 
 #[derive(Default)]
@@ -378,6 +396,10 @@ pub(super) struct Detail {
     pub(super) parents: Vec<Option<u64>>,
     pub(super) labels: Vec<MapLabel>,
     pub(super) features: usize,
+    /// Neighbouring lines of this detail share identical vertices (geoBoundaries files
+    /// are simplified with shared topology), so they match at a tight tolerance. Sources
+    /// that simplify each polygon on their own leave this off.
+    pub(super) exact_topology: bool,
 }
 
 /// Human-readable load log shown in the Layers panel, so failures are never silent.

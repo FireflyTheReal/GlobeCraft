@@ -20,6 +20,7 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
         match patch.layer {
             Layer::Countries => {
                 data.countries.clear();
+                data.country_pairs.clear();
                 data.country_regions.clear();
                 data.labels.retain(|label| label.kind != LabelKind::Country);
             }
@@ -40,6 +41,9 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
     }
     match patch.layer {
         Layer::Countries => {
+            let mut pairs = patch.pairs;
+            pairs.resize(patch.lines.len(), None);
+            data.country_pairs.extend(pairs);
             data.countries.extend(patch.lines);
             data.country_regions.extend(patch.regions);
             data.countries_loaded = true;
@@ -56,10 +60,14 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
                 Some(staging) => {
                     data.municipal_detail_max_km = staging.detail_max_km;
                     data.municipal_major_cells = staging.major_cells;
+                    data.world_cities_country = staging.country_lines;
+                    data.municipal_country_cells = staging.country_cells;
                 }
                 None => {
                     data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
                     data.municipal_major_cells = Arc::default();
+                    data.world_cities_country = Vec::new();
+                    data.municipal_country_cells = Arc::default();
                 }
             }
             // Drop previously staged municipal labels (ranks 9-10); base
@@ -129,6 +137,7 @@ mod tests {
         .unwrap();
         let patch = |name: &str, rank| Patch {
             layer: Layer::Countries,
+            pairs: Vec::new(),
             lines: vec![Arc::new(vec![(0.0, 0.0), (1.0, 1.0)])],
             lines_big: vec![],
             labels: vec![MapLabel {
@@ -184,6 +193,7 @@ mod tests {
             &mut data,
             Patch {
                 layer: Layer::WorldCities,
+                pairs: Vec::new(),
                 lines: vec![],
                 lines_big: vec![],
                 labels: vec![label(
@@ -227,6 +237,7 @@ mod tests {
             &mut data,
             Patch {
                 layer: Layer::Countries,
+                pairs: Vec::new(),
                 lines: vec![
                     Arc::new(vec![(0.0, 0.0), (2.0, 2.0)]),
                     Arc::new(vec![(3.0, 3.0), (4.0, 4.0)]),
@@ -250,6 +261,7 @@ mod tests {
             &mut data,
             Patch {
                 layer: Layer::Countries,
+                pairs: Vec::new(),
                 lines: vec![Arc::new(vec![(5.0, 5.0), (6.0, 6.0)])],
                 lines_big: vec![],
                 labels: vec![],
@@ -283,6 +295,7 @@ mod tests {
             &mut data,
             Patch {
                 layer: Layer::Cities,
+                pairs: Vec::new(),
                 lines: vec![],
                 lines_big: vec![],
                 labels: vec![label("New world city", 3)],

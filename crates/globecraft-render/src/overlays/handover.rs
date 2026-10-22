@@ -252,13 +252,22 @@ mod tests {
                 .map(Arc::new)
                 .collect()
         };
-        let cells = MajorCells::of(&lines("state"));
-        let kept: Vec<Vec<(f64, f64)>> = lines("ne_state_all")
-            .iter()
-            .flat_map(|line| uncovered_runs(line, &cells))
-            .collect();
-        println!("{} Natural Earth state runs stay drawn", kept.len());
-        value["ne_state"] = serde_json::to_value(kept).unwrap();
+        let cut = |drawn: &str, coarse: &str| -> Vec<Vec<(f64, f64)>> {
+            let cells = MajorCells::of(&lines(drawn));
+            lines(coarse)
+                .iter()
+                .flat_map(|line| uncovered_runs(line, &cells))
+                .collect()
+        };
+        let states = cut("state", "ne_state_all");
+        let countries = cut("country", "ne_country_all");
+        println!(
+            "{} Natural Earth state runs and {} country runs stay drawn",
+            states.len(),
+            countries.len()
+        );
+        value["ne_state"] = serde_json::to_value(states).unwrap();
+        value["ne_country"] = serde_json::to_value(countries).unwrap();
         std::fs::write(&path, value.to_string()).unwrap();
     }
 }
