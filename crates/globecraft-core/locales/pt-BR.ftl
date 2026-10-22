@@ -833,3 +833,42 @@ layers-municipal-countries-all = Todos
 layers-municipal-only-here = Só este país
 layers-municipal-add-here = Adicionar este país
 layers-municipal-all-countries = Todos os países
+
+settings-category-map-style = Estilo do mapa
+
+settings-map-style-line-country = Fronteiras de países
+
+settings-map-style-line-state = Limites de estados e províncias
+
+settings-map-style-line-municipal = Limites municipais
+
+settings-map-style-line-help = Limites municipais sobre uma divisa estadual usam o estilo dos estados, para que a troca de perto mantenha o mesmo visual.
+
+settings-map-style-color-label = Cor
+
+settings-map-style-width-label = Espessura
+
+settings-map-style-dash-label = Traço
+
+settings-map-style-dash-solid = Contínuo
+
+settings-map-style-dash-dashed = Tracejado
+
+settings-map-style-dash-dotted = Pontilhado
+
+settings-map-style-labels-title = Tamanho dos nomes
+
+settings-map-style-label-country = Países
+
+settings-map-style-label-state = Estados e províncias
+
+settings-map-style-label-city = Cidades e municípios
+
+settings-map-style-reset-action = Restaurar estilo do mapa
+
+cmd-style-line = Estilo dos limites
+cmd-style-line-help = Define a cor, a espessura e o traço das fronteiras de países, estados ou municípios.
+cmd-style-label-size = Tamanho dos nomes
+cmd-style-label-size-help = Define o tamanho da fonte dos nomes de países, estados ou cidades.
+cmd-style-reset = Restaurar estilo do mapa
+cmd-style-reset-help = Restaura as cores, espessuras, traços e tamanhos de nomes padrão.

@@ -4,6 +4,7 @@ use eframe::egui;
 use globecraft_core::language::{Lang, fold_name};
 use globecraft_data::settings::Settings;
 mod controllers;
+mod map_style;
 mod sections;
 mod sky;
 pub(super) const MAX_UI_SLIDER_SCALE: f32 = 2.0;
@@ -17,6 +18,7 @@ enum Category {
     #[default]
     General,
     Appearance,
+    MapStyle,
     Navigation,
     Globe,
     Graphics,
@@ -25,9 +27,10 @@ enum Category {
     Files,
 }
 impl Category {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::General,
         Self::Appearance,
+        Self::MapStyle,
         Self::Navigation,
         Self::Globe,
         Self::Graphics,
@@ -39,6 +42,7 @@ impl Category {
         match self {
             Self::General => "settings-category-general",
             Self::Appearance => "settings-category-appearance",
+            Self::MapStyle => "settings-category-map-style",
             Self::Navigation => "settings-category-navigation",
             Self::Globe => "settings-category-globe",
             Self::Controllers => "settings-category-controllers",
@@ -68,6 +72,7 @@ impl Category {
                 "coordinates-format-mgrs",
                 "coordinates-input-help",
             ],
+            Self::MapStyle => map_style::KEYWORDS,
             Self::Navigation => &[
                 "settings-hide-navigation-controls-toggle",
                 "settings-pan-sensitivity",
@@ -179,6 +184,7 @@ impl App {
                                         self.settings_general(ui, &mut language_preference)
                                     }
                                     Category::Appearance => self.settings_appearance(ui),
+                                    Category::MapStyle => self.settings_map_style(ui),
                                     Category::Navigation => self.settings_navigation(ui),
                                     Category::Globe => self.settings_sky(ui),
                                     Category::Controllers => self.settings_controllers(ui),
@@ -244,6 +250,8 @@ mod tests {
         assert!(Category::Appearance.matches(&fold_name("distância"), Lang::PtBr));
         assert!(Category::Navigation.matches(&fold_name("sensibilidade"), Lang::PtBr));
         assert!(!Category::Files.matches("mgrs", Lang::En));
+        assert!(Category::MapStyle.matches(&fold_name("Width"), Lang::En));
+        assert!(Category::MapStyle.matches(&fold_name("espessura"), Lang::PtBr));
         for lang in [Lang::En, Lang::PtBr] {
             for category in Category::ALL {
                 assert!(category.matches(&fold_name(lang.text(category.name_id())), lang));

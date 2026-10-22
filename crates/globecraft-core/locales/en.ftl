@@ -833,3 +833,42 @@ layers-municipal-countries-all = All
 layers-municipal-only-here = Only this country
 layers-municipal-add-here = Add this country
 layers-municipal-all-countries = All countries
+
+settings-category-map-style = Map style
+
+settings-map-style-line-country = Country borders
+
+settings-map-style-line-state = State and province borders
+
+settings-map-style-line-municipal = Municipal borders
+
+settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
+
+settings-map-style-color-label = Color
+
+settings-map-style-width-label = Width
+
+settings-map-style-dash-label = Line
+
+settings-map-style-dash-solid = Solid
+
+settings-map-style-dash-dashed = Dashed
+
+settings-map-style-dash-dotted = Dotted
+
+settings-map-style-labels-title = Name size
+
+settings-map-style-label-country = Countries
+
+settings-map-style-label-state = States and provinces
+
+settings-map-style-label-city = Cities and towns
+
+settings-map-style-reset-action = Reset map style
+
+cmd-style-line = Border style
+cmd-style-line-help = Set the color, width and dash of country, state or municipal borders.
+cmd-style-label-size = Name size
+cmd-style-label-size-help = Set the font size of country, state or city names.
+cmd-style-reset = Reset map style
+cmd-style-reset-help = Restore the default border colors, widths, dashes and name sizes.

@@ -230,8 +230,8 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
     assert_eq!(patch.lines_big.len(), 1, "{:?}", patch.lines_big);
     assert!(patch.lines_big[0].iter().all(|p| (p.1 + 45.0).abs() < 1e-9));
     let staging = patch.municipal.unwrap();
-    assert!(staging.major_cells.near(-19.75, -45.0));
-    assert!(!staging.major_cells.near(-19.75, -44.6));
+    assert!(staging.major_cells.covers(-19.75, -45.0));
+    assert!(!staging.major_cells.covers(-19.75, -44.6));
 }
 
 const _: () = {

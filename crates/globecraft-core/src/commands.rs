@@ -491,6 +491,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         View,
         r#"{"type":"object","properties":{"language":{"type":"string","enum":["system","en","pt-BR"]}},"required":["language"]}"#
     ),
+    command!(
+        "style.line",
+        "style-line",
+        "symbology",
+        Settings,
+        View,
+        r##"{"type":"object","properties":{"line":{"type":"string","enum":["country","state","municipal"],"description":"Country borders, state/province borders (also the municipal state borders that replace them up close), or interior municipal borders"},"color":{"type":"string","description":"Hex colour #rrggbb or #rrggbbaa (aa is opacity)"},"width":{"type":"number","description":"Line width in points, 0.5..6"},"dash":{"type":"string","enum":["solid","dashed","dotted"]}},"required":["line"]}"##
+    ),
+    command!(
+        "style.labelSize",
+        "style-label-size",
+        "label_properties",
+        Settings,
+        View,
+        r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
+    ),
+    command!(
+        "style.reset",
+        "style-reset",
+        "symbology",
+        Settings,
+        View,
+        NO_PARAMS
+    ),
     // Help.
     command!(
         "ui.shortcuts",

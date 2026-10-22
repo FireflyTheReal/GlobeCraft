@@ -99,7 +99,9 @@ impl App {
             map_scale: self.settings.map_scale,
             lang: self.lang,
             arrival,
+            map_style: self.settings.map_style,
         };
+        meshes::BorderWidths::of(&style.map_style).publish(painter.ctx());
         self.overlay_cache.draw(
             painter,
             OverlayView {

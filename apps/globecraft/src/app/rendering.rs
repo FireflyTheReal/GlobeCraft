@@ -232,6 +232,7 @@ impl App {
                     state_visible_max_km: self.settings.state_max_altitude_km,
                     grid_step_deg: self.layer(MapLayer::GridLabels).then_some(grid_step),
                     layers: self.overlay_layers(),
+                    dashes: globecraft_render::overlays::BorderDashes::of(&self.settings.map_style),
                 },
                 data: self.boundaries.clone(),
             }),

@@ -108,6 +108,7 @@ fn overlay_projection_and_label_occupancy_time() {
         map_scale: 1.0,
         lang: Lang::En,
         arrival: ArrivalFade::SETTLED,
+        map_style: globecraft_data::settings::map_style::MapStyle::default(),
     };
     let ctx = egui::Context::default();
     let mut cache = OverlayCache::new(ctx.clone());

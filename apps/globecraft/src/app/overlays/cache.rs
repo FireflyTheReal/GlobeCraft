@@ -5,6 +5,7 @@ use super::projected;
 use eframe::egui::{self, Rect, Shape};
 use globecraft_core::{camera::Basis, language::Lang};
 use globecraft_data::boundaries::BoundaryData;
+use globecraft_data::settings::map_style::MapStyle;
 use globecraft_render::overlays::OverlayWorker;
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ pub(super) struct OverlayStyle {
     pub map_scale: f32,
     pub lang: Lang,
     pub arrival: ArrivalFade,
+    pub map_style: MapStyle,
 }
 
 /// How far each streamed layer has faded in since its data arrived, in
@@ -146,6 +148,7 @@ impl OverlayCache {
                 state_visible_max_km: view.state_max_km,
                 grid_step_deg: view.grid_step_deg,
                 layers: style.layers,
+                dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
             };
             if let Some(completed) = self.worker.take_completed()
                 && completed.geometry.matches(geometry_view, boundaries)

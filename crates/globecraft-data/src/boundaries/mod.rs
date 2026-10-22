@@ -14,7 +14,7 @@ mod world;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
 pub use municipal::MunicipalView;
-pub use municipal::topology::{MAJOR_CELL_DEG, MajorCells};
+pub use municipal::topology::{MAJOR_CELL_DEG, MAJOR_COVER_DEG, MajorCells};
 pub use updates::{BoundarySnapshot, BoundaryUpdates};
 pub type Line = Arc<Vec<(f64, f64)>>;
 
@@ -137,7 +137,7 @@ pub struct BoundaryData {
     pub world_cities_major: Vec<Line>,
     /// Below this altitude `world_cities` and the small municipal names appear.
     pub municipal_detail_max_km: f64,
-    /// Cells crossed by `world_cities_major`; see [`MajorCells`].
+    /// Where `world_cities_major` replaces coarser lines; see [`MajorCells`].
     pub municipal_major_cells: Arc<MajorCells>,
     pub labels: Vec<MapLabel>,
     country_regions: Vec<CountryRegion>,
@@ -204,11 +204,10 @@ pub const STATE_VISIBLE_MAX_ALTITUDE_KM: f64 = 1_609.0;
 /// altitude the smaller countries' provinces use.
 pub const STATE_BIG_VISIBLE_MAX_ALTITUDE_KM: f64 = 4_000.0;
 /// Below this camera altitude (km) municipal outlines and their labels appear
-/// (about 250 mi). Lines fade in through the states handoff: states stay until
-/// this completion altitude (about 200 mi) and both layers draw with the same
+/// (about 250 mi). At this altitude the municipal state borders replace the coarse
+/// state lines they trace in one frame, with no cross-fade; both draw with the same
 /// color and dash, so the swap reads as one continuous linework.
 pub const MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM: f64 = 402.0;
-pub const MUNICIPAL_FADE_FULL_ALTITUDE_KM: f64 = 322.0;
 /// Interior municipal lines fade in from `BoundaryData::municipal_detail_max_km` to this
 /// fraction of it; small municipal names appear at the same fraction.
 pub const MUNICIPAL_DETAIL_FADE_FULL_RATIO: f64 = 0.8;

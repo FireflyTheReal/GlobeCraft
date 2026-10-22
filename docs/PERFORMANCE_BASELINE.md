@@ -325,3 +325,24 @@ than work (a build timed at 0.1 ms inside took 10 ms outside). Recheck on the Ma
 cargo test --release -p globecraft boundary_streaming_descent -- --ignored --nocapture
 ```
 
+
+### Instant state-border handover (2026-10-22)
+
+The Natural Earth state lines are now cut exactly where municipal state borders replace
+them (13.12), instead of being split at vertices near a 0.05° cell and cross-faded.
+Synthetic Germany-sized view on the 2-core container, release build: 60 state lines of
+301 points (0.02° spacing), half of each traced by municipal borders.
+
+| Step | Before (vertex runs, 3×3 cells) | After (exact cut) | Where it runs |
+| --- | --- | --- | --- |
+| Coverage per view | 3.0 ms | 1.5 ms | overlay worker, every rebuilt view |
+| Coverage index | 1.0 ms | 5.0 ms | municipal publisher, once per publish |
+
+The cut tests each coarse vertex once (steps of 3 km on longer segments) and bisects
+only where coverage changes. Run with:
+
+```sh
+cargo test --release -p globecraft-render handover_cut_time -- --ignored --nocapture
+```
+
+Not yet measured on the Mac.

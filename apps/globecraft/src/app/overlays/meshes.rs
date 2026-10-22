@@ -10,6 +10,7 @@ use eframe::egui::{
     self, Color32, Mesh, Stroke,
     epaint::{TessellationOptions, Tessellator},
 };
+use globecraft_data::settings::map_style::MapStyle;
 use globecraft_render::overlays::OverlayGeometry;
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use std::sync::Arc;
 pub(super) struct MeshSettings {
     pixels_per_point: f32,
     options: TessellationOptions,
+    widths: BorderWidths,
 }
 
 impl MeshSettings {
@@ -27,7 +29,32 @@ impl MeshSettings {
         Self {
             pixels_per_point: ctx.pixels_per_point(),
             options: ctx.tessellation_options(|options| *options),
+            widths: BorderWidths::current(ctx),
         }
+    }
+}
+
+/// Line width in points of each border kind, from the user's map style. The app
+/// publishes them to the egui context, where the overlay and frame workers read them
+/// along with the other tessellation settings.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) struct BorderWidths([f32; BORDER_KINDS.len()]);
+
+impl BorderWidths {
+    fn id() -> egui::Id {
+        egui::Id::new("globecraft-border-widths")
+    }
+    pub(super) fn of(style: &MapStyle) -> Self {
+        Self(BORDER_KINDS.map(|kind| border_width(kind, style)))
+    }
+    pub(super) fn publish(self, ctx: &egui::Context) {
+        if Self::current(ctx) != self {
+            ctx.data_mut(|data| data.insert_temp(Self::id(), self));
+        }
+    }
+    fn current(ctx: &egui::Context) -> Self {
+        ctx.data(|data| data.get_temp(Self::id()))
+            .unwrap_or_else(|| Self::of(&MapStyle::default()))
     }
 }
 
@@ -54,7 +81,7 @@ impl BorderMeshes {
         for &(kind, points) in &geometry.borders {
             tessellator.tessellate_line_segment(
                 points,
-                Stroke::new(border_width(kind), Color32::WHITE),
+                Stroke::new(settings.widths.0[kind as usize], Color32::WHITE),
                 &mut kinds[kind as usize],
             );
         }

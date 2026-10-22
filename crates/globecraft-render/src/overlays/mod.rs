@@ -5,7 +5,9 @@ use globecraft_data::boundaries::{
     BoundaryData, LabelKind, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, MapLabel,
     STATE_BIG_VISIBLE_MAX_ALTITUDE_KM,
 };
+use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 pub mod grid;
+mod handover;
 mod labels;
 mod spatial;
 mod worker;
@@ -19,11 +21,12 @@ const MIN_BORDER_SEGMENT_POINTS: f32 = 1.4;
 const MAX_BORDER_SUBDIVISIONS: usize = 96;
 const CLOSE_BORDER_ALTITUDE_KM: f64 = 500.0;
 const MEDIUM_BORDER_ALTITUDE_KM: f64 = 5000.0;
-/// Screen-space dash pattern for state/province borders: on/off in points.
-/// Municipal outlines use the same pattern and the app draws them with the
-/// same color and width, so the states→municipal handoff keeps one visual.
-const STATE_DASH_ON_POINTS: f32 = 7.0;
-const STATE_DASH_OFF_POINTS: f32 = 5.0;
+/// Screen-space dash patterns, on/off in points. States and municipalities use the
+/// dashed pattern by default, so the states→municipal handoff keeps one visual.
+const DASHED_ON_POINTS: f32 = 7.0;
+const DASHED_OFF_POINTS: f32 = 5.0;
+const DOTTED_ON_POINTS: f32 = 1.5;
+const DOTTED_OFF_POINTS: f32 = 3.0;
 pub const MAX_VISIBLE_LABELS: usize = 500;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct OverlayLayers {
@@ -41,7 +44,47 @@ pub struct OverlayProjection<'a> {
     /// provinces keep their own earlier, fixed threshold.
     pub state_visible_max_km: f64,
     pub layers: OverlayLayers,
+    pub dashes: BorderDashes,
 }
+
+/// On/off dash lengths in points for each styled line type; `None` draws a solid line.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct BorderDashes {
+    pub country: Option<(f32, f32)>,
+    pub state: Option<(f32, f32)>,
+    pub municipal: Option<(f32, f32)>,
+}
+impl BorderDashes {
+    pub fn of(style: &MapStyle) -> Self {
+        Self {
+            country: dash_points(style.country.dash),
+            state: dash_points(style.state.dash),
+            municipal: dash_points(style.municipal.dash),
+        }
+    }
+    fn of_kind(self, kind: BorderKind) -> Option<(f32, f32)> {
+        match kind.line_type() {
+            LineType::Country => self.country,
+            LineType::State => self.state,
+            LineType::Municipal => self.municipal,
+        }
+    }
+}
+impl Default for BorderDashes {
+    fn default() -> Self {
+        Self::of(&MapStyle::default())
+    }
+}
+
+/// The on/off pattern of a dash style, in points.
+pub fn dash_points(dash: DashStyle) -> Option<(f32, f32)> {
+    match dash {
+        DashStyle::Solid => None,
+        DashStyle::Dashed => Some((DASHED_ON_POINTS, DASHED_OFF_POINTS)),
+        DashStyle::Dotted => Some((DOTTED_ON_POINTS, DOTTED_OFF_POINTS)),
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum BorderKind {
     Country,
@@ -49,26 +92,22 @@ pub enum BorderKind {
     /// across its own band, but with the same color, width and dash.
     StateBig,
     State,
-    /// State lines (regular or big-country) where municipal state borders were loaded:
-    /// they fade out as `CityMajor` fades in, so the accurate lines take over.
-    StateCovered,
     /// Municipal segments on state borders: the accurate version of the state lines,
-    /// drawn from the municipal altitude down.
+    /// drawn from the municipal altitude down in place of the stretches they cover.
     CityMajor,
     /// Interior municipal lines, drawn only below the data's detail altitude.
     City,
 }
 
-/// Dash pattern in points for a border kind. Country borders are solid.
-fn dash_pattern(kind: BorderKind) -> Option<(f32, f32)> {
-    match kind {
-        BorderKind::State | BorderKind::StateBig => {
-            Some((STATE_DASH_ON_POINTS, STATE_DASH_OFF_POINTS))
+impl BorderKind {
+    /// The user-styled line type this kind draws with. Municipal state borders replace
+    /// the state lines up close, so they take the state style.
+    pub fn line_type(self) -> LineType {
+        match self {
+            Self::Country => LineType::Country,
+            Self::StateBig | Self::State | Self::CityMajor => LineType::State,
+            Self::City => LineType::Municipal,
         }
-        BorderKind::City | BorderKind::CityMajor | BorderKind::StateCovered => {
-            Some((STATE_DASH_ON_POINTS, STATE_DASH_OFF_POINTS))
-        }
-        BorderKind::Country => None,
     }
 }
 
@@ -131,7 +170,8 @@ pub fn project_borders(
     };
     let mut dash_phase = 0.0_f32;
     let mut dash_last_end: Option<Pos2> = None;
-    let mut emit_segment = |kind: BorderKind, segment: [Pos2; 2]| match dash_pattern(kind) {
+    let dashes = view.dashes;
+    let mut emit_segment = |kind: BorderKind, segment: [Pos2; 2]| match dashes.of_kind(kind) {
         Some((on, off)) => emit_dashed(
             &mut emit,
             kind,
@@ -199,12 +239,12 @@ pub fn project_borders(
         }
     };
     let close_zoom = view.altitude_km <= CLOSE_BORDER_ALTITUDE_KM;
-    // Municipal outlines only make sense at close range; data loads below
-    // `MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM` and the app fades them in from there
-    // to `MUNICIPAL_FADE_FULL_ALTITUDE_KM`.
+    // Municipal outlines only make sense at close range: they are drawn from
+    // `MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM` down.
     let municipal_visible = view.altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
     // Where municipal state borders were loaded, the coarse state lines hand over to
-    // them; elsewhere both stay, since municipal data rarely covers the whole view.
+    // them: the covered parts are cut out (see `handover`). Elsewhere the coarse lines
+    // stay, since municipal data rarely covers the whole view.
     let cells = &boundaries.municipal_major_cells;
     let handover = view.layers.cities && municipal_visible && !cells.is_empty();
     let mut draw_lines =
@@ -218,31 +258,12 @@ pub fn project_borders(
                     draw_line(line, kind, max_step_deg);
                     continue;
                 }
-                // Runs of vertices near (or away from) a municipal state border.
-                let covered = |p: &(f64, f64)| cells.near(p.0, p.1);
-                let mut start = 0;
-                while start + 1 < line.len() {
-                    let run_covered = covered(&line[start]) && covered(&line[start + 1]);
-                    let mut end = start + 1;
-                    while end + 1 < line.len()
-                        && (covered(&line[end]) && covered(&line[end + 1])) == run_covered
-                    {
-                        end += 1;
-                    }
-                    let run_kind = if run_covered {
-                        BorderKind::StateCovered
-                    } else {
-                        kind
-                    };
-                    draw_line(&line[start..=end], run_kind, max_step_deg);
-                    start = end;
+                for run in handover::uncovered_runs(line, cells) {
+                    draw_line(&run, kind, max_step_deg);
                 }
             }
         };
-    // State/province lines stay under the municipal outlines. Municipal data now
-    // streams per area, so it rarely covers the whole view; hiding the states
-    // wherever any municipal line was loaded left the rest of the view without
-    // them. Both layers share one visual, so the overlap reads as one linework.
+    // State/province lines, minus the stretches municipal state borders replace.
     if view.layers.states {
         let step = if close_zoom {
             0.12
@@ -433,10 +454,21 @@ mod tests {
     }
 
     #[test]
-    fn solid_borders_are_not_dashed() {
-        assert_eq!(dash_pattern(BorderKind::Country), None);
-        assert!(dash_pattern(BorderKind::State).is_some());
-        assert!(dash_pattern(BorderKind::City).is_some());
+    fn dashes_follow_the_style_of_each_line_type() {
+        let dashes = BorderDashes::default();
+        assert_eq!(dashes.of_kind(BorderKind::Country), None);
+        assert!(dashes.of_kind(BorderKind::State).is_some());
+        assert!(dashes.of_kind(BorderKind::City).is_some());
+        let mut style = MapStyle::default();
+        style.state.dash = DashStyle::Dotted;
+        style.municipal.dash = DashStyle::Solid;
+        let dashes = BorderDashes::of(&style);
+        // Municipal state borders keep the state look, interior lines the municipal one.
+        assert_eq!(
+            dashes.of_kind(BorderKind::CityMajor),
+            dash_points(DashStyle::Dotted)
+        );
+        assert_eq!(dashes.of_kind(BorderKind::City), None);
     }
 
     #[test]
@@ -474,23 +506,25 @@ mod tests {
                 rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
                 altitude_km: 300.0,
                 state_visible_max_km: 1609.0,
+                dashes: BorderDashes::default(),
                 layers,
             };
-            let (mut covered, mut open) = (0, 0);
-            project_borders(&view, &data, None, |kind, _| match kind {
-                BorderKind::StateCovered => covered += 1,
-                BorderKind::State => open += 1,
-                _ => {}
+            let mut state_points = 0.0_f32;
+            project_borders(&view, &data, None, |kind, [a, b]| {
+                if matches!(kind, BorderKind::State) {
+                    state_points += (b - a).length();
+                }
             });
-            (covered, open)
+            state_points
         };
-        let (covered, open) = project(layers);
-        assert!(covered > 0 && open > 0, "{covered} covered, {open} open");
-        // Without the municipal layer nothing hands over.
-        let (covered, _) = project(OverlayLayers {
+        // The covered western half is cut out; the eastern half stays.
+        let handed_over = project(layers);
+        let whole = project(OverlayLayers {
             cities: false,
             ..layers
         });
-        assert_eq!(covered, 0);
+        assert!(handed_over > 0.0, "the uncovered half stays");
+        let kept = handed_over / whole;
+        assert!((0.4..0.6).contains(&kept), "{kept} of the line kept");
     }
 }

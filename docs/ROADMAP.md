@@ -1,6 +1,7 @@
 # GlobeCraft roadmap
 
-Last revised 2026-10-22: GlobeCraft rename, second batch of user requests (section 13),
+Last revised 2026-10-22: GlobeCraft rename, second batch of user requests (section 13,
+including 13.12 instant border handover),
 size and efficiency review (section 14). Earlier context:
 `docs/plans/2026-10-20-boundaries-and-vector-rebuild.md`. Data source IDs refer to
 the master table in `docs/Data_Sources.pdf` (for example `IMG-03`). The
@@ -344,17 +345,35 @@ are kept now (99.4 % of shared admin-1 polygon edges covered, checked against th
 
 | # | Item | Size | Why / notes |
 | --- | --- | --- | --- |
-| 13.1 | **Municipal takeover and staging** (3.1 d): municipal outlines replace the coarse state and country lines first, where municipalities sit on those borders; interior municipalities and their names appear only at a narrower zoom, biggest first | M | **First slice implemented 2026-10-22.** Segments are classified per loaded unit (state border, interior, shared); state-border segments draw from 402 km, interior lines and small names only below an altitude set by the municipalities' mean size (about 75 km for Germany), and shared borders are drawn once instead of twice. **Second slice 2026-10-22:** each new unit is classified against the rings already stored around it, so borders between units (Brazilian states, two countries' sources) become state or country borders too; and the Natural Earth state lines fade out wherever municipal state borders were loaded (runs of vertices within about 5 km of one), so the accurate lines take over without leaving the rest of the view bare. Still open: checking on the Mac |
+| 13.1 | **Municipal takeover and staging** (3.1 d): municipal outlines replace the coarse state and country lines first, where municipalities sit on those borders; interior municipalities and their names appear only at a narrower zoom, biggest first | M | **First slice implemented 2026-10-22.** Segments are classified per loaded unit (state border, interior, shared); state-border segments draw from 402 km, interior lines and small names only below an altitude set by the municipalities' mean size (about 75 km for Germany), and shared borders are drawn once instead of twice. **Second slice 2026-10-22:** each new unit is classified against the rings already stored around it, so borders between units (Brazilian states, two countries' sources) become state or country borders too; and the Natural Earth state lines give way wherever municipal state borders were loaded, so the accurate lines take over without leaving the rest of the view bare (made instant by 13.12). Still open: checking on the Mac |
 | 13.2 | **One header row**: merge the logo and Quick Access Toolbar row with the File / Home / Layers… tab row; drop the "placemarks.kml — Earth" title | S | **Done 2026-10-22.** Logo, File, tabs, Quick Access Toolbar, both searches and the collapse button share one 38-pt row; the file and body names moved to the window title |
 | 13.3 | **All planets and moons, streamed**: NASA Solar System Treks WMTS (Moon, Mars, Mercury, Vesta, Ceres, Titan…), USGS Astrogeology and GIBS where they serve tiles; one `TileSource` per body (1.2), with elevation where available (1.10) | M–L | Today the Moon and custom planets are single images. Credits per body in CREDITS.md |
 | 13.4 | **Borders in the dark**: when Night lights / sunlight are on, draw land borders at full strength all around the night side (today they follow the lit-side styling) | S | Pairs with 3.2 and 8.4 |
 | 13.5 | **Navigator in the Fusion 360 style**: a small view cube or mini globe that shows orientation, click a face or pole to snap, with compact move and zoom controls beside it | M | Replaces the large ring, pad and slider stack |
 | 13.6 | **Small, simple live symbols**: one minimal glyph per category for aircraft (by size class), ships (by AIS ship type: cargo, tanker, passenger, fishing, sailing…) and satellites (by group); satellites drawn at their real altitude above the globe | M | Uses the category fields the feeds already send. Pairs with 1.8 smooth motion |
 | 13.7 | **"Map data not yet available" at maximum zoom**: detect Esri's placeholder tiles (they come back as normal images) and treat them as missing, so the deepest real level is upsampled instead (overzoom) | S–M | **Done 2026-10-22.** Requests carry `blankTile=false`, so Esri answers 404 where it has no tile; 404s and placeholders already in the disk cache mark the tile unavailable for the session, and renderers show the deepest real level without waiting or re-requesting |
-| 13.8 | **Style settings**: colour, thickness and dash pattern per line type (country, state, municipal), label sizes per kind, and a reset button | M | All values are named constants already; they become settings with commands |
+| 13.8 | **Style settings**: colour, thickness and dash pattern per line type (country, state, municipal), label sizes per kind, and a reset button | M | **Done 2026-10-22.** Settings → Map style, saved as `map_style` in settings.json; commands `style.line` (`line`, `color` as `#rrggbb[aa]`, `width`, `dash`: solid, dashed or dotted), `style.labelSize` and `style.reset`. Municipal state borders use the state style, so the handover (13.12) keeps one look whatever the user picks. Still open: checking on the Mac |
 | 13.9 | **Wayback**: a drop-down calendar of the available release dates, and a **swipe compare** of two dates with a slider across the globe | M | The release list is already loaded; compare needs two imagery requests per frame |
 | 13.10 | **Remove the metropolitan regions layer**: municipal borders cover it. Optionally, a country picker for municipal borders (only the selected countries load) | S | **Removal done 2026-10-22** (layer, IBGE metro pass, Overture metro slices and their scripts). **Country picker done 2026-10-22:** `layer.municipalCountries` and a Countries line under Municipal borders in the Layers pane (Only this country, Add this country, All countries); the choice is saved |
 | 13.11 | **GlobeCraft repository**: fresh history, English only, straightforward README for non-technical users, every source credited in CREDITS.md | S | Done 2026-10-22 |
+| 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. Still open: country borders |
+
+**13.12 Instant border handover.** Where two versions of a border meet, exactly one is
+drawn, and the switch between them happens between two frames:
+
+- **Natural Earth state lines → municipal state borders**: done (see the table).
+- **Natural Earth country lines → municipal country borders**: still open. Where both
+  neighbours' municipal data is loaded, their shared border is drawn as a municipal state
+  border under the solid country line, so two lines show from 402 km down. Next: a
+  country class in the municipal topology, those segments drawn in the country style,
+  and the same exact cut on the Natural Earth country line. Where only one side is loaded,
+  its outline along the country border is an interior line next to the country line below
+  the detail altitude; classifying it needs the Natural Earth country lines in the
+  municipal publisher.
+- **Natural Earth detail levels** (1:110m → 1:50m → 1:10m countries and states): already
+  replaced in one patch, so the swap is a single frame; keep it that way.
+- Arrival fades stay only for layers that replace nothing (interior municipal lines,
+  a states layer arriving for the first time).
 
 ## 14. Size and efficiency review (2026-10-22)
 

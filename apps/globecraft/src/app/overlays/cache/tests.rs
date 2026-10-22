@@ -29,6 +29,7 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
         map_scale: 1.0,
         lang: Lang::En,
         arrival: ArrivalFade::SETTLED,
+        map_style: globecraft_data::settings::map_style::MapStyle::default(),
     };
     let mut data = BoundaryData::default();
     data.countries = vec![Arc::new(vec![(0.0, 0.0), (1.0, 1.0)])];
@@ -415,6 +416,7 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
                     cities: false,
                     labels: false,
                 },
+                dashes: globecraft_render::overlays::BorderDashes::default(),
             },
             data: Arc::new(data),
             borders: segments.to_vec(),
@@ -431,10 +433,10 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
         });
         let state = Color32::from_rgba_unmultiplied(150, 205, 240, 120);
         let country = Color32::from_rgba_unmultiplied(255, 255, 255, 245);
-        let mut colors = [Color32::TRANSPARENT; 6];
+        let mut colors = [Color32::TRANSPARENT; super::super::projected::BORDER_KINDS.len()];
         colors[BorderKind::State as usize] = state;
         colors[BorderKind::Country as usize] = country;
-        let expected = |colors: [Color32; 6]| -> Vec<_> {
+        let expected = |colors: [Color32; super::super::projected::BORDER_KINDS.len()]| -> Vec<_> {
             // egui draws the kinds in declaration order; `project_borders` emits them so.
             let mut shapes: Vec<_> = segments
                 .iter()
@@ -475,7 +477,7 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
         // A fully faded kind adds no triangles at all.
         colors[BorderKind::State as usize] = Color32::TRANSPARENT;
         assert_eq!(meshes.tinted(colors).vertices, expected(colors));
-        colors = [Color32::TRANSPARENT; 6];
+        colors = [Color32::TRANSPARENT; super::super::projected::BORDER_KINDS.len()];
         assert!(meshes.tinted(colors).is_empty());
     });
 }
