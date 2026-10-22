@@ -1,0 +1,71 @@
+[package]
+name = "globecraft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "A small, fast 3D globe in the style of Google Earth, written in Rust (Windows, macOS, Linux)"
+license.workspace = true
+authors = ["Julien Foss (@FireflyTheReal)"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["gpu"]
+gpu = ["globecraft-render/gpu"]
+profiling = ["globecraft-data/profiling", "globecraft-render/profiling"]
+
+[dependencies]
+globecraft-core.workspace = true
+globecraft-data.workspace = true
+globecraft-render.workspace = true
+globecraft-assistant.workspace = true
+serde_json.workspace = true
+eframe.workspace = true
+egui-wgpu.workspace = true
+wgpu.workspace = true
+emath.workspace = true
+image.workspace = true
+fontdb.workspace = true
+gilrs.workspace = true
+ab_glyph.workspace = true
+rstar.workspace = true
+sys-locale.workspace = true
+self_update.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+# Native file/folder dialogs. Linux and FreeBSD use GTK3 without a desktop portal.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+rfd = { workspace = true, features = ["gtk3"] }
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
+rfd = { workspace = true, default-features = true }
+
+[package.metadata.generate-rpm]
+name = "globecraft"
+summary = "3D globe explorer with satellite imagery, live layers and KML places"
+url = "https://github.com/FireflyTheReal/GlobeCraft"
+assets = [
+    { source = "target/release/globecraft", dest = "/usr/bin/globecraft", mode = "755" },
+    { source = "packaging/globecraft.desktop", dest = "/usr/share/applications/globecraft.desktop", mode = "644" },
+    { source = "assets/packaging/icon_256.png", dest = "/usr/share/icons/hicolor/256x256/apps/globecraft.png", mode = "644" },
+    { source = "packaging/globecraft.metainfo.xml", dest = "/usr/share/metainfo/io.github.fireflythereal.globecraft.metainfo.xml", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/globecraft/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+glibc = ">= 2.35"
+libgcc = "*"
+gtk3 = "*"
+"libudev.so.1()(64bit)" = "*"
+libX11 = "*"
+libxkbcommon = "*"
+wayland-libs = "*"
+xdg-utils = "*"
+
+[package.metadata.generate-rpm.recommends]
+espeak-ng = "*"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda.workspace = true

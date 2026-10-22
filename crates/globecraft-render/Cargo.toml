@@ -1,0 +1,29 @@
+[package]
+name = "globecraft-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["gpu"]
+gpu = ["dep:wgpu", "dep:pollster"]
+profiling = ["globecraft-data/profiling"]
+
+[dependencies]
+globecraft-core.workspace = true
+globecraft-data.workspace = true
+rayon.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+wide.workspace = true
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+emath.workspace = true
+geo-index.workspace = true
+rstar.workspace = true
+image.workspace = true

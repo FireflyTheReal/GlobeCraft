@@ -1,0 +1,16 @@
+# Rust build output
+/target/
+/dist/
+__pycache__/
+**/*.rs.bk
+
+# Local editor files
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini

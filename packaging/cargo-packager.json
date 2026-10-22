@@ -1,0 +1,21 @@
+{
+  "productName": "GlobeCraft",
+  "identifier": "io.github.fireflythereal.globecraft",
+  "description": "3D globe explorer with satellite imagery, live layers and KML places",
+  "homepage": "https://github.com/FireflyTheReal/GlobeCraft",
+  "authors": ["GlobeCraft <globecraft@localhost>"],
+  "publisher": "GlobeCraft",
+  "category": "Education",
+  "deb": {
+    "section": "science",
+    "priority": "optional",
+    "depends": ["libc6 (>= 2.35)", "libgcc-s1", "libudev1", "libgtk-3-0", "libx11-6", "libxkbcommon0", "libwayland-client0", "xdg-utils"]
+  },
+  "appimage": {
+    "linuxdeployPlugins": {
+      "gtk": "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
+    }
+  },
+  "macos": {"minimumSystemVersion": "11.0"},
+  "windows": {"allowDowngrades": false}
+}

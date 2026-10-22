@@ -1,0 +1,585 @@
+# Contributing
+
+Start with [the architecture](docs/ARCHITECTURE.md)
+and [agent rules](AGENTS.md). Keep feature work separate from mechanical moves
+so reviewers can distinguish behavior changes from file organization.
+
+## Development
+
+Install Rust 1.95 or newer through rustup. The locked dependency graph includes
+eframe/egui 0.36, which require Rust 1.95.
+The workspace uses Edition 2024 and declares Rust 1.95; CI checks stable on
+Ubuntu. Stable is suitable for day-to-day development; do not use APIs newer than
+the declared minimum.
+
+On Linux, install build prerequisites before compiling:
+
+```sh
+sudo apt install build-essential pkg-config libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev
+```
+
+From the repository root:
+
+```sh
+cargo run --release
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --locked
+```
+
+The default member is the desktop app. Plain `cargo test` does not run every
+library's unit tests: use `cargo test --workspace`. For focused changes:
+
+```sh
+cargo test -p globecraft-core
+cargo test -p globecraft-data
+cargo test -p globecraft-render
+cargo run -p globecraft
+```
+
+Keep `Cargo.lock` in version control. Normal verification uses `--locked` to
+catch unintended dependency resolution changes. Intentional dependency updates
+should be reviewed separately, including compatibility with Rust 1.95.
+The `app-build-test` workflow runs on pushes and pull requests changing `apps/**`,
+`crates/**`, `assets/**`, the root manifest/lockfile or the workflow itself, and can
+also be run manually from Actions. One stable-Rust verification job formats,
+lints, tests and builds the default configuration on Ubuntu and checks the
+CPU-only desktop. It also lints the profiling configuration; profiling tests and
+builds remain available locally and do not run in CI.
+Rust 1.95 remains the declared minimum; CI does not run a separate minimum-version
+job. Use the latest supported major version tags for GitHub
+Actions, rather than commit hashes. For actions without version tags, follow the
+maintained upstream branch. Keep Rust toolchain versions explicit.
+
+Both app checks and release builds use `Swatinem/rust-cache@v2` after selecting
+the Rust toolchain. It caches downloaded Cargo dependencies and compiled dependency
+artifacts, while workspace crates still rebuild. App-check caches are separated
+by runner/toolchain; CPU-only release caches are separated by target architecture
+and from the app-check profile. The action also keys caches by compiler and Cargo
+manifest/lockfile changes. Initial runs are cold; subsequent compatible runs can
+reuse their dependencies. Builds and tests still run on every workflow invocation.
+
+For preview artifacts, version tags and publication, see [releases](docs/RELEASING.md).
+
+## Tests and behavior preservation
+
+Camera tests call the same methods as the app. Boundary and search tests use
+local JSON/strings. KML tests use isolated temporary files. Raster regression
+fixtures cover empty-cache and loaded-tile rendering; see [fixture provenance](crates/globecraft-render/tests/fixtures/README.md).
+Tests require no public map service or saved user configuration. HTTP fixtures
+bind an ephemeral loopback port; they exercise response limits, retries and disk
+cache behavior. Fluent tests verify catalog syntax, matching keys/variables and
+exact UI output. See [localization](docs/LOCALIZATION.md) before editing text.
+
+Prefer tests of observable behavior and invariants. Avoid copies of production
+algorithms. For behavior-preserving changes, retain constants, coordinate
+order, persistence formats and UI strings. Do not regenerate regression fixtures
+unless a deliberately approved rendering change explains the difference.
+
+The automated tests do not validate live services, GUI event delivery, native
+file dialogs, or packaging. Run the following manual checks for affected areas:
+
+- Launch from the root and verify the icon, initial view and panels.
+- Orbit, zoom under the cursor, rotate with right-drag/Shift, use arrow keys,
+  compass/north reset, navigation widgets, double-click and fly-to.
+  Hold each pan, rotation and zoom button for at least ten seconds; verify
+  movement continues until release, including with slight pointer movement.
+  Toggle Settings → Hide navigation controls; verify the top-right controls
+  disappear immediately, their area accepts normal map input, reopening restores
+  controls, and the choice persists after restart (default: controls visible).
+- With background rendering, open Settings during continuous rotation/flight;
+  verify input remains responsive, new imagery keeps arriving and borders/labels
+  stay aligned. Stop input and check full-resolution recovery. Rapidly switch
+  providers/effects and resize to check obsolete results, then close while busy.
+- At the initial distance, let the satellite overview warm, then rotate to the
+  opposite hemisphere. Check that overview imagery is available, close zoom
+  still loads detail, and other layers remain on demand. Compare cold and warm
+  disk-cache startup separately; do not promise immediate cold-network readiness.
+- In an isolated cache directory, use Settings → Clear on-disk cache. Check
+  progress/completion, retained imagery in memory, preservation of settings and
+  boundary caches, and that old queued downloads do not restore deleted files.
+  Check the usage readout beside the button before clearing and its refreshed
+  value afterward; it counts managed MBTiles/legacy file lengths, including SQLite overhead
+  but excluding filesystem allocation overhead.
+  Verify that fresh visible misses and a later startup can cache tiles again.
+- Switch satellite/streets/topography/historical imagery; verify loading,
+  release selection, fallback and attribution.
+- Search by coordinates and address; select suggestions with mouse and keyboard.
+  Clear the field after results arrive and during a pending lookup; the old count,
+  result list and late responses must not return. Check singular/plural result
+  and KML import messages in both languages.
+- Toggle borders, the municipal layer, labels, grid, atmosphere and sunlight.
+  For real aircraft, enable the layer and inspect source status and attribution
+  in the sidebar/Explorer. Rotate, fly, resize and change map text scale/language;
+  icons must follow the displayed globe, labels retain order and hover stays live.
+  Check poles/dateline, empty data, one provider failing and both failing; errors
+  must be English while ordinary status/hover text follows the UI language.
+  Hide the layer or switch away from Earth: new requests and marker repaints pause.
+  Return to Earth and verify cached data/fresh results recover. Close while a
+  request/projection is busy; closing must not wait on aircraft work. These checks
+  exercise live services and must be reported separately from isolated fixtures.
+  Enable the grid's indented Show numbers option, zoom and rotate through the
+  dateline/poles; labels must follow the displayed lines and avoid each other.
+  Toggle numbers while stationary, change map text size/language and resize.
+  Disable the grid: numbers disappear but their preference is retained.
+- Check the bottom-right heading through rotation and flight; click it to reset
+  north. Verify the top compass's localized cardinal directions rotate with the
+  displayed view, clicking N resets north, and the north-up, 180° flip and held
+  left/right rotation buttons remain available inside it. Drag the outer ring to
+  rotate. The combined control is always used when navigation controls are visible.
+  Grid labels should share a left column and bottom row inside the visible globe;
+  their axes swap as the view rotates. Grid numbers default off and persist.
+  Alt-click (Option-click on macOS) to start a disconnected ruler path, then
+  use normal clicks to extend it. Gaps must not draw connecting segments or add
+  distance; a new one-point path has no bearing. Drag/delete points in either
+  path and confirm they remain separate, including after deleting every point
+  in the newest path and placing another. Clear ruler removes all paths.
+  Undo/redo additions, new paths, a long drag, deletion and Clear; a drag must be
+  one undo step. After undo, a new edit must disable Redo; a click without moving
+  a handle must preserve it. Verify buttons disable when unavailable.
+  Use Cmd+Z / Cmd+Shift+Z and Edit → Undo/Redo on macOS; use Ctrl+Z /
+  Ctrl+Shift+Z or Ctrl+Y on Windows/Linux. Focus a search/KML text field: its
+  undo/redo must affect text without altering ruler points.
+  Open Ruler → Edit coordinates. Add exact decimal-degree points, including ±90°
+  latitude and ±180° longitude, and start a separate path with the checkbox.
+  Select an existing point, edit it and apply; reopening/selecting must preserve
+  its full input precision. Undo/redo each add/edit. Reject NaN, infinity and
+  out-of-range input without changing points. Delete or undo a selected point
+  on the map: Apply must require reselection, never overwrite a shifted index.
+  Enter submits a coordinate field; Escape/Close cancels unsubmitted input.
+  Repeat in both UI languages. Measurements follow the selected Earth model; Realistic — WGS 84 (G2296) is the default.
+  In Settings → Earth model, switch Perfect Sphere / Realistic — WGS 84 (G2296).
+  Verify camera center/heading/altitude and ruler coordinates remain intact;
+  totals, arc geometry, grid, labels, aircraft/weather and scale bar must agree
+  with the displayed model. Exercise poles/dateline, anchored zoom, pending frames
+  during a switch, restore defaults and restart persistence in both languages.
+  WGS 84 must use the CPU renderer even with the GPU diagnostic preference.
+  Add two ruler points, check the last segment's initial true-north bearing;
+  add/remove/edit points and verify the bearing updates. Coincident or antipodal
+  points must show an undefined bearing rather than an arbitrary direction.
+- For overlay caching, toggle label/border layers while stationary, switch
+  language/map text size, and resize. Verify updates without camera movement;
+  late boundary patches and ruler/placemark edits must appear immediately.
+- Open/drop uppercase and lowercase `.kmz` archives, including a nested KML
+  document and extra image resources. Verify names, coordinates and folder
+  hierarchy; save as KMZ and reopen, restart, and confirm missing archives are pruned.
+  Invalid ZIPs, missing KML entries and invalid coordinates must report errors.
+  KMZ selects the first KML entry and then takes the same XML repair and
+  folder-visibility handling as plain KML.
+- Create placemarks; save/open/drop KML; export a screenshot and use the ruler.
+  Close the Measure pane, then click Home › Ruler: the Measure pane must open with
+  its controls. Click Ruler again with measurements and undo/redo history: measuring
+  must switch off while retaining both; re-enable it and check the same history.
+  Close the left pane and click Home › Placemark: add one marker at the camera
+  center, reopen the Places pane and focus its selected name field for editing. Check generated names in both
+  languages, an entered name and insertion into a selected folder. Save/reopen
+  KML to verify the marker uses the existing file workflow.
+  Click the camera repeatedly: save clean PNGs to the configured folder without
+  dialogs or overwrites, preserving pixels/resolution/attribution. Before the
+  first frame, the camera must be disabled. Use an unwritable folder and check
+  the existing English error status. Check native menus and keyboard shortcuts.
+  Open several KML files, restart and verify their saved contents reopen in order.
+  Remove one source externally, restart and verify it is silently pruned from
+  `open-kml.json`; malformed/unreadable sources should report errors and remain
+  remembered. Clear All during a pending import must leave the tree empty, retain
+  source files and stay empty after restart. Restore Defaults must retain sources.
+  Save the combined tree to a new file and restart: no duplicate imports should appear.
+  Import nested Documents/Folders (including empty folders and repeated names).
+  Expand/collapse, select and edit names/descriptions, double-click a marker to
+  fly, and toggle parent/child visibility. Move markers/folders by dragging onto
+  a folder or My Places; dropping a parent onto a descendant must do nothing.
+  Add folders/markers to a selected folder, delete a subtree, save and reopen:
+  hierarchy, order and visibility must survive without extra wrapper nesting.
+  Check both languages and narrow/resized sidebars. Native tree interaction is
+  separate from the automated core mutation and KML round-trip tests.
+  At the default sidebar width, expand six nested folders: rows and indentation
+  should remain compact, with distinct outlined folder and pin icons. Hover a
+  truncated name for its full text; selection must still cover the row's width.
+  Select a place with a long HTML description: its text remains editable in a
+  three-line scrolling viewport while the tree retains its taller area. Check
+  radar/cloud attribution directly beneath its matching layer toggle.
+- Switch Layers/Places/Globe from the left pane's tabs in both languages; at narrow
+  widths they become icons. Close the pane with ✕ and reopen it from View › Panes.
+  Pin Places, switch tabs and drag the splitter; the outline must stay usable and
+  appear only once when Places is selected. Open the Assistant and Measure panes,
+  close one tab, resize, and restart: pane, tab, ribbon tab/collapse, pin, splitter,
+  layer visibility, basemap and terrain exaggeration must survive. Collapse the
+  ribbon (double-click a tab or Ctrl+F1), click a tab to peek and click the globe
+  to close it. Open Command Search (Ctrl/⌘+K), run a command, toggle a layer by
+  name and send unmatched words to the assistant. Check all six layer groups in
+  the Layers pane, their status lines and credits, in light and dark themes.
+
+- On macOS, open every native menu. Change language while menus are closed and
+  reopen them: titles, commands and checkmarks must follow the current language
+  and state. Use Settings/Cmd+,, Sidebar, View toggles, Add Placemark/Folder,
+  Measure distances, Explorer, fullscreen/minimize, About and Controls Help.
+  Ruler/placemark actions must use the existing state and reveal controls/name.
+  Edit text and test native Undo/Redo before testing ruler Undo/Redo. Check
+  screenshot enablement before/after the first frame. On Windows/Linux, repeat
+  through the ribbon (File menu, tabs) and Ctrl shortcuts. Confirm the system Window/Help
+  behavior on macOS and that closing About/Help does not close the main window.
+- In Settings, switch DD/DMS/DDM/UTM/UPS/MGRS and their precision. Cursor, center
+  and right-click readouts/copies must agree; restart must retain the selection.
+  Search the documented coordinate examples regardless of selected format; test
+  poles/dateline, DMS carry and malformed coordinates without a remote request.
+  Search King's Cross and a normal address to check name searches still work.
+  Resize the sidebar and verify both cursor coordinates fit at their selected
+  precision. Check both languages and click-to-copy without localized prefixes.
+- In Explorer, display large planet/sky images and load/save `.globeplanet` files;
+  the UI should remain responsive while the file work runs. Check the busy
+  indicator and disabled file controls, including after a failed operation.
+  Load a planet after choosing unrelated image paths, then save it to a new
+  document and reopen it: planet, sky and name must match the loaded document.
+  Repeat with no sky and a legacy sidecar document. Delete the original image
+  files after importing and confirm re-saving still works. Start a load, switch
+  back to Earth or the Moon, and verify completion preserves that selection.
+  Choose the Moon for the first time and confirm its texture arrives without
+  switching back if another body is selected before decoding completes.
+- Open language, distance-unit, ruler-unit and historical-imagery dropdowns with
+  a short option selected. The selected/hovered rectangle must fill every row,
+  including empty space to the right, even on the first opening.
+- Switch English/Portuguese, change UI/map scales, then restart to verify persistence.
+  Use Settings → Language: new installs select System Locale; test Portuguese,
+  English and unsupported OS locales, explicit overrides and restart persistence.
+  Verify Distance units shows System locale (mi) or System locale (km) using
+  the OS region, including when metric/imperial is manually selected.
+  Verify the System option names its resolved language even with an override
+  selected; unsupported/unknown locales must show English with a fallback marker.
+  Existing `lang.txt` values `en`/`pt-BR` must remain explicit; selecting System
+  Locale stores `system` and follows a changed OS locale on the next launch.
+  Ruler help uses Option-click on macOS and Alt-click elsewhere.
+
+Report which checks actually ran and which platforms/services remain unverified.
+For packaging, use the release helpers in `scripts/` and the tool configuration
+in `packaging/`. cargo-packager constructs the native bundles and x64 MSI, while
+RPM metadata lives in the app manifest. Release binaries still go to the root
+`target/release` (or `target/<target>/release` for explicit targets). macOS bundles use
+`assets/packaging/macos/icon.icns`, generated from the unchanged `assets/packaging/icon.png` artwork with
+transparent Dock padding and standard and Retina sizes (16–1024 pixels).
+The macOS runtime icon is `assets/packaging/macos/icon.png`, with the same padding as the
+bundle icon: eframe applies it to the Dock at startup. Keep both assets aligned;
+Windows/Linux retain `assets/packaging/icon_256.png`.
+The release workflow builds DEB/AppImage/x64 MSI and the macOS app with cargo-packager,
+ARM64 MSI with WiX 5 (cargo-packager's bundled WiX 3.11 lacks ARM64 support),
+RPM with cargo-generate-rpm, Flatpak with flatpak-builder and Snap with the official
+Snapcraft Rust plugin. macOS keeps dmgbuild for the existing Finder layout. See
+[release tooling](docs/RELEASING.md) for pinned versions and native validation limits.
+
+
+Distance and path smoke checks: select System, kilometers/meters and miles/feet
+in Settings; check ruler segments/totals, camera altitude and close-view scale
+bars. Click the bottom-bar camera altitude and enter an exact value in the shown
+unit; verify Enter/Apply updates altitude without changing the center/heading and
+cancels an active flight. Escape/Cancel must leave altitude unchanged. Check
+invalid, non-finite and out-of-range values, and repeat in both languages. Try each explicit ruler unit and verify that both segment labels and totals
+change while altitude and scale keep their own settings. Check degrees/arcseconds,
+smoots and football fields (100 yards without end zones). The field option is
+available everywhere: verify “Football fields” in the US selector and “American
+football fields” elsewhere, with the shorter name in totals/segment labels.
+Restart to check that the ruler preference persists across locales. Restart and verify the override persists; switching UI language must not
+change it. System locales use the regional defaults listed in ARCHITECTURE.md. Inspect folder labels and KML
+import/save/screenshot statuses: home paths use `~/…` on macOS/Linux and
+`%USERPROFILE%\…` on Windows, other long paths retain their tail with `.../`.
+The toolbar status uses slightly smaller text. Hover shortened text/paths for
+the full message; a message that fits without abbreviation must have no tooltip.
+Resize the window and change UI scale: verify filename endings remain visible
+and status text does not push toolbar buttons out of view.
+
+## Resource-constrained builds
+
+For a small disk or a quick local check, reduce generated debug information and
+incremental output without changing the shared development profile:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false cargo test --workspace --locked
+```
+
+On PowerShell, set those names with `$env:CARGO_PROFILE_DEV_DEBUG="0"` and
+`$env:CARGO_PROFILE_DEV_INCREMENTAL="false"`, then run Cargo normally.
+`cargo clean --profile dev` removes rebuildable development output. Never delete
+user caches, screenshots, KML, or unrelated files to make a build fit.
+
+## Review checklist
+
+Explain the concrete behavior affected, why the owning module is correct, and
+what ran. Keep imports explicit and public APIs small. Prefer a module to a new
+crate when code shares the same responsibility and dependency requirements.
+Update architecture docs when ownership or dependency direction changes. Update
+both READMEs when changing user-facing setup or feature descriptions. Stage
+explicit files and keep generated output out of commits.
+
+## Dependency changes and memory measurements
+
+Use separate commits for each library migration; group dependencies only when
+needed for one boundary (for example Tokio/reqwest or Fluent's supporting crates).
+Verify the affected invariants before committing, then run workspace checks.
+Use glam's double precision for geometry and SIMD float vectors for colors;
+avoid alignment assumptions when using bytemuck with pixel buffers.
+
+For memory comparisons, use the same build profile, viewport, settings, cache
+state, enabled layers and elapsed startup time. Record which memory metric was
+used. Resident memory and Activity Monitor's memory column are not interchangeable.
+Moka's 256 MiB target is weighted by decoded tile bytes and enforced best-effort;
+brief overshoot is expected. It does not limit total application memory, and its
+weighted-size estimate can lag inserts/evictions. Keep retry/deduplication tests
+independent of cache maintenance, and do not add per-frame eviction flushing.
+Municipal geometry is deferred rather than removed. Exercise enabling both
+the municipal layer after startup, and verify that loading labels finish.
+
+For a focused cache lookup comparison (optimized dev profile):
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false cargo test -p globecraft-data cached_hit_throughput --locked -- --ignored --nocapture
+```
+
+This ignored manual benchmark reports median cached-hit throughput over five
+rounds with 256 warm tiles and one/eight threads. It calls production lookup code;
+there are no timing assertions. It excludes misses, downloads, eviction pressure,
+full rendering and texture upload. Do not equate its numbers with application FPS.
+
+To compare complete warm CPU frames using isolated disk fixtures:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false RAYON_NUM_THREADS=8 cargo test -p globecraft-render warm_cpu_frame_time --locked -- --ignored --nocapture --test-threads=1
+```
+
+Run this benchmark alone: it injects a private imagery directory into the cache
+constructor, then removes that directory after its workers stop. It does not
+modify the process environment. It renders 512×384 frames with grid, sunlight and atmosphere, using 341
+warm 256×256-pixel fixture tiles (85.25 MiB decoded). Startup warming uses production admission and disk
+workers, and rotations across hemispheres, the dateline and poles assert that
+overview frames request no new tiles. Five rounds of two hundred frames include production ray
+casting, sampling, allocation and tile lookup; they exclude GUI upload, overlays,
+network and eviction pressure. Neither benchmark is a substitute for live-app
+frame-time and memory measurements.
+
+For a SIMD comparison, alternate baseline and current executables with the same
+compiler/profile and Rayon thread count, without concurrent builds. The generated
+textures exercise a larger tile working set, but exclude eviction pressure and
+real imagery variation. Ray-batch regression fixtures separately cover partial
+rows, altitude extremes, poles/dateline and every provider, including exact
+missing-tile keys and nearest-pixel priorities.
+
+To measure overlay projection-cache reuse and label occupancy separately:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false cargo test -p globecraft overlay_projection_and_label_occupancy_time --locked -- --ignored --nocapture --test-threads=1
+```
+
+The isolated synthetic benchmark compares the old linear intersection scan with
+the production R-tree for 8,000 ordered rectangles in sparse/dense screen areas,
+asserting identical admissions. It also compares rebuild/reuse for 10,000
+32-point geographic lines and 8,000 labels using production overlay drawing.
+Medians exclude the first font/cache warmup, rendering, services, tessellation
+and GPU work. Overlay rebuild measurements now include waiting for asynchronous
+geometry preparation; cache reuse remains immediate. Do not compare these totals
+directly with the earlier synchronous rebuild numbers. R-tree insertion/traversal can cost more at the current 500-label
+cap; do not present cache reuse or this benchmark as an application FPS guarantee.
+
+For static geographic-index comparisons, run the render-owned benchmark:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false cargo test -p globecraft-render static_boundary_index_time --locked -- --ignored --nocapture --test-threads=1
+```
+
+It compares candidate results with rstar and linear bounds checks over moving
+views, separately from fonts, shape caching and GPU work. Geographic projection,
+occupancy and frame scheduling tests live in render; egui shape/font tests remain
+in the desktop app. Native checks still verify their integration.
+
+To compare loaded-name prefix search independently of network/UI work:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false cargo test -p globecraft-data prefix_index_time --locked -- --ignored --nocapture --test-threads=1
+```
+
+It verifies complete suggestion parity while measuring broad, narrow and missing
+prefixes over 16,000 synthetic names. Report map bytes separately from the owned
+name snapshot; compare construction separately from per-query cost.
+
+## Opt-in native profiling
+
+Normal builds compile timing capture out. To capture a native session:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_INCREMENTAL=false cargo build -p globecraft --features profiling --locked
+GLOBECRAFT_PROFILE=/tmp/globecraft-profile.csv RAYON_NUM_THREADS=8 ./target/debug/globecraft
+python3 scripts/profile_summary.py /tmp/globecraft-profile.csv
+```
+
+The destination must not already exist; choose a new filename for each run. File
+writing runs on a bounded background recorder (8,192 queued events). Producers
+never wait for writes; `dropped_events` reports saturation. Failures appear in
+stderr. Closing the profiling app requests a bounded final flush. Reports contain
+operation timings and dimensions/counts only, without names, tile URLs or queries.
+Profiling-enabled builds require `GLOBECRAFT_PROFILE` to select an output file.
+Do not use their timings as overhead-free measurements.
+
+Finish compilation before recording measured intervals. Fix the compiler/profile,
+Rayon thread count, window size/DPI, layers and cache state for comparisons. Warm
+rotation, coordinate flight/detail loading, municipality loading and
+close rotation should be separate intervals. Use an isolated copy of cached data
+when changing disk/cache controls. Keep live downloads distinguishable from warm
+CPU work; record resident-memory samples separately from decoded-cache estimates.
+
+Optional phase JSON uses microseconds since the Unix epoch:
+
+```json
+[{"phase":"warm_rotation","start_us":1791904857946195,"end_us":1791904900972873}]
+```
+
+```sh
+python3 scripts/profile_summary.py /tmp/globecraft-profile.csv --phases /tmp/phases.json
+```
+
+The script groups raster resolutions separately and reports median, nearest-rank
+p95 and maxima. Open-ended phases are supported for inspecting a live recording.
+`frame.delivery` measures submit-to-UI-poll time, not input-to-screen latency;
+`ui.texture_submit` measures app-side submission, not driver upload. UI timings
+exclude eframe's subsequent tessellation/GPU work. `overlay.prepare` includes
+cached returns and index rebuilding when needed. Tile lock timing samples view
+admission, not every per-pixel cache miss. Avoid adding overlapping timing medians
+across threads. The [native baseline](docs/PERFORMANCE_BASELINE.md) records limitations.
+
+Feature-enabled checks must accompany normal checks when changing instrumentation:
+
+```sh
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+```
+
+The two text-size sliders use relative tracks with a shared 100% midpoint.
+Each keeps its existing limits and five-percentage-point steps. Check pointer
+and keyboard editing, typed percentages and UI-scale application on drag release.
+
+## Frame rate and display synchronization
+
+Native presentation synchronizes with the current display by default.
+Settings → Uncap FPS persists the choice; restart
+is required because native swap synchronization is selected at startup. Changing
+this setting does not enable G-SYNC/FreeSync in the graphics driver or display.
+Continuous animation requests repaints without the old 260 ms delay; native
+presentation and renderer readiness determine the achievable cadence.
+
+
+## Experimental GPU Earth rasterization / renderização experimental em GPU
+
+The Earth overview raster can be computed by the `globecraft-render` `backend`
+module with `wgpu` compute shaders (`gpu/`), then read back for the existing
+egui view. All GPU globe rendering is experimental on every platform; the CPU
+path remains the default and fallback. Set
+`GLOBECRAFT_RENDERER=auto` or `GLOBECRAFT_RENDERER=gpu` to enable an experimental GPU attempt.
+The Explorer, live meteorological/aircraft layers, moon and custom planet
+remain integrated in `apps/globecraft`. See [GPU_RENDERER.md](docs/features/GPU_RENDERER.md)
+for hardware limits, performance and CPU-only build instructions.
+
+## Panes, commands and native menus
+
+The left pane (Layers, Places, Globe) and right pane (AI Assistant, Measure) open and
+close without resetting layer, placemark, ruler or section state, and restore their
+widths. Oversized widgets scroll within a pane instead of widening it; the status
+bar's cursor readout shrinks its font, then reduces decimal precision to keep both
+coordinates visible. The globe keeps the previous frame and overlays at their
+original rectangle until a compatible frame for the new viewport arrives. KML drops
+remain available with the panes hidden.
+
+Every action is a command (`globecraft_core::commands`) implemented once in
+`App::run`; add new actions there rather than in a widget, with `cmd-…` label and
+help keys in both Fluent catalogs. The catalog test checks that ids are unique,
+parameters are JSON Schema objects and every label is translated.
+
+macOS uses muda 0.21 (compatible with Rust 1.95) in `apps/globecraft/src/app/menu`.
+Menu objects and handlers stay on the window thread. Callbacks enqueue actions
+and wake egui; the app opens dialogs, submits existing KML/screenshot jobs and
+closes normally. Screenshot is disabled before a frame exists. Captions follow
+language changes and AppKit handles Cmd shortcuts. Edit contains Undo/Redo;
+these commands edit focused text or the ruler otherwise. Menu availability
+tracks ruler history when text is not focused. Windows and Linux use the
+sidebar's file controls; both support Ctrl+O/S/Shift+S/Shift+E and Ctrl+Q
+without a native menu bar. All workspace code forbids unsafe Rust.
+
+Smoke check hiding/reopening the sidebar, preserving expanded sections and layer
+selections, map navigation while hidden and after resizing, and toggling in both
+languages. On macOS also check Open/Save KML, screenshots and Quit through the
+native menu. Use isolated settings/cache for these checks.
+
+Ruler editing smoke check: enable the ruler and add several points. Drag a white
+point and verify that only that point moves, including after releasing outside
+the map. Drag empty map space and verify normal navigation. Hover a point and
+press Delete or Backspace to remove only that point; focused text fields must
+keep their normal editing behavior. Check both UI languages and Clear all.
+
+## Live-layer refactor smoke checks
+
+Use isolated settings/cache. Toggle roads, AIS, satellites and traffic separately
+and together; drag/zoom/rotate while data completes, switch Earth models and
+resize/change DPI or text scale. Geometry must follow the displayed frame;
+labels retain their order, and hidden road fragments must not connect across
+space. Hover earlier as well as later fragments of a road. Clear/change the
+TomTom key during a pending request: old imagery must not return. Keep network
+failures visible and check both languages. Select System, metric and imperial
+units: the roads zoom hint must follow the resolved preference (180 km / 112 mi).
+
+Open the flat-Earth Easter egg and exercise all existing shortcuts and controls.
+Its scientific Earth-model dropdown must remain unchanged. Verify the illustration
+still matches its original layout, rotation, UV seam and rim; resize and change
+DPI, exit while its image loads, then reopen. Stationary repaints should reuse
+cached meshes. Automated headless tests do not replace these native checks.
+
+## Update notice and restart smoke checks
+
+Use isolated settings/cache and a disposable portable installation, never the
+only working app. Check startup without GitHub access: it must remain responsive,
+with a retry tooltip rather than a dialog. Confirm the bottom-bar notice is
+centered between tile status and heading in both languages and hidden when current
+or when no matching target asset exists. Resize and change UI scale; the heading
+and existing status must retain their space. Keyboard-focus and activate the
+notice. Repeated clicks must start only one download. Keep using the globe during
+check/download/install and confirm the spinner wakes through the final result.
+
+On a disposable macOS app bundle, install from the updater ZIP and verify the
+whole bundle with `codesign --verify --deep --strict`. A bad digest/signature must
+keep the installed app intact. Repeat portable replacement and restart on native
+Windows/Linux. Managed or protected installs must open Releases without elevation.
+For restart, cancel each save dialog and simulate a save failure: the process must
+stay open. Save places/custom planet, restart and reopen their contents; settings
+and language must survive. Close normally during a check/download. Do not report
+real replacement/restart as verified unless run against disposable native builds.
+
+## Categorized preferences smoke checks
+
+Open Settings with the toolbar and Ctrl/Cmd+,. Resize the window, visit each
+category, search for localized labels/help in English and Portuguese, and confirm
+that Clear/Reset can be cancelled. Switch themes and installed UI/map fonts;
+verify map text changes independently, clipping/fallback glyphs, missing-font
+recovery, and unchanged coordinate precision. Check drag/rotation/wheel gains,
+inverted scroll, save-current startup view and restart persistence. Change both
+cache budgets, restart, and verify active limits. Existing file dialogs and
+language/system-unit fallback must remain available. Headless tests do not prove
+installed-font appearance or OS dialog behavior.
+
+## Controller smoke checks
+
+With a supported physical gamepad, test startup connected, hotplug, two device
+profiles, trigger release and unplug during motion. Verify frame-rate-independent
+pan/heading/zoom, deadzone noise, per-axis inversion/curve and camera bounds.
+Rebind axes/buttons; cancel/timeout capture and reject/accept an occupied-button
+replacement. Edit text/open dialogs/lose focus with sticks held: the camera must
+wait for neutral on return. Reconnect/restart and check the saved profile. Verify
+mouse/keyboard and menu actions still work. Repeat on each packaged platform;
+a headless engine test is not a physical-adapter or confinement test.
+
+## Celestial background smoke checks
+
+Use a wide-angle North America view with the same camera before/after toggling
+Layers → Celestial background. Confirm the Milky Way changes only space and Earth
+occludes it. Compare opposite longitudes/headings, seams and poles; compare clock
+buckets with NASA's equatorial markers. Near the daytime surface, compare
+Realistic/Cinematic and the existing atmosphere. Toggle while frames are pending
+and resize/move the sidebar; stale sky styles must not publish. Save a clean PNG
+and inspect Source metadata from its displayed frame, including during pending
+toggle changes. Check offline startup, retry/fallback and EN/PT credits/settings.
+Run the existing explicit gpu_overview_matches_cpu test on a native GPU; it now
+includes the real map in sky-enabled cases. Review source/derivative hashes with
+`python3 -m unittest discover -s scripts -p 'test_prepare_sky.py'` (no downloads).

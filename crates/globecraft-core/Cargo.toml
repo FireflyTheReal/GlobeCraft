@@ -1,0 +1,25 @@
+[package]
+name = "globecraft-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+geographiclib-rs.workspace = true
+mgrs-convert.workspace = true
+sofars.workspace = true
+emath.workspace = true
+glam.workspace = true
+fluent-bundle.workspace = true
+fluent-syntax.workspace = true
+unic-langid.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

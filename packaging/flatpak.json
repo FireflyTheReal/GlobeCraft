@@ -1,0 +1,29 @@
+{
+  "app-id": "io.github.fireflythereal.globecraft",
+  "branch": "stable",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "49",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "globecraft",
+  "finish-args": ["--share=network", "--share=ipc", "--socket=wayland", "--socket=fallback-x11", "--device=dri", "--device=input", "--filesystem=host", "--env=GLOBECRAFT_UPDATE_MODE=manual"],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {"CARGO_HOME": "/run/build/globecraft/cargo"}
+  },
+  "modules": [{
+    "name": "globecraft",
+    "buildsystem": "simple",
+    "build-commands": [
+      "cargo build -p globecraft --release --no-default-features --locked --offline",
+      "install -Dm755 target/release/globecraft /app/bin/globecraft",
+      "install -Dm644 assets/packaging/icon_256.png /app/share/icons/hicolor/256x256/apps/io.github.fireflythereal.globecraft.png",
+      "install -Dm644 LICENSE /app/share/licenses/globecraft/LICENSE",
+      "install -Dm644 packaging/globecraft.desktop /app/share/applications/io.github.fireflythereal.globecraft.desktop",
+      "sed -i 's/Icon=globecraft/Icon=io.github.fireflythereal.globecraft/' /app/share/applications/io.github.fireflythereal.globecraft.desktop",
+      "install -Dm644 packaging/globecraft.metainfo.xml /app/share/metainfo/io.github.fireflythereal.globecraft.metainfo.xml",
+      "sed -i 's/globecraft.desktop/io.github.fireflythereal.globecraft.desktop/' /app/share/metainfo/io.github.fireflythereal.globecraft.metainfo.xml"
+    ],
+    "sources": []
+  }]
+}
