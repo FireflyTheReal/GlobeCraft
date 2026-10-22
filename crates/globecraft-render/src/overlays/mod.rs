@@ -300,6 +300,11 @@ pub fn project_borders(
         if view.layers.cities && view.altitude_km <= boundaries.municipal_detail_max_km {
             draw_lines(&boundaries.cities, BorderKind::City, step);
             draw_lines(&boundaries.world_cities, BorderKind::City, step);
+            // With the state layer off, the municipal segments on state borders are
+            // ordinary municipal lines; without them the municipalities would have gaps.
+            if !view.layers.states {
+                draw_lines(&boundaries.world_cities_major, BorderKind::City, step);
+            }
         }
     }
     // Country outlines are drawn last so they stay legible above any
@@ -548,5 +553,52 @@ mod tests {
         assert!(handed_over > 0.0, "the uncovered half stays");
         let kept = handed_over / whole;
         assert!((0.4..0.6).contains(&kept), "{kept} of the line kept");
+    }
+
+    #[test]
+    fn municipal_state_borders_close_the_municipalities_when_states_are_off() {
+        use globecraft_core::camera::Cam;
+        use std::sync::Arc;
+        let mut data = BoundaryData::default();
+        data.world_cities_major = vec![Arc::new(vec![(48.0, 8.5), (48.0, 9.5)])];
+        data.world_cities = vec![Arc::new(vec![(48.2, 8.5), (48.2, 9.5)])];
+        data.municipal_detail_max_km = 400.0;
+        let basis = Cam {
+            lat: 48.0,
+            lon: 9.0,
+            heading: 0.0,
+            alt: 300.0,
+        }
+        .basis(1.0);
+        let kinds = |states: bool, cities: bool| {
+            let view = OverlayProjection {
+                basis: &basis,
+                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
+                altitude_km: 300.0,
+                state_visible_max_km: 1609.0,
+                dashes: BorderDashes::default(),
+                layers: OverlayLayers {
+                    countries: true,
+                    states,
+                    cities,
+                    labels: false,
+                },
+            };
+            let (mut major, mut city) = (0, 0);
+            project_borders(&view, &data, None, |kind, _| match kind {
+                BorderKind::CityMajor => major += 1,
+                BorderKind::City => city += 1,
+                _ => {}
+            });
+            (major, city)
+        };
+        let (major, city_with_states) = kinds(true, true);
+        assert!(major > 0);
+        // States off: the state-border segments join the municipal lines.
+        let (major_off, city_without_states) = kinds(false, true);
+        assert_eq!(major_off, 0);
+        assert!(city_without_states > city_with_states);
+        // Municipalities off too: nothing municipal at all.
+        assert_eq!(kinds(false, false), (0, 0));
     }
 }
