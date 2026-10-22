@@ -346,3 +346,17 @@ cargo test --release -p globecraft-render handover_cut_time -- --ignored --nocap
 ```
 
 Not yet measured on the Mac.
+
+### Tracing municipal borders on Natural Earth lines (2026-10-22)
+
+Real data, release build, 2-core container: the trace reference over the 1:10m state
+lines (415,835 points) and country land borders (77,295 points) builds in 391 ms on the
+feature pool, once per Natural Earth detail change; its grid holds about 3.3 M segment
+entries in 0.72 M cells (roughly 60 MB). Tracing all 8,561 Italian comuni (381,632
+points) takes 107 ms on the feature pool: 12.0 % of their segments follow a state line
+and 0.7 % a country line. Nothing here runs on the UI or frame path. Run with:
+
+```sh
+GLOBECRAFT_REFERENCE_BENCH=<folder> cargo test --release -p globecraft-data \
+  reference_build_and_trace_time -- --ignored --nocapture
+```

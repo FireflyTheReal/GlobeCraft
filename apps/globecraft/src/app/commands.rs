@@ -694,7 +694,10 @@ impl App {
                 checked: false,
             },
             "layer.municipalCountries" => CommandState {
-                enabled: earth && self.layer(MapLayer::MunicipalBorders),
+                enabled: earth
+                    && (self.layer(MapLayer::MunicipalBorders)
+                        || self.layer(MapLayer::StateBorders)
+                        || self.layer(MapLayer::CountryBorders)),
                 checked: false,
             },
             "layer.terrainExaggeration" => CommandState {

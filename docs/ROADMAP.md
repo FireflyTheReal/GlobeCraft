@@ -362,6 +362,7 @@ are kept now (99.4 % of shared admin-1 polygon edges covered, checked against th
 | 13.10 | **Remove the metropolitan regions layer**: municipal borders cover it. Optionally, a country picker for municipal borders (only the selected countries load) | S | **Removal done 2026-10-22** (layer, IBGE metro pass, Overture metro slices and their scripts). **Country picker done 2026-10-22:** `layer.municipalCountries` and a Countries line under Municipal borders in the Layers pane (Only this country, Add this country, All countries); the choice is saved |
 | 13.11 | **GlobeCraft repository**: fresh history, English only, straightforward README for non-technical users, every source credited in CREDITS.md | S | Done 2026-10-22 |
 | 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. **Country borders done 2026-10-22** where both neighbours are loaded. Still open: one-sided country edges |
+| 13.13 | **German pattern in every country** (user, 2026-10-22): state borders upgraded by municipal borders, then single municipalities closer in, wherever the data allows; a list of the countries where it does not. The municipal button shows only municipalities; the sharper state and country borders belong to the state and country buttons | M | **Done 2026-10-22, needs a check on the Mac.** Sources without state fields (geoBoundaries, OSM) were never classified, so outside Germany, Spain, France, the US, Canada and Brazil no state border was upgraded. Now municipal segments that run along a Natural Earth state or country line become that border (`municipal/reference.rs`), for every source, which also covers one-sided country edges. geoBoundaries loaded ADM2 for every country; each country now has a reviewed municipal level (Italy's comuni are ADM4, Austria's Gemeinden ADM3). Per-country list: `docs/MUNICIPAL_COVERAGE.md` (6 national, 120 possible, 44 unsure, 27 single-level, 35 not possible) |
 
 **13.12 Instant border handover.** Where two versions of a border meet, exactly one is
 drawn, and the switch between them happens between two frames:
@@ -372,15 +373,7 @@ drawn, and the switch between them happens between two frames:
   (`COUNTRY`, above `MAJOR`), draw as `BorderKind::CityCountry` in the country style from
   402 km down, and the Natural Earth country line is cut exactly where they run. With
   country borders hidden they draw as ordinary municipal state borders.
-- **One-sided country edges**: still open. Where only one side is loaded (the other
-  country deselected in the picker, or its source failed), that side's outline along the
-  border is an unmatched (`OUTER`) segment, drawn as an interior line next to the country
-  line below the detail altitude. Classifying it needs the Natural Earth country lines in
-  the municipal publisher.
-- **Natural Earth detail levels** (1:110m → 1:50m → 1:10m countries and states): already
-  replaced in one patch, so the swap is a single frame; keep it that way.
-- Arrival fades stay only for layers that replace nothing (interior municipal lines,
-  a states layer arriving for the first time).
+- **One-sided country edges**: done with 13.13; a municipal segment along a Natural Earth country line is a country border even while the neighbour is not loaded.
 
 ## 14. Size and efficiency review (2026-10-22)
 

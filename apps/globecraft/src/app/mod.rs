@@ -539,7 +539,12 @@ impl eframe::App for App {
         let is_brazil = earth_visible && country.as_deref() == Some("BRA");
         self.boundary_loader.request_municipal(
             globecraft_data::boundaries::MunicipalView {
-                enabled: self.layer(MapLayer::MunicipalBorders) && earth_visible,
+                // Municipal outlines also sharpen the state and country borders up
+                // close, so they load for any of the three border layers.
+                enabled: (self.layer(MapLayer::MunicipalBorders)
+                    || self.layer(MapLayer::StateBorders)
+                    || self.layer(MapLayer::CountryBorders))
+                    && earth_visible,
                 altitude_km: self.cam.alt,
                 lat: self.cam.lat,
                 lon: self.cam.lon,

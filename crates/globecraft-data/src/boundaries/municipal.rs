@@ -12,7 +12,10 @@ use super::{
     Detail, GeoBounds, Layer, Line, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, MapLabel, Patch, StatusLog,
     adm, brazil, log_status, national, world,
 };
+mod reference;
 pub(crate) mod topology;
+pub use reference::ReferenceLines;
+use reference::{Reference, ReferenceKey};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, mpsc};
@@ -172,7 +175,9 @@ fn units_at(iso3: &str, lat: f64, lon: f64, osm_countries: &HashSet<[u8; 3]>) ->
             size_mdeg: (size * 1000.0).round() as u32,
         });
     }
-    if osm_countries.contains(&iso) {
+    // OSM cells cover countries without a geoBoundaries municipal level, and those
+    // whose file failed.
+    if osm_countries.contains(&iso) || adm::level(iso3).is_none() {
         return Some(Unit::OsmCell {
             x: (lon / OSM_CELL_DEG).floor() as i32,
             y: (lat / OSM_CELL_DEG).floor() as i32,
@@ -189,6 +194,10 @@ struct UnitLine {
     id: u64,
     /// One `topology` class per segment.
     classes: Arc<[u8]>,
+    /// The class each segment traces on the Natural Earth lines (see `reference`),
+    /// computed for `Store::reference_revision` `traced_revision`; empty until then.
+    traced: Arc<[u8]>,
+    traced_revision: u64,
     parent: topology::Parent,
     area_km2: f64,
 }
@@ -226,6 +235,7 @@ impl UnitData {
         centre: (f64, f64),
         country: Option<[u8; 3]>,
         neighbours: &[Neighbour],
+        reference: Option<&(Arc<Reference>, u64)>,
     ) -> (Self, Vec<Upgrade>) {
         let vertices = detail.lines.iter().map(|line| line.len()).sum();
         let own = detail.lines.len();
@@ -262,10 +272,16 @@ impl UnitData {
             .zip(parents)
             .filter_map(|((line, classes), parent)| {
                 let bounds = GeoBounds::of(&line)?;
+                let (traced, traced_revision) = match reference {
+                    Some((reference, revision)) => (reference.trace(&line), *revision),
+                    None => (Arc::from([]), 0),
+                };
                 Some(UnitLine {
                     id: topology::ring_id(&line),
                     area_km2: topology::ring_area_km2(&line),
                     classes: classes.into(),
+                    traced,
+                    traced_revision,
                     parent,
                     line,
                     bounds,
@@ -330,6 +346,22 @@ impl Store {
             ring.classes = classes.into();
         }
     }
+    /// Stored rings not yet traced against the current reference.
+    fn untraced(&self) -> Vec<(Unit, usize, u64, Line)> {
+        let Some((_, revision)) = self.reference else {
+            return Vec::new();
+        };
+        self.units
+            .iter()
+            .flat_map(|(&unit, data)| {
+                data.lines
+                    .iter()
+                    .enumerate()
+                    .filter(move |(_, ring)| ring.traced_revision != revision)
+                    .map(move |(index, ring)| (unit, index, ring.id, ring.line.clone()))
+            })
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -346,6 +378,9 @@ struct Store {
     revision: u64,
     /// Bumped when any load finishes, so waiting units get their turn.
     completed: u64,
+    /// The Natural Earth lines outlines are traced against, with its revision
+    /// (starting at 1; 0 marks untraced lines).
+    reference: Option<(Arc<Reference>, u64)>,
 }
 impl Store {
     /// Drops the units farthest from `centre` until the vertex budget holds.
@@ -405,6 +440,8 @@ pub(super) struct MunicipalStreamer {
     wake_publisher: Arc<tokio::sync::Notify>,
     repaint: Arc<dyn Fn() + Send + Sync>,
     last: Option<Request>,
+    /// The reference lines last handed to the tracer.
+    reference: Option<ReferenceKey>,
 }
 
 impl MunicipalStreamer {
@@ -429,6 +466,7 @@ impl MunicipalStreamer {
             wake_publisher,
             repaint,
             last: None,
+            reference: None,
         }
     }
 
@@ -443,8 +481,10 @@ impl MunicipalStreamer {
     pub(super) fn update(
         &mut self,
         view: MunicipalView<'_>,
+        reference: ReferenceLines<'_>,
         country_at: impl Fn(f64, f64) -> Option<String>,
     ) {
+        self.follow_reference(reference);
         let Ok(mut store) = self.store.lock() else {
             return;
         };
@@ -510,6 +550,67 @@ impl MunicipalStreamer {
                 self.repaint.clone(),
             ));
         }
+    }
+}
+
+impl MunicipalStreamer {
+    /// Rebuilds the trace reference when the Natural Earth lines changed (a detail
+    /// level or the state lines arrived), then traces every stored ring against it.
+    fn follow_reference(&mut self, lines: ReferenceLines<'_>) {
+        let key = lines.key();
+        if lines.is_empty() || self.reference == Some(key) {
+            return;
+        }
+        self.reference = Some(key);
+        let (states, countries) = lines.to_owned();
+        let store = self.store.clone();
+        let wake = self.wake_publisher.clone();
+        let repaint = self.repaint.clone();
+        self.runtime.spawn(async move {
+            let Ok(reference) = crate::cpu::run(crate::cpu::Service::Features, move || {
+                Ok(Arc::new(Reference::build(&states, &countries)))
+            })
+            .await
+            else {
+                return;
+            };
+            let (pending, current) = {
+                let Ok(mut store) = store.lock() else {
+                    return;
+                };
+                let revision = store.reference.as_ref().map_or(0, |(_, r)| *r) + 1;
+                store.reference = Some((reference.clone(), revision));
+                (store.untraced(), revision)
+            };
+            let Ok(traced) = crate::cpu::run(crate::cpu::Service::Features, move || {
+                Ok(pending
+                    .into_iter()
+                    .map(|(unit, index, id, line)| (unit, index, id, reference.trace(&line)))
+                    .collect::<Vec<_>>())
+            })
+            .await
+            else {
+                return;
+            };
+            if let Ok(mut store) = store.lock() {
+                if store.reference.as_ref().is_some_and(|(_, r)| *r == current) {
+                    for (unit, index, id, classes) in traced {
+                        if let Some(ring) = store
+                            .units
+                            .get_mut(&unit)
+                            .and_then(|data| data.lines.get_mut(index))
+                            .filter(|ring| ring.id == id)
+                        {
+                            ring.traced = classes;
+                            ring.traced_revision = current;
+                        }
+                    }
+                }
+                store.revision += 1;
+            }
+            wake.notify_one();
+            repaint();
+        });
     }
 }
 
@@ -627,12 +728,22 @@ async fn load(
                 .filter_map(|line| GeoBounds::of(line))
                 .reduce(GeoBounds::union)
                 .map(|bounds| bounds.expanded(topology::SHARED_TOLERANCE_DEG));
-            let neighbours = match (area, store.lock()) {
-                (Some(area), Ok(store)) => store.neighbours(unit, area),
-                _ => Vec::new(),
+            let (neighbours, reference) = match store.lock() {
+                Ok(store) => (
+                    area.map(|area| store.neighbours(unit, area))
+                        .unwrap_or_default(),
+                    store.reference.clone(),
+                ),
+                Err(_) => (Vec::new(), None),
             };
             crate::cpu::run(crate::cpu::Service::Features, move || {
-                Ok(UnitData::new(detail, centre, unit.country(), &neighbours))
+                Ok(UnitData::new(
+                    detail,
+                    centre,
+                    unit.country(),
+                    &neighbours,
+                    reference.as_ref(),
+                ))
             })
             .await
         }
@@ -681,11 +792,16 @@ async fn load(
     repaint();
 }
 
+/// One ring in an assembled area: its points, its merged topology classes and the
+/// classes it traces on the Natural Earth lines.
+type MergedRing = (Line, Vec<u8>, Arc<[u8]>);
+
 /// The lines and names of the store inside `area`, with lines shared by
 /// neighbouring units kept once.
 fn assemble(store: &Store, area: GeoBox) -> Patch {
     // The same municipality can come from two units (a cell edge); merge its classes.
-    let mut rings: HashMap<u64, (Line, Vec<u8>)> = HashMap::new();
+    let current = store.reference.as_ref().map(|(_, revision)| *revision);
+    let mut rings: HashMap<u64, MergedRing> = HashMap::new();
     let mut order = Vec::new();
     let mut labels = Vec::new();
     let (mut area_sum, mut area_count) = (0.0, 0_usize);
@@ -696,7 +812,12 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
             }
             match rings.entry(unit_line.id) {
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert((unit_line.line.clone(), unit_line.classes.to_vec()));
+                    let traced = if Some(unit_line.traced_revision) == current {
+                        unit_line.traced.clone()
+                    } else {
+                        Arc::from([])
+                    };
+                    entry.insert((unit_line.line.clone(), unit_line.classes.to_vec(), traced));
                     order.push(unit_line.id);
                     if unit_line.area_km2 > 0.0 {
                         area_sum += unit_line.area_km2;
@@ -717,8 +838,8 @@ fn assemble(store: &Store, area: GeoBox) -> Patch {
     }
     let mut split = topology::SplitLines::default();
     for id in order {
-        let (line, classes) = &rings[&id];
-        topology::split(line, classes, &mut split);
+        let (line, classes, traced) = &rings[&id];
+        topology::split(line, &topology::with_traced(classes, traced), &mut split);
     }
     let topology::SplitLines {
         country,

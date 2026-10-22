@@ -13,8 +13,8 @@ mod updates;
 mod world;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
-pub use municipal::MunicipalView;
 pub use municipal::topology::{MAJOR_CELL_DEG, MAJOR_COVER_DEG, MajorCells};
+pub use municipal::{MunicipalView, ReferenceLines};
 pub use updates::{BoundarySnapshot, BoundaryUpdates};
 pub type Line = Arc<Vec<(f64, f64)>>;
 
@@ -297,6 +297,11 @@ impl MapLabel {
     /// municipal names staged at the default altitude.
     pub fn visible_at(&self, alt: f64) -> bool {
         self.visible_with_detail(alt, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM)
+    }
+    /// Whether this is a municipality's name from the municipal layer (rather than
+    /// one of the populated places shown with place names).
+    pub fn is_municipal(&self) -> bool {
+        self.kind == LabelKind::City && self.rank >= LOCAL_BIG_LABEL_RANK
     }
     /// Whether the label should be shown at the given camera altitude (km).
     /// Bigger places (lower rank) appear first, smaller ones only when zoomed in.

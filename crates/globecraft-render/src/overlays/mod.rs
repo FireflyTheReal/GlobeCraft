@@ -249,13 +249,13 @@ pub fn project_borders(
     // Where municipal state borders were loaded, the coarse state lines hand over to
     // them: the covered parts are cut out (see `handover`). Elsewhere the coarse lines
     // stay, since municipal data rarely covers the whole view.
-    let municipal_drawn = view.layers.cities && municipal_visible;
+    // The sharper state and country borders belong to those layers, not to the
+    // municipal one: municipal borders on a state line upgrade the state borders,
+    // those on a country line upgrade the country borders.
     let state_cells = Some(&*boundaries.municipal_major_cells)
-        .filter(|cells| municipal_drawn && !cells.is_empty());
-    // Country lines hand over the same way, where municipal country borders replace them
-    // (only while country borders are shown; otherwise those draw in the state style).
+        .filter(|cells| municipal_visible && view.layers.states && !cells.is_empty());
     let country_cells = Some(&*boundaries.municipal_country_cells)
-        .filter(|cells| municipal_drawn && view.layers.countries && !cells.is_empty());
+        .filter(|cells| municipal_visible && view.layers.countries && !cells.is_empty());
     let mut draw_lines =
         |lines: &[globecraft_data::boundaries::Line], kind: BorderKind, max_step_deg: f64| {
             for line in lines {
@@ -298,21 +298,22 @@ pub fn project_borders(
             draw_lines(&boundaries.states, BorderKind::State, step);
         }
     }
-    if view.layers.cities && municipal_visible {
+    if municipal_visible {
         let step = if close_zoom { 0.12 } else { 1.0 };
         // State borders traced by municipalities come first; the interior lines
         // (most of the line count) wait until the municipalities are a reasonable
         // size on screen.
-        draw_lines(&boundaries.world_cities_major, BorderKind::CityMajor, step);
-        // Shared country borders: the country style while country borders are shown,
-        // otherwise the state style like any other municipal border on a major line.
-        let country_kind = if view.layers.countries {
-            BorderKind::CityCountry
-        } else {
-            BorderKind::CityMajor
-        };
-        draw_lines(&boundaries.world_cities_country, country_kind, step);
-        if view.altitude_km <= boundaries.municipal_detail_max_km {
+        if view.layers.states {
+            draw_lines(&boundaries.world_cities_major, BorderKind::CityMajor, step);
+        }
+        if view.layers.countries {
+            draw_lines(
+                &boundaries.world_cities_country,
+                BorderKind::CityCountry,
+                step,
+            );
+        }
+        if view.layers.cities && view.altitude_km <= boundaries.municipal_detail_max_km {
             draw_lines(&boundaries.cities, BorderKind::City, step);
             draw_lines(&boundaries.world_cities, BorderKind::City, step);
         }
@@ -391,8 +392,12 @@ pub fn project_labels<'a>(
                 label.visible_at(view.altitude_km)
                     && country_label_apparent(label, basis, rect, boundaries)
             }
+            // Municipal names belong to the municipal layer; its data also loads for
+            // the sharper state and country borders.
             LabelKind::City => {
-                label.visible_with_detail(view.altitude_km, boundaries.municipal_detail_max_km)
+                (view.layers.cities || !label.is_municipal())
+                    && label
+                        .visible_with_detail(view.altitude_km, boundaries.municipal_detail_max_km)
             }
             LabelKind::State => {
                 view.layers.states
@@ -521,7 +526,7 @@ mod tests {
             cities: true,
             labels: false,
         };
-        let project = |layers: OverlayLayers| {
+        let project = |layers: OverlayLayers, data: &BoundaryData| {
             let view = OverlayProjection {
                 basis: &basis,
                 rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
@@ -531,19 +536,31 @@ mod tests {
                 layers,
             };
             let mut state_points = 0.0_f32;
-            project_borders(&view, &data, None, |kind, [a, b]| {
+            project_borders(&view, data, None, |kind, [a, b]| {
                 if matches!(kind, BorderKind::State) {
                     state_points += (b - a).length();
                 }
             });
             state_points
         };
-        // The covered western half is cut out; the eastern half stays.
-        let handed_over = project(layers);
-        let whole = project(OverlayLayers {
-            cities: false,
-            ..layers
+        // The covered western half is cut out; the eastern half stays. The upgrade
+        // belongs to the state layer: it happens with the municipal layer off too.
+        let whole = project(layers, &{
+            let mut plain = data.clone();
+            plain.municipal_major_cells = Arc::default();
+            plain
         });
+        let handed_over = project(layers, &data);
+        assert_eq!(
+            handed_over,
+            project(
+                OverlayLayers {
+                    cities: false,
+                    ..layers
+                },
+                &data
+            )
+        );
         assert!(handed_over > 0.0, "the uncovered half stays");
         let kept = handed_over / whole;
         assert!((0.4..0.6).contains(&kept), "{kept} of the line kept");
@@ -579,7 +596,7 @@ mod tests {
             cities: true,
             labels: false,
         };
-        let project = |layers: OverlayLayers| {
+        let project = |layers: OverlayLayers, data: &BoundaryData| {
             let view = OverlayProjection {
                 basis: &basis,
                 rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
@@ -589,7 +606,7 @@ mod tests {
                 layers,
             };
             let (mut coarse, mut municipal, mut as_state) = (0.0_f32, 0.0_f32, 0.0_f32);
-            project_borders(&view, &data, None, |kind, [a, b]| match kind {
+            project_borders(&view, data, None, |kind, [a, b]| match kind {
                 BorderKind::Country => coarse += (b - a).length(),
                 BorderKind::CityCountry => municipal += (b - a).length(),
                 BorderKind::CityMajor => as_state += (b - a).length(),
@@ -597,11 +614,13 @@ mod tests {
             });
             (coarse, municipal, as_state)
         };
-        let (whole, _, _) = project(OverlayLayers {
-            cities: false,
-            ..layers
+        let (whole, _, _) = project(layers, &{
+            let mut plain = data.clone();
+            plain.world_cities_country = Vec::new();
+            plain.municipal_country_cells = Arc::default();
+            plain
         });
-        let (coarse, municipal, _) = project(layers);
+        let (coarse, municipal, _) = project(layers, &data);
         // The western half is drawn once, by the municipal border; the rest stays.
         let kept = coarse / whole;
         assert!(
@@ -612,12 +631,27 @@ mod tests {
             (municipal / whole - 0.5).abs() < 0.1,
             "{municipal} vs {whole}"
         );
-        // With country borders hidden, the shared border is an ordinary major line.
-        let (coarse, municipal, as_state) = project(OverlayLayers {
-            countries: false,
-            ..layers
-        });
-        assert_eq!((coarse, municipal), (0.0, 0.0));
-        assert!(as_state > 0.0);
+        // The upgrade belongs to the country layer: it stays with the municipal
+        // layer off, and disappears with country borders hidden.
+        assert_eq!(
+            project(
+                OverlayLayers {
+                    cities: false,
+                    ..layers
+                },
+                &data
+            ),
+            (coarse, municipal, 0.0)
+        );
+        assert_eq!(
+            project(
+                OverlayLayers {
+                    countries: false,
+                    ..layers
+                },
+                &data
+            ),
+            (0.0, 0.0, 0.0)
+        );
     }
 }

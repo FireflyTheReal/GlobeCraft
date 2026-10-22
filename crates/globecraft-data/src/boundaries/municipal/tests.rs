@@ -1,5 +1,11 @@
 use super::*;
 
+const NO_REFERENCE: ReferenceLines<'static> = ReferenceLines {
+    states: &[],
+    states_big: &[],
+    countries: &[],
+};
+
 fn view(lat: f64, lon: f64, altitude_km: f64) -> MunicipalView<'static> {
     MunicipalView {
         enabled: true,
@@ -152,7 +158,7 @@ fn assembly_clips_to_the_area_and_keeps_shared_rings_once() {
                 y: 96,
                 size_mdeg: 500,
             },
-            UnitData::new(detail, centre, Some(*b"FRA"), &[]).0,
+            UnitData::new(detail, centre, Some(*b"FRA"), &[], None).0,
         );
     }
     let patch = assemble(&store, GeoBox::around(48.2, 2.3, 1.0));
@@ -174,7 +180,7 @@ fn eviction_keeps_the_units_nearest_the_view() {
         parents: vec![],
     };
     for (y, lat) in [(0, 0.0), (10, 10.0), (20, 20.0)] {
-        let data = UnitData::new(big(lat), (lat, 0.0), None, &[]).0;
+        let data = UnitData::new(big(lat), (lat, 0.0), None, &[], None).0;
         store.vertices += data.vertices;
         store.units.insert(Unit::OsmCell { x: 0, y }, data);
     }
@@ -208,7 +214,7 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
         parents: vec![Some(state)],
     };
     let mut store = Store::default();
-    let (first, _) = UnitData::new(detail(west, 31), (-19.75, -45.25), Some(*b"BRA"), &[]);
+    let (first, _) = UnitData::new(detail(west, 31), (-19.75, -45.25), Some(*b"BRA"), &[], None);
     store.units.insert(Unit::BrazilState(31), first);
     // Alone, the state's edge has no neighbour: nothing is a state border yet.
     let alone = assemble(&store, GeoBox::around(-19.75, -45.0, 2.0));
@@ -222,6 +228,7 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
         (-19.75, -44.75),
         Some(*b"BRA"),
         &neighbours,
+        None,
     );
     store.units.insert(Unit::BrazilState(35), second);
     store.apply(upgrades);
@@ -250,9 +257,9 @@ async fn leaving_the_altitude_band_publishes_an_empty_layer() {
         Arc::new(|| {}),
     );
     // Over the sea nothing loads, but the area becomes active.
-    streamer.update(view(30.0, -40.0, 300.0), |_, _| None);
+    streamer.update(view(30.0, -40.0, 300.0), NO_REFERENCE, |_, _| None);
     assert!(streamer.store.lock().unwrap().active.is_some());
-    streamer.update(view(30.0, -40.0, 5_000.0), |_, _| None);
+    streamer.update(view(30.0, -40.0, 5_000.0), NO_REFERENCE, |_, _| None);
     assert!(streamer.store.lock().unwrap().active.is_none());
     let patch = tokio::task::spawn_blocking(move || {
         rx.recv_timeout(Duration::from_secs(5))
@@ -287,12 +294,17 @@ fn borders_between_two_countries_units_become_country_borders() {
         parents: vec![Some(state)],
     };
     let mut store = Store::default();
-    let (first, _) = UnitData::new(detail(west, 67), (48.25, 7.75), Some(*b"FRA"), &[]);
+    let (first, _) = UnitData::new(detail(west, 67), (48.25, 7.75), Some(*b"FRA"), &[], None);
     store.units.insert(Unit::Country(*b"FRA"), first);
     let area = GeoBounds::of(&east).unwrap();
     let neighbours = store.neighbours(Unit::Country(*b"DEU"), area.expanded(0.02));
-    let (second, upgrades) =
-        UnitData::new(detail(east, 8), (48.25, 8.25), Some(*b"DEU"), &neighbours);
+    let (second, upgrades) = UnitData::new(
+        detail(east, 8),
+        (48.25, 8.25),
+        Some(*b"DEU"),
+        &neighbours,
+        None,
+    );
     store.units.insert(Unit::Country(*b"DEU"), second);
     store.apply(upgrades);
     let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
@@ -314,4 +326,61 @@ fn borders_between_two_countries_units_become_country_borders() {
     // State lines give way along country borders as well.
     assert!(staging.major_cells.covers(48.25, 8.0));
     assert!(!staging.country_cells.covers(48.25, 7.6));
+}
+
+#[test]
+fn sources_without_parents_trace_the_natural_earth_lines() {
+    // Two geoBoundaries municipalities with no state named, sharing the edge at
+    // lon 10.0, which a Natural Earth state line follows 1 km off. The western one's
+    // left side runs along a Natural Earth country line (its neighbour is not loaded).
+    let west = line(&[
+        (45.0, 9.5),
+        (45.0, 10.0),
+        (45.5, 10.0),
+        (45.5, 9.5),
+        (45.0, 9.5),
+    ]);
+    let east = line(&[
+        (45.0, 10.0),
+        (45.0, 10.5),
+        (45.5, 10.5),
+        (45.5, 10.0),
+        (45.0, 10.0),
+    ]);
+    let state: Line = Arc::new(vec![(44.8, 10.01), (45.7, 10.01)]);
+    let country: Line = Arc::new(vec![(44.8, 9.5), (45.7, 9.5)]);
+    let reference = (
+        Arc::new(reference::Reference::build(&[state], &[country])),
+        1,
+    );
+    let detail = Detail {
+        lines: vec![west, east],
+        labels: vec![],
+        features: 2,
+        parents: vec![],
+    };
+    let mut store = Store {
+        reference: Some(reference.clone()),
+        ..Store::default()
+    };
+    let (data, _) = UnitData::new(detail, (45.25, 10.0), Some(*b"ITA"), &[], Some(&reference));
+    store.units.insert(Unit::Country(*b"ITA"), data);
+    let patch = assemble(&store, GeoBox::around(45.25, 10.0, 2.0));
+    // The shared edge is drawn once, as a state border; the west edge as a country
+    // border; the rest stays interior.
+    assert_eq!(patch.lines_big.len(), 1, "{:?}", patch.lines_big);
+    assert!(patch.lines_big[0].iter().all(|p| (p.1 - 10.0).abs() < 1e-9));
+    let staging = patch.municipal.unwrap();
+    assert_eq!(staging.country_lines.len(), 1);
+    assert!(
+        staging.country_lines[0]
+            .iter()
+            .all(|p| (p.1 - 9.5).abs() < 1e-9)
+    );
+    assert!(!patch.lines.is_empty());
+    // Without a traced reference revision, nothing is upgraded.
+    store.reference = Some((reference.0, 2));
+    let untraced = assemble(&store, GeoBox::around(45.25, 10.0, 2.0));
+    assert!(untraced.lines_big.is_empty());
+    assert_eq!(store.untraced().len(), 2);
 }
