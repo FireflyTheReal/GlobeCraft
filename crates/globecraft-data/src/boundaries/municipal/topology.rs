@@ -291,40 +291,6 @@ impl MajorCells {
     }
 }
 
-/// A municipal segment traces an indexed line when its direction is within this angle
-/// of the nearest indexed segment, so outlines that only touch a border (a boundary
-/// meeting it at right angles) are not mistaken for it.
-const TRACE_MAX_ANGLE_DEG: f64 = 35.0;
-
-impl MajorCells {
-    /// Whether the segment `a`–`b` runs along an indexed line: its ends and middle are
-    /// covered (see [`MajorCells::covers`]) and it runs roughly parallel to the nearest
-    /// indexed segment.
-    pub(super) fn traces(&self, a: (f64, f64), b: (f64, f64)) -> bool {
-        if a == b {
-            return false;
-        }
-        let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-        if ![a, mid, b].iter().all(|p| self.covers(p.0, p.1)) {
-            return false;
-        }
-        let scale = lon_scale(mid.0);
-        let Some((c, d)) = self
-            .candidates(mid)
-            .map(|(_, c, d)| (segment_distance(mid, c, d, scale).distance_sq, c, d))
-            .min_by(|x, y| x.0.total_cmp(&y.0))
-            .map(|(_, c, d)| (c, d))
-        else {
-            return false;
-        };
-        let plane = |p: (f64, f64), q: (f64, f64)| (q.0 - p.0, (q.1 - p.1) * scale);
-        let (u, v) = (plane(a, b), plane(c, d));
-        let lengths = (u.0.hypot(u.1)) * (v.0.hypot(v.1));
-        lengths > 0.0
-            && ((u.0 * v.0 + u.1 * v.1) / lengths).abs() >= TRACE_MAX_ANGLE_DEG.to_radians().cos()
-    }
-}
-
 fn lon_scale(lat: f64) -> f64 {
     lat.to_radians().cos().max(MIN_LON_SCALE)
 }
@@ -364,30 +330,18 @@ fn segment_distance(
     }
 }
 
-/// The classes to draw: segments the topology left as interior or unmatched take the
-/// class they trace (`MAJOR` along a state line, `COUNTRY` along a country line, `OUTER`
-/// for neither). Shared segments drawn by the neighbour stay dropped.
-pub(super) fn with_traced(classes: &[u8], traced: &[u8]) -> Vec<u8> {
-    classes
-        .iter()
-        .zip(traced.iter().chain(std::iter::repeat(&OUTER)))
-        .map(|(&class, &traced)| match (class, traced) {
-            (OUTER | INTERIOR, MAJOR | COUNTRY) => traced,
-            _ => class,
-        })
-        .collect()
-}
-
 /// Drawn municipal segments, as runs by kind of border.
 #[derive(Default)]
 pub(super) struct SplitLines {
-    pub(super) country: Vec<Line>,
     pub(super) major: Vec<Line>,
     pub(super) interior: Vec<Line>,
 }
 
-/// Splits rings into runs of drawn segments: country-border runs, state-border runs
-/// and everything else.
+/// Splits rings into runs of drawn segments: state-border runs and everything else.
+/// Borders between two countries' municipalities stay ordinary municipal lines: two
+/// countries' sources rarely trace their border alike, so a municipal version of the
+/// country line would break up where they part, and the Natural Earth country line
+/// stays the one country border.
 pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
     let mut run: Vec<(f64, f64)> = Vec::new();
     let mut run_class = None;
@@ -395,7 +349,6 @@ pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
         if run.len() >= 2 {
             let line = std::sync::Arc::new(std::mem::take(run));
             match class {
-                Some(COUNTRY) => out.country.push(line),
                 Some(MAJOR) => out.major.push(line),
                 _ => out.interior.push(line),
             }
@@ -405,7 +358,7 @@ pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
     for (segment, pair) in line.windows(2).enumerate() {
         let class = match classes.get(segment).copied().unwrap_or(OUTER) {
             DROP => None,
-            class @ (MAJOR | COUNTRY) => Some(class),
+            MAJOR => Some(MAJOR),
             _ => Some(INTERIOR),
         };
         if class != run_class {
@@ -528,12 +481,10 @@ mod tests {
         assert_eq!(out.major[0].len(), 3);
         assert_eq!(out.interior.len(), 1);
         assert_eq!(out.interior[0].len(), 2);
+        // Country borders are drawn like interior lines.
         let mut out = SplitLines::default();
         split(&ring, &[COUNTRY, MAJOR, INTERIOR, COUNTRY], &mut out);
-        assert_eq!(
-            (out.country.len(), out.major.len(), out.interior.len()),
-            (2, 1, 1)
-        );
+        assert_eq!((out.major.len(), out.interior.len()), (1, 2));
         let mut seen = vec![OUTER, INTERIOR, MAJOR, OUTER, COUNTRY];
         merge(&mut seen, &[INTERIOR, DROP, OUTER, OUTER, DROP]);
         assert_eq!(seen, [INTERIOR, DROP, MAJOR, OUTER, DROP]);
@@ -585,16 +536,6 @@ mod tests {
     }
 
     #[test]
-    fn traced_classes_upgrade_interior_and_unmatched_segments_only() {
-        let classes = [OUTER, INTERIOR, DROP, MAJOR, INTERIOR, OUTER];
-        let traced = [COUNTRY, MAJOR, MAJOR, COUNTRY, OUTER];
-        assert_eq!(
-            with_traced(&classes, &traced),
-            [COUNTRY, MAJOR, DROP, MAJOR, INTERIOR, OUTER]
-        );
-    }
-
-    #[test]
     fn outer_segments_take_the_class_found_later() {
         let mut classes = vec![OUTER, INTERIOR, OUTER, DROP];
         upgrade_outer(&mut classes, &[MAJOR, OUTER, DROP, OUTER]);
@@ -616,20 +557,6 @@ mod tests {
         assert!(!cells.covers(48.0, 9.002));
         assert!(!cells.covers(48.01, 7.998));
         assert!(!MajorCells::default().covers(48.0, 8.5));
-    }
-
-    #[test]
-    fn segments_trace_a_line_only_when_running_along_it() {
-        let border = MajorCells::of(&[Arc::new(vec![(48.0, 8.0), (48.0, 9.0)])]);
-        // Along the border, 1 km off: traces it.
-        assert!(border.traces((48.01, 8.2), (48.01, 8.4)));
-        // Meeting it at a right angle: touches, but is not the border.
-        assert!(!border.traces((48.0, 8.5), (48.02, 8.5)));
-        // Parallel but 10 km away: another line.
-        assert!(!border.traces((48.09, 8.2), (48.09, 8.4)));
-        // Running past the free end.
-        assert!(!border.traces((48.0, 8.9), (48.0, 9.2)));
-        assert!(!border.traces((48.0, 8.5), (48.0, 8.5)));
     }
 
     #[test]

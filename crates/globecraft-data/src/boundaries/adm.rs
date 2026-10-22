@@ -68,42 +68,128 @@ pub(super) fn metadata_url(iso3: &str, level: &str) -> String {
     format!("{API}/{iso3}/{level}/")
 }
 
-pub(super) async fn load(iso3: &str) -> Result<Detail, crate::Error> {
-    let level = level(iso3)
-        .ok_or_else(|| crate::Error::from(format!("geoBoundaries {iso3}: no municipal level")))?;
+/// Natural Earth's states where they are not geoBoundaries ADM1: the level whose unit
+/// count matches Natural Earth's admin-1 count (Italy's 110 provinces are ADM3, for
+/// example). Municipal borders replace exactly these lines.
+const ADM2_STATES: &str = "BEL BFA BIH GIN GRC LKA MWI PHL";
+const ADM3_STATES: &str = "ITA UGA";
+
+/// The geoBoundaries level of a country's states, or `None` when its municipalities
+/// are ADM1 (each municipality is its own state; every border between two is drawn).
+pub(super) fn state_level(iso3: &str) -> Option<&'static str> {
+    let municipal = level(iso3)?;
     let iso3 = geoboundaries_iso(iso3);
+    let listed = |countries: &str| countries.split_whitespace().any(|code| code == iso3);
+    let state = if listed(ADM3_STATES) {
+        "ADM3"
+    } else if listed(ADM2_STATES) {
+        "ADM2"
+    } else {
+        "ADM1"
+    };
+    (state != municipal).then_some(state)
+}
+
+/// A municipal file as read: the outlines and names, and for each municipality the
+/// lines it added and a point inside it.
+#[derive(Default)]
+pub(super) struct MunicipalFile {
+    detail: Detail,
+    municipalities: Vec<Municipality>,
+}
+
+/// One municipality of a file: the lines it added, and a point inside it.
+struct Municipality {
+    lines: std::ops::Range<usize>,
+    inside: Option<(f64, f64)>,
+}
+
+pub(super) fn read_municipality(feature: &serde_json::Value, out: &mut MunicipalFile) {
+    out.detail.features += 1;
+    let Some(geometry) = feature.get("geometry").filter(|value| !value.is_null()) else {
+        return;
+    };
+    let start = out.detail.lines.len();
+    if let Some(coords) = geometry.get("coordinates") {
+        collect_geojson_lines(coords, &mut out.detail.lines);
+    }
+    let lines = start..out.detail.lines.len();
+    let inside = super::parents::interior_point(&out.detail.lines[lines.clone()]);
+    out.municipalities.push(Municipality { lines, inside });
+    let Some(name) = feature_name(feature, NAME_KEYS) else {
+        return;
+    };
+    let Some((lat, lon)) = inside.or_else(|| label_center(geometry)) else {
+        return;
+    };
+    out.detail.labels.push(MapLabel {
+        lat,
+        lon,
+        en: name.clone(),
+        pt: name,
+        kind: LabelKind::City,
+        rank: municipal_label_rank(feature.get("properties")),
+        big: false,
+    });
+}
+
+/// One state's rings.
+pub(super) fn read_state(feature: &serde_json::Value, out: &mut Vec<Vec<super::Line>>) {
+    let mut rings = Vec::new();
+    if let Some(coords) = feature.pointer("/geometry/coordinates") {
+        collect_geojson_lines(coords, &mut rings);
+    }
+    out.push(rings);
+}
+
+/// The municipal detail with each line's state: the state containing the municipality,
+/// or the municipality itself when it is the country's top level (`states` is `None`).
+pub(super) fn with_parents(file: MunicipalFile, states: Option<&super::parents::States>) -> Detail {
+    let MunicipalFile {
+        mut detail,
+        municipalities,
+    } = file;
+    detail.parents = vec![None; detail.lines.len()];
+    for (index, Municipality { lines, inside }) in municipalities.into_iter().enumerate() {
+        let parent = match states {
+            Some(states) => inside.and_then(|point| states.containing(point)),
+            None => Some(index),
+        };
+        for line in lines {
+            detail.parents[line] = parent.map(|parent| parent as u64);
+        }
+    }
+    detail
+}
+
+async fn file_url(iso3: &str, level: &str) -> Result<String, crate::Error> {
     let metadata = fetch_json(&metadata_url(iso3, level)).await?;
-    let url = metadata
+    metadata
         .get("simplifiedGeometryGeoJSON")
         .or_else(|| metadata.get("gjDownloadURL"))
         .and_then(|value| value.as_str())
         .filter(|url| !url.is_empty())
-        .ok_or_else(|| {
-            crate::Error::from(format!("geoBoundaries {iso3} {level}: no GeoJSON URL"))
-        })?;
-    crate::features::fetch(url, |feature: &serde_json::Value, out: &mut Detail| {
-        out.features += 1;
-        let Some(geometry) = feature.get("geometry").filter(|value| !value.is_null()) else {
-            return;
-        };
-        if let Some(coords) = geometry.get("coordinates") {
-            collect_geojson_lines(coords, &mut out.lines);
+        .map(str::to_owned)
+        .ok_or_else(|| crate::Error::from(format!("geoBoundaries {iso3} {level}: no GeoJSON URL")))
+}
+
+pub(super) async fn load(iso3: &str) -> Result<Detail, crate::Error> {
+    let level = level(iso3)
+        .ok_or_else(|| crate::Error::from(format!("geoBoundaries {iso3}: no municipal level")))?;
+    let state_level = state_level(iso3);
+    let iso3 = geoboundaries_iso(iso3);
+    let file = crate::features::fetch(&file_url(iso3, level).await?, read_municipality).await?;
+    let states = match state_level {
+        Some(state_level) => {
+            let rings: Vec<Vec<super::Line>> =
+                crate::features::fetch(&file_url(iso3, state_level).await?, read_state).await?;
+            Some(rings)
         }
-        let Some(name) = feature_name(feature, NAME_KEYS) else {
-            return;
-        };
-        let Some((lat, lon)) = label_center(geometry) else {
-            return;
-        };
-        out.labels.push(MapLabel {
-            lat,
-            lon,
-            en: name.clone(),
-            pt: name,
-            kind: LabelKind::City,
-            rank: municipal_label_rank(feature.get("properties")),
-            big: false,
-        });
+        None => None,
+    };
+    crate::cpu::run(crate::cpu::Service::Features, move || {
+        let states = states.map(super::parents::States::new);
+        Ok(with_parents(file, states.as_ref()))
     })
     .await
 }
@@ -143,6 +229,44 @@ mod tests {
         assert!(codes.iter().all(|c| c.len() == 3), "{codes:?}");
         let unique: std::collections::HashSet<_> = codes.iter().collect();
         assert_eq!(unique.len(), codes.len(), "a country is listed twice");
+    }
+
+    #[test]
+    fn states_follow_natural_earth_and_single_level_countries_are_their_own_states() {
+        assert_eq!(state_level("POL"), Some("ADM1"));
+        assert_eq!(
+            state_level("ITA"),
+            Some("ADM3"),
+            "Natural Earth draws 110 provinces"
+        );
+        assert_eq!(state_level("BEL"), Some("ADM2"));
+        assert_eq!(
+            state_level("MDA"),
+            None,
+            "raions are municipalities and states at once"
+        );
+        assert_eq!(state_level("DEU"), None, "national source");
+    }
+
+    #[test]
+    fn municipalities_take_the_state_that_contains_them() {
+        let square = |lat: f64, lon: f64, size: f64| {
+            serde_json::json!({"type": "Feature", "properties": {"shapeName": "M"},
+                "geometry": {"type": "Polygon", "coordinates": [[
+                    [lon, lat], [lon + size, lat], [lon + size, lat + size],
+                    [lon, lat + size], [lon, lat]]]}})
+        };
+        let mut file = MunicipalFile::default();
+        for lon in [0.0, 1.0, 2.0, 3.0] {
+            read_municipality(&square(0.0, lon, 1.0), &mut file);
+        }
+        let mut states = Vec::new();
+        read_state(&square(0.0, 0.0, 2.0), &mut states);
+        read_state(&square(0.0, 2.0, 2.0), &mut states);
+        let states = super::super::parents::States::new(states);
+        let detail = with_parents(file, Some(&states));
+        assert_eq!(detail.parents, [Some(0), Some(0), Some(1), Some(1)]);
+        assert_eq!(detail.labels.len(), 4);
     }
 
     #[test]

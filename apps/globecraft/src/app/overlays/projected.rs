@@ -161,7 +161,7 @@ fn faded_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         // Municipal state borders replace the coarse state lines in the same geometry
         // (the covered stretch is cut out there), so they never fade in: a fade would
         // leave frames with neither line.
-        BorderKind::CityMajor | BorderKind::CityCountry | BorderKind::Country => ARRIVAL_FADE_STEPS,
+        BorderKind::CityMajor | BorderKind::Country => ARRIVAL_FADE_STEPS,
     };
     let arrival = smoothstep(f64::from(arrived) / f64::from(ARRIVAL_FADE_STEPS));
     layer_opacity(kind, policy) * arrival
@@ -193,12 +193,8 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         // Municipal state borders switch on at full strength in the same frame as
         // the coarse stretches they cover are cut out: no cross-fade band, so no
         // frame shows both lines at once.
-        BorderKind::CityMajor | BorderKind::CityCountry
-            if altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM =>
-        {
-            1.0
-        }
-        BorderKind::CityMajor | BorderKind::CityCountry => 0.0,
+        BorderKind::CityMajor if altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM => 1.0,
+        BorderKind::CityMajor => 0.0,
         BorderKind::City if municipal_detail_max_km <= 0.0 => 0.0,
         BorderKind::City => smoothstep(
             (municipal_detail_max_km - altitude_km)
@@ -209,13 +205,12 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
 }
 
 /// Every border kind, in `BorderKind` declaration order (so `kind as usize` indexes it).
-pub(super) const BORDER_KINDS: [BorderKind; 6] = [
+pub(super) const BORDER_KINDS: [BorderKind; 5] = [
     BorderKind::Country,
     BorderKind::StateBig,
     BorderKind::State,
     BorderKind::CityMajor,
     BorderKind::City,
-    BorderKind::CityCountry,
 ];
 
 /// The user's colour for a border kind. Municipal state borders take the state style
@@ -479,14 +474,6 @@ mod fade_tests {
         // municipal layer's arrival fade runs: the coarse lines they replace are
         // already cut out of the same geometry.
         assert_eq!(at(MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, just_arrived), 1.0);
-        let country = faded_opacity(
-            BorderKind::CityCountry,
-            FadePolicy {
-                arrival: just_arrived,
-                ..policy(300.0, 1609.0, 75.0)
-            },
-        );
-        assert_eq!(country, 1.0, "shared country borders switch on at once too");
         assert_eq!(at(300.0, ArrivalFade::SETTLED), 1.0);
         assert_eq!(
             at(

@@ -178,12 +178,7 @@ impl BoundaryLoader {
     }
     /// Municipal outlines around the view, streamed by area (see `municipal`).
     pub fn request_municipal(&mut self, view: MunicipalView<'_>, boundaries: &super::BoundaryData) {
-        let reference = super::ReferenceLines {
-            states: &boundaries.states,
-            states_big: &boundaries.states_big,
-            countries: &boundaries.countries,
-        };
-        self.municipal.update(view, reference, |lat, lon| {
+        self.municipal.update(view, |lat, lon| {
             boundaries.country_at(lat, lon).map(str::to_owned)
         });
     }

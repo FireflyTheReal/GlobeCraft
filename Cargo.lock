@@ -2079,6 +2079,7 @@ dependencies = [
  "pollster 1.0.1",
  "rayon",
  "rstar",
+ "serde_json",
  "wgpu",
  "wide",
 ]

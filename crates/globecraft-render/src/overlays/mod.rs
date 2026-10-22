@@ -97,10 +97,6 @@ pub enum BorderKind {
     CityMajor,
     /// Interior municipal lines, drawn only below the data's detail altitude.
     City,
-    /// Municipal segments on country borders, where both neighbours' municipalities
-    /// are loaded: drawn in the country style in place of the Natural Earth country
-    /// line they cover.
-    CityCountry,
 }
 
 impl BorderKind {
@@ -108,7 +104,7 @@ impl BorderKind {
     /// the state lines up close, so they take the state style.
     pub fn line_type(self) -> LineType {
         match self {
-            Self::Country | Self::CityCountry => LineType::Country,
+            Self::Country => LineType::Country,
             Self::StateBig | Self::State | Self::CityMajor => LineType::State,
             Self::City => LineType::Municipal,
         }
@@ -249,13 +245,9 @@ pub fn project_borders(
     // Where municipal state borders were loaded, the coarse state lines hand over to
     // them: the covered parts are cut out (see `handover`). Elsewhere the coarse lines
     // stay, since municipal data rarely covers the whole view.
-    // The sharper state and country borders belong to those layers, not to the
-    // municipal one: municipal borders on a state line upgrade the state borders,
-    // those on a country line upgrade the country borders.
+    // The sharper state borders belong to the state layer, not to the municipal one.
     let state_cells = Some(&*boundaries.municipal_major_cells)
         .filter(|cells| municipal_visible && view.layers.states && !cells.is_empty());
-    let country_cells = Some(&*boundaries.municipal_country_cells)
-        .filter(|cells| municipal_visible && view.layers.countries && !cells.is_empty());
     let mut draw_lines =
         |lines: &[globecraft_data::boundaries::Line], kind: BorderKind, max_step_deg: f64| {
             for line in lines {
@@ -264,7 +256,6 @@ pub fn project_borders(
                 }
                 let cells = match kind {
                     BorderKind::State | BorderKind::StateBig => state_cells,
-                    BorderKind::Country => country_cells,
                     _ => None,
                 };
                 let Some(cells) = cells else {
@@ -305,13 +296,6 @@ pub fn project_borders(
         // size on screen.
         if view.layers.states {
             draw_lines(&boundaries.world_cities_major, BorderKind::CityMajor, step);
-        }
-        if view.layers.countries {
-            draw_lines(
-                &boundaries.world_cities_country,
-                BorderKind::CityCountry,
-                step,
-            );
         }
         if view.layers.cities && view.altitude_km <= boundaries.municipal_detail_max_km {
             draw_lines(&boundaries.cities, BorderKind::City, step);
@@ -564,94 +548,5 @@ mod tests {
         assert!(handed_over > 0.0, "the uncovered half stays");
         let kept = handed_over / whole;
         assert!((0.4..0.6).contains(&kept), "{kept} of the line kept");
-    }
-
-    #[test]
-    fn country_lines_hand_over_to_shared_municipal_country_borders() {
-        use globecraft_core::camera::Cam;
-        use std::sync::Arc;
-        // A Natural Earth country line along 48°N; both neighbours' municipalities are
-        // loaded along its western half, which they draw as a country border.
-        let mut data = BoundaryData::default();
-        data.countries = vec![Arc::new(
-            (0..=40)
-                .map(|i| (48.0, 8.0 + f64::from(i) * 0.05))
-                .collect(),
-        )];
-        let shared: globecraft_data::boundaries::Line = Arc::new(vec![(48.0, 8.0), (48.0, 9.0)]);
-        data.world_cities_country = vec![shared.clone()];
-        data.municipal_country_cells = Arc::new(globecraft_data::boundaries::MajorCells::of(
-            std::slice::from_ref(&shared),
-        ));
-        let basis = Cam {
-            lat: 48.0,
-            lon: 9.0,
-            heading: 0.0,
-            alt: 300.0,
-        }
-        .basis(1.0);
-        let layers = OverlayLayers {
-            countries: true,
-            states: true,
-            cities: true,
-            labels: false,
-        };
-        let project = |layers: OverlayLayers, data: &BoundaryData| {
-            let view = OverlayProjection {
-                basis: &basis,
-                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
-                altitude_km: 300.0,
-                state_visible_max_km: 1609.0,
-                dashes: BorderDashes::default(),
-                layers,
-            };
-            let (mut coarse, mut municipal, mut as_state) = (0.0_f32, 0.0_f32, 0.0_f32);
-            project_borders(&view, data, None, |kind, [a, b]| match kind {
-                BorderKind::Country => coarse += (b - a).length(),
-                BorderKind::CityCountry => municipal += (b - a).length(),
-                BorderKind::CityMajor => as_state += (b - a).length(),
-                _ => {}
-            });
-            (coarse, municipal, as_state)
-        };
-        let (whole, _, _) = project(layers, &{
-            let mut plain = data.clone();
-            plain.world_cities_country = Vec::new();
-            plain.municipal_country_cells = Arc::default();
-            plain
-        });
-        let (coarse, municipal, _) = project(layers, &data);
-        // The western half is drawn once, by the municipal border; the rest stays.
-        let kept = coarse / whole;
-        assert!(
-            (0.4..0.6).contains(&kept),
-            "{kept} of the country line kept"
-        );
-        assert!(
-            (municipal / whole - 0.5).abs() < 0.1,
-            "{municipal} vs {whole}"
-        );
-        // The upgrade belongs to the country layer: it stays with the municipal
-        // layer off, and disappears with country borders hidden.
-        assert_eq!(
-            project(
-                OverlayLayers {
-                    cities: false,
-                    ..layers
-                },
-                &data
-            ),
-            (coarse, municipal, 0.0)
-        );
-        assert_eq!(
-            project(
-                OverlayLayers {
-                    countries: false,
-                    ..layers
-                },
-                &data
-            ),
-            (0.0, 0.0, 0.0)
-        );
     }
 }

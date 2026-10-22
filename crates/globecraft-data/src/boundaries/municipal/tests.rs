@@ -1,11 +1,5 @@
 use super::*;
 
-const NO_REFERENCE: ReferenceLines<'static> = ReferenceLines {
-    states: &[],
-    states_big: &[],
-    countries: &[],
-};
-
 fn view(lat: f64, lon: f64, altitude_km: f64) -> MunicipalView<'static> {
     MunicipalView {
         enabled: true,
@@ -158,7 +152,7 @@ fn assembly_clips_to_the_area_and_keeps_shared_rings_once() {
                 y: 96,
                 size_mdeg: 500,
             },
-            UnitData::new(detail, centre, Some(*b"FRA"), &[], None).0,
+            UnitData::new(detail, centre, Some(*b"FRA"), &[]).0,
         );
     }
     let patch = assemble(&store, GeoBox::around(48.2, 2.3, 1.0));
@@ -180,7 +174,7 @@ fn eviction_keeps_the_units_nearest_the_view() {
         parents: vec![],
     };
     for (y, lat) in [(0, 0.0), (10, 10.0), (20, 20.0)] {
-        let data = UnitData::new(big(lat), (lat, 0.0), None, &[], None).0;
+        let data = UnitData::new(big(lat), (lat, 0.0), None, &[]).0;
         store.vertices += data.vertices;
         store.units.insert(Unit::OsmCell { x: 0, y }, data);
     }
@@ -214,7 +208,7 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
         parents: vec![Some(state)],
     };
     let mut store = Store::default();
-    let (first, _) = UnitData::new(detail(west, 31), (-19.75, -45.25), Some(*b"BRA"), &[], None);
+    let (first, _) = UnitData::new(detail(west, 31), (-19.75, -45.25), Some(*b"BRA"), &[]);
     store.units.insert(Unit::BrazilState(31), first);
     // Alone, the state's edge has no neighbour: nothing is a state border yet.
     let alone = assemble(&store, GeoBox::around(-19.75, -45.0, 2.0));
@@ -228,7 +222,6 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
         (-19.75, -44.75),
         Some(*b"BRA"),
         &neighbours,
-        None,
     );
     store.units.insert(Unit::BrazilState(35), second);
     store.apply(upgrades);
@@ -257,9 +250,9 @@ async fn leaving_the_altitude_band_publishes_an_empty_layer() {
         Arc::new(|| {}),
     );
     // Over the sea nothing loads, but the area becomes active.
-    streamer.update(view(30.0, -40.0, 300.0), NO_REFERENCE, |_, _| None);
+    streamer.update(view(30.0, -40.0, 300.0), |_, _| None);
     assert!(streamer.store.lock().unwrap().active.is_some());
-    streamer.update(view(30.0, -40.0, 5_000.0), NO_REFERENCE, |_, _| None);
+    streamer.update(view(30.0, -40.0, 5_000.0), |_, _| None);
     assert!(streamer.store.lock().unwrap().active.is_none());
     let patch = tokio::task::spawn_blocking(move || {
         rx.recv_timeout(Duration::from_secs(5))
@@ -271,7 +264,7 @@ async fn leaving_the_altitude_band_publishes_an_empty_layer() {
 }
 
 #[test]
-fn borders_between_two_countries_units_become_country_borders() {
+fn borders_between_two_countries_stay_municipal_lines() {
     // A French and a German cell, one commune each, sharing the edge at 8°E.
     let west = line(&[
         (48.0, 7.5),
@@ -294,93 +287,142 @@ fn borders_between_two_countries_units_become_country_borders() {
         parents: vec![Some(state)],
     };
     let mut store = Store::default();
-    let (first, _) = UnitData::new(detail(west, 67), (48.25, 7.75), Some(*b"FRA"), &[], None);
+    let (first, _) = UnitData::new(detail(west, 67), (48.25, 7.75), Some(*b"FRA"), &[]);
     store.units.insert(Unit::Country(*b"FRA"), first);
     let area = GeoBounds::of(&east).unwrap();
     let neighbours = store.neighbours(Unit::Country(*b"DEU"), area.expanded(0.02));
-    let (second, upgrades) = UnitData::new(
-        detail(east, 8),
-        (48.25, 8.25),
-        Some(*b"DEU"),
-        &neighbours,
-        None,
-    );
+    let (second, upgrades) =
+        UnitData::new(detail(east, 8), (48.25, 8.25), Some(*b"DEU"), &neighbours);
     store.units.insert(Unit::Country(*b"DEU"), second);
     store.apply(upgrades);
     let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
     let staging = patch.municipal.unwrap();
-    // The shared edge is a country border, drawn once, and not a state border.
-    assert_eq!(
-        staging.country_lines.len(),
-        1,
-        "{:?}",
-        staging.country_lines
-    );
-    assert!(
-        staging.country_lines[0]
-            .iter()
-            .all(|p| (p.1 - 8.0).abs() < 1e-9)
-    );
+    // The shared edge is drawn once, as an ordinary municipal line: not a state border,
+    // and the Natural Earth country line stays the country border.
     assert!(patch.lines_big.is_empty());
-    assert!(staging.country_cells.covers(48.25, 8.0));
-    // State lines give way along country borders as well.
-    assert!(staging.major_cells.covers(48.25, 8.0));
-    assert!(!staging.country_cells.covers(48.25, 7.6));
+    let on_edge = |p: &(f64, f64)| (p.1 - 8.0).abs() < 1e-9;
+    let shared = patch
+        .lines
+        .iter()
+        .flat_map(|line| line.windows(2))
+        .filter(|pair| on_edge(&pair[0]) && on_edge(&pair[1]))
+        .count();
+    assert_eq!(shared, 1, "{:?}", patch.lines);
+    assert!(!staging.major_cells.covers(48.25, 8.0));
 }
 
+/// Real data, outside the repository: set `GLOBECRAFT_MUNICIPAL_CHECK` to a folder
+/// holding geoBoundaries simplified files named `{ISO}-{LEVEL}.geojson` and the Natural
+/// Earth `ne_10m_admin_1_states_provinces_lines.geojson` and
+/// `ne_10m_admin_0_boundary_lines_land.geojson`, and `GLOBECRAFT_MUNICIPAL_COUNTRIES`
+/// to a list such as `CZE,POL,AUT`. Writes `check.json` (what each layer draws in the
+/// area `GLOBECRAFT_MUNICIPAL_AREA` = `lat,lon,radius_deg`) for plotting.
 #[test]
-fn sources_without_parents_trace_the_natural_earth_lines() {
-    // Two geoBoundaries municipalities with no state named, sharing the edge at
-    // lon 10.0, which a Natural Earth state line follows 1 km off. The western one's
-    // left side runs along a Natural Earth country line (its neighbour is not loaded).
-    let west = line(&[
-        (45.0, 9.5),
-        (45.0, 10.0),
-        (45.5, 10.0),
-        (45.5, 9.5),
-        (45.0, 9.5),
-    ]);
-    let east = line(&[
-        (45.0, 10.0),
-        (45.0, 10.5),
-        (45.5, 10.5),
-        (45.5, 10.0),
-        (45.0, 10.0),
-    ]);
-    let state: Line = Arc::new(vec![(44.8, 10.01), (45.7, 10.01)]);
-    let country: Line = Arc::new(vec![(44.8, 9.5), (45.7, 9.5)]);
-    let reference = (
-        Arc::new(reference::Reference::build(&[state], &[country])),
-        1,
-    );
-    let detail = Detail {
-        lines: vec![west, east],
-        labels: vec![],
-        features: 2,
-        parents: vec![],
+#[ignore = "manual check on real data; run with --release --ignored --nocapture"]
+fn real_countries_classify_their_borders() {
+    let Ok(dir) = std::env::var("GLOBECRAFT_MUNICIPAL_CHECK") else {
+        return;
     };
-    let mut store = Store {
-        reference: Some(reference.clone()),
-        ..Store::default()
+    let countries = std::env::var("GLOBECRAFT_MUNICIPAL_COUNTRIES").unwrap_or_default();
+    let area: Vec<f64> = std::env::var("GLOBECRAFT_MUNICIPAL_AREA")
+        .unwrap_or_else(|_| "50.0,15.0,3.0".into())
+        .split(',')
+        .map(|v| v.parse().unwrap())
+        .collect();
+    let features = |name: &str| -> Vec<serde_json::Value> {
+        let text = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        value["features"].as_array().unwrap().clone()
     };
-    let (data, _) = UnitData::new(detail, (45.25, 10.0), Some(*b"ITA"), &[], Some(&reference));
-    store.units.insert(Unit::Country(*b"ITA"), data);
-    let patch = assemble(&store, GeoBox::around(45.25, 10.0, 2.0));
-    // The shared edge is drawn once, as a state border; the west edge as a country
-    // border; the rest stays interior.
-    assert_eq!(patch.lines_big.len(), 1, "{:?}", patch.lines_big);
-    assert!(patch.lines_big[0].iter().all(|p| (p.1 - 10.0).abs() < 1e-9));
-    let staging = patch.municipal.unwrap();
-    assert_eq!(staging.country_lines.len(), 1);
-    assert!(
-        staging.country_lines[0]
+    let mut store = Store::default();
+    for iso in countries.split(',').filter(|c| !c.is_empty()) {
+        let started = std::time::Instant::now();
+        let level = adm::level(iso).unwrap();
+        let mut file = adm::MunicipalFile::default();
+        for feature in features(&format!("{iso}-{level}.geojson")) {
+            adm::read_municipality(&feature, &mut file);
+        }
+        let states = adm::state_level(iso).map(|state_level| {
+            let mut rings = Vec::new();
+            for feature in features(&format!("{iso}-{state_level}.geojson")) {
+                adm::read_state(&feature, &mut rings);
+            }
+            super::super::parents::States::new(rings)
+        });
+        let detail = adm::with_parents(file, states.as_ref());
+        let unassigned = detail.parents.iter().filter(|p| p.is_none()).count();
+        let lines = detail.lines.len();
+        let bounds = detail
+            .lines
             .iter()
-            .all(|p| (p.1 - 9.5).abs() < 1e-9)
+            .filter_map(|line| GeoBounds::of(line))
+            .reduce(GeoBounds::union)
+            .unwrap();
+        let unit = Unit::Country(iso.as_bytes().try_into().unwrap());
+        let neighbours = store.neighbours(unit, bounds.expanded(topology::SHARED_TOLERANCE_DEG));
+        let (data, upgrades) = UnitData::new(
+            detail,
+            (0.0, 0.0),
+            Some(iso.as_bytes().try_into().unwrap()),
+            &neighbours,
+        );
+        store.units.insert(unit, data);
+        store.apply(upgrades);
+        println!(
+            "{iso}: {lines} rings, {unassigned} without a state, {} ms",
+            started.elapsed().as_millis()
+        );
+    }
+    let patch = assemble(&store, GeoBox::around(area[0], area[1], area[2]));
+    let staging = patch.municipal.unwrap();
+    let ne = |name: &str| -> Vec<Line> {
+        let mut lines = Vec::new();
+        for feature in features(name) {
+            if let Some(coords) = feature.pointer("/geometry/coordinates") {
+                super::super::geojson::collect_geojson_lines(coords, &mut lines);
+            }
+        }
+        let inside = GeoBox::around(area[0], area[1], area[2] * 1.2);
+        lines
+            .into_iter()
+            .filter(|line| line.iter().any(|p| inside.contains(p.0, p.1)))
+            .collect()
+    };
+    // The Natural Earth lines as the renderer cuts them: vertices covered by a municipal
+    // state (or country) border are dropped.
+    let kept = |lines: Vec<Line>, cells: &topology::MajorCells| -> Vec<Vec<(f64, f64)>> {
+        let mut out = Vec::new();
+        for line in lines {
+            let mut run = Vec::new();
+            for &p in line.iter() {
+                if cells.covers(p.0, p.1) {
+                    if run.len() >= 2 {
+                        out.push(std::mem::take(&mut run));
+                    }
+                    run.clear();
+                } else {
+                    run.push(p);
+                }
+            }
+            if run.len() >= 2 {
+                out.push(run);
+            }
+        }
+        out
+    };
+    let plain =
+        |lines: &[Line]| -> Vec<Vec<(f64, f64)>> { lines.iter().map(|l| l.to_vec()).collect() };
+    let json = serde_json::json!({
+        "state": plain(&patch.lines_big),
+        "interior": plain(&patch.lines),
+        "ne_state": kept(ne("ne_10m_admin_1_states_provinces_lines.geojson"), &staging.major_cells),
+        "ne_state_all": plain(&ne("ne_10m_admin_1_states_provinces_lines.geojson")),
+        "ne_country": plain(&ne("ne_10m_admin_0_boundary_lines_land.geojson")),
+    });
+    std::fs::write(format!("{dir}/check.json"), json.to_string()).unwrap();
+    println!(
+        "area: {} state runs, {} interior runs",
+        patch.lines_big.len(),
+        patch.lines.len()
     );
-    assert!(!patch.lines.is_empty());
-    // Without a traced reference revision, nothing is upgraded.
-    store.reference = Some((reference.0, 2));
-    let untraced = assemble(&store, GeoBox::around(45.25, 10.0, 2.0));
-    assert!(untraced.lines_big.is_empty());
-    assert_eq!(store.untraced().len(), 2);
 }

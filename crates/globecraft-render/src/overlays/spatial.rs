@@ -173,7 +173,6 @@ impl BoundaryIndex {
             &data.states_big,
             &data.cities,
             &data.world_cities_major,
-            &data.world_cities_country,
             &data.world_cities,
         ]
         .into_iter()

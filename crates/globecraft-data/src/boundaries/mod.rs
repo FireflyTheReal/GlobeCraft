@@ -7,14 +7,15 @@ mod load;
 mod lod;
 mod municipal;
 mod national;
+mod parents;
 mod sources;
 mod states;
 mod updates;
 mod world;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
+pub use municipal::MunicipalView;
 pub use municipal::topology::{MAJOR_CELL_DEG, MAJOR_COVER_DEG, MajorCells};
-pub use municipal::{MunicipalView, ReferenceLines};
 pub use updates::{BoundarySnapshot, BoundaryUpdates};
 pub type Line = Arc<Vec<(f64, f64)>>;
 
@@ -139,11 +140,6 @@ pub struct BoundaryData {
     pub municipal_detail_max_km: f64,
     /// Where `world_cities_major` replaces coarser lines; see [`MajorCells`].
     pub municipal_major_cells: Arc<MajorCells>,
-    /// Municipal segments on country borders (both neighbours loaded), drawn in the
-    /// country style in place of the Natural Earth country line they cover.
-    pub world_cities_country: Vec<Line>,
-    /// Where `world_cities_country` replaces the Natural Earth country lines.
-    pub municipal_country_cells: Arc<MajorCells>,
     pub labels: Vec<MapLabel>,
     country_regions: Vec<CountryRegion>,
     countries_loaded: bool,
@@ -372,10 +368,6 @@ pub struct MunicipalStaging {
     /// Where municipal state and country borders run, so the coarser Natural
     /// Earth state lines can hand over to them.
     pub major_cells: Arc<MajorCells>,
-    /// Municipal segments on country borders.
-    pub country_lines: Vec<Line>,
-    /// Where `country_lines` run, so the Natural Earth country lines hand over too.
-    pub country_cells: Arc<MajorCells>,
 }
 
 #[derive(Default)]

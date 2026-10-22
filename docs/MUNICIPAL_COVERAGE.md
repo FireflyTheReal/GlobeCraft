@@ -5,14 +5,22 @@ simplified file. Each country is checked for the German pattern: accurate munici
 borders that replace the Natural Earth state (and country) lines from 402 km down,
 and the single municipalities appearing as the view gets closer.
 
-**How it works for every source.** A municipal border segment that runs along a Natural
-Earth state line (within 3 km, roughly parallel) *is* that state border, and one along
-a country line is that country border (`boundaries/municipal/reference.rs`). National
-sources additionally name each municipality's state. So a country only needs a file of
-municipality-sized units; the level per country is in `boundaries/adm.rs`.
+**How it works.** Each municipality belongs to a state. National sources name it; for
+geoBoundaries countries it is the state polygon (from the same release's state-level
+file, `boundaries/parents.rs`) that contains a point inside the municipality. Levels of
+one release nest, so a border is a state border exactly where two neighbouring
+municipalities belong to different states, and those borders replace the Natural Earth
+state lines. The state level is the one matching Natural Earth's admin-1 (ADM1, except
+Belgium, Burkina Faso, Bosnia and Herzegovina, Guinea, Greece, Sri Lanka, Malawi and the
+Philippines at ADM2, and Italy and Uganda at ADM3). Country borders keep the Natural Earth
+line: two countries' sources rarely trace their border alike.
 
-**Nothing below was checked on screen yet.** "Unsure" marks countries where the data
-itself raises a doubt; any country may still show problems on the Mac.
+**Checked on real data (2026-10-22), not yet on screen:** Czechia, Poland, Austria,
+Slovakia and Italy through the actual loading and classification code; every municipality
+found its state, and the state borders come out continuous.
+
+"Unsure" marks countries where the data itself raises a doubt; any country may still show
+problems on the Mac.
 
 Legend: *units* is the number of municipal units, *km²* their mean area (Germany: 32),
 *MB* the one-off download (cached on disk afterwards).
@@ -206,7 +214,7 @@ These load and hand over like the others, but the units are coarser than municip
 
 ## 4. Only one level of subdivision (27)
 
-The country has no states between it and its municipalities (or geoBoundaries has only that level). The municipalities load from ADM1, and Natural Earth already draws the same lines as "states", so they hand over like state borders; there is no separate state layer above them.
+The country has no states between it and its municipalities (or geoBoundaries has only that level). The municipalities load from ADM1 and each is its own state, so every border between two of them replaces the Natural Earth line that draws it.
 
 | Country | Level | Units | km² | MB | geoBoundaries calls them |
 | --- | --- | --- | --- | --- | --- |
