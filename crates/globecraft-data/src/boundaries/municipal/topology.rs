@@ -135,18 +135,7 @@ pub(super) fn classify(lines: &[Line], parents: &[Parent]) -> Vec<Vec<u8>> {
 /// Squared distance in degrees (longitude scaled to latitude degrees) from `p` to the
 /// segment `a`–`b`.
 fn distance_sq(p: (f64, f64), a: (f64, f64), b: (f64, f64), lon_scale: f64) -> f64 {
-    let to_plane = |q: (f64, f64)| (q.0 - p.0, (q.1 - p.1) * lon_scale);
-    let (ay, ax) = to_plane(a);
-    let (by, bx) = to_plane(b);
-    let (dy, dx) = (by - ay, bx - ax);
-    let length_sq = dx * dx + dy * dy;
-    let t = if length_sq > 0.0 {
-        (-(ax * dx + ay * dy) / length_sq).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let (y, x) = (ay + t * dy, ax + t * dx);
-    x * x + y * y
+    segment_distance(p, a, b, lon_scale).distance_sq
 }
 
 /// Two copies of the same ring from different units: a segment is dropped if either
@@ -174,26 +163,68 @@ pub(super) fn upgrade_outer(into: &mut [u8], found: &[u8]) {
 
 /// Grid cell size of [`MajorCells`], about 5 km.
 pub const MAJOR_CELL_DEG: f64 = 0.05;
+/// A coarse (Natural Earth) border point this close to a municipal state or country
+/// border is the same border: 1:10m lines stay within about 2 km of the municipal
+/// outlines. Farther than this, the coarse line is a different border and stays.
+pub const MAJOR_COVER_DEG: f64 = 0.03;
+/// Two municipal border runs whose ends lie this close continue each other (runs
+/// break where the neighbouring ring draws the shared segment instead).
+const MAJOR_JOIN_DEG: f64 = 2.0 * SHARED_TOLERANCE_DEG;
+/// Longitude scale floor near the poles, so cells stay finite.
+const MIN_LON_SCALE: f64 = 0.05;
 
-/// The grid cells crossed by state and country borders traced by municipalities,
-/// so renderers can hide the coarser Natural Earth state lines where these exist.
+/// The state and country borders traced by municipalities, indexed so renderers can
+/// hide exactly the part of a coarser Natural Earth line that they replace.
+///
+/// A point is covered when it lies within `MAJOR_COVER_DEG` of a municipal border and
+/// beside it, not beyond the end of a run: where the municipal data stops (the edge of
+/// the loaded area, a coast, an unloaded neighbour), the coarse line starts again at
+/// the perpendicular through the run's last point. So along any border exactly one of
+/// the two lines is drawn, with neither a gap nor a doubled stretch.
 #[derive(Clone, Debug, Default)]
-pub struct MajorCells(std::collections::HashSet<(i32, i32)>);
+pub struct MajorCells {
+    lines: Vec<Line>,
+    /// Whether each line's first and last point continue another run.
+    joined: Vec<[bool; 2]>,
+    /// Segments (line, first point) whose cover area touches each cell.
+    grid: HashMap<(i32, i32), Vec<(u32, u32)>>,
+}
 impl MajorCells {
     pub fn of(lines: &[Line]) -> Self {
-        let mut cells = std::collections::HashSet::new();
-        for line in lines {
-            for pair in line.windows(2) {
+        let lines: Vec<Line> = lines.iter().filter(|line| line.len() >= 2).cloned().collect();
+        let mut grid: HashMap<(i32, i32), Vec<(u32, u32)>> = HashMap::new();
+        for (index, line) in lines.iter().enumerate() {
+            for (segment, pair) in line.windows(2).enumerate() {
                 let (a, b) = (pair[0], pair[1]);
-                let span = (b.0 - a.0).abs().max((b.1 - a.1).abs());
-                let steps = (span / (MAJOR_CELL_DEG / 2.0)).ceil().max(1.0) as usize;
-                for i in 0..=steps {
-                    let t = i as f64 / steps as f64;
-                    cells.insert(Self::cell(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+                let lon_scale = lon_scale(a.0.abs().max(b.0.abs()) + MAJOR_COVER_DEG);
+                let lon_margin = MAJOR_COVER_DEG / lon_scale;
+                let (y0, x0) = Self::cell(a.0.min(b.0) - MAJOR_COVER_DEG, a.1.min(b.1) - lon_margin);
+                let (y1, x1) = Self::cell(a.0.max(b.0) + MAJOR_COVER_DEG, a.1.max(b.1) + lon_margin);
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        grid.entry((y, x))
+                            .or_default()
+                            .push((index as u32, segment as u32));
+                    }
                 }
             }
         }
-        Self(cells)
+        let mut cells = Self {
+            joined: Vec::with_capacity(lines.len()),
+            lines,
+            grid,
+        };
+        cells.joined = (0..cells.lines.len())
+            .map(|index| {
+                let line = &cells.lines[index];
+                let (first, last) = (line[0], line[line.len() - 1]);
+                if first == last {
+                    return [true, true];
+                }
+                [first, last].map(|end| cells.continues(index, end))
+            })
+            .collect();
+        cells
     }
     fn cell(lat: f64, lon: f64) -> (i32, i32) {
         (
@@ -202,12 +233,94 @@ impl MajorCells {
         )
     }
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.lines.is_empty()
     }
-    /// Whether a municipal state or country border passes within about one cell.
-    pub fn near(&self, lat: f64, lon: f64) -> bool {
-        let (y, x) = Self::cell(lat, lon);
-        (-1..=1).any(|dy| (-1..=1).any(|dx| self.0.contains(&(y + dy, x + dx))))
+    /// Whether another run passes within `MAJOR_JOIN_DEG` of this end of `line`.
+    fn continues(&self, line: usize, end: (f64, f64)) -> bool {
+        let scale = lon_scale(end.0);
+        self.candidates(end).any(|(other, a, b)| {
+            other != line
+                && segment_distance(end, a, b, scale).distance_sq <= MAJOR_JOIN_DEG.powi(2)
+        })
+    }
+    fn candidates(
+        &self,
+        point: (f64, f64),
+    ) -> impl Iterator<Item = (usize, (f64, f64), (f64, f64))> + '_ {
+        self.grid
+            .get(&Self::cell(point.0, point.1))
+            .into_iter()
+            .flatten()
+            .map(|&(line, segment)| {
+                let points = &self.lines[line as usize];
+                let segment = segment as usize;
+                (line as usize, points[segment], points[segment + 1])
+            })
+    }
+    /// Whether a municipal state or country border replaces a coarse line at this point
+    /// (see the type documentation).
+    pub fn covers(&self, lat: f64, lon: f64) -> bool {
+        let point = (lat, lon);
+        let scale = lon_scale(lat);
+        let Some(candidates) = self.grid.get(&Self::cell(lat, lon)) else {
+            return false;
+        };
+        candidates.iter().any(|&(line, segment)| {
+            let (line, segment) = (line as usize, segment as usize);
+            let points = &self.lines[line];
+            let (a, b) = (points[segment], points[segment + 1]);
+            let nearest = segment_distance(point, a, b, scale);
+            if nearest.distance_sq > MAJOR_COVER_DEG.powi(2) {
+                return false;
+            }
+            if nearest.along < 0.0 {
+                // Beside the start: an inner vertex or a joined end still covers.
+                segment > 0 || self.joined[line][0]
+            } else if nearest.along > 1.0 {
+                segment + 2 < points.len() || self.joined[line][1]
+            } else {
+                true
+            }
+        })
+    }
+}
+
+fn lon_scale(lat: f64) -> f64 {
+    lat.to_radians().cos().max(MIN_LON_SCALE)
+}
+
+/// Where a point lies relative to a segment.
+struct SegmentDistance {
+    /// Squared distance in degrees to the nearest point of the segment.
+    distance_sq: f64,
+    /// Position of the perpendicular foot along the segment, unclamped: below zero
+    /// before the first point, above one past the second.
+    along: f64,
+}
+
+/// Distance from `p` to the segment `a`–`b` on a local plane (longitude scaled to
+/// latitude degrees).
+fn segment_distance(
+    p: (f64, f64),
+    a: (f64, f64),
+    b: (f64, f64),
+    lon_scale: f64,
+) -> SegmentDistance {
+    let to_plane = |q: (f64, f64)| (q.0 - p.0, (q.1 - p.1) * lon_scale);
+    let (ay, ax) = to_plane(a);
+    let (by, bx) = to_plane(b);
+    let (dy, dx) = (by - ay, bx - ax);
+    let length_sq = dx * dx + dy * dy;
+    let along = if length_sq > 0.0 {
+        -(ax * dx + ay * dy) / length_sq
+    } else {
+        0.0
+    };
+    let t = along.clamp(0.0, 1.0);
+    let (y, x) = (ay + t * dy, ax + t * dx);
+    SegmentDistance {
+        distance_sq: x * x + y * y,
+        along,
     }
 }
 
@@ -415,11 +528,36 @@ mod tests {
     }
 
     #[test]
-    fn major_cells_mark_the_border_and_its_neighbourhood() {
+    fn major_cells_cover_beside_the_border_and_stop_at_its_free_ends() {
         let cells = MajorCells::of(&[Arc::new(vec![(48.0, 8.0), (48.0, 9.0)])]);
-        assert!(cells.near(48.0, 8.5));
-        assert!(cells.near(48.04, 8.5), "within one cell");
-        assert!(!cells.near(48.3, 8.5));
-        assert!(!cells.near(48.0, 9.3));
+        assert!(!cells.is_empty());
+        assert!(cells.covers(48.0, 8.5));
+        assert!(cells.covers(48.02, 8.5), "a coarse line 2 km off is the same border");
+        assert!(!cells.covers(48.05, 8.5), "farther away is another border");
+        // Past a free end the coarse line takes over again, right at the end.
+        assert!(cells.covers(48.0, 8.999));
+        assert!(!cells.covers(48.0, 9.002));
+        assert!(!cells.covers(48.01, 7.998));
+        assert!(!MajorCells::default().covers(48.0, 8.5));
+    }
+
+    #[test]
+    fn joined_runs_and_rings_cover_their_ends() {
+        // Two runs meeting at a corner, as when a neighbour draws the next segment.
+        let cells = MajorCells::of(&[
+            Arc::new(vec![(48.0, 8.0), (48.0, 9.0)]),
+            Arc::new(vec![(48.005, 9.0), (48.5, 9.0)]),
+        ]);
+        // Just outside the corner: beyond both runs' ends, covered because they join.
+        assert!(cells.covers(47.995, 9.005));
+        // The other ends stay free.
+        assert!(!cells.covers(48.0, 7.99));
+        assert!(!cells.covers(48.51, 9.0));
+        // A closed ring has no free end.
+        let ring = MajorCells::of(&[square(10.0, 10.0, 1.0)]);
+        assert!(ring.covers(9.99, 9.99));
+        // An inner vertex covers the outside of its corner.
+        let corner = MajorCells::of(&[Arc::new(vec![(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)])]);
+        assert!(corner.covers(-0.01, 1.01));
     }
 }

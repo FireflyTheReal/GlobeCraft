@@ -29,6 +29,7 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
         map_scale: 1.0,
         lang: Lang::En,
         arrival: ArrivalFade::SETTLED,
+        map_style: globecraft_data::settings::map_style::MapStyle::default(),
     };
     let mut data = BoundaryData::default();
     data.countries = vec![Arc::new(vec![(0.0, 0.0), (1.0, 1.0)])];
@@ -415,6 +416,7 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
                     cities: false,
                     labels: false,
                 },
+                dashes: globecraft_render::overlays::BorderDashes::default(),
             },
             data: Arc::new(data),
             borders: segments.to_vec(),

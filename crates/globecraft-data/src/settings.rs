@@ -4,6 +4,7 @@ pub mod cache;
 pub mod controllers;
 mod coordinates;
 pub mod layers;
+pub mod map_style;
 pub mod navigation;
 pub mod sidebar;
 pub mod sky;
@@ -71,6 +72,8 @@ pub struct Settings {
     pub kml_dir: String,
     pub ui_scale: f32,  // text size of buttons/panels
     pub map_scale: f32, // text size of map labels
+    /// Colour, width and dash of border lines; label sizes.
+    pub map_style: map_style::MapStyle,
     pub uncap_fps: bool,
     pub grid_numbers: bool,
     pub hide_navigation_controls: bool,
@@ -115,6 +118,7 @@ impl Default for Settings {
             kml_dir: default_out_dir("Documents"),
             ui_scale: 1.0,
             map_scale: 1.0,
+            map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             grid_numbers: false,
             hide_navigation_controls: false,
@@ -166,6 +170,7 @@ struct SettingsInput {
     ui_scale: Option<f64>,
     #[serde(default, deserialize_with = "crate::json_fields::number")]
     map_scale: Option<f64>,
+    map_style: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     uncap_fps: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
@@ -227,6 +232,9 @@ impl Settings {
         }
         if let Some(scale) = input.map_scale {
             self.map_scale = (scale as f32).clamp(MIN_MAP_SCALE, MAX_MAP_SCALE);
+        }
+        if let Some(value) = input.map_style {
+            self.map_style.apply(&value);
         }
         if let Some(uncap) = input.uncap_fps {
             self.uncap_fps = uncap;
@@ -505,6 +513,7 @@ mod tests {
             kml_dir: "documents".into(),
             ui_scale: 1.0,
             map_scale: 1.0,
+            map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             grid_numbers: false,
             hide_navigation_controls: false,

@@ -1,6 +1,6 @@
 //! Bounded background geometry preparation; font metrics remain backend-owned.
 use super::{
-    BorderKind, BoundaryIndex, OverlayLayers, OverlayProjection, project_borders, project_labels,
+    BorderDashes, BorderKind, BoundaryIndex, OverlayLayers, OverlayProjection, project_borders, project_labels,
 };
 use emath::{Pos2, Rect};
 use globecraft_core::camera::Basis;
@@ -16,6 +16,8 @@ pub struct OverlayView {
     pub state_visible_max_km: f64,
     pub grid_step_deg: Option<f64>,
     pub layers: OverlayLayers,
+    /// Matches `OverlayProjection::dashes`.
+    pub dashes: BorderDashes,
 }
 pub struct PreparedLabel {
     pub position: Pos2,
@@ -70,6 +72,7 @@ impl OverlayPreparer {
             rect: request.view.rect,
             altitude_km: request.view.altitude_km,
             state_visible_max_km: request.view.state_visible_max_km,
+            dashes: request.view.dashes,
             layers: request.view.layers,
         };
         let mut borders = Vec::new();
@@ -216,6 +219,7 @@ mod tests {
             rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 600.0)),
             altitude_km: 6000.0,
             state_visible_max_km: 1609.0,
+            dashes: BorderDashes::default(),
             grid_step_deg: None,
             layers: OverlayLayers {
                 countries: true,
@@ -229,6 +233,7 @@ mod tests {
             rect: view.rect,
             altitude_km: view.altitude_km,
             state_visible_max_km: view.state_visible_max_km,
+            dashes: view.dashes,
             layers: view.layers,
         };
         let mut segments = Vec::new();
@@ -267,6 +272,7 @@ mod tests {
             rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 600.0)),
             altitude_km: 1000.0,
             state_visible_max_km: 1609.0,
+            dashes: BorderDashes::default(),
             grid_step_deg: None,
             layers: OverlayLayers {
                 countries: true,
@@ -292,6 +298,7 @@ mod tests {
             rect: view.rect,
             altitude_km: view.altitude_km,
             state_visible_max_km: view.state_visible_max_km,
+            dashes: view.dashes,
             layers: view.layers,
         };
         let mut direct = Vec::new();
@@ -377,6 +384,7 @@ mod tests {
             rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 600.0)),
             altitude_km: 1000.0,
             state_visible_max_km: 1609.0,
+            dashes: BorderDashes::default(),
             grid_step_deg: None,
             layers: OverlayLayers {
                 countries: true,

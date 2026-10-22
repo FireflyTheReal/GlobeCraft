@@ -564,6 +564,53 @@ impl App {
                 self.set_language_preference(preference);
                 json!({"language": self.lang.code()})
             }
+            "style.line" => {
+                use globecraft_data::settings::map_style::{DashStyle, LineType, Rgba, clamp_width};
+                let line = str_param(p, "line")
+                    .and_then(LineType::from_code)
+                    .ok_or("line must be country, state or municipal")?;
+                let color = match str_param(p, "color") {
+                    Some(text) => Some(
+                        Rgba::parse_hex(text).ok_or("color must be #rrggbb or #rrggbbaa")?,
+                    ),
+                    None => None,
+                };
+                let dash = match str_param(p, "dash") {
+                    Some(code) => {
+                        Some(DashStyle::from_code(code).ok_or("dash must be solid, dashed or dotted")?)
+                    }
+                    None => None,
+                };
+                let style = self.settings.map_style.line_mut(line);
+                if let Some(color) = color {
+                    style.color = color;
+                }
+                if let Some(width) = p.get("width").and_then(Value::as_f64) {
+                    style.width_points = clamp_width(width);
+                }
+                if let Some(dash) = dash {
+                    style.dash = dash;
+                }
+                json!({
+                    "line": line.code(),
+                    "color": style.color.hex(),
+                    "width": style.width_points,
+                    "dash": style.dash.code(),
+                })
+            }
+            "style.labelSize" => {
+                use globecraft_data::settings::map_style::{LabelType, clamp_label_size};
+                let label = str_param(p, "label")
+                    .and_then(LabelType::from_code)
+                    .ok_or("label must be country, state or city")?;
+                let size = clamp_label_size(required_f64(p, "size")?);
+                self.settings.map_style.labels.set(label, size);
+                json!({"label": label.code(), "size": size})
+            }
+            "style.reset" => {
+                self.settings.map_style = Default::default();
+                json!({})
+            }
             "ui.shortcuts" => {
                 self.show_shortcuts = !self.show_shortcuts;
                 json!({})
@@ -705,6 +752,10 @@ impl App {
             "ruler.unit" => {
                 on(str_param(params, "unit").is_some_and(|u| u == self.settings.ruler_unit.code()))
             }
+            "style.reset" => CommandState {
+                enabled: self.settings.map_style != Default::default(),
+                checked: false,
+            },
             "camera.zoomIn" | "camera.zoomOut" | "camera.resetNorth" | "camera.globalView"
             | "search.place" | "camera.flyTo" | "camera.set" => CommandState {
                 enabled: !self.flat_earth.open,
