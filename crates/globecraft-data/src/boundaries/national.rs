@@ -84,9 +84,14 @@ fn city_label(feature: &serde_json::Value, name_keys: &[&str]) -> Option<MapLabe
 }
 
 /// Fields naming a municipality's state (département in France, province in Spain and
-/// Canada), with how many leading characters of the value identify it.
-const PARENT_KEYS: [(&str, usize); 6] = [
+/// Canada), with how many leading characters of the value identify it. France's IGN
+/// ADMIN EXPRESS renamed its fields in version 4 (2025) to the full BD TOPO names, so
+/// both spellings are listed, then the commune's INSEE code, whose first two characters
+/// are the metropolitan département (2A and 2B in Corsica).
+const PARENT_KEYS: [(&str, usize); 8] = [
+    ("code_insee_du_departement", usize::MAX),
     ("insee_dep", usize::MAX),
+    ("code_insee", 2),
     ("sn_l", usize::MAX),
     ("SN_L", usize::MAX),
     ("STATE", usize::MAX),
@@ -434,6 +439,26 @@ mod tests {
         assert_eq!(cell_size_deg("FRA"), Some(0.25));
         assert_eq!(cell_size_deg("DEU"), Some(1.0));
         assert_eq!(cell_size_deg("MEX"), None);
+    }
+
+    #[test]
+    fn french_communes_name_their_departement_in_every_admin_express_version() {
+        let parent = |props: serde_json::Value| parent_code(Some(&props));
+        let v4 =
+            parent(serde_json::json!({"code_insee": "75056", "code_insee_du_departement": "75"}));
+        let v4_other =
+            parent(serde_json::json!({"code_insee": "92012", "code_insee_du_departement": "92"}));
+        assert!(v4.is_some());
+        assert_ne!(
+            v4, v4_other,
+            "Paris and Hauts-de-Seine are different départements"
+        );
+        assert!(parent(serde_json::json!({"insee_dep": "75"})).is_some());
+        // Without a département field, the commune code still separates départements.
+        let by_code = |code: &str| parent(serde_json::json!({"code_insee": code}));
+        assert_eq!(by_code("2A004"), by_code("2A041"));
+        assert_ne!(by_code("2A004"), by_code("2B033"));
+        assert_eq!(parent(serde_json::json!({"nom_officiel": "Paris"})), None);
     }
 
     #[test]
