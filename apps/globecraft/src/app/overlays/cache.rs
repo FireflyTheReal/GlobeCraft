@@ -151,15 +151,21 @@ impl OverlayCache {
                 dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
             };
             if let Some(completed) = self.worker.take_completed()
-                && completed.geometry.matches(geometry_view, boundaries)
+                && completed.geometry.view == geometry_view
             {
                 self.geometry = Some(completed);
             }
-            if let Some(prepared) = self
+            let this_view = self
                 .geometry
                 .as_ref()
-                .filter(|prepared| prepared.geometry.matches(geometry_view, boundaries))
-            {
+                .filter(|prepared| prepared.geometry.view == geometry_view);
+            let current_data = this_view
+                .is_some_and(|prepared| prepared.geometry.matches(geometry_view, boundaries));
+            if let Some(prepared) = this_view {
+                // Geometry for exactly this view. When it was projected from the
+                // previous dataset (a patch arrived while the camera moved), paint it
+                // anyway rather than a blank frame: it is a complete, consistent set of
+                // lines, one patch old, and the replacement is requested below.
                 #[cfg(feature = "profiling")]
                 let _profile = globecraft_data::profiling::Span::new("ui.overlay_shapes");
                 let built = projected::build_prepared(painter, prepared, &mut self.galleys, style);
@@ -170,8 +176,21 @@ impl OverlayCache {
                     self.labels_pending = true;
                     painter.ctx().request_repaint();
                 }
-                self.key = Some(current);
                 self.stale = Some(current);
+                if current_data {
+                    self.key = Some(current);
+                    painter.extend(self.shapes.iter().cloned());
+                    return;
+                }
+                self.key = None;
+                let request = (geometry_view, Arc::as_ptr(boundaries) as usize);
+                if self.requested != Some(request) {
+                    self.worker.submit(geometry_view, boundaries.clone());
+                    self.requested = Some(request);
+                }
+                painter.ctx().request_repaint();
+                painter.extend(self.shapes.iter().cloned());
+                return;
             } else {
                 let request = (geometry_view, Arc::as_ptr(boundaries) as usize);
                 if self.requested != Some(request) {

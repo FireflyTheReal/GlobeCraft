@@ -123,6 +123,54 @@ fn boundary_merge_holds_the_previous_shapes_until_replacement_arrives() {
 }
 
 #[test]
+fn a_moving_camera_never_paints_a_blank_frame_when_a_patch_arrives() {
+    // The evidence video: zooming while municipal patches stream in. The frame for
+    // the new view was prepared with the previous dataset, and nothing painted
+    // until geometry for the new dataset arrived, so every line vanished for a
+    // few frames.
+    headless(|painter| {
+        let (view, style, data) = scene();
+        let old = Arc::new(data);
+        let mut cache = OverlayCache::new(painter.ctx().clone());
+        draw_ready(&mut cache, painter, view, &old, style);
+        // The camera moves; the frame coordinator delivers geometry for the new view,
+        // projected from the dataset it was given (the old one).
+        let moved = OverlayView {
+            altitude_km: view.altitude_km * 0.9,
+            ..view
+        };
+        let geometry_view = globecraft_render::overlays::OverlayView {
+            basis: moved.basis,
+            rect: moved.rect,
+            altitude_km: moved.altitude_km,
+            state_visible_max_km: moved.state_max_km,
+            grid_step_deg: moved.grid_step_deg,
+            layers: style.layers,
+            dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
+        };
+        let mut preparer = globecraft_render::overlays::OverlayPreparer::default();
+        let geometry = preparer.prepare(globecraft_render::overlays::OverlayInput {
+            view: geometry_view,
+            data: old.clone(),
+        });
+        cache.accept(PreparedOverlay::new(geometry, painter.ctx()));
+        // Meanwhile a patch replaced the dataset.
+        let mut new = (*old).clone();
+        new.countries = vec![Arc::new(vec![(0.0, 0.0), (2.0, 2.0)])];
+        let new = Arc::new(new);
+        cache.merge_boundaries();
+        cache.draw(painter, moved, &new, style);
+        assert!(
+            !cache.shapes.is_empty() && cache.stale == Some(DrawKey { view: moved, style }),
+            "the previous dataset, projected for this very view, keeps painting"
+        );
+        // The replacement swaps in once ready.
+        draw_ready(&mut cache, painter, moved, &new, style);
+        assert_eq!(cache.key, Some(DrawKey { view: moved, style }));
+    });
+}
+
+#[test]
 fn unchanged_view_reuses_shapes_and_boundary_invalidation_rebuilds() {
     headless(|painter| {
         let (view, style, data) = scene();
