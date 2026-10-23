@@ -196,3 +196,39 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
     request.width = 0;
     assert!(!GpuRenderer::supports(&request));
 }
+
+#[test]
+fn motion_and_idle_frames_choose_the_same_level() {
+    let cam = Cam {
+        lat: 40.0,
+        lon: 71.0,
+        heading: 0.0,
+        alt: 2000.0,
+    };
+    let request = |width: usize, height: usize, lod_scale: f32| RenderRequest {
+        width,
+        height,
+        cam,
+        basis: cam.basis(width as f64 / height as f64),
+        cfg: crate::RenderCfg {
+            sky: None,
+            provider: Provider::Satellite,
+            terrain: None,
+            rel: 0,
+            grid: false,
+            grid_step: 10.0,
+            atmo: true,
+            sun: None,
+            lod_scale,
+        },
+        overlays: None,
+        aircraft: None,
+        live_layers: None,
+        presentation: 0,
+    };
+    // The motion raster is 0.4 of the idle one; both pick the idle raster's level.
+    let idle = super::overview::supported_zoom(&request(2000, 1250, 1.0));
+    let motion = super::overview::supported_zoom(&request(800, 500, 0.4));
+    assert!(idle.is_some());
+    assert_eq!(idle, motion);
+}

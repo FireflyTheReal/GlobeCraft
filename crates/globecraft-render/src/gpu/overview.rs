@@ -162,7 +162,7 @@ impl Overview {
             effects: [
                 u32::from(request.cfg.sun.is_some()),
                 u32::from(request.cfg.atmo),
-                0,
+                lod_height(request),
                 0,
             ],
             limits: [
@@ -334,7 +334,7 @@ pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
     {
         return None;
     }
-    let pa = 2.0 * VERTICAL_FOV_HALF_TAN / request.height as f64;
+    let pa = 2.0 * VERTICAL_FOV_HALF_TAN / f64::from(lod_height(request));
     let max_lod = ((2.0 * std::f64::consts::PI * EARTH_RADIUS_M)
         / (tuning::TILE_SIZE_PX * request.cam.alt * globecraft_core::METERS_PER_KM * pa))
         .log2()
@@ -346,6 +346,15 @@ pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
     }) as u8)
         .min(request.cfg.provider.max_zoom());
     (max_zoom <= MAX_TRACKED_ZOOM).then_some(max_zoom)
+}
+/// The raster height the level of detail follows: the full-quality raster's, not this
+/// one's. Motion frames render smaller (`RenderCfg::lod_scale`) but must pick the same
+/// imagery level as idle frames, or the view switches mosaics at every motion/idle
+/// change (as the CPU renderer did before 2026-10-23).
+fn lod_height(request: &RenderRequest) -> u32 {
+    let scale = f64::from(request.cfg.lod_scale);
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    ((request.height as f64 / scale).round() as u32).max(1)
 }
 fn tile_hash(z: u32, x: u32, y: u32) -> usize {
     (z.wrapping_mul(73856093) ^ x.wrapping_mul(19349663) ^ y.wrapping_mul(83492791)) as usize

@@ -87,7 +87,7 @@ impl GeoBox {
 }
 
 /// One loadable piece of municipal data.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Unit {
     /// A national service's grid cell; `size_mdeg` is the cell edge in millidegrees.
     Cell {
@@ -753,9 +753,13 @@ struct Snapshot {
     borders: Option<Arc<borders::CountryBorders>>,
 }
 impl Store {
+    /// Units in a fixed order (by unit), so the same store always assembles the same
+    /// output in the same order.
     fn snapshot(&self) -> Snapshot {
+        let mut units: Vec<(&Unit, &Arc<UnitData>)> = self.units.iter().collect();
+        units.sort_unstable_by_key(|(unit, _)| **unit);
         Snapshot {
-            units: self.units.values().cloned().collect(),
+            units: units.into_iter().map(|(_, data)| data.clone()).collect(),
             borders: self.borders.clone(),
         }
     }
@@ -765,8 +769,9 @@ impl Store {
 /// neighbouring units kept once.
 fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
     // The same municipality can come from two units (a cell edge); merge its classes.
-    let mut rings: HashMap<u64, MergedRing> = HashMap::new();
-    let mut order = Vec::new();
+    // Rings keep their first-seen order, which the sorted snapshot fixes.
+    let mut rings: Vec<MergedRing> = Vec::new();
+    let mut index: HashMap<u64, usize> = HashMap::new();
     let mut labels = Vec::new();
     let (mut area_sum, mut area_count) = (0.0, 0_usize);
     for data in &store.units {
@@ -774,22 +779,22 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
             if !area.intersects(unit_line.bounds) {
                 continue;
             }
-            match rings.entry(unit_line.id) {
+            match index.entry(unit_line.id) {
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(MergedRing {
+                    entry.insert(rings.len());
+                    rings.push(MergedRing {
                         line: unit_line.line.clone(),
                         classes: unit_line.classes.to_vec(),
                         pairs: vec![None; unit_line.classes.len()],
                         country: unit_line.parent.country,
                     });
-                    order.push(unit_line.id);
                     if unit_line.area_km2 > 0.0 {
                         area_sum += unit_line.area_km2;
                         area_count += 1;
                     }
                 }
-                std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    topology::merge(&mut entry.get_mut().classes, &unit_line.classes);
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    topology::merge(&mut rings[*entry.get()].classes, &unit_line.classes);
                 }
             }
         }
@@ -802,7 +807,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
     }
     if let Some(borders) = store.borders.as_deref().filter(|b| !b.is_empty()) {
         let mut border_rings: Vec<borders::BorderRing<'_>> = rings
-            .values_mut()
+            .iter_mut()
             .map(|ring| borders::BorderRing {
                 line: &ring.line,
                 classes: &mut ring.classes,
@@ -818,7 +823,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
         // Natural Earth's land borders are not indexed yet, so nothing decides which
         // side draws a country border: both copies stay ordinary municipal lines and
         // the Natural Earth country line stays whole.
-        for ring in rings.values_mut() {
+        for ring in &mut rings {
             for class in &mut ring.classes {
                 if *class == topology::COUNTRY {
                     *class = topology::INTERIOR;
@@ -827,8 +832,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
         }
     }
     let mut split = topology::SplitLines::default();
-    for id in order {
-        let ring = &rings[&id];
+    for ring in &rings {
         topology::split(&ring.line, &ring.classes, &ring.pairs, &mut split);
     }
     let topology::SplitLines {

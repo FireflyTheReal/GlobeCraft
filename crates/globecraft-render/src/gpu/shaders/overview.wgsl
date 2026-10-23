@@ -5,7 +5,7 @@ struct View {
     right: vec4<f32>, up: vec4<f32>, forward: vec4<f32>,
     sun: vec4<f32>,
     raster: vec4<u32>, // width, height, imagery, provider max zoom
-    effects: vec4<u32>, // sunlight, atmosphere, reserved, reserved
+    effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, reserved
     limits: vec4<u32>, // tracked max zoom, dependency count, table mask, unused
 }
 @group(0) @binding(0) var<uniform> view: View;
@@ -96,7 +96,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let incidence = max(-dot(point,dir),0.0);
     let lat = asin(clamp(point.z,-1.0,1.0));
     let lon = atan2(point.y,point.x);
-    let mpp = t * EARTH_RADIUS_M * (2.0 * FOV_HALF_TAN / f32(height)) / sqrt(max(incidence,LOD_INC_COS));
+    let mpp = t * EARTH_RADIUS_M * (2.0 * FOV_HALF_TAN / f32(view.effects.z)) / sqrt(max(incidence,LOD_INC_COS));
     let lod = log2(2.0 * PI * EARTH_RADIUS_M * max(cos(lat),LOD_LAT_COS) / (256.0 * mpp)) + LOD_BIAS;
     var zl = floor(lod); var fraction = lod - zl;
     let z = u32(clamp(zl,0.0,f32(view.raster.w)));
