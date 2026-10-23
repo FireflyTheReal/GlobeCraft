@@ -363,3 +363,34 @@ once per detail level on the CPU pool). Release build, 2-core container, real
 geoBoundaries data: 8 ms for Italy and Austria (2,300 rings in view), 15 ms for Czechia
 alone and 30 ms for Czechia, Poland, Austria and Slovakia together (14,600 runs). It runs
 on the municipal publisher, not the frame.
+
+### Municipal classification and publishing (2026-10-23)
+
+Release build, 2-core container, real geoBoundaries files, loaded in this order so
+later countries are classified against their stored neighbours. Classification is the
+step that compares every outline segment with the rings around it; file reading and
+state membership are unchanged.
+
+| Country | Rings | Before | After |
+| --- | --- | --- | --- |
+| Czechia | 6,361 | 1,331 ms | 433 ms |
+| Poland (Czechia stored) | 2,584 | 1,507 ms | 344 ms |
+| Austria | 2,115 | 506 ms | 181 ms |
+| Slovakia | 2,985 | 488 ms | 145 ms |
+| Italy | 8,561 | 1,244 ms | 547 ms |
+| India (districts) | 1,029 | 333 ms | 301 ms |
+| Bangladesh (unions) | 5,706 | 1,267 ms | 444 ms |
+
+Changes: 0.02° search cells instead of 0.05°, neighbours' segments that already have a
+class are not searched again, and rings are classified in parallel on the feature pool
+(2 threads). Every class came out identical except one Italian segment that the old
+search missed (longitude padding, see ROADMAP 14.9). The assembled layer is identical.
+
+Assembling a published area (10–45 ms for 2,000–15,000 rings) now runs on the feature
+pool from a snapshot instead of under the store lock that the UI thread takes every
+frame. Run with:
+
+```sh
+GLOBECRAFT_MUNICIPAL_CHECK=<dir> GLOBECRAFT_MUNICIPAL_COUNTRIES=CZE,POL,AUT,SVK,ITA,IND,BGD \
+  cargo test --release -p globecraft-data real_countries_classify -- --ignored --nocapture
+```

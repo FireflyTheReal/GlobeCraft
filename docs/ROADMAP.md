@@ -363,6 +363,7 @@ are kept now (99.4 % of shared admin-1 polygon edges covered, checked against th
 | 13.11 | **GlobeCraft repository**: fresh history, English only, straightforward README for non-technical users, every source credited in CREDITS.md | S | Done 2026-10-22 |
 | 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. Natural Earth detours between two replaced stretches (under 30 km) are dropped too. **Blank frames fixed 2026-10-22** (user video): while municipal patches streamed in during a zoom, the overlay painted nothing for 2–6 frames because no geometry matched both the new view and the new dataset; it now paints the previous dataset's geometry for exactly that view until the replacement is ready. Country borders: done in a second attempt, see below |
 | 13.13 | **German pattern in every country** (user, 2026-10-22): state borders upgraded by municipal borders, then single municipalities closer in, wherever the data allows; a list of the countries where it does not. The municipal button shows only municipalities; the sharper state borders belong to the state button | M | **Done 2026-10-22, second attempt.** geoBoundaries files name no state, so outside the six national sources no state border was upgraded. The first attempt (tracing municipal segments along Natural Earth lines) broke borders into fragments and was removed. Now each municipality gets the geoBoundaries state polygon containing it (`boundaries/parents.rs`), the same rule as the national sources; checked on real data for CZ, PL, AT, SK and IT before shipping. Each country has a reviewed municipal and state level (`adm.rs`). Country borders are drawn from one side's municipal outline (13.12). With the state or country layer off, the municipal lines on those borders stay drawn as ordinary municipal lines. Per-country list: `docs/MUNICIPAL_COVERAGE.md` |
+| 13.14 | **Cleaner municipal country borders** (user, 2026-10-23): no rogue blobs or short stray lines where a country's municipal file has holes or slivers near a border (seen at 26.3° N, 89.0° E on the India–Bangladesh border) | S–M | Planned. Design and measurements below |
 
 **13.12 Instant border handover.** Where two versions of a border meet, exactly one is
 drawn, and the switch between them happens between two frames:
@@ -380,6 +381,48 @@ drawn, and the switch between them happens between two frames:
   geoBoundaries file (shared vertices) segments count as shared only within 50 m, so
   a narrow notch of the neighbour stays part of the outline instead of leaving a gap.
   Snapshot of the state-only version: branch `snapshot/2026-10-22-state-borders`.
+
+**13.14 Cleaner municipal country borders.** Today an outline segment of the drawing
+country becomes country border when it runs within 5.5 km of a Natural Earth land-border
+line naming both countries (13.12). Where that country's municipal file has gaps near
+the border, the edges around each gap pass the same test.
+
+- **What the screenshot shows** (26.3° N, 89.0° E, checked on the real files 2026-10-23):
+  Bangladesh draws this border (BGD sorts before IND, neither is a national source).
+  Its union file (ADM4) leaves holes and loose slivers along the border: former Cooch
+  Behar enclaves and river chars that no union covers. Natural Earth has just one plain
+  BGD–IND line there, no enclave loops, so every blob is a hole or sliver edge in the
+  geoBoundaries file.
+- **Minimum independent line length alone does not separate them.** Country-border
+  chains (runs joined end to end), measured on real data:
+
+  | Area | Chains | Total | Under 1 km | Under 3 km | Under 10 km |
+  | --- | --- | --- | --- | --- | --- |
+  | Bangladesh–India, screenshot spot | 21 | 634 km | 2 (0.8 km) | 12 (17.9 km) | 15 (37 km) |
+  | Bangladesh–India, whole border | 61 | 5,707 km | 4 (1.6 km) | 19 (27 km) | 28 (78 km) |
+  | CZ, PL, AT, SK (good borders) | 86 | 3,443 km | 27 (7.4 km) | 33 (17.9 km) | 47 (109 km) |
+
+  The good borders have more short chains than the bad one: real borders split by
+  short gaps. A cut-off that removes the Bangladesh loops (2–10 km) would remove 109 km
+  of real border in Central Europe. A small cut-off (about 1 km, closed loops only) is
+  still useful for slivers.
+- **Small islands are not at risk.** Fais (9.76° N, 140.52° E) is in geoBoundaries
+  (Micronesia ADM2, a 10-point ring, 6.7 km around) and in Natural Earth's country
+  polygons. But an island has no land border, so its coast never becomes municipal
+  country border; a length filter on country-border chains cannot remove it. No special
+  island file is needed.
+- **Proposed rule: the far side must be the neighbour.** For each candidate segment,
+  probe a point about 1 km out on the side away from its own municipality. It is a
+  border only if that point lies in the neighbour: within a loaded neighbour's
+  municipality, or, when the neighbour is not loaded, inside the neighbour's Natural
+  Earth country polygon (`country_at`, already used by the streamer), or within 3 km of
+  the Natural Earth line to absorb its offset. A hole or sliver deep inside the
+  drawing country fails, because its far side is still that country. Then drop closed
+  country-border loops under 1 km as slivers.
+- **Check before shipping:** the BGD–IND spot (blobs gone), CZ/PL/AT/SK and IT/AT (no
+  chain lost, compare with today's plots), and Baarle-Nassau (real enclaves stay).
+  Cost: one probe and one point-in-polygon per outline segment near a border, about
+  as much as the current band test.
 
 ## 14. Size and efficiency review (2026-10-22)
 
@@ -409,6 +452,11 @@ terrain (34–42 ms).
 | 14.6 | **Idle cost**: no repaint while nothing changes; measure idle CPU on the Mac and cap background refreshes | Battery life | S–M |
 | 14.7 | **Documentation diet**: merge CONTRIBUTING, AGENTS and the per-feature docs into fewer, shorter pages; keep the performance log as data, not prose | A repository newcomers can read in an hour | M |
 | 14.8 | **App state split** (10.2) and the vector rebuild (3.3): fewer special cases in `load.rs` and `App` | Easier changes, fewer bugs | L |
+| 14.9 | **Municipal border classification** (review 2026-10-23): smaller search cells (0.02° instead of 0.05°), only the neighbours' still-unshared segments searched, rings classified in parallel on the 2-thread feature pool. The search also padded longitude by the latitude tolerance, missing a match now and then near cell edges at higher latitudes (one segment in Italy); fixed. **Done 2026-10-23**, output checked byte for byte on CZ, PL, AT, SK, IT, IN and BD | 0.33–1.51 s → 0.15–0.55 s per country load (table in PERFORMANCE_BASELINE) | S |
+| 14.10 | **Municipal publishing off the store lock** (review 2026-10-23): the publisher assembled the layer (10–45 ms) while holding the lock the UI thread takes every frame, so panning with municipal data could stall frames four times a second. Units are now shared (`Arc`), the publisher snapshots them and assembles on the feature pool. **Done 2026-10-23** | No frame waits on a municipal publish | S |
+| 14.11 | **Reuse the country-border decision between publishes**: `borders::resolve` reruns for every publish (15–32 ms on the feature pool) even when only the area moved. Cache each ring's result by the set of loaded countries and the border index | Less CPU while panning; no visible change since 14.10 | S |
+| 14.12 | **Experimental GPU renderer ignores `lod_scale`**: `overview.wgsl` picks the level from its own raster height, so motion frames at 0.4 scale sample a coarser level than idle frames (the strobing fixed for the CPU path on 2026-10-23). Pass the level-of-detail height as a uniform before 14.1 | Required for 14.1 | S |
+| 14.13 | **Stable run order**: `assemble` walks hash maps, so runs come out in a different order after each publish. Sorting rings by id would make the output repeatable (easier diffs, steady dash phase) | Determinism | S |
 
 Overall: binary size can probably drop by a third to a half without losing features
 (14.2–14.5), and the CPU-bound visual cost can drop by an order of magnitude only
