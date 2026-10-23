@@ -12,6 +12,10 @@
 //! 3. Each border is drawn by one side only: the one with the better source, or the
 //!    only one loaded. The other side's outline is hidden wherever the chosen line runs,
 //!    and the Natural Earth line is cut there.
+//! 4. Land that both countries' files claim is contested: its outline is not drawn as a
+//!    country border (it stays a municipal line). Bangladesh's union file still holds
+//!    pockets of India given up in the 2015 land swap, which India's file covers; drawn
+//!    as country border they looked like stray blobs along the border.
 use super::super::Line;
 use super::topology::{COUNTRY, DROP, INTERIOR, OUTER, lon_scale, segment_distance};
 use std::collections::{HashMap, HashSet};
@@ -134,6 +138,85 @@ impl CountryBorders {
     }
 }
 
+/// A ring's points and the country holding it.
+type OwnedRing<'a> = (&'a [(f64, f64)], [u8; 3]);
+
+/// Which country's rings cover a point, for finding land that two countries claim.
+struct Contested<'a> {
+    rings: Vec<OwnedRing<'a>>,
+    grid: HashMap<(i32, i32), Vec<u32>>,
+}
+
+const CONTESTED_GRID_DEG: f64 = 0.25;
+
+impl<'a> Contested<'a> {
+    fn new(rings: &[BorderRing<'a>]) -> Self {
+        let cell = |lat: f64, lon: f64| {
+            (
+                (lat / CONTESTED_GRID_DEG).floor() as i32,
+                (lon / CONTESTED_GRID_DEG).floor() as i32,
+            )
+        };
+        let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        let mut kept = Vec::new();
+        for ring in rings {
+            let Some(country) = ring.country else {
+                continue;
+            };
+            let line: &'a [(f64, f64)] = ring.line;
+            let Some((min, max)) = bounds(line) else {
+                continue;
+            };
+            let ((y0, x0), (y1, x1)) = (cell(min.0, min.1), cell(max.0, max.1));
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    grid.entry((y, x)).or_default().push(kept.len() as u32);
+                }
+            }
+            kept.push((line, country));
+        }
+        Self { rings: kept, grid }
+    }
+
+    /// Whether `country`'s rings cover `point` (even-odd over all of them, so holes
+    /// count as uncovered).
+    fn covers(&self, country: [u8; 3], point: (f64, f64)) -> bool {
+        let key = (
+            (point.0 / CONTESTED_GRID_DEG).floor() as i32,
+            (point.1 / CONTESTED_GRID_DEG).floor() as i32,
+        );
+        self.grid
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .map(|&index| self.rings[index as usize])
+            .filter(|(_, owner)| *owner == country)
+            .fold(false, |inside, (ring, _)| {
+                inside ^ super::super::parents::encloses(ring, point)
+            })
+    }
+
+    /// Whether the land inside `ring`, which `own` holds, is also held by `across`.
+    /// A hole in `own`'s land (an enclave of `across`) is not `own`'s land, so its
+    /// border stays a border.
+    fn claimed_by(&self, ring: &Line, own: [u8; 3], across: [u8; 3]) -> bool {
+        let Some(point) = super::super::parents::interior_point(std::slice::from_ref(ring)) else {
+            return false;
+        };
+        self.covers(own, point) && self.covers(across, point)
+    }
+}
+
+fn bounds(line: &[(f64, f64)]) -> Option<((f64, f64), (f64, f64))> {
+    let first = *line.first()?;
+    Some(line.iter().fold((first, first), |(min, max), p| {
+        (
+            (min.0.min(p.0), min.1.min(p.1)),
+            (max.0.max(p.0), max.1.max(p.1)),
+        )
+    }))
+}
+
 /// One ring in an assembled area: its points, its classes, and its country.
 pub(super) struct BorderRing<'a> {
     pub(super) line: &'a Line,
@@ -150,6 +233,7 @@ pub(super) fn resolve(
     borders: &CountryBorders,
     better: impl Fn([u8; 3], [u8; 3]) -> bool,
 ) {
+    let contested = Contested::new(rings);
     let loaded: HashSet<[u8; 3]> = rings.iter().filter_map(|ring| ring.country).collect();
     let draws = |own: [u8; 3], across: [u8; 3]| {
         !loaded.contains(&across) || better(own, across) || (!better(across, own) && own < across)
@@ -162,22 +246,32 @@ pub(super) fn resolve(
         let Some(own) = ring.country else {
             continue;
         };
+        // Asked once per ring and neighbour, only for rings along a border.
+        let mut claimed: HashMap<[u8; 3], bool> = HashMap::new();
         for (segment, pair) in ring.line.windows(2).enumerate() {
             let class = ring.classes[segment];
             if !matches!(class, OUTER | COUNTRY) {
                 continue;
             }
+            let mut is_claimed = |across: [u8; 3]| {
+                *claimed
+                    .entry(across)
+                    .or_insert_with(|| contested.claimed_by(ring.line, own, across))
+            };
             match borders.across(pair[0], pair[1], own) {
-                Some(across) if draws(own, across) => {
+                // Contested land is not drawn as a border by the drawing side; the
+                // other side's handling below is unchanged, so its copy stays hidden
+                // where a drawn line runs.
+                Some(across) if draws(own, across) && !is_claimed(across) => {
                     ring.classes[segment] = COUNTRY;
                     drawn.push((Arc::new(vec![pair[0], pair[1]]), [own, across]));
                 }
-                Some(_) => waiting.push((index, segment, own)),
-                // An outline segment off any border: a coast or the edge of the loaded
-                // area. A cross-country match off Natural Earth's lines is drawn as an
-                // ordinary municipal line.
-                None if class == COUNTRY => ring.classes[segment] = INTERIOR,
-                None => {}
+                Some(across) if !draws(own, across) => waiting.push((index, segment, own)),
+                // An outline segment off any border (a coast or the edge of the loaded
+                // area), or around contested land. A cross-country match off Natural
+                // Earth's lines is drawn as an ordinary municipal line.
+                _ if class == COUNTRY => ring.classes[segment] = INTERIOR,
+                _ => {}
             }
         }
     }
@@ -254,6 +348,79 @@ mod tests {
         resolve(&mut rings, &borders, |a, _| a == DEU);
         assert_eq!(german_classes, [COUNTRY, COUNTRY, OUTER]);
         assert_eq!(czech_classes, [DROP, DROP]);
+    }
+
+    fn rect(lat0: f64, lon0: f64, lat1: f64, lon1: f64) -> Line {
+        line(&[
+            (lat0, lon0),
+            (lat0, lon1),
+            (lat1, lon1),
+            (lat1, lon0),
+            (lat0, lon0),
+        ])
+    }
+
+    #[test]
+    fn land_both_countries_claim_is_not_drawn_as_a_country_border() {
+        let borders = border_48n();
+        // A stale Czech pocket north of the border, inside Germany's own outline.
+        let pocket = rect(48.01, 8.3, 48.03, 8.32);
+        let germany = rect(48.0, 8.0, 48.2, 9.0);
+        let mut pocket_classes = vec![OUTER; 4];
+        let mut german_classes = vec![OUTER; 4];
+        resolve(
+            &mut [
+                BorderRing {
+                    line: &pocket,
+                    classes: &mut pocket_classes,
+                    country: Some(CZE),
+                },
+                BorderRing {
+                    line: &germany,
+                    classes: &mut german_classes,
+                    country: Some(DEU),
+                },
+            ],
+            &borders,
+            |_, _| false,
+        );
+        assert!(
+            !pocket_classes.contains(&COUNTRY),
+            "contested pocket: {pocket_classes:?}"
+        );
+    }
+
+    #[test]
+    fn an_enclave_held_as_a_hole_keeps_its_border() {
+        let borders = border_48n();
+        // Czech land south of the border with a hole that a German enclave fills.
+        let czechia = rect(47.8, 8.0, 47.99, 9.0);
+        let hole = rect(47.95, 8.4, 47.97, 8.42);
+        let enclave = rect(47.95, 8.4, 47.97, 8.42);
+        let (mut cz, mut cz_hole, mut de) = (vec![OUTER; 4], vec![OUTER; 4], vec![OUTER; 4]);
+        resolve(
+            &mut [
+                BorderRing {
+                    line: &czechia,
+                    classes: &mut cz,
+                    country: Some(CZE),
+                },
+                BorderRing {
+                    line: &hole,
+                    classes: &mut cz_hole,
+                    country: Some(CZE),
+                },
+                BorderRing {
+                    line: &enclave,
+                    classes: &mut de,
+                    country: Some(DEU),
+                },
+            ],
+            &borders,
+            |_, _| false,
+        );
+        assert_eq!(cz_hole, [COUNTRY; 4], "Czechia draws around the enclave");
+        assert_eq!(de, [DROP; 4], "Germany's copy is hidden");
     }
 
     #[test]

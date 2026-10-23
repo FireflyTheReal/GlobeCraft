@@ -363,7 +363,7 @@ are kept now (99.4 % of shared admin-1 polygon edges covered, checked against th
 | 13.11 | **GlobeCraft repository**: fresh history, English only, straightforward README for non-technical users, every source credited in CREDITS.md | S | Done 2026-10-22 |
 | 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. Natural Earth detours between two replaced stretches (under 30 km) are dropped too. **Blank frames fixed 2026-10-22** (user video): while municipal patches streamed in during a zoom, the overlay painted nothing for 2–6 frames because no geometry matched both the new view and the new dataset; it now paints the previous dataset's geometry for exactly that view until the replacement is ready. Country borders: done in a second attempt, see below |
 | 13.13 | **German pattern in every country** (user, 2026-10-22): state borders upgraded by municipal borders, then single municipalities closer in, wherever the data allows; a list of the countries where it does not. The municipal button shows only municipalities; the sharper state borders belong to the state button | M | **Done 2026-10-22, second attempt.** geoBoundaries files name no state, so outside the six national sources no state border was upgraded. The first attempt (tracing municipal segments along Natural Earth lines) broke borders into fragments and was removed. Now each municipality gets the geoBoundaries state polygon containing it (`boundaries/parents.rs`), the same rule as the national sources; checked on real data for CZ, PL, AT, SK and IT before shipping. Each country has a reviewed municipal and state level (`adm.rs`). Country borders are drawn from one side's municipal outline (13.12). With the state or country layer off, the municipal lines on those borders stay drawn as ordinary municipal lines. Per-country list: `docs/MUNICIPAL_COVERAGE.md` |
-| 13.14 | **Cleaner municipal country borders** (user, 2026-10-23): no rogue blobs or short stray lines where a country's municipal file has holes or slivers near a border (seen at 26.3° N, 89.0° E on the India–Bangladesh border) | S–M | Planned. Design and measurements below |
+| 13.14 | **Cleaner municipal country borders** (user, 2026-10-23): no rogue blobs or short stray lines where a country's municipal file has holes or slivers near a border (seen at 26.3° N, 89.0° E on the India–Bangladesh border) | S–M | **Done 2026-10-23.** Most of the "blobs" were the real border (the Patgram salient); the stray ones were land both countries' files claim. Contested land is no longer drawn as country border. Details below |
 
 **13.12 Instant border handover.** Where two versions of a border meet, exactly one is
 drawn, and the switch between them happens between two frames:
@@ -382,47 +382,36 @@ drawn, and the switch between them happens between two frames:
   a narrow notch of the neighbour stays part of the outline instead of leaving a gap.
   Snapshot of the state-only version: branch `snapshot/2026-10-22-state-borders`.
 
-**13.14 Cleaner municipal country borders.** Today an outline segment of the drawing
-country becomes country border when it runs within 5.5 km of a Natural Earth land-border
-line naming both countries (13.12). Where that country's municipal file has gaps near
-the border, the edges around each gap pass the same test.
+**13.14 Cleaner municipal country borders.** An outline segment of the drawing country
+becomes country border when it runs within 5.5 km of a Natural Earth land-border line
+naming both countries (13.12). At 26.3° N, 89.0° E this drew large loops and small
+blobs, which looked wrong. Checked on the real files (2026-10-23):
 
-- **What the screenshot shows** (26.3° N, 89.0° E, checked on the real files 2026-10-23):
-  Bangladesh draws this border (BGD sorts before IND, neither is a national source).
-  Its union file (ADM4) leaves holes and loose slivers along the border: former Cooch
-  Behar enclaves and river chars that no union covers. Natural Earth has just one plain
-  BGD–IND line there, no enclave loops, so every blob is a hole or sliver edge in the
-  geoBoundaries file.
-- **Minimum independent line length alone does not separate them.** Country-border
-  chains (runs joined end to end), measured on real data:
-
-  | Area | Chains | Total | Under 1 km | Under 3 km | Under 10 km |
-  | --- | --- | --- | --- | --- | --- |
-  | Bangladesh–India, screenshot spot | 21 | 634 km | 2 (0.8 km) | 12 (17.9 km) | 15 (37 km) |
-  | Bangladesh–India, whole border | 61 | 5,707 km | 4 (1.6 km) | 19 (27 km) | 28 (78 km) |
-  | CZ, PL, AT, SK (good borders) | 86 | 3,443 km | 27 (7.4 km) | 33 (17.9 km) | 47 (109 km) |
-
-  The good borders have more short chains than the bad one: real borders split by
-  short gaps. A cut-off that removes the Bangladesh loops (2–10 km) would remove 109 km
-  of real border in Central Europe. A small cut-off (about 1 km, closed loops only) is
-  still useful for slivers.
-- **Small islands are not at risk.** Fais (9.76° N, 140.52° E) is in geoBoundaries
-  (Micronesia ADM2, a 10-point ring, 6.7 km around) and in Natural Earth's country
-  polygons. But an island has no land border, so its coast never becomes municipal
-  country border; a length filter on country-border chains cannot remove it. No special
-  island file is needed.
-- **Proposed rule: the far side must be the neighbour.** For each candidate segment,
-  probe a point about 1 km out on the side away from its own municipality. It is a
-  border only if that point lies in the neighbour: within a loaded neighbour's
-  municipality, or, when the neighbour is not loaded, inside the neighbour's Natural
-  Earth country polygon (`country_at`, already used by the streamer), or within 3 km of
-  the Natural Earth line to absorb its offset. A hole or sliver deep inside the
-  drawing country fails, because its far side is still that country. Then drop closed
-  country-border loops under 1 km as slivers.
-- **Check before shipping:** the BGD–IND spot (blobs gone), CZ/PL/AT/SK and IT/AT (no
-  chain lost, compare with today's plots), and Baarle-Nassau (real enclaves stay).
-  Cost: one probe and one point-in-polygon per outline segment near a border, about
-  as much as the current band test.
+- **The large loops are the real border.** Bangladesh's Patgram salient reaches into
+  India's Cooch Behar, and both countries' files agree on it: along most drawn
+  segments a Bangladeshi union lies on one side and an Indian district on the other.
+  Natural Earth's 1:10m line simplifies this away (it puts both sides in India at
+  hundreds of places), which is why the accurate line looked odd.
+- **The stray blobs were land both files claim:** union parts in Bangladesh's file
+  (Kuchlibari, Baura, Jagatber, Jongra, Dahagram) that India's file also covers. Most
+  are pockets exchanged in the 2015 land swap that Bangladesh's file still holds.
+  Dahagram is the exception: it is still Bangladeshi, but India's file and Natural
+  Earth both put it in India, so no source at hand tells it apart.
+- **Rule (done):** the drawing side does not draw a country border around land that the
+  neighbour's file also covers (a point inside the ring is covered by both countries'
+  rings, even-odd, so a hole that a real enclave fills is not contested). That outline
+  stays a municipal line; the other side's copy is handled as before, so no line is
+  drawn twice. Results: 21 → 7 border chains at the screenshot spot (569 of 634 km
+  kept), 61 → 42 along the whole Bangladesh–India border; Czechia, Poland, Austria,
+  Slovakia, Italy and Baarle-Nassau (real nested enclaves) unchanged. Dahagram shows
+  as a municipal outline, not a country border.
+- **Rejected:** a minimum line length (the good Central European borders have more
+  short chains than this border: 47 under 10 km, 109 km in total, against 28 and 78 km)
+  and "the far side must be the neighbour" (the two files leave thin gaps along the
+  real border, and the rule cut it there).
+- **Small islands:** Fais (9.76° N, 140.52° E) is in geoBoundaries and Natural Earth.
+  Islands get no line because GlobeCraft never draws coastlines (only land borders),
+  not because of this rule.
 
 ## 14. Size and efficiency review (2026-10-22)
 

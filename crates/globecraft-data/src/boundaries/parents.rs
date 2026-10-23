@@ -48,14 +48,20 @@ fn ring_area(ring: &Line) -> f64 {
 }
 
 /// Even-odd test against all rings of one polygon, so holes are outside.
-fn inside(rings: &[Line], (lat, lon): (f64, f64)) -> bool {
+fn inside(rings: &[Line], point: (f64, f64)) -> bool {
+    rings
+        .iter()
+        .fold(false, |inside, ring| inside ^ encloses(ring, point))
+}
+
+/// Whether `ring` encloses `point` (even-odd). Over several rings, XOR the results:
+/// a point in a hole is enclosed by the outer ring and the hole.
+pub(super) fn encloses(ring: &[(f64, f64)], (lat, lon): (f64, f64)) -> bool {
     let mut inside = false;
-    for ring in rings {
-        for pair in ring.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
-            if (a.0 > lat) != (b.0 > lat) && lon < a.1 + (lat - a.0) * (b.1 - a.1) / (b.0 - a.0) {
-                inside = !inside;
-            }
+    for pair in ring.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if (a.0 > lat) != (b.0 > lat) && lon < a.1 + (lat - a.0) * (b.1 - a.1) / (b.0 - a.0) {
+            inside = !inside;
         }
     }
     inside
