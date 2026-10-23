@@ -343,6 +343,7 @@ impl App {
             });
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::MunicipalBorders);
+                self.layer_small(ui, MapLayer::OsmBorderTiles);
             });
         });
         group(ui, lang.text("layers-globe-title"), |ui| {
@@ -777,6 +778,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Satellites => "ribbon-layer-satellites",
         MapLayer::Roads => "ribbon-layer-roads",
         MapLayer::Traffic => "ribbon-layer-traffic",
+        MapLayer::OsmBorderTiles => "ribbon-layer-osm-border-tiles",
     })
 }
 

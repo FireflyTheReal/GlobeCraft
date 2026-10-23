@@ -68,6 +68,7 @@ impl App {
             states: self.layer(MapLayer::StateBorders),
             cities: self.layer(MapLayer::MunicipalBorders),
             labels: self.layer(MapLayer::PlaceLabels),
+            osm_tiles: self.layer(MapLayer::OsmBorderTiles),
         }
     }
 

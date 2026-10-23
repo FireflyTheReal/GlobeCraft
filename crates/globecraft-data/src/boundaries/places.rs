@@ -174,6 +174,7 @@ fn publish_if_changed(
         regions: Vec::new(),
         replace: true,
         municipal: None,
+        osm: None,
     });
     repaint();
 }

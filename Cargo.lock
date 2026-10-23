@@ -2044,6 +2044,7 @@ name = "globecraft-data"
 version = "0.2.0"
 dependencies = [
  "bytemuck",
+ "flate2",
  "fst",
  "glam",
  "globecraft-core",

@@ -2,7 +2,7 @@
 use emath::{Pos2, Rect};
 use globecraft_core::{camera::Basis, math::wrap_lon};
 use globecraft_data::boundaries::{
-    BoundaryData, LabelKind, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, MapLabel,
+    BoundaryData, LabelKind, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, MapLabel, OSM_MUNICIPAL_MIN_ZOOM,
     STATE_BIG_VISIBLE_MAX_ALTITUDE_KM,
 };
 use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
@@ -35,6 +35,8 @@ pub struct OverlayLayers {
     pub states: bool,
     pub cities: bool,
     pub labels: bool,
+    /// Borders from OpenStreetMap vector tiles replace the other border sources.
+    pub osm_tiles: bool,
 }
 pub struct OverlayProjection<'a> {
     pub basis: &'a Basis,
@@ -286,6 +288,45 @@ pub fn project_borders(
             }
         }
     };
+
+    // Borders from OpenStreetMap vector tiles: one line per border, already chosen for
+    // the zoom level, so nothing is cut or handed over. The buttons keep their meaning:
+    // a line belongs to the lowest level it bounds, and with that level's layer off it
+    // is drawn in the style of the next layer that is on, so no area is left open.
+    let osm = &boundaries.osm_borders;
+    if view.layers.osm_tiles && !osm.is_empty() {
+        let step = if close_zoom { 0.12 } else { 1.0 };
+        let states_far = STATE_BIG_VISIBLE_MAX_ALTITUDE_KM.max(view.state_visible_max_km);
+        let municipal = view.layers.cities
+            && municipal_visible
+            && osm.zoom >= OSM_MUNICIPAL_MIN_ZOOM
+            && view.altitude_km <= boundaries.municipal_detail_max_km;
+        if view.layers.states {
+            if view.altitude_km < STATE_BIG_VISIBLE_MAX_ALTITUDE_KM {
+                draw_cut(&osm.state_big, BorderKind::StateBig, None, step);
+            }
+            if view.altitude_km < view.state_visible_max_km {
+                draw_cut(&osm.state, BorderKind::State, None, step);
+            }
+            if !view.layers.countries && view.altitude_km < states_far {
+                draw_cut(&osm.country, BorderKind::StateBig, None, step);
+            }
+        }
+        if municipal {
+            draw_cut(&osm.municipal, BorderKind::City, None, step);
+            if !view.layers.states {
+                draw_cut(&osm.state_big, BorderKind::City, None, step);
+                draw_cut(&osm.state, BorderKind::City, None, step);
+                if !view.layers.countries {
+                    draw_cut(&osm.country, BorderKind::City, None, step);
+                }
+            }
+        }
+        if view.layers.countries {
+            draw_cut(&osm.country, BorderKind::Country, None, step);
+        }
+        return;
+    }
 
     // State/province lines, minus the stretches municipal state borders replace.
     if view.layers.states {
@@ -631,6 +672,7 @@ mod tests {
             states: true,
             cities: true,
             labels: false,
+            osm_tiles: false,
         };
         let project = |layers: OverlayLayers, data: &BoundaryData| {
             let view = OverlayProjection {
@@ -709,6 +751,7 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
+                osm_tiles: false,
             },
         };
         let names: Vec<(&str, u8)> = project_labels(&view, &data)
@@ -752,6 +795,7 @@ mod tests {
                     states,
                     cities,
                     labels: false,
+                    osm_tiles: false,
                 },
             };
             let mut kinds = std::collections::BTreeMap::<&str, f32>::new();
@@ -791,6 +835,82 @@ mod tests {
     }
 
     #[test]
+    fn osm_tile_borders_replace_the_other_sources_and_keep_the_button_rules() {
+        use globecraft_core::camera::Cam;
+        use std::sync::Arc;
+        let line = |lat: f64| Arc::new(vec![(lat, 8.9), (lat, 9.1)]);
+        // Natural Earth and municipal lines that the tiles must replace.
+        let mut data = BoundaryData::default();
+        data.countries = vec![line(48.03)];
+        data.world_cities = vec![line(48.04)];
+        data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+        data.osm_borders = Arc::new(globecraft_data::boundaries::OsmBorderLines {
+            country: vec![line(48.0)],
+            state: vec![line(48.01)],
+            municipal: vec![line(48.02)],
+            zoom: OSM_MUNICIPAL_MIN_ZOOM + 1,
+            ..Default::default()
+        });
+        let basis = Cam {
+            lat: 48.0,
+            lon: 9.0,
+            heading: 0.0,
+            alt: 30.0,
+        }
+        .basis(1.0);
+        let draw = |countries: bool, states: bool, cities: bool, osm_tiles: bool| {
+            let view = OverlayProjection {
+                basis: &basis,
+                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
+                altitude_km: 30.0,
+                state_visible_max_km: 1609.0,
+                dashes: BorderDashes::default(),
+                layers: OverlayLayers {
+                    countries,
+                    states,
+                    cities,
+                    labels: false,
+                    osm_tiles,
+                },
+            };
+            // Which kinds draw the lines at each latitude, by hundredths of a degree.
+            let mut kinds = std::collections::BTreeSet::<(i64, &str)>::new();
+            project_borders(&view, &data, None, |kind, [a, _]| {
+                let lat = basis
+                    .pick(view.rect, a)
+                    .map_or(-1, |(lat, _)| ((lat - 48.0) * 100.0).round() as i64);
+                let name = match kind {
+                    BorderKind::Country => "Country",
+                    BorderKind::State => "State",
+                    BorderKind::StateBig => "StateBig",
+                    BorderKind::City => "City",
+                    BorderKind::CityMajor => "CityMajor",
+                    BorderKind::CityCountry => "CityCountry",
+                };
+                kinds.insert((lat, name));
+            });
+            kinds.into_iter().collect::<Vec<_>>()
+        };
+        assert_eq!(
+            draw(true, true, true, true),
+            vec![(0, "Country"), (1, "State"), (2, "City")],
+            "each tile line once, in its own style; nothing from the other sources"
+        );
+        assert_eq!(
+            draw(false, false, true, true),
+            vec![(0, "City"), (1, "City"), (2, "City")],
+            "municipalities alone are closed by the higher borders"
+        );
+        assert_eq!(
+            draw(false, true, true, true),
+            vec![(0, "StateBig"), (1, "State"), (2, "City")],
+            "states close at country borders"
+        );
+        // Without the tile layer the other sources draw as before.
+        assert!(draw(true, true, true, false).contains(&(3, "Country")));
+    }
+
+    #[test]
     fn municipal_state_borders_close_the_municipalities_when_states_are_off() {
         use globecraft_core::camera::Cam;
         use std::sync::Arc;
@@ -817,6 +937,7 @@ mod tests {
                     states,
                     cities,
                     labels: false,
+                    osm_tiles: false,
                 },
             };
             let (mut major, mut city) = (0, 0);

@@ -227,6 +227,7 @@ mod tests {
                 states: false,
                 cities: false,
                 labels: false,
+                osm_tiles: false,
             },
         };
         let projection = OverlayProjection {
@@ -280,6 +281,7 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
+                osm_tiles: false,
             },
         };
         let (tx, rx) = mpsc::channel();
@@ -332,6 +334,7 @@ mod tests {
         let hidden = OverlayView {
             layers: OverlayLayers {
                 labels: false,
+                osm_tiles: false,
                 ..view.layers
             },
             ..view
@@ -392,6 +395,7 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
+                osm_tiles: false,
             },
         };
         worker.submit(view, data.clone());

@@ -42,6 +42,7 @@ pub struct BoundaryLoader {
     active: Arc<AtomicUsize>,
     municipal: MunicipalStreamer,
     places: super::places::PlaceStreamer,
+    osm_tiles: super::osm_tiles::OsmTileStreamer,
     requests: BrazilRequests,
     /// Highest round-detail level already applied to the world layers.
     world_detail: Arc<AtomicU8>,
@@ -194,6 +195,17 @@ impl BoundaryLoader {
         self.places.update(view);
     }
 
+    /// Borders and names from OpenStreetMap vector tiles (see `osm_tiles`).
+    pub fn request_osm_tiles(&mut self, view: super::OsmTileView) {
+        self.osm_tiles.update(view);
+    }
+
+    /// Whether OpenStreetMap border tiles have arrived (the other border sources stay
+    /// in use until then, so a failed service never leaves the globe without borders).
+    pub fn has_osm_tiles(&self) -> bool {
+        self.osm_tiles.has_tiles()
+    }
+
     pub fn is_loading(&self) -> bool {
         self.is_loading_base_layers() || self.is_loading_local()
     }
@@ -255,6 +267,12 @@ pub fn load_boundaries_async(
         log.clone(),
         repaint.clone(),
     );
+    let osm_tiles = super::osm_tiles::OsmTileStreamer::new(
+        runtime.clone(),
+        tx.clone(),
+        log.clone(),
+        repaint.clone(),
+    );
     (
         rx,
         BoundaryLoader {
@@ -264,6 +282,7 @@ pub fn load_boundaries_async(
             active,
             municipal,
             places,
+            osm_tiles,
             requests: BrazilRequests::default(),
             world_detail: Arc::new(AtomicU8::new(DetailLevel::Low as u8)),
             world_target: Arc::new(AtomicU8::new(DetailLevel::Low as u8)),
@@ -391,6 +410,7 @@ async fn load_polygon_layer(
         regions: output.regions,
         replace: false,
         municipal: None,
+        osm: None,
     })
 }
 async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch> {
@@ -445,6 +465,7 @@ async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch
         regions: vec![],
         replace: true,
         municipal: None,
+        osm: None,
     })
 }
 
@@ -491,6 +512,7 @@ async fn load_disputed(log: &StatusLog, sources: &[FeatureSource]) -> Option<Pat
         regions: vec![],
         replace: false,
         municipal: None,
+        osm: None,
     })
 }
 
@@ -622,6 +644,12 @@ mod tests {
                 Arc::new(|| {}),
             ),
             places: crate::boundaries::places::PlaceStreamer::new(
+                tokio::runtime::Handle::current(),
+                tx.clone(),
+                log.clone(),
+                Arc::new(|| {}),
+            ),
+            osm_tiles: crate::boundaries::osm_tiles::OsmTileStreamer::new(
                 tokio::runtime::Handle::current(),
                 tx.clone(),
                 log.clone(),

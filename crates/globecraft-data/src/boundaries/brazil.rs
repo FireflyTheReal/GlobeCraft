@@ -200,5 +200,6 @@ pub(super) async fn load_brazil(log: &StatusLog, tx: &mpsc::Sender<Patch>, inclu
         // base populated-place labels that share this layer.
         replace: false,
         municipal: None,
+        osm: None,
     });
 }

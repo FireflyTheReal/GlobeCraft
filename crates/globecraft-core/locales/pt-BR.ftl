@@ -114,6 +114,8 @@ layers-state-altitude-label = Estados visíveis abaixo
 layers-place-labels-toggle = Nomes de países, estados e cidades
 
 layers-municipal-borders-toggle = Limites de municípios (Brasil IBGE; fontes nacionais; geoBoundaries/OSM como alternativa)
+layers-osm-border-tiles-toggle = Fronteiras e nomes dos blocos do OpenStreetMap (OpenFreeMap; teste)
+layers-osm-border-tiles-help = Teste: cada fronteira é uma linha do OpenStreetMap, comum aos dois lados, escolhida para o nível de zoom como as imagens. Substitui as outras camadas de fronteiras e os nomes de lugares assim que chegam os primeiros blocos. Os limites municipais aparecem a partir de cerca de 40 km.
 
 
 layers-boundary-attribution = Limites: Natural Earth (domínio público), geoBoundaries (CC BY 4.0), institutos nacionais de estatística e OpenStreetMap (ODbL).
@@ -597,6 +599,7 @@ sky-retry = Tentar carregar o fundo novamente
 sky-short-credit = Céu: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
 sky-combined-credit = { $map }
     { $sky }
+osm-tiles-combined-credit = { $map } · { $tiles }
 sky-software-credits = Licenças do software de transformação celeste
 
 # Relevo diretamente no motor Rust (sem navegador)
@@ -808,6 +811,7 @@ ribbon-layer-countries = Países
 ribbon-layer-states = Estados
 ribbon-layer-labels = Nomes de lugares
 ribbon-layer-municipal = Municípios
+ribbon-layer-osm-border-tiles = Blocos OSM
 ribbon-layer-terrain = Relevo 3D
 ribbon-layer-grid = Grade
 ribbon-layer-grid-labels = Rótulos da grade

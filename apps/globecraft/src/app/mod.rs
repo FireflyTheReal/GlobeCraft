@@ -541,6 +541,11 @@ impl eframe::App for App {
             .country_at(self.cam.lat, self.cam.lon)
             .map(str::to_owned);
         let is_brazil = earth_visible && country.as_deref() == Some("BRA");
+        // OpenStreetMap border tiles replace the municipal outlines and the Overpass
+        // names once the first tiles arrived; until then (or if the service fails)
+        // the other sources keep the globe bordered and named.
+        let osm_tiles = earth_visible && self.layer(MapLayer::OsmBorderTiles);
+        let osm_ready = osm_tiles && self.boundary_loader.has_osm_tiles();
         self.boundary_loader.request_municipal(
             globecraft_data::boundaries::MunicipalView {
                 // Municipal outlines also sharpen the state and country borders up
@@ -548,7 +553,8 @@ impl eframe::App for App {
                 enabled: (self.layer(MapLayer::MunicipalBorders)
                     || self.layer(MapLayer::StateBorders)
                     || self.layer(MapLayer::CountryBorders))
-                    && earth_visible,
+                    && earth_visible
+                    && !osm_ready,
                 altitude_km: self.cam.alt,
                 lat: self.cam.lat,
                 lon: self.cam.lon,
@@ -558,7 +564,14 @@ impl eframe::App for App {
         );
         self.boundary_loader
             .request_places(globecraft_data::boundaries::PlaceView {
-                enabled: self.layer(MapLayer::PlaceLabels) && earth_visible,
+                enabled: self.layer(MapLayer::PlaceLabels) && earth_visible && !osm_ready,
+                lat: self.cam.lat,
+                lon: self.cam.lon,
+                altitude_km: self.cam.alt,
+            });
+        self.boundary_loader
+            .request_osm_tiles(globecraft_data::boundaries::OsmTileView {
+                enabled: osm_tiles,
                 lat: self.cam.lat,
                 lon: self.cam.lon,
                 altitude_km: self.cam.alt,

@@ -862,6 +862,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
             country_pairs,
             country_cells,
         }),
+        osm: None,
     }
 }
 
@@ -911,6 +912,7 @@ async fn publish(
                 regions: vec![],
                 replace: true,
                 municipal: None,
+                osm: None,
             },
         };
         if tx.send(patch).is_err() {

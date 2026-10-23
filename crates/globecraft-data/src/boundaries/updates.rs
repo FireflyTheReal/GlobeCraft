@@ -36,7 +36,7 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
                     label.kind != LabelKind::City || label.rank >= LOCAL_BIG_LABEL_RANK
                 });
             }
-            Layer::WorldCities => {}
+            Layer::WorldCities | Layer::OsmBorders => {}
             Layer::Places => data.labels.retain(|label| !label.is_place()),
         }
     }
@@ -76,6 +76,23 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
             data.labels.retain(|label| !label.is_municipal());
         }
         Layer::Places => {}
+        Layer::OsmBorders => {
+            let mut lines = patch.osm.unwrap_or_default();
+            // Provinces of the big countries show from farther out, as with Natural
+            // Earth's lines (`STATE_BIG_VISIBLE_MAX_ALTITUDE_KM`).
+            let (big, other): (Vec<_>, Vec<_>) = std::mem::take(&mut lines.state)
+                .into_iter()
+                .partition(|line| {
+                    let mid = line[line.len() / 2];
+                    data.in_big_country(mid.0, mid.1)
+                });
+            lines.state = other;
+            lines.state_big = big;
+            data.osm_borders = Arc::new(lines);
+            if data.municipal_detail_max_km <= 0.0 {
+                data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+            }
+        }
     }
     data.labels.extend(patch.labels);
     dedupe_city_labels(&mut data.labels);
@@ -152,6 +169,7 @@ mod tests {
             regions: vec![],
             replace: false,
             municipal: None,
+            osm: None,
         };
         tx.send(patch("First", 5)).unwrap();
         wakes.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -204,6 +222,7 @@ mod tests {
                 regions: vec![],
                 replace: false,
                 municipal: None,
+                osm: None,
             },
         );
         assert!(data.labels.iter().any(|label| label.en == "Base city"));
@@ -247,6 +266,7 @@ mod tests {
                 regions: vec![],
                 replace: true,
                 municipal: None,
+                osm: None,
             },
         );
         assert_eq!(data.countries.len(), 2);
@@ -268,6 +288,7 @@ mod tests {
                 regions: vec![],
                 replace: false,
                 municipal: None,
+                osm: None,
             },
         );
         assert_eq!(data.countries.len(), 3);
@@ -302,6 +323,7 @@ mod tests {
                 regions: vec![],
                 replace: true,
                 municipal: None,
+                osm: None,
             },
         );
         assert!(!data.labels.iter().any(|l| l.en == "World city"));

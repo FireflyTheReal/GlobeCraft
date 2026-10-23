@@ -403,6 +403,19 @@ impl App {
                 );
                 credit(ui, "TomTom Traffic", "https://developer.tomtom.com/");
             }
+            MapLayer::OsmBorderTiles => {
+                note(ui, t, lang.text("layers-osm-border-tiles-help"));
+                credit(
+                    ui,
+                    crate::app::globe::OSM_TILES_CREDIT,
+                    "https://openfreemap.org",
+                );
+                credit(
+                    ui,
+                    "© OpenStreetMap contributors (ODbL)",
+                    "https://www.openstreetmap.org/copyright",
+                );
+            }
             MapLayer::Radar => credit(
                 ui,
                 lang.text("sidebar-radar-source"),

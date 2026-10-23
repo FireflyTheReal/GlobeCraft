@@ -114,6 +114,8 @@ layers-state-altitude-label = States visible below
 layers-place-labels-toggle = Country, state and city names
 
 layers-municipal-borders-toggle = Municipal borders (Brazil IBGE; national sources; geoBoundaries/OSM fallback)
+layers-osm-border-tiles-toggle = Borders and names from OpenStreetMap tiles (OpenFreeMap; test)
+layers-osm-border-tiles-help = Test: every border is one OpenStreetMap line, shared by both sides, chosen for the zoom level like imagery. Replaces the other border layers and the place names once the first tiles arrive. Municipal lines show from about 40 km.
 
 
 layers-boundary-attribution = Borders: Natural Earth (public domain), geoBoundaries (CC BY 4.0), national statistical agencies, OpenStreetMap (ODbL).
@@ -597,6 +599,7 @@ sky-retry = Retry background loading
 sky-short-credit = Sky: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
 sky-combined-credit = { $map }
     { $sky }
+osm-tiles-combined-credit = { $map } · { $tiles }
 sky-software-credits = Celestial transform software licenses
 
 # Native Rust renderer terrain (no browser)
@@ -808,6 +811,7 @@ ribbon-layer-countries = Countries
 ribbon-layer-states = States
 ribbon-layer-labels = Place Names
 ribbon-layer-municipal = Municipalities
+ribbon-layer-osm-border-tiles = OSM tiles
 ribbon-layer-terrain = 3D Terrain
 ribbon-layer-grid = Grid
 ribbon-layer-grid-labels = Grid Labels

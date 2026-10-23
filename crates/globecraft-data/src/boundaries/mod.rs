@@ -7,6 +7,8 @@ mod load;
 mod lod;
 mod municipal;
 mod national;
+mod osm_tiles;
+pub use osm_tiles::{MUNICIPAL_MIN_ZOOM as OSM_MUNICIPAL_MIN_ZOOM, OsmBorderLines, OsmTileView};
 mod parents;
 mod places;
 pub use places::PlaceView;
@@ -154,6 +156,8 @@ pub struct BoundaryData {
     /// `ADM0_A3_L`/`ADM0_A3_R`), when known.
     pub country_pairs: Vec<Option<CountryPair>>,
     pub labels: Vec<MapLabel>,
+    /// Borders from OpenStreetMap vector tiles around the view, when that layer is on.
+    pub osm_borders: Arc<OsmBorderLines>,
     country_regions: Vec<CountryRegion>,
     countries_loaded: bool,
 }
@@ -181,6 +185,11 @@ impl BoundaryData {
     }
     pub fn has_countries(&self) -> bool {
         self.countries_loaded
+    }
+    /// Whether the country at the point has its provinces shown from far out.
+    fn in_big_country(&self, lat: f64, lon: f64) -> bool {
+        self.country_at(lat, lon)
+            .is_some_and(|iso3| BIG_COUNTRIES_A3.contains(&iso3))
     }
 }
 
@@ -369,6 +378,8 @@ pub enum Layer {
     WorldCities,
     /// OpenStreetMap town, village and island names around the view.
     Places,
+    /// Borders from OpenStreetMap vector tiles around the view (`osm_tiles`).
+    OsmBorders,
 }
 
 /// One finished piece of overlay data, sent from a loader thread to the UI thread.
@@ -387,6 +398,8 @@ pub struct Patch {
     pub replace: bool,
     /// For `Layer::WorldCities`: the staging of the municipal layer.
     pub municipal: Option<MunicipalStaging>,
+    /// For `Layer::OsmBorders`: the border lines of the tiles on show.
+    pub osm: Option<OsmBorderLines>,
 }
 
 /// How the municipal layer is staged, sent with each `WorldCities` patch.

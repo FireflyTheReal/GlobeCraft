@@ -175,6 +175,10 @@ impl BoundaryIndex {
             &data.world_cities_major,
             &data.world_cities_country,
             &data.world_cities,
+            &data.osm_borders.country,
+            &data.osm_borders.state_big,
+            &data.osm_borders.state,
+            &data.osm_borders.municipal,
         ]
         .into_iter()
         .flatten()

@@ -25,6 +25,7 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
             states: true,
             cities: false,
             labels: true,
+            osm_tiles: false,
         },
         map_scale: 1.0,
         lang: Lang::En,
@@ -308,6 +309,7 @@ fn projected_shapes_preserve_priority_stable_ties_and_border_endpoints() {
             layers: OverlayLayers {
                 countries: false,
                 labels: false,
+                osm_tiles: false,
                 states: true,
                 ..style.layers
             },
@@ -473,6 +475,7 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
                     states: true,
                     cities: false,
                     labels: false,
+                    osm_tiles: false,
                 },
                 dashes: globecraft_render::overlays::BorderDashes::default(),
             },

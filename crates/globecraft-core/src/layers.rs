@@ -22,6 +22,9 @@ pub enum MapLayer {
     Satellites,
     Roads,
     Traffic,
+    /// Borders and place names from OpenStreetMap vector tiles instead of the
+    /// Natural Earth, municipal and Overpass sources (a prototype to compare).
+    OsmBorderTiles,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -58,7 +61,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -77,6 +80,7 @@ impl MapLayer {
         Self::Satellites,
         Self::Roads,
         Self::Traffic,
+        Self::OsmBorderTiles,
     ];
 
     /// Stable identifier used in settings files and assistant commands.
@@ -100,6 +104,7 @@ impl MapLayer {
             Self::Satellites => "satellites",
             Self::Roads => "roads",
             Self::Traffic => "traffic",
+            Self::OsmBorderTiles => "osm_border_tiles",
         }
     }
 
@@ -128,6 +133,7 @@ impl MapLayer {
             Self::Satellites => "layers-satellites-toggle",
             Self::Roads => "layers-roads-toggle",
             Self::Traffic => "layers-traffic-toggle",
+            Self::OsmBorderTiles => "layers-osm-border-tiles-toggle",
         }
     }
 
@@ -135,7 +141,7 @@ impl MapLayer {
     pub fn icon(self) -> &'static str {
         match self {
             Self::CountryBorders | Self::StateBorders => "borders",
-            Self::MunicipalBorders => "borders_fine",
+            Self::MunicipalBorders | Self::OsmBorderTiles => "borders_fine",
             Self::PlaceLabels => "label",
             Self::Terrain => "terrain",
             Self::Grid | Self::GridLabels => "graticule",
@@ -157,7 +163,8 @@ impl MapLayer {
             Self::CountryBorders
             | Self::StateBorders
             | Self::PlaceLabels
-            | Self::MunicipalBorders => LayerGroup::Geography,
+            | Self::MunicipalBorders
+            | Self::OsmBorderTiles => LayerGroup::Geography,
             Self::Terrain | Self::Grid | Self::GridLabels => LayerGroup::Globe,
             Self::Atmosphere | Self::Sunlight | Self::Stars | Self::CinematicSky => LayerGroup::Sky,
             Self::Radar | Self::Clouds => LayerGroup::Weather,

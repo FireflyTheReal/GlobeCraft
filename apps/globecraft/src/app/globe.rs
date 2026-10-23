@@ -401,6 +401,16 @@ impl App {
                 ],
             );
         }
+        if self.layer(MapLayer::OsmBorderTiles) {
+            // OpenFreeMap's terms ask clients without MapLibre to show this credit.
+            attribution = lg.format(
+                "osm-tiles-combined-credit",
+                &[
+                    ("map", attribution.into()),
+                    ("tiles", OSM_TILES_CREDIT.into()),
+                ],
+            );
+        }
         if self.renderer.displayed_sky {
             attribution = lg.format(
                 "sky-combined-credit",
@@ -598,3 +608,6 @@ impl App {
         }
     }
 }
+
+/// The credit OpenFreeMap's vector tiles require (names, so never translated).
+pub(super) const OSM_TILES_CREDIT: &str = "OpenFreeMap © OpenMapTiles Data from OpenStreetMap";
