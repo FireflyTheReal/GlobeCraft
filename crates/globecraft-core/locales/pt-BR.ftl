@@ -841,6 +841,7 @@ settings-map-style-line-country = Fronteiras de países
 settings-map-style-line-state = Limites de estados e províncias
 
 settings-map-style-line-municipal = Limites municipais
+settings-map-style-line-disputed = Fronteiras disputadas
 
 settings-map-style-line-help = Limites municipais sobre uma divisa estadual usam o estilo dos estados, para que a troca de perto mantenha o mesmo visual.
 
@@ -867,7 +868,7 @@ settings-map-style-label-city = Cidades e municípios
 settings-map-style-reset-action = Restaurar estilo do mapa
 
 cmd-style-line = Estilo dos limites
-cmd-style-line-help = Define a cor, a espessura e o traço das fronteiras de países, estados ou municípios.
+cmd-style-line-help = Define a cor, a espessura e o traço das fronteiras de países, estados, municípios ou disputadas.
 cmd-style-label-size = Tamanho dos nomes
 cmd-style-label-size-help = Define o tamanho da fonte dos nomes de países, estados ou cidades.
 cmd-style-reset = Restaurar estilo do mapa

@@ -153,6 +153,12 @@ pub struct BoundaryData {
     /// For each line of `countries`, the two countries it separates (Natural Earth's
     /// `ADM0_A3_L`/`ADM0_A3_R`), when known.
     pub country_pairs: Vec<Option<CountryPair>>,
+    /// For each line of `countries`, whether it is disputed (Natural Earth's feature
+    /// class; drawn in the disputed style).
+    pub country_disputed: Vec<bool>,
+    /// Where disputed lines run: municipal country borders give way to them there, so
+    /// a disputed border is never drawn twice.
+    pub disputed_cells: Arc<MajorCells>,
     pub labels: Vec<MapLabel>,
     country_regions: Vec<CountryRegion>,
     countries_loaded: bool,
@@ -377,6 +383,9 @@ pub struct Patch {
     /// For `Layer::Countries`: the two countries each of `lines` separates, when known
     /// (shorter than `lines` when the tail has none).
     pub pairs: Vec<Option<CountryPair>>,
+    /// For `Layer::Countries`: whether each of `lines` is disputed (shorter than `lines`
+    /// when the tail is not).
+    pub disputed: Vec<bool>,
     pub lines: Vec<Line>,
     pub lines_big: Vec<Line>,
     pub labels: Vec<MapLabel>,

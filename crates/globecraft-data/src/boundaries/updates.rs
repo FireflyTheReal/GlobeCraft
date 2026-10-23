@@ -21,6 +21,7 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
             Layer::Countries => {
                 data.countries.clear();
                 data.country_pairs.clear();
+                data.country_disputed.clear();
                 data.country_regions.clear();
                 data.labels.retain(|label| label.kind != LabelKind::Country);
             }
@@ -45,7 +46,21 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
             let mut pairs = patch.pairs;
             pairs.resize(patch.lines.len(), None);
             data.country_pairs.extend(pairs);
+            let mut disputed = patch.disputed;
+            disputed.resize(patch.lines.len(), false);
+            data.country_disputed.extend(disputed);
             data.countries.extend(patch.lines);
+            let disputed_lines: Vec<super::Line> = data
+                .countries
+                .iter()
+                .zip(&data.country_disputed)
+                .filter(|(_, disputed)| **disputed)
+                .map(|(line, _)| line.clone())
+                .collect();
+            data.disputed_cells = Arc::new(super::MajorCells::with_cover(
+                &disputed_lines,
+                super::municipal::topology::COUNTRY_COVER_DEG,
+            ));
             data.country_regions.extend(patch.regions);
             data.countries_loaded = true;
         }
@@ -138,6 +153,7 @@ mod tests {
         let patch = |name: &str, rank| Patch {
             layer: Layer::Countries,
             pairs: Vec::new(),
+            disputed: Vec::new(),
             lines: vec![Arc::new(vec![(0.0, 0.0), (1.0, 1.0)])],
             lines_big: vec![],
             labels: vec![MapLabel {
@@ -194,6 +210,7 @@ mod tests {
             Patch {
                 layer: Layer::WorldCities,
                 pairs: Vec::new(),
+                disputed: Vec::new(),
                 lines: vec![],
                 lines_big: vec![],
                 labels: vec![label(
@@ -238,6 +255,7 @@ mod tests {
             Patch {
                 layer: Layer::Countries,
                 pairs: Vec::new(),
+                disputed: Vec::new(),
                 lines: vec![
                     Arc::new(vec![(0.0, 0.0), (2.0, 2.0)]),
                     Arc::new(vec![(3.0, 3.0), (4.0, 4.0)]),
@@ -262,6 +280,7 @@ mod tests {
             Patch {
                 layer: Layer::Countries,
                 pairs: Vec::new(),
+                disputed: Vec::new(),
                 lines: vec![Arc::new(vec![(5.0, 5.0), (6.0, 6.0)])],
                 lines_big: vec![],
                 labels: vec![],
@@ -296,6 +315,7 @@ mod tests {
             Patch {
                 layer: Layer::Cities,
                 pairs: Vec::new(),
+                disputed: Vec::new(),
                 lines: vec![],
                 lines_big: vec![],
                 labels: vec![label("New world city", 3)],

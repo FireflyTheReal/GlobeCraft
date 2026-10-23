@@ -168,6 +168,7 @@ fn publish_if_changed(
     let _ = tx.send(Patch {
         layer: Layer::Places,
         pairs: Vec::new(),
+        disputed: Vec::new(),
         lines: Vec::new(),
         lines_big: Vec::new(),
         labels,

@@ -192,6 +192,7 @@ pub(super) async fn load_brazil(log: &StatusLog, tx: &mpsc::Sender<Patch>, inclu
     let _ = tx.send(Patch {
         layer: Layer::Cities,
         pairs: Vec::new(),
+        disputed: Vec::new(),
         lines: vec![],
         lines_big: vec![],
         labels,

@@ -54,6 +54,7 @@ pub struct BorderDashes {
     pub country: Option<(f32, f32)>,
     pub state: Option<(f32, f32)>,
     pub municipal: Option<(f32, f32)>,
+    pub disputed: Option<(f32, f32)>,
 }
 impl BorderDashes {
     pub fn of(style: &MapStyle) -> Self {
@@ -61,6 +62,7 @@ impl BorderDashes {
             country: dash_points(style.country.dash),
             state: dash_points(style.state.dash),
             municipal: dash_points(style.municipal.dash),
+            disputed: dash_points(style.disputed.dash),
         }
     }
     fn of_kind(self, kind: BorderKind) -> Option<(f32, f32)> {
@@ -68,6 +70,7 @@ impl BorderDashes {
             LineType::Country => self.country,
             LineType::State => self.state,
             LineType::Municipal => self.municipal,
+            LineType::Disputed => self.disputed,
         }
     }
 }
@@ -101,6 +104,9 @@ pub enum BorderKind {
     /// Municipal country borders, drawn by one side per border, in the country style in
     /// place of the Natural Earth country line they cover.
     CityCountry,
+    /// Disputed borders and lines of control, in their own style. They are never
+    /// replaced by municipal lines; municipal country borders give way to them instead.
+    Disputed,
 }
 
 impl BorderKind {
@@ -111,6 +117,7 @@ impl BorderKind {
             Self::Country | Self::CityCountry => LineType::Country,
             Self::StateBig | Self::State | Self::CityMajor => LineType::State,
             Self::City => LineType::Municipal,
+            Self::Disputed => LineType::Disputed,
         }
     }
 }
@@ -263,6 +270,9 @@ pub fn project_borders(
         BorderKind::State | BorderKind::StateBig => state_cells,
         _ => None,
     };
+    let disputed = |index: usize| boundaries.country_disputed.get(index) == Some(&true);
+    // Municipal country borders give way to disputed lines, which stay whole.
+    let disputed_cells = Some(&*boundaries.disputed_cells).filter(|cells| !cells.is_empty());
     // A Natural Earth country line is cut by the municipal version of its own border.
     let country_line_cells = |index: usize| {
         country_cells
@@ -325,10 +335,13 @@ pub fn project_borders(
         {
             // Cut like country lines: the municipal country borders replace them.
             for (index, line) in boundaries.countries.iter().enumerate() {
+                let cells = (!disputed(index))
+                    .then(|| country_line_cells(index))
+                    .flatten();
                 draw_cut(
                     std::slice::from_ref(line),
                     BorderKind::StateBig,
-                    country_line_cells(index),
+                    cells,
                     step,
                 );
             }
@@ -351,7 +364,7 @@ pub fn project_borders(
                 draw_cut(
                     &boundaries.world_cities_country,
                     BorderKind::CityMajor,
-                    None,
+                    disputed_cells,
                     step,
                 );
             }
@@ -393,7 +406,7 @@ pub fn project_borders(
             draw_cut(
                 &boundaries.world_cities_country,
                 BorderKind::CityCountry,
-                cells_for(BorderKind::CityCountry),
+                disputed_cells,
                 step,
             );
         }
@@ -403,12 +416,16 @@ pub fn project_borders(
     if view.layers.countries {
         let step = if close_zoom { 0.25 } else { 2.0 };
         for (index, line) in boundaries.countries.iter().enumerate() {
-            draw_cut(
-                std::slice::from_ref(line),
-                BorderKind::Country,
-                country_line_cells(index),
-                step,
-            );
+            if disputed(index) {
+                draw_cut(std::slice::from_ref(line), BorderKind::Disputed, None, step);
+            } else {
+                draw_cut(
+                    std::slice::from_ref(line),
+                    BorderKind::Country,
+                    country_line_cells(index),
+                    step,
+                );
+            }
         }
     }
 }
@@ -673,6 +690,69 @@ mod tests {
     }
 
     #[test]
+    fn disputed_lines_stay_whole_and_municipal_borders_give_way_to_them() {
+        use globecraft_core::camera::Cam;
+        use std::sync::Arc;
+        let mut data = BoundaryData::default();
+        // A disputed line along 48° N and an ordinary one along 48.5° N; a municipal
+        // country border runs 2 km from each.
+        let along = |lat: f64| -> globecraft_data::boundaries::Line {
+            Arc::new((0..=10).map(|i| (lat, 8.5 + i as f64 * 0.1)).collect())
+        };
+        data.countries = vec![along(48.0), along(48.5)];
+        data.country_disputed = vec![true, false];
+        data.country_pairs = vec![Some([*b"CHN", *b"IND"]), Some([*b"DEU", *b"CZE"])];
+        data.world_cities_country = vec![along(48.02), along(48.52)];
+        data.municipal_country_cells = Arc::new(globecraft_data::boundaries::CountryCells::of(
+            &data.world_cities_country,
+            &[Some([*b"CHN", *b"IND"]), Some([*b"CZE", *b"DEU"])],
+        ));
+        data.disputed_cells = Arc::new(globecraft_data::boundaries::MajorCells::with_cover(
+            &data.countries[..1],
+            0.1,
+        ));
+        let basis = Cam {
+            lat: 48.25,
+            lon: 9.0,
+            heading: 0.0,
+            alt: 300.0,
+        }
+        .basis(1.0);
+        let view = OverlayProjection {
+            basis: &basis,
+            rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
+            altitude_km: 300.0,
+            state_visible_max_km: 1609.0,
+            dashes: BorderDashes::default(),
+            layers: OverlayLayers {
+                countries: true,
+                states: false,
+                cities: false,
+                labels: false,
+            },
+        };
+        let mut lengths = std::collections::BTreeMap::<&str, f32>::new();
+        project_borders(&view, &data, None, |kind, [a, b]| {
+            let name = match kind {
+                BorderKind::Disputed => "disputed",
+                BorderKind::Country => "country",
+                BorderKind::CityCountry => "municipal country",
+                _ => "other",
+            };
+            *lengths.entry(name).or_default() += (b - a).length();
+        });
+        let whole = lengths["disputed"];
+        // The disputed line is drawn whole; the ordinary one is replaced by its municipal
+        // version, and the municipal version of the disputed border is not drawn.
+        assert!(whole > 100.0, "{lengths:?}");
+        assert!(!lengths.contains_key("country"), "{lengths:?}");
+        assert!(
+            (lengths["municipal country"] - whole).abs() < whole * 0.05,
+            "only one municipal line remains: {lengths:?}"
+        );
+    }
+
+    #[test]
     fn place_names_do_not_repeat_a_name_already_shown_nearby() {
         use globecraft_core::camera::Cam;
         let label = |en: &str, lat: f64, lon: f64, rank: u8| MapLabel {
@@ -763,6 +843,7 @@ mod tests {
                     BorderKind::City => "City",
                     BorderKind::CityMajor => "CityMajor",
                     BorderKind::CityCountry => "CityCountry",
+                    BorderKind::Disputed => "Disputed",
                 };
                 *kinds.entry(name).or_default() += (b - a).length();
             });

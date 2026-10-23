@@ -847,6 +847,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
     Patch {
         layer: Layer::WorldCities,
         pairs: Vec::new(),
+        disputed: Vec::new(),
         lines: interior,
         lines_big: major,
         labels,
@@ -905,6 +906,7 @@ async fn publish(
             _ => Patch {
                 layer: Layer::WorldCities,
                 pairs: Vec::new(),
+                disputed: Vec::new(),
                 lines: vec![],
                 lines_big: vec![],
                 labels: vec![],
