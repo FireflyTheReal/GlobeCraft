@@ -227,7 +227,7 @@ impl App {
         );
         match outcome {
             WakeOutcome::Submit => {
-                let lod_scale = globecraft_render::view::render_scale(idle);
+                let lod_scale = globecraft_render::view::render_scale(viewport.size(), ppp, idle);
                 self.request_render(
                     RenderSize {
                         width: w,

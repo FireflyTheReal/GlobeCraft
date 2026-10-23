@@ -21,18 +21,20 @@ pub fn raster_size(size_points: Vec2, pixels_per_point: f32, idle: bool) -> (usi
         ((width as f32 * size_points.y / size_points.x) as usize).max(MIN_RENDER_HEIGHT_PX);
     (width, height)
 }
-/// Scale between the raster's pixels and the displayed pixels the user sees.
-/// While interacting, frames render at `ACTIVE_RENDER_SCALE` but the level of
-/// detail must still be chosen from the *displayed* pixel density, otherwise
-/// motion and idle frames sample different zoom bands and imagery strobes
-/// between levels at every motion/idle switch. 1.0 for full-resolution
-/// renders (recovers the historical per-raster behavior).
-pub fn render_scale(idle: bool) -> f32 {
-    if idle {
-        IDLE_RENDER_SCALE
-    } else {
-        ACTIVE_RENDER_SCALE
-    }
+/// Scale between this raster's pixels and the full-quality (idle) raster's, which
+/// sets the level of detail. While interacting, frames render at
+/// `ACTIVE_RENDER_SCALE`, but the level must follow the idle raster's density, or
+/// motion and idle frames sample different zoom bands and the imagery strobes
+/// between levels at every motion/idle switch.
+///
+/// The ratio comes from the actual raster sizes, not the nominal scale: idle rasters
+/// are capped at `MAX_RENDER_WIDTH_PX`, so on a large Retina window (3660 px) the
+/// idle raster is 2000 px while the motion raster (1464 px) is not capped. Using the
+/// nominal 0.4 there put motion frames almost a full level finer than idle frames.
+pub fn render_scale(size_points: Vec2, pixels_per_point: f32, idle: bool) -> f32 {
+    let (width, _) = raster_size(size_points, pixels_per_point, idle);
+    let (idle_width, _) = raster_size(size_points, pixels_per_point, true);
+    width as f32 / idle_width as f32
 }
 pub struct RasterView {
     pub camera: Cam,
@@ -213,6 +215,28 @@ mod tests {
         assert_ne!(mountain.presentation, flat.presentation);
         view.terrain_exaggeration = 2.0;
         assert_ne!(view.keys(120.0).presentation, mountain.presentation);
+    }
+
+    #[test]
+    fn motion_and_idle_frames_choose_the_same_level_even_when_the_idle_raster_is_capped() {
+        // `pixel::surface` picks the level from `render_scale / raster height`.
+        for (size, ppp) in [
+            (Vec2::new(1280.0, 800.0), 1.0),
+            (Vec2::new(1830.0, 1100.0), 2.0),
+            (Vec2::new(4000.0, 2000.0), 2.0),
+        ] {
+            let density = |idle| {
+                let (_, height) = raster_size(size, ppp, idle);
+                render_scale(size, ppp, idle) / height as f32
+            };
+            let (idle, motion) = (density(true), density(false));
+            assert!(
+                ((motion / idle).log2()).abs() < 0.02,
+                "{size:?} at {ppp}x: levels differ by {}",
+                (motion / idle).log2()
+            );
+        }
+        assert_eq!(render_scale(Vec2::new(1280.0, 800.0), 1.0, true), 1.0);
     }
 
     #[test]
