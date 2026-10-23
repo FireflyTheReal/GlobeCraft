@@ -154,6 +154,9 @@ impl App {
             aspect: render_aspect,
             provider: self.effective_provider(),
             release_index: self.wayback_idx,
+            compare: self
+                .active_compare()
+                .map(|compare| (compare.index, compare.split.to_bits())),
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
             terrain: self.layer(MapLayer::Terrain)
@@ -385,6 +388,7 @@ impl App {
                 Color32::WHITE,
             );
         }
+        self.compare_split(ui, &painter, rect);
         let mut attribution = self.settings.layers.basemap.attribution(lg).to_string();
         if self.settings.layers.basemap == Provider::Wayback
             && let Some(r) = self.wayback_list.get(self.wayback_idx)
@@ -517,4 +521,80 @@ fn draw_planet(
         .collect();
     mesh.indices = geometry.indices;
     painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Width of the grab area around the swipe-compare split, in points.
+const SPLIT_GRAB_POINTS: f32 = 24.0;
+const SPLIT_KNOB_RADIUS_POINTS: f32 = 13.0;
+
+impl App {
+    /// The Wayback swipe compare's split: a vertical line with a knob that drags left and
+    /// right, and each side's date at the top. Registered after the globe's own input,
+    /// so a drag that starts on the split moves the split, not the globe.
+    fn compare_split(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, rect: Rect) {
+        let Some(mut compare) = self.active_compare() else {
+            return;
+        };
+        let x = rect.left() + rect.width() * compare.split;
+        let grab = Rect::from_x_y_ranges(
+            (x - SPLIT_GRAB_POINTS / 2.0)..=(x + SPLIT_GRAB_POINTS / 2.0),
+            rect.y_range(),
+        );
+        let handle = ui.interact(grab, ui.id().with("wayback_compare_split"), Sense::drag());
+        if handle.hovered() || handle.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if handle.dragged()
+            && let Some(pointer) = handle.interact_pointer_pos()
+        {
+            let split = ((pointer.x - rect.left()) / rect.width())
+                .clamp(super::wayback::MIN_SPLIT, 1.0 - super::wayback::MIN_SPLIT);
+            if split != compare.split {
+                compare.split = split;
+                self.wayback_compare = Some(compare);
+                self.touch();
+            }
+        }
+        let x = rect.left() + rect.width() * compare.split;
+        let line = Stroke::new(2.0, Color32::WHITE);
+        painter.line_segment(
+            [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+            line,
+        );
+        let knob = Pos2::new(x, rect.center().y);
+        painter.circle(
+            knob,
+            SPLIT_KNOB_RADIUS_POINTS,
+            Color32::from_rgba_unmultiplied(20, 28, 40, 220),
+            line,
+        );
+        painter.text(
+            knob,
+            Align2::CENTER_CENTER,
+            "◀▶",
+            FontId::proportional(10.0),
+            Color32::WHITE,
+        );
+        let date = |index: usize| {
+            self.wayback_list
+                .get(index)
+                .map_or_else(String::new, |release| release.date.clone())
+        };
+        let font = FontId::proportional(12.0 * self.settings.map_scale);
+        let shadow = Color32::from_black_alpha(180);
+        for (text, anchor, offset) in [
+            (date(self.wayback_idx), Align2::RIGHT_TOP, -8.0),
+            (date(compare.index), Align2::LEFT_TOP, 8.0),
+        ] {
+            let at = Pos2::new(x + offset, rect.top() + 8.0);
+            painter.text(
+                at + Vec2::new(1.0, 1.0),
+                anchor,
+                &text,
+                font.clone(),
+                shadow,
+            );
+            painter.text(at, anchor, text, font.clone(), Color32::WHITE);
+        }
+    }
 }

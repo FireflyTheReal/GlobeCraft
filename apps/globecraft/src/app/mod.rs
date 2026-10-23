@@ -154,6 +154,9 @@ pub(crate) struct App {
 
     wayback_list: Vec<WaybackRelease>,
     wayback_idx: usize,
+    /// Wayback swipe compare: the release shown right of the split, and where the split
+    /// runs (a fraction of the view's width).
+    wayback_compare: Option<wayback::Compare>,
     wayback_rx: Option<mpsc::Receiver<Result<Vec<WaybackRelease>, globecraft_data::Error>>>,
     wayback_started: bool,
     wayback_err: Option<String>,
@@ -325,6 +328,7 @@ impl App {
             show_shortcuts: false,
             wayback_list: vec![],
             wayback_idx: 0,
+            wayback_compare: None,
             wayback_rx: None,
             wayback_started: false,
             wayback_err: None,

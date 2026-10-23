@@ -396,6 +396,52 @@ impl App {
                 self.set_wayback(index);
                 json!({"release": self.wayback_list[index].date})
             }
+            "layer.waybackCompare" => {
+                if self.wayback_list.len() < 2 {
+                    return Err(
+                        "Wayback releases are still loading; show the wayback basemap first."
+                            .into(),
+                    );
+                }
+                let enabled = bool_param(p, "enabled").unwrap_or(
+                    self.wayback_compare.is_none()
+                        || p.get("date").is_some()
+                        || p.get("step").is_some()
+                        || p.get("split").is_some(),
+                );
+                self.settings.layers.basemap = globecraft_data::tiles::Provider::Wayback;
+                if !enabled {
+                    self.set_wayback_compare(false);
+                    return Ok(json!({"compare": false}));
+                }
+                if self.wayback_compare.is_none() {
+                    self.set_wayback_compare(true);
+                }
+                let mut compare = self.wayback_compare.ok_or("nothing to compare")?;
+                if let Some(date) = str_param(p, "date") {
+                    compare.index = self
+                        .wayback_list
+                        .iter()
+                        .position(|r| r.date.starts_with(date))
+                        .ok_or_else(|| format!("no release dated {date}"))?;
+                } else if let Some(step) = p.get("step").and_then(Value::as_i64) {
+                    compare.index = (compare.index as i64 + step)
+                        .clamp(0, self.wayback_list.len() as i64 - 1)
+                        as usize;
+                }
+                if let Some(split) = p.get("split").and_then(Value::as_f64) {
+                    compare.split = (split as f32)
+                        .clamp(super::wayback::MIN_SPLIT, 1.0 - super::wayback::MIN_SPLIT);
+                }
+                self.wayback_compare = Some(compare);
+                self.last_state = 0;
+                json!({
+                    "compare": true,
+                    "left": self.wayback_list[self.wayback_idx].date,
+                    "right": self.wayback_list[compare.index].date,
+                    "split": compare.split,
+                })
+            }
             "layer.show" => {
                 let layer = str_param(p, "layer")
                     .and_then(MapLayer::from_code)
@@ -692,6 +738,10 @@ impl App {
             "layer.waybackRelease" => CommandState {
                 enabled: !self.wayback_list.is_empty(),
                 checked: false,
+            },
+            "layer.waybackCompare" => CommandState {
+                enabled: self.wayback_list.len() > 1,
+                checked: self.active_compare().is_some(),
             },
             "layer.municipalCountries" => CommandState {
                 enabled: earth

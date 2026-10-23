@@ -320,6 +320,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"date":{"type":"string","description":"Release date as listed, e.g. 2021-06-30"},"step":{"type":"integer","description":"+1 for an older, -1 for a newer release"}}}"#
     ),
     command!(
+        "layer.waybackCompare",
+        "layer-wayback-compare",
+        "history",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"enabled":{"type":"boolean","description":"Omit to toggle"},"date":{"type":"string","description":"Release shown right of the split, as listed"},"step":{"type":"integer","description":"+1 for an older, -1 for a newer comparison release"},"split":{"type":"number","description":"Where the split runs, 0 (left edge) .. 1 (right edge)"}}}"#
+    ),
+    command!(
         "layer.show",
         "layer-show",
         "eye",

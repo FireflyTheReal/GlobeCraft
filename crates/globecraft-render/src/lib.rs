@@ -66,6 +66,27 @@ pub struct RenderCfg {
     /// this scale so motion frames pick the same zoom band as idle frames.
     /// 1.0 for full-resolution renders.
     pub lod_scale: f32,
+    /// Wayback swipe compare: right of the split, imagery from another release.
+    pub compare: Option<ReleaseCompare>,
+}
+
+/// A second imagery release shown right of a vertical split (Wayback swipe compare).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReleaseCompare {
+    /// The release index shown right of the split.
+    pub rel: u16,
+    /// Where the split runs, as a fraction of the raster width (0 at the left edge).
+    pub split: f32,
+}
+
+impl RenderCfg {
+    /// The imagery release for raster column `x` of `width`.
+    fn release_at(&self, x: usize, width: usize) -> u16 {
+        match self.compare {
+            Some(compare) if (x as f32 + 0.5) >= compare.split * width as f32 => compare.rel,
+            _ => self.rel,
+        }
+    }
 }
 
 struct Local<'a, F> {
@@ -173,10 +194,11 @@ fn sample_chain(
 fn shade_surface(
     surface: Surface,
     cfg: &RenderCfg,
+    rel: u16,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
     terrain_light: f32,
 ) -> Vec4 {
-    let (mut col, _) = sample_chain(loc, cfg.provider, cfg.rel, surface.z0, &surface);
+    let (mut col, _) = sample_chain(loc, cfg.provider, rel, surface.z0, &surface);
     let blend = if cfg.provider.is_imagery() {
         // Short fade at the end of the level band: with an oversampled base,
         // imagery stays sharp until the next level is almost fully in place.
@@ -187,7 +209,7 @@ fn shade_surface(
         ((surface.frac - TEXT_ZOOM_FADE_START) / (1.0 - TEXT_ZOOM_FADE_START)).clamp(0.0, 1.0)
     };
     if blend > MIN_ZOOM_BLEND_FRACTION {
-        let (c2, level) = sample_chain(loc, cfg.provider, cfg.rel, surface.z0 + 1, &surface);
+        let (c2, level) = sample_chain(loc, cfg.provider, rel, surface.z0 + 1, &surface);
         // Only blend when the finer level actually resolved. Blending a coarser
         // fallback back over the current image makes levels flash while tiles
         // load during zoom changes.
@@ -231,10 +253,11 @@ fn render_row<const ELLIPSOID: bool>(
                     Some((raised, light)) => shade_surface(
                         surface::<ELLIPSOID>(x, y, w, h, &raised, cfg, geometry),
                         cfg,
+                        cfg.release_at(x, w),
                         loc,
                         light,
                     ),
-                    None => shade_surface(hit, cfg, loc, 1.0),
+                    None => shade_surface(hit, cfg, cfg.release_at(x, w), loc, 1.0),
                 }
             } else {
                 sky(&ray, cc, cfg)

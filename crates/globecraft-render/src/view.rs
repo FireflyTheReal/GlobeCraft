@@ -44,6 +44,8 @@ pub struct RasterView {
     pub aspect: f64,
     pub provider: Provider,
     pub release_index: usize,
+    /// Wayback swipe compare: the second release and the split's `f32` bits.
+    pub compare: Option<(usize, u32)>,
     pub grid: bool,
     pub atmosphere: bool,
     pub terrain: bool,
@@ -83,6 +85,7 @@ impl RasterView {
                 self.release_index,
                 self.sky,
                 self.cinematic_sky,
+                self.compare,
             ),
             (self.aspect.to_bits(), self.model.code()),
         )
@@ -94,6 +97,7 @@ impl RasterView {
             self.aspect.to_bits(),
             self.provider.id(),
             self.release_index,
+            self.compare,
             self.grid,
             self.atmosphere,
             self.terrain,
@@ -127,6 +131,7 @@ mod tests {
             aspect: 4.0 / 3.0,
             provider: Provider::Satellite,
             release_index: 0,
+            compare: None,
             grid: false,
             atmosphere: false,
             terrain: false,
@@ -159,6 +164,7 @@ mod tests {
             aspect: 4.0 / 3.0,
             provider: Provider::Satellite,
             release_index: 0,
+            compare: None,
             grid: false,
             atmosphere: true,
             terrain: false,
@@ -179,6 +185,14 @@ mod tests {
         assert_ne!(view.keys(180.0).presentation, moved.presentation);
         view.grid = true;
         assert_ne!(view.keys(120.0).presentation, moved.presentation);
+        // A swipe compare, and every move of its split, need a new frame.
+        let plain = view.keys(120.0);
+        view.compare = Some((4, 0.5_f32.to_bits()));
+        let compared = view.keys(120.0);
+        assert_ne!(compared.presentation, plain.presentation);
+        view.compare = Some((4, 0.6_f32.to_bits()));
+        assert_ne!(view.keys(120.0).state, compared.state);
+        view.compare = None;
         let before_resize = view.keys(120.0);
         // Raster dimensions can round to the same pixels even as the viewport changes.
         view.aspect += 0.0001;
@@ -200,6 +214,7 @@ mod tests {
             aspect: 4.0 / 3.0,
             provider: Provider::Satellite,
             release_index: 0,
+            compare: None,
             grid: false,
             atmosphere: false,
             sunlight: false,

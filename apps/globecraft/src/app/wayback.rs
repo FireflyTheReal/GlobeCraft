@@ -6,7 +6,35 @@ use globecraft_data::{
     wayback::{load_wayback_releases, set_wayback_releases},
 };
 use std::sync::mpsc;
+/// A swipe compare between the current release and another (see `RenderCfg::compare`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Compare {
+    /// The release index shown right of the split.
+    pub(super) index: usize,
+    /// Where the split runs, as a fraction of the view's width.
+    pub(super) split: f32,
+}
+/// The split stays this far from the view's edges, so its handle can be grabbed.
+pub(super) const MIN_SPLIT: f32 = 0.02;
+
 impl App {
+    /// The swipe compare, when the Wayback basemap is showing and a compare is set.
+    pub(super) fn active_compare(&self) -> Option<Compare> {
+        self.wayback_compare
+            .filter(|_| self.effective_provider() == Provider::Wayback)
+            .filter(|compare| compare.index < self.wayback_list.len())
+    }
+
+    /// Starts a compare with the newest release (or the next one, when the newest is
+    /// already showing), or ends it.
+    pub(super) fn set_wayback_compare(&mut self, enabled: bool) {
+        self.wayback_compare = (enabled && self.wayback_list.len() > 1).then(|| Compare {
+            index: if self.wayback_idx == 0 { 1 } else { 0 },
+            split: self.wayback_compare.map_or(0.5, |old| old.split),
+        });
+        self.last_state = 0;
+    }
+
     pub(super) fn ensure_wayback(&mut self, ctx: &egui::Context) {
         if self.settings.layers.basemap != Provider::Wayback || self.wayback_started {
             return;

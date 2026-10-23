@@ -279,6 +279,7 @@ mod native_fallback_tests {
                 atmo: true,
                 sun: None,
                 lod_scale: 1.0,
+                compare: None,
             },
             overlays: None,
             aircraft: None,

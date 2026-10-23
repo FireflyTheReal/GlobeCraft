@@ -208,6 +208,12 @@ impl App {
             atmo: self.layer(MapLayer::Atmosphere),
             sun,
             lod_scale: size.lod_scale,
+            compare: self
+                .active_compare()
+                .map(|compare| globecraft_render::ReleaseCompare {
+                    rel: compare.index as u16,
+                    split: compare.split,
+                }),
         };
         self.renderer.worker.submit(RenderRequest {
             width: size.width,

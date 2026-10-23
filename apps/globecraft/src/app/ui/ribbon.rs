@@ -388,11 +388,11 @@ impl App {
             {
                 self.run_reporting("layer.waybackRelease", json!({"step": 1}));
             }
-            let date = self
-                .wayback_list
-                .get(self.wayback_idx)
-                .map_or_else(|| "—".to_string(), |r| r.date.clone());
-            ui.label(egui::RichText::new(date).monospace().size(11.5));
+            if let Some(index) = self.wayback_date_menu(ui, "ribbon_wayback_date", self.wayback_idx)
+            {
+                let date = self.wayback_list[index].date.clone();
+                self.run_reporting("layer.waybackRelease", json!({"date": date}));
+            }
             if ui
                 .add_enabled(loaded, egui::Button::new("▶").small())
                 .on_hover_text(lang.text("wayback-newer-tooltip"))
@@ -400,7 +400,55 @@ impl App {
             {
                 self.run_reporting("layer.waybackRelease", json!({"step": -1}));
             }
+            let comparing = self.active_compare().is_some();
+            if ui
+                .add_enabled(
+                    self.wayback_list.len() > 1,
+                    egui::Button::new("⇆").small().selected(comparing),
+                )
+                .on_hover_text(lang.text("wayback-compare-tooltip"))
+                .clicked()
+            {
+                self.run_reporting("layer.waybackCompare", json!({"enabled": !comparing}));
+            }
         });
+    }
+
+    /// A drop-down of the Wayback release dates, grouped by year. Returns the release
+    /// picked this frame, if any.
+    pub(super) fn wayback_date_menu(&self, ui: &mut Ui, id: &str, current: usize) -> Option<usize> {
+        let selected = self
+            .wayback_list
+            .get(current)
+            .map_or_else(|| "—".to_string(), |r| r.date.clone());
+        let mut picked = None;
+        ui.add_enabled_ui(!self.wayback_list.is_empty(), |ui| {
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(egui::RichText::new(selected).monospace().size(11.5))
+                .height(360.0)
+                .show_ui(ui, |ui| {
+                    let mut year = "";
+                    for (index, release) in self.wayback_list.iter().enumerate() {
+                        let this_year = release.date.get(..4).unwrap_or("");
+                        if this_year != year {
+                            year = this_year;
+                            ui.label(egui::RichText::new(year).strong().size(11.0));
+                        }
+                        let mut choice = current;
+                        if super::selection::full_width_value(
+                            ui,
+                            &mut choice,
+                            index,
+                            egui::RichText::new(&release.date).monospace(),
+                        )
+                        .clicked()
+                        {
+                            picked = Some(index);
+                        }
+                    }
+                });
+        });
+        picked
     }
 
     fn terrain_slider(&mut self, ui: &mut Ui) {

@@ -42,7 +42,8 @@ impl GpuRenderer {
             .expect("poll destroyed device");
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
-        if request.cfg.terrain.is_some() {
+        // The overview shader samples one release; a swipe compare renders on the CPU.
+        if request.cfg.terrain.is_some() || request.cfg.compare.is_some() {
             return false;
         }
         use globecraft_core::{EARTH_RADIUS_KM, earth_model::SurfaceGeometry};

@@ -308,6 +308,25 @@ impl App {
                         idx -= 1;
                     }
                 });
+                let compare = self.active_compare();
+                ui.horizontal(|ui| {
+                    ui.add_space(INDENT);
+                    let mut on = compare.is_some();
+                    if ui
+                        .checkbox(&mut on, lang.text("wayback-compare-label"))
+                        .on_hover_text(lang.text("wayback-compare-tooltip"))
+                        .changed()
+                    {
+                        self.run_reporting("layer.waybackCompare", json!({"enabled": on}));
+                    }
+                    if let Some(compare) = compare
+                        && let Some(index) =
+                            self.wayback_date_menu(ui, "pane_wayback_compare", compare.index)
+                    {
+                        let date = self.wayback_list[index].date.clone();
+                        self.run_reporting("layer.waybackCompare", json!({"date": date}));
+                    }
+                });
                 note(
                     ui,
                     t,
