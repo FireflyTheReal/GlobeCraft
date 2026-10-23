@@ -35,7 +35,7 @@ const EXACT_TOLERANCE_DEG: f64 = 0.0005;
 /// tolerance of a neighbour's corner was taken as shared and left undrawn.
 const SHARED_MIN_COS: f64 = 0.82;
 /// Spatial hash cell for the neighbour search.
-const GRID_DEG: f64 = 0.05;
+const GRID_DEG: f64 = 0.02;
 /// Municipalities that should fit on screen before the interior lines and the small
 /// names appear. A thousand German municipalities at once is what the staging avoids.
 const DETAIL_TARGET_COUNT: f64 = 400.0;
@@ -81,13 +81,30 @@ impl Parent {
 /// The first `exact` rings share identical vertices with each other: among them, an
 /// interior border must coincide (`EXACT_TOLERANCE_DEG`), while state borders and borders
 /// with any other ring may differ by `SHARED_TOLERANCE_DEG`.
-#[cfg(test)]
-pub(super) fn classify_at(lines: &[Line], parents: &[Parent], tolerance: f64) -> Vec<Vec<u8>> {
-    classify_with(lines, parents, lines.len(), tolerance)
+///
+/// `known[i]`, when given, holds ring `i`'s stored classes, and only its `OUTER`
+/// segments are searched: the others keep their class, which is all
+/// [`upgrade_outer`] would keep anyway. Every ring is still a candidate for the
+/// others' segments, so the result is the same as searching everything.
+pub(super) fn classify_known(
+    lines: &[Line],
+    parents: &[Parent],
+    exact: usize,
+    known: &[Option<&[u8]>],
+) -> Vec<Vec<u8>> {
+    classify_with(lines, parents, exact, EXACT_TOLERANCE_DEG, known)
 }
 
+/// [`classify_known`] with nothing known.
+#[cfg(test)]
 pub(super) fn classify(lines: &[Line], parents: &[Parent], exact: usize) -> Vec<Vec<u8>> {
-    classify_with(lines, parents, exact, EXACT_TOLERANCE_DEG)
+    classify_with(lines, parents, exact, EXACT_TOLERANCE_DEG, &[])
+}
+
+/// [`classify`] with every ring exact at the given tolerance.
+#[cfg(test)]
+pub(super) fn classify_at(lines: &[Line], parents: &[Parent], tolerance: f64) -> Vec<Vec<u8>> {
+    classify_with(lines, parents, lines.len(), tolerance, &[])
 }
 
 fn classify_with(
@@ -95,7 +112,9 @@ fn classify_with(
     parents: &[Parent],
     exact: usize,
     exact_tolerance: f64,
+    known: &[Option<&[u8]>],
 ) -> Vec<Vec<u8>> {
+    use rayon::prelude::*;
     let ids: Vec<u64> = lines.iter().map(ring_id).collect();
     let mut grid: HashMap<(i32, i32), Vec<(u32, u32)>> = HashMap::new();
     let cell = |value: f64| (value / GRID_DEG).floor() as i32;
@@ -108,9 +127,13 @@ fn classify_with(
             }
             let (min_lat, max_lat) = (a.0.min(b.0), a.0.max(b.0));
             let (min_lon, max_lon) = (a.1.min(b.1), a.1.max(b.1));
+            // Distances shrink longitude by cos(latitude) (`lon_scale`), so the
+            // tolerance spans more degrees of longitude than of latitude. Padding by
+            // the latitude tolerance alone missed matches near cell edges.
+            let lon_margin =
+                SHARED_TOLERANCE_DEG / lon_scale(a.0.abs().max(b.0.abs()) + SHARED_TOLERANCE_DEG);
             for y in cell(min_lat - SHARED_TOLERANCE_DEG)..=cell(max_lat + SHARED_TOLERANCE_DEG) {
-                for x in cell(min_lon - SHARED_TOLERANCE_DEG)..=cell(max_lon + SHARED_TOLERANCE_DEG)
-                {
+                for x in cell(min_lon - lon_margin)..=cell(max_lon + lon_margin) {
                     grid.entry((y, x))
                         .or_default()
                         .push((ring as u32, segment as u32));
@@ -119,16 +142,23 @@ fn classify_with(
         }
     }
     lines
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(ring, line)| {
+            let known = known.get(ring).copied().flatten();
             line.windows(2)
-                .map(|pair| {
+                .enumerate()
+                .map(|(segment, pair)| {
+                    if let Some(&class) = known.and_then(|known| known.get(segment))
+                        && class != OUTER
+                    {
+                        return class;
+                    }
                     if pair[0] == pair[1] {
                         return OUTER;
                     }
                     let mid = ((pair[0].0 + pair[1].0) / 2.0, (pair[0].1 + pair[1].1) / 2.0);
-                    let lon_scale = mid.0.to_radians().cos().max(0.05);
+                    let lon_scale = lon_scale(mid.0);
                     let direction = |a: (f64, f64), b: (f64, f64)| {
                         let (y, x) = (b.0 - a.0, (b.1 - a.1) * lon_scale);
                         let length = x.hypot(y);
@@ -532,6 +562,23 @@ mod tests {
             ..same_state
         };
         let classes = classify(&[west, east], &[same_state, other_state], 2);
+        let pair = [classes[0][east_side], classes[1][west_side]];
+        assert!(pair.contains(&MAJOR) && pair.contains(&DROP), "{pair:?}");
+    }
+
+    #[test]
+    fn borders_match_across_a_grid_cell_edge_at_high_latitude() {
+        // At 60° N a degree of longitude is half as long, so outlines 0.015° of
+        // longitude apart are 0.0075° apart: within the tolerance. The west square's
+        // edge lies in one grid cell and the east square's in the next.
+        let west = square(60.0, 7.9185, 0.1);
+        let east = square(60.0, 8.0335, 0.1);
+        let state = |id| Parent {
+            country: Some(*b"NOR"),
+            state: Some(id),
+        };
+        let classes = classify(&[west, east], &[state(1), state(2)], 0);
+        let (east_side, west_side) = (1, 3);
         let pair = [classes[0][east_side], classes[1][west_side]];
         assert!(pair.contains(&MAJOR) && pair.contains(&DROP), "{pair:?}");
     }

@@ -158,10 +158,10 @@ fn assembly_clips_to_the_area_and_keeps_shared_rings_once() {
                 y: 96,
                 size_mdeg: 500,
             },
-            UnitData::new(detail, centre, Some(*b"FRA"), &[]).0,
+            Arc::new(UnitData::new(detail, centre, Some(*b"FRA"), &[]).0),
         );
     }
-    let patch = assemble(&store, GeoBox::around(48.2, 2.3, 1.0));
+    let patch = assemble(&store.snapshot(), GeoBox::around(48.2, 2.3, 1.0));
     assert!(patch.replace);
     assert!(patch.layer == Layer::WorldCities);
     // The shared ring once; the far-away extra lines (lat 52+) are clipped away.
@@ -183,7 +183,9 @@ fn eviction_keeps_the_units_nearest_the_view() {
     for (y, lat) in [(0, 0.0), (10, 10.0), (20, 20.0)] {
         let data = UnitData::new(big(lat), (lat, 0.0), None, &[]).0;
         store.vertices += data.vertices;
-        store.units.insert(Unit::OsmCell { x: 0, y }, data);
+        store
+            .units
+            .insert(Unit::OsmCell { x: 0, y }, Arc::new(data));
     }
     store.evict((1.0, 0.0));
     assert!(store.vertices <= STORE_VERTEX_BUDGET);
@@ -217,9 +219,9 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
     };
     let mut store = Store::default();
     let (first, _) = UnitData::new(detail(west, 31), (-19.75, -45.25), Some(*b"BRA"), &[]);
-    store.units.insert(Unit::BrazilState(31), first);
+    store.units.insert(Unit::BrazilState(31), Arc::new(first));
     // Alone, the state's edge has no neighbour: nothing is a state border yet.
-    let alone = assemble(&store, GeoBox::around(-19.75, -45.0, 2.0));
+    let alone = assemble(&store.snapshot(), GeoBox::around(-19.75, -45.0, 2.0));
     assert!(alone.lines_big.is_empty());
 
     let area = GeoBounds::of(&east).unwrap();
@@ -231,9 +233,14 @@ fn borders_between_units_are_classified_when_the_second_unit_loads() {
         Some(*b"BRA"),
         &neighbours,
     );
-    store.units.insert(Unit::BrazilState(35), second);
+    // The publisher may still be assembling from a snapshot taken before this load:
+    // the upgrade copies the stored unit instead of changing the snapshot's.
+    let before = store.snapshot();
+    store.units.insert(Unit::BrazilState(35), Arc::new(second));
     store.apply(upgrades);
-    let patch = assemble(&store, GeoBox::around(-19.75, -45.0, 2.0));
+    let stale = assemble(&before, GeoBox::around(-19.75, -45.0, 2.0));
+    assert!(stale.lines_big.is_empty(), "the snapshot is not changed");
+    let patch = assemble(&store.snapshot(), GeoBox::around(-19.75, -45.0, 2.0));
     // The shared edge is now a state border, drawn once.
     assert_eq!(patch.lines_big.len(), 1, "{:?}", patch.lines_big);
     assert!(patch.lines_big[0].iter().all(|p| (p.1 + 45.0).abs() < 1e-9));
@@ -298,12 +305,12 @@ fn one_country_draws_a_shared_border_once_the_land_borders_are_indexed() {
     };
     let mut store = Store::default();
     let (first, _) = UnitData::new(detail(west, 67), (48.25, 7.75), Some(*b"FRA"), &[]);
-    store.units.insert(Unit::Country(*b"FRA"), first);
+    store.units.insert(Unit::Country(*b"FRA"), Arc::new(first));
     let area = GeoBounds::of(&east).unwrap();
     let neighbours = store.neighbours(Unit::Country(*b"DEU"), area.expanded(0.02));
     let (second, upgrades) =
         UnitData::new(detail(east, 8), (48.25, 8.25), Some(*b"DEU"), &neighbours);
-    store.units.insert(Unit::Country(*b"DEU"), second);
+    store.units.insert(Unit::Country(*b"DEU"), Arc::new(second));
     store.apply(upgrades);
     let on_edge = |p: &(f64, f64)| (p.1 - 8.0).abs() < 1e-9;
     let count = |lines: &[Line]| {
@@ -315,7 +322,7 @@ fn one_country_draws_a_shared_border_once_the_land_borders_are_indexed() {
     };
     // Before the land borders are indexed: both copies are ordinary municipal lines,
     // and no country line replaces Natural Earth's.
-    let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
+    let patch = assemble(&store.snapshot(), GeoBox::around(48.25, 8.0, 2.0));
     let staging = patch.municipal.unwrap();
     assert!(staging.country_lines.is_empty());
     assert!(patch.lines_big.is_empty(), "never a state border");
@@ -326,7 +333,7 @@ fn one_country_draws_a_shared_border_once_the_land_borders_are_indexed() {
         natural_earth,
         [*b"FRA", *b"DEU"],
     )])));
-    let patch = assemble(&store, GeoBox::around(48.25, 8.0, 2.0));
+    let patch = assemble(&store.snapshot(), GeoBox::around(48.25, 8.0, 2.0));
     let staging = patch.municipal.unwrap();
     assert_eq!(
         count(&staging.country_lines),
@@ -343,7 +350,9 @@ fn one_country_draws_a_shared_border_once_the_land_borders_are_indexed() {
 /// Earth `ne_10m_admin_1_states_provinces_lines.geojson` and
 /// `ne_10m_admin_0_boundary_lines_land.geojson`, and `GLOBECRAFT_MUNICIPAL_COUNTRIES`
 /// to a list such as `CZE,POL,AUT`. Writes `check.json` (what each layer draws in the
-/// area `GLOBECRAFT_MUNICIPAL_AREA` = `lat,lon,radius_deg`) for plotting.
+/// area `GLOBECRAFT_MUNICIPAL_AREA` = `lat,lon,radius_deg`) for plotting. With
+/// `GLOBECRAFT_MUNICIPAL_CLASSES=<prefix>`, also writes each country's classes to
+/// `<prefix>-{ISO}.bin`, to compare two builds byte for byte.
 #[test]
 #[ignore = "manual check on real data; run with --release --ignored --nocapture"]
 fn real_countries_classify_their_borders() {
@@ -369,6 +378,7 @@ fn real_countries_classify_their_borders() {
         for feature in features(&format!("{iso}-{level}.geojson")) {
             adm::read_municipality(&feature, &mut file);
         }
+        let parsed = started.elapsed();
         let states = adm::state_level(iso).map(|state_level| {
             let mut rings = Vec::new();
             for feature in features(&format!("{iso}-{state_level}.geojson")) {
@@ -377,6 +387,7 @@ fn real_countries_classify_their_borders() {
             super::super::parents::States::new(rings)
         });
         let detail = adm::with_parents(file, states.as_ref());
+        let with_states = started.elapsed();
         if std::env::var("GLOBECRAFT_MUNICIPAL_TOLERANCE").is_ok() {
             // How far apart the copies of borders matched only at the wide tolerance are.
             let parents: Vec<topology::Parent> = detail
@@ -430,6 +441,22 @@ fn real_countries_classify_their_borders() {
                 );
             }
         }
+        if let Ok(path) = std::env::var("GLOBECRAFT_MUNICIPAL_CLASSES") {
+            // Every class of the country on its own, to compare two builds byte for byte.
+            let parents: Vec<topology::Parent> = detail
+                .parents
+                .iter()
+                .map(|state| topology::Parent {
+                    country: Some(iso.as_bytes().try_into().unwrap()),
+                    state: *state,
+                })
+                .collect();
+            let timer = std::time::Instant::now();
+            let classes = topology::classify(&detail.lines, &parents, detail.lines.len());
+            println!("{iso}: classify alone {} ms", timer.elapsed().as_millis());
+            let bytes: Vec<u8> = classes.concat();
+            std::fs::write(format!("{path}-{iso}.bin"), bytes).unwrap();
+        }
         let unassigned = detail.parents.iter().filter(|p| p.is_none()).count();
         let lines = detail.lines.len();
         let bounds = detail
@@ -446,11 +473,15 @@ fn real_countries_classify_their_borders() {
             Some(iso.as_bytes().try_into().unwrap()),
             &neighbours,
         );
-        store.units.insert(unit, data);
+        store.units.insert(unit, Arc::new(data));
         store.apply(upgrades);
         println!(
-            "{iso}: {lines} rings, {unassigned} without a state, {} ms",
-            started.elapsed().as_millis()
+            "{iso}: {lines} rings, {unassigned} without a state, {} ms \
+             (read {} ms, states {} ms, classify {} ms)",
+            started.elapsed().as_millis(),
+            parsed.as_millis(),
+            (with_states - parsed).as_millis(),
+            (started.elapsed() - with_states).as_millis(),
         );
     }
     // Natural Earth's land borders with the two countries each separates, as the app
@@ -515,7 +546,7 @@ fn real_countries_classify_their_borders() {
         }
     }
     let started = std::time::Instant::now();
-    let patch = assemble(&store, GeoBox::around(area[0], area[1], area[2]));
+    let patch = assemble(&store.snapshot(), GeoBox::around(area[0], area[1], area[2]));
     println!("assembled in {} ms", started.elapsed().as_millis());
     let staging = patch.municipal.unwrap();
     let ne = |name: &str| -> Vec<Line> {

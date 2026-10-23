@@ -186,6 +186,7 @@ fn units_at(iso3: &str, lat: f64, lon: f64, osm_countries: &HashSet<[u8; 3]>) ->
 }
 
 /// A loaded unit: its outlines (with their bounds, for clipping) and names.
+#[derive(Clone)]
 struct UnitLine {
     line: Line,
     bounds: GeoBounds,
@@ -204,6 +205,8 @@ struct Neighbour {
     id: u64,
     line: Line,
     parent: topology::Parent,
+    /// The stored classes: only its `OUTER` segments can gain a class.
+    classes: Arc<[u8]>,
 }
 
 /// Classes found for a stored ring once its neighbouring unit loaded.
@@ -214,6 +217,7 @@ struct Upgrade {
     classes: Vec<u8>,
 }
 
+#[derive(Clone)]
 struct UnitData {
     lines: Vec<UnitLine>,
     labels: Vec<MapLabel>,
@@ -249,7 +253,10 @@ impl UnitData {
         combined.extend(others.iter().map(|n| n.line.clone()));
         parents.extend(others.iter().map(|n| n.parent));
         let exact = if detail.exact_topology { own } else { 0 };
-        let mut classes = topology::classify(&combined, &parents, exact);
+        let known: Vec<Option<&[u8]>> = std::iter::repeat_n(None, own)
+            .chain(others.iter().map(|n| Some(&*n.classes)))
+            .collect();
+        let mut classes = topology::classify_known(&combined, &parents, exact, &known);
         let upgrades = classes
             .drain(own..)
             .zip(&others)
@@ -313,6 +320,7 @@ impl Store {
                         id: ring.id,
                         line: ring.line.clone(),
                         parent: ring.parent,
+                        classes: ring.classes.clone(),
                     });
                 }
             }
@@ -325,7 +333,7 @@ impl Store {
             let Some(ring) = self
                 .units
                 .get_mut(&upgrade.unit)
-                .and_then(|data| data.lines.get_mut(upgrade.index))
+                .and_then(|data| Arc::make_mut(data).lines.get_mut(upgrade.index))
                 .filter(|ring| ring.id == upgrade.id)
             else {
                 continue;
@@ -339,7 +347,8 @@ impl Store {
 
 #[derive(Default)]
 struct Store {
-    units: HashMap<Unit, UnitData>,
+    /// Shared with the publisher, which assembles from a snapshot outside the lock.
+    units: HashMap<Unit, Arc<UnitData>>,
     inflight: HashSet<Unit>,
     failed: HashMap<Unit, Instant>,
     vertices: usize,
@@ -698,14 +707,14 @@ async fn load(
                     ),
                 );
                 store.vertices += data.vertices;
-                store.units.insert(unit, data);
+                store.units.insert(unit, Arc::new(data));
                 store.apply(upgrades);
                 store.evict(view_centre);
                 store.revision += 1;
             }
             Ok(_) => {
                 // An empty answer (open sea, an unmapped area) is final for this unit.
-                store.units.insert(unit, UnitData::empty(centre));
+                store.units.insert(unit, Arc::new(UnitData::empty(centre)));
             }
             Err(error) => {
                 log_status(&log, format!("✖ {}: {error}", describe(unit)));
@@ -733,15 +742,31 @@ struct MergedRing {
     country: Option<[u8; 3]>,
 }
 
-/// The lines and names of the store inside `area`, with lines shared by
+/// What the publisher needs from the store, taken under the lock in microseconds
+/// (reference counts only) so the assembly runs without blocking the UI thread,
+/// which takes the same lock every frame.
+struct Snapshot {
+    units: Vec<Arc<UnitData>>,
+    borders: Option<Arc<borders::CountryBorders>>,
+}
+impl Store {
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            units: self.units.values().cloned().collect(),
+            borders: self.borders.clone(),
+        }
+    }
+}
+
+/// The lines and names of the stored units inside `area`, with lines shared by
 /// neighbouring units kept once.
-fn assemble(store: &Store, area: GeoBox) -> Patch {
+fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
     // The same municipality can come from two units (a cell edge); merge its classes.
     let mut rings: HashMap<u64, MergedRing> = HashMap::new();
     let mut order = Vec::new();
     let mut labels = Vec::new();
     let (mut area_sum, mut area_count) = (0.0, 0_usize);
-    for data in store.units.values() {
+    for data in &store.units {
         for unit_line in &data.lines {
             if !area.intersects(unit_line.bounds) {
                 continue;
@@ -845,7 +870,7 @@ async fn publish(
     loop {
         wake.notified().await;
         tokio::time::sleep(PUBLISH_INTERVAL).await;
-        let patch = {
+        let (snapshot, active) = {
             let Ok(store) = store.lock() else {
                 return;
             };
@@ -854,19 +879,32 @@ async fn publish(
                 continue;
             }
             sent = Some(state);
-            match store.active {
-                Some(area) => assemble(&store, area),
-                None => Patch {
-                    layer: Layer::WorldCities,
-                    pairs: Vec::new(),
-                    lines: vec![],
-                    lines_big: vec![],
-                    labels: vec![],
-                    regions: vec![],
-                    replace: true,
-                    municipal: None,
-                },
+            (store.active.map(|_| store.snapshot()), store.active)
+        };
+        let patch = match (snapshot, active) {
+            (Some(snapshot), Some(area)) => {
+                // Off the async runtime and outside the lock: 10–45 ms for a few
+                // thousand rings, which used to stall the UI thread's `update`.
+                match crate::cpu::run(crate::cpu::Service::Features, move || {
+                    Ok(assemble(&snapshot, area))
+                })
+                .await
+                {
+                    Ok(patch) => patch,
+                    // A failed assembly is skipped; the next change publishes again.
+                    Err(_) => continue,
+                }
             }
+            _ => Patch {
+                layer: Layer::WorldCities,
+                pairs: Vec::new(),
+                lines: vec![],
+                lines_big: vec![],
+                labels: vec![],
+                regions: vec![],
+                replace: true,
+                municipal: None,
+            },
         };
         if tx.send(patch).is_err() {
             return;
