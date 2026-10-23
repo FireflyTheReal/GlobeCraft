@@ -34,7 +34,9 @@ pub(super) fn interior_point(rings: &[Line]) -> Option<(f64, f64)> {
         .collect();
     crossings.sort_by(f64::total_cmp);
     crossings
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0])))
         .map(|pair| (lat, (pair[0] + pair[1]) / 2.0))
 }
