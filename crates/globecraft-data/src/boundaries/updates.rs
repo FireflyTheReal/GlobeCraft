@@ -37,6 +37,7 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
                 });
             }
             Layer::WorldCities => {}
+            Layer::Places => data.labels.retain(|label| !label.is_place()),
         }
     }
     match patch.layer {
@@ -72,10 +73,9 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
             }
             // Drop previously staged municipal labels (ranks 9-10); base
             // populated places (rank 0-8) and other kinds survive.
-            data.labels.retain(|label| {
-                !(label.kind == LabelKind::City && label.rank >= LOCAL_BIG_LABEL_RANK)
-            });
+            data.labels.retain(|label| !label.is_municipal());
         }
+        Layer::Places => {}
     }
     data.labels.extend(patch.labels);
     dedupe_city_labels(&mut data.labels);

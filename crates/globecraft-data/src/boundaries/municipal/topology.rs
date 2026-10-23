@@ -10,7 +10,7 @@
 //! Neighbouring outlines are matched by distance, not by identical vertices: services
 //! that simplify each polygon on the server (ArcGIS `maxAllowableOffset`) return
 //! slightly different copies of a shared border.
-use super::super::Line;
+use super::super::{CountryPair, Line};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -235,6 +235,48 @@ pub(super) fn upgrade_outer(into: &mut [u8], found: &[u8]) {
     }
 }
 
+/// How far from a municipal country border the coarse line of the *same* border is
+/// replaced (about 11 km). Natural Earth's 1:10m country lines and the municipal sources
+/// disagree by 5–10 km in places; within the strict `MAJOR_COVER_DEG` the coarse line
+/// stayed beside the accurate one and both were drawn. Lines of other borders keep the
+/// strict radius.
+pub const COUNTRY_COVER_DEG: f64 = 0.1;
+
+/// Where municipal country borders replace Natural Earth's country lines: per border
+/// (pair of countries) with the wide `COUNTRY_COVER_DEG`, and for coarse lines without
+/// a known pair, all municipal country borders with the strict radius.
+#[derive(Clone, Debug, Default)]
+pub struct CountryCells {
+    all: MajorCells,
+    by_pair: HashMap<CountryPair, MajorCells>,
+}
+impl CountryCells {
+    pub fn of(lines: &[Line], pairs: &[Option<CountryPair>]) -> Self {
+        let mut grouped: HashMap<CountryPair, Vec<Line>> = HashMap::new();
+        for (line, pair) in lines.iter().zip(pairs) {
+            if let Some([a, b]) = *pair {
+                let key = if a <= b { [a, b] } else { [b, a] };
+                grouped.entry(key).or_default().push(line.clone());
+            }
+        }
+        Self {
+            all: MajorCells::of(lines),
+            by_pair: grouped
+                .into_iter()
+                .map(|(pair, lines)| (pair, MajorCells::with_cover(&lines, COUNTRY_COVER_DEG)))
+                .collect(),
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.all.is_empty()
+    }
+    /// The cells that cut a coarse line of this border (`None`: unknown border).
+    pub fn for_pair(&self, pair: Option<CountryPair>) -> &MajorCells {
+        pair.and_then(|[a, b]| self.by_pair.get(&if a <= b { [a, b] } else { [b, a] }))
+            .unwrap_or(&self.all)
+    }
+}
+
 /// Grid cell size of [`MajorCells`], about 5 km.
 pub const MAJOR_CELL_DEG: f64 = 0.05;
 /// A coarse (Natural Earth) border point this close to a municipal state or country
@@ -258,6 +300,8 @@ const MIN_LON_SCALE: f64 = 0.05;
 #[derive(Clone, Debug, Default)]
 pub struct MajorCells {
     lines: Vec<Line>,
+    /// How far from a run a coarse point counts as covered.
+    cover_deg: f64,
     /// Whether each line's first and last point continue another run.
     joined: Vec<[bool; 2]>,
     /// Segments (line, first point) whose cover area touches each cell.
@@ -265,6 +309,10 @@ pub struct MajorCells {
 }
 impl MajorCells {
     pub fn of(lines: &[Line]) -> Self {
+        Self::with_cover(lines, MAJOR_COVER_DEG)
+    }
+    /// As [`MajorCells::of`], covering coarse points up to `cover_deg` away.
+    pub fn with_cover(lines: &[Line], cover_deg: f64) -> Self {
         let lines: Vec<Line> = lines
             .iter()
             .filter(|line| line.len() >= 2)
@@ -274,12 +322,10 @@ impl MajorCells {
         for (index, line) in lines.iter().enumerate() {
             for (segment, pair) in line.windows(2).enumerate() {
                 let (a, b) = (pair[0], pair[1]);
-                let lon_scale = lon_scale(a.0.abs().max(b.0.abs()) + MAJOR_COVER_DEG);
-                let lon_margin = MAJOR_COVER_DEG / lon_scale;
-                let (y0, x0) =
-                    Self::cell(a.0.min(b.0) - MAJOR_COVER_DEG, a.1.min(b.1) - lon_margin);
-                let (y1, x1) =
-                    Self::cell(a.0.max(b.0) + MAJOR_COVER_DEG, a.1.max(b.1) + lon_margin);
+                let lon_scale = lon_scale(a.0.abs().max(b.0.abs()) + cover_deg);
+                let lon_margin = cover_deg / lon_scale;
+                let (y0, x0) = Self::cell(a.0.min(b.0) - cover_deg, a.1.min(b.1) - lon_margin);
+                let (y1, x1) = Self::cell(a.0.max(b.0) + cover_deg, a.1.max(b.1) + lon_margin);
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         grid.entry((y, x))
@@ -292,6 +338,7 @@ impl MajorCells {
         let mut cells = Self {
             joined: Vec::with_capacity(lines.len()),
             lines,
+            cover_deg,
             grid,
         };
         cells.joined = (0..cells.lines.len())
@@ -337,6 +384,30 @@ impl MajorCells {
                 (line as usize, points[segment], points[segment + 1])
             })
     }
+    /// Whether any run passes within `reach_deg` of the point (in either direction
+    /// along it), however far that is beyond the cover distance.
+    pub fn reaches(&self, lat: f64, lon: f64, reach_deg: f64) -> bool {
+        let point = (lat, lon);
+        let scale = lon_scale(lat.abs() + reach_deg);
+        let (y0, x0) = Self::cell(lat - reach_deg, lon - reach_deg / scale);
+        let (y1, x1) = Self::cell(lat + reach_deg, lon + reach_deg / scale);
+        let scale = lon_scale(lat);
+        (y0..=y1).any(|y| {
+            (x0..=x1).any(|x| {
+                self.grid
+                    .get(&(y, x))
+                    .into_iter()
+                    .flatten()
+                    .any(|&(line, segment)| {
+                        let points = &self.lines[line as usize];
+                        let segment = segment as usize;
+                        segment_distance(point, points[segment], points[segment + 1], scale)
+                            .distance_sq
+                            <= reach_deg.powi(2)
+                    })
+            })
+        })
+    }
     /// Whether a municipal state or country border replaces a coarse line at this point
     /// (see the type documentation).
     pub fn covers(&self, lat: f64, lon: f64) -> bool {
@@ -350,7 +421,7 @@ impl MajorCells {
             let points = &self.lines[line];
             let (a, b) = (points[segment], points[segment + 1]);
             let nearest = segment_distance(point, a, b, scale);
-            if nearest.distance_sq > MAJOR_COVER_DEG.powi(2) {
+            if nearest.distance_sq > self.cover_deg.powi(2) {
                 return false;
             }
             if nearest.along < 0.0 {
@@ -408,21 +479,34 @@ pub(super) fn segment_distance(
 #[derive(Default)]
 pub(super) struct SplitLines {
     pub(super) country: Vec<Line>,
+    /// The border each `country` run draws, when known.
+    pub(super) country_pairs: Vec<Option<CountryPair>>,
     pub(super) major: Vec<Line>,
     pub(super) interior: Vec<Line>,
 }
 
 /// Splits rings into runs of drawn segments: country-border runs (the side chosen to
 /// draw each border, see `borders`), state-border runs and everything else.
-pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
+/// Splits a ring into runs by class; country runs also break where the border they
+/// draw changes (`pairs`, one per segment, may be empty).
+pub(super) fn split(
+    line: &Line,
+    classes: &[u8],
+    pairs: &[Option<CountryPair>],
+    out: &mut SplitLines,
+) {
+    type Key = Option<(u8, Option<CountryPair>)>;
     let mut run: Vec<(f64, f64)> = Vec::new();
-    let mut run_class = None;
-    let flush = |run: &mut Vec<(f64, f64)>, class: Option<u8>, out: &mut SplitLines| {
+    let mut run_class: Key = None;
+    let flush = |run: &mut Vec<(f64, f64)>, class: Key, out: &mut SplitLines| {
         if run.len() >= 2 {
             let line = std::sync::Arc::new(std::mem::take(run));
             match class {
-                Some(COUNTRY) => out.country.push(line),
-                Some(MAJOR) => out.major.push(line),
+                Some((COUNTRY, pair)) => {
+                    out.country.push(line);
+                    out.country_pairs.push(pair);
+                }
+                Some((MAJOR, _)) => out.major.push(line),
                 _ => out.interior.push(line),
             }
         }
@@ -431,8 +515,9 @@ pub(super) fn split(line: &Line, classes: &[u8], out: &mut SplitLines) {
     for (segment, pair) in line.windows(2).enumerate() {
         let class = match classes.get(segment).copied().unwrap_or(OUTER) {
             DROP => None,
-            class @ (MAJOR | COUNTRY) => Some(class),
-            _ => Some(INTERIOR),
+            COUNTRY => Some((COUNTRY, pairs.get(segment).copied().flatten())),
+            MAJOR => Some((MAJOR, None)),
+            _ => Some((INTERIOR, None)),
         };
         if class != run_class {
             flush(&mut run, run_class, out);
@@ -613,13 +698,13 @@ mod tests {
     fn split_keeps_runs_and_merge_prefers_dropping() {
         let ring = square(0.0, 0.0, 1.0);
         let mut out = SplitLines::default();
-        split(&ring, &[MAJOR, MAJOR, DROP, OUTER], &mut out);
+        split(&ring, &[MAJOR, MAJOR, DROP, OUTER], &[], &mut out);
         assert_eq!(out.major.len(), 1);
         assert_eq!(out.major[0].len(), 3);
         assert_eq!(out.interior.len(), 1);
         assert_eq!(out.interior[0].len(), 2);
         let mut out = SplitLines::default();
-        split(&ring, &[COUNTRY, MAJOR, INTERIOR, COUNTRY], &mut out);
+        split(&ring, &[COUNTRY, MAJOR, INTERIOR, COUNTRY], &[], &mut out);
         assert_eq!(
             (out.country.len(), out.major.len(), out.interior.len()),
             (2, 1, 1)

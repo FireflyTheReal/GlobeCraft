@@ -41,6 +41,7 @@ pub struct BoundaryLoader {
     log: StatusLog,
     active: Arc<AtomicUsize>,
     municipal: MunicipalStreamer,
+    places: super::places::PlaceStreamer,
     requests: BrazilRequests,
     /// Highest round-detail level already applied to the world layers.
     world_detail: Arc<AtomicU8>,
@@ -181,10 +182,16 @@ impl BoundaryLoader {
         let borders = super::CountryBorderLines {
             lines: &boundaries.countries,
             pairs: &boundaries.country_pairs,
+            land: &boundaries.country_regions,
         };
         self.municipal.update(view, borders, |lat, lon| {
             boundaries.country_at(lat, lon).map(str::to_owned)
         });
+    }
+
+    /// Town, village and island names around the view (see `places`).
+    pub fn request_places(&mut self, view: super::PlaceView) {
+        self.places.update(view);
     }
 
     pub fn is_loading(&self) -> bool {
@@ -242,6 +249,12 @@ pub fn load_boundaries_async(
 
     let municipal =
         MunicipalStreamer::new(runtime.clone(), tx.clone(), log.clone(), repaint.clone());
+    let places = super::places::PlaceStreamer::new(
+        runtime.clone(),
+        tx.clone(),
+        log.clone(),
+        repaint.clone(),
+    );
     (
         rx,
         BoundaryLoader {
@@ -250,6 +263,7 @@ pub fn load_boundaries_async(
             log,
             active,
             municipal,
+            places,
             requests: BrazilRequests::default(),
             world_detail: Arc::new(AtomicU8::new(DetailLevel::Low as u8)),
             world_target: Arc::new(AtomicU8::new(DetailLevel::Low as u8)),
@@ -602,6 +616,12 @@ mod tests {
         let mut loader = BoundaryLoader {
             runtime: tokio::runtime::Handle::current(),
             municipal: MunicipalStreamer::new(
+                tokio::runtime::Handle::current(),
+                tx.clone(),
+                log.clone(),
+                Arc::new(|| {}),
+            ),
+            places: crate::boundaries::places::PlaceStreamer::new(
                 tokio::runtime::Handle::current(),
                 tx.clone(),
                 log.clone(),

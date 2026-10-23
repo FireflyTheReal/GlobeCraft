@@ -304,11 +304,21 @@ fn projected_shapes_preserve_priority_stable_ties_and_border_endpoints() {
             }
             _ => panic!("country border must precede labels"),
         }
-        let hidden = OverlayStyle {
+        let states_only = OverlayStyle {
             layers: OverlayLayers {
                 countries: false,
                 labels: false,
+                states: true,
                 ..style.layers
+            },
+            ..style
+        };
+        // Without the country layer, the country border closes the states instead.
+        assert!(!projected::build(painter, view, &data, states_only).is_empty());
+        let hidden = OverlayStyle {
+            layers: OverlayLayers {
+                states: false,
+                ..states_only.layers
             },
             ..style
         };

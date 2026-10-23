@@ -394,3 +394,12 @@ frame. Run with:
 GLOBECRAFT_MUNICIPAL_CHECK=<dir> GLOBECRAFT_MUNICIPAL_COUNTRIES=CZE,POL,AUT,SVK,ITA,IND,BGD \
   cargo test --release -p globecraft-data real_countries_classify -- --ignored --nocapture
 ```
+
+### Country borders: land test and fallback (2026-10-23)
+
+Assembling Czechia, Poland, Austria, Slovakia and Italy in one 4.5° area (21,000 runs,
+a much larger area than a view publishes) took 105 ms before and 161 ms after the
+border rules of ROADMAP 13.15 (land test, other-side fallback, joined runs, contested
+check). It runs on the feature pool since 14.10, so frames do not wait for it. The land
+index (Natural Earth outlines by 0.05° latitude row) is built once per detail level,
+with the border index.

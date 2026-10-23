@@ -49,7 +49,9 @@ pub fn dedupe_city_labels(labels: &mut Vec<MapLabel>) {
     let mut best: HashMap<(String, i32, i32), usize> = HashMap::new();
     let mut drop = vec![false; labels.len()];
     for (i, l) in labels.iter().enumerate() {
-        if l.kind != LabelKind::City {
+        // Place names come and go with the view; the renderer skips the ones another
+        // label already shows (see `project_labels`).
+        if l.kind != LabelKind::City || l.is_place() {
             continue;
         }
         for (dla, dlo) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {

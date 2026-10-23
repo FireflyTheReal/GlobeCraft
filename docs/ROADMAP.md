@@ -364,6 +364,9 @@ are kept now (99.4 % of shared admin-1 polygon edges covered, checked against th
 | 13.12 | **Instant border handover** (user, 2026-10-22): when one resolution of a border replaces another, the swap happens in a single frame. No frame may show neither line, and none may show both | S–M | **State lines done 2026-10-22.** Municipal state borders no longer cross-fade with the Natural Earth state lines (322–402 km) or fade in on arrival; at 402 km, or when a municipal unit loads, the covered stretch of the coarse line is cut out of the same geometry the municipal border is added to. The cut is exact: a coarse point is covered within 3 km of a municipal state border and only beside it, so the coarse line resumes right where municipal data ends (edge of the loaded area, a coast, an unloaded neighbour) instead of leaving a 5–10 km gap. See 13.12 below. Natural Earth detours between two replaced stretches (under 30 km) are dropped too. **Blank frames fixed 2026-10-22** (user video): while municipal patches streamed in during a zoom, the overlay painted nothing for 2–6 frames because no geometry matched both the new view and the new dataset; it now paints the previous dataset's geometry for exactly that view until the replacement is ready. Country borders: done in a second attempt, see below |
 | 13.13 | **German pattern in every country** (user, 2026-10-22): state borders upgraded by municipal borders, then single municipalities closer in, wherever the data allows; a list of the countries where it does not. The municipal button shows only municipalities; the sharper state borders belong to the state button | M | **Done 2026-10-22, second attempt.** geoBoundaries files name no state, so outside the six national sources no state border was upgraded. The first attempt (tracing municipal segments along Natural Earth lines) broke borders into fragments and was removed. Now each municipality gets the geoBoundaries state polygon containing it (`boundaries/parents.rs`), the same rule as the national sources; checked on real data for CZ, PL, AT, SK and IT before shipping. Each country has a reviewed municipal and state level (`adm.rs`). Country borders are drawn from one side's municipal outline (13.12). With the state or country layer off, the municipal lines on those borders stay drawn as ordinary municipal lines. Per-country list: `docs/MUNICIPAL_COVERAGE.md` |
 | 13.14 | **Cleaner municipal country borders** (user, 2026-10-23): no rogue blobs or short stray lines where a country's municipal file has holes or slivers near a border (seen at 26.3° N, 89.0° E on the India–Bangladesh border) | S–M | **Done 2026-10-23.** Most of the "blobs" were the real border (the Patgram salient); the stray ones were land both countries' files claim. Contested land is no longer drawn as country border. Details below |
+| 13.15 | **Country borders, measured on every land border** (user, 2026-10-23: "fixing them requires global, not local fixes") | M | **Done 2026-10-23.** A global audit (`scripts/border-audit`) runs the app's own code on all 283 land borders with geoBoundaries data on both sides (199,000 km) and measures replaced, doubled, kept and broken stretches. Fixes, each a general rule: an edge both countries' outlines share is border up to 16 km from Natural Earth's line; the coarse line is cut per border, within 11 km of the accurate version of the *same* border; a coarse detour is dropped only where a municipal line really bridges it; holes under 2 km in a drawn border are bridged; where the drawing side has no line, the other side's outline draws the border (if the drawing side's land lies across it); an unconfirmed edge needs land on both sides (no coasts); disputed land stays undrawn on both sides. Results below |
+| 13.16 | **Town, village and island names** (user, 2026-10-23) | M | **Done 2026-10-23, not yet seen live** (Overpass is unreachable from the build container). Natural Earth names only about 7,300 places and no islands. Names now stream from OpenStreetMap in 0.5° cells below 160 km: towns and big islands from 150 km, villages and mid-sized islands from 50 km, hamlets and islets from 20 km (`boundaries/places.rs`). A place name is skipped where a label with the same name is already shown nearby |
+| 13.17 | **States close at country borders** (user, 2026-10-23) | S | **Done 2026-10-23.** With the state layer on and the country layer off, country borders are drawn in the state style, municipal and coarse alike, with the same handover |
 
 **13.12 Instant border handover.** Where two versions of a border meet, exactly one is
 drawn, and the switch between them happens between two frames:
@@ -412,6 +415,60 @@ blobs, which looked wrong. Checked on the real files (2026-10-23):
 - **Small islands:** Fais (9.76° N, 140.52° E) is in geoBoundaries and Natural Earth.
   Islands get no line because GlobeCraft never draws coastlines (only land borders),
   not because of this rule.
+
+**13.15 Country borders, measured on every land border.** Natural Earth's line for each
+pair is sampled every kilometre (`scripts/border-audit/README.md`). Totals over 283
+pairs and 198,666 km, before and after (2026-10-23):
+
+| Stretch | Before | After |
+| --- | --- | --- |
+| Replaced by the municipal border | 180,896 km (91.1 %) | 192,566 km (96.9 %) |
+| Doubled (coarse kept beside the municipal border) | 9,367 km (4.7 %) | 1,425 km (0.7 %) |
+| Coarse kept although municipal outlines are near | 7,706 km (3.9 %) | 4,370 km (2.2 %) |
+| Coarse kept, no municipal data | 693 km | 300 km |
+| Lost (removed, nothing in its place) | 4 km | 7 km |
+| Breaks (a drawn line ending in nothing) | 2,901 | 2,107 |
+
+Czechia, Poland, Austria, Slovakia and Italy: state lines identical; their country
+lines lost nothing visible (13 km of Gulf of Trieste coast is no longer drawn as the
+Italy–Slovenia border).
+
+What each rule fixed, with an example from the audit:
+
+- **Confirmed edges up to 16 km from Natural Earth** (`borders::CONFIRMED_BAND_DEG`):
+  where both countries' outlines coincide but Natural Earth runs 5–10 km away (the Andes,
+  Central Asia, the Sahara), the border was demoted to municipal lines and broke into
+  pieces. Argentina–Chile at 27.5° S became continuous.
+- **Per-border cut** (`topology::CountryCells`): within the old 3.3 km the coarse line
+  stayed beside the accurate one wherever the sources differ more. Kazakhstan–Russia went
+  from 423 km of doubled line to none; the Sokh enclave (Fergana valley) shows one outline
+  instead of two.
+- **Bridged detours only** (`handover::DETOUR_REACH_DEG`): the coarse line across the
+  Southern Patagonian Ice Field, where neither file reaches, was dropped with nothing in
+  its place.
+- **Short holes bridged** (`borders::BRIDGE_KM`): where the neighbour's outline bends
+  away for a few hundred metres, the border had holes (Iran–Pakistan near 26.3° N).
+- **The other side fills gaps**: Mozambique's file has no line along part of the
+  Eswatini border; Eswatini's outline draws it now.
+- **Disputed land stays undrawn on both sides**, including through the fallback (Aksai
+  Chin, Kashmir): there Natural Earth's line stays.
+- **A border has land on both sides** (`borders::Land`, from Natural Earth's country
+  outlines): an outline segment the neighbour's outline does not confirm is a border
+  only with land about 1 km to both sides, so coasts near a border line are no longer
+  drawn as border (the Beagle Channel: Argentina–Chile breaks 123 → 48).
+- **The fallback needs the drawing side's own land across** (within 5 km, in its file):
+  where that file has no land at all, the other side's shore is no shared border. The
+  Ukrainian shore of the Syvash had been drawn along Natural Earth's de facto line
+  (Russia–Ukraine breaks 17 → 80 → 13).
+
+Remaining: stray municipal country lines (over 10 km from any Natural Earth line) are
+mostly places where both countries' files agree and Natural Earth is off (Bolivia–Peru
+along the Heath River, 10–13 km). Borders with a national source (Germany, France,
+Spain, the US, Canada, Brazil) are not in the audit: their servers are not reachable
+from the build container. A municipal line offset from the imagery (user, 71.98° N,
+80.14° E, Yamalo-Nenets / Krasnoyarsk) is the source data: geoBoundaries has a vertex
+every 0.5 km there and traces the river's meanders, but beside them. A projection error
+would shift lines everywhere, not at one spot.
 
 ## 14. Size and efficiency review (2026-10-22)
 

@@ -8,13 +8,15 @@ mod lod;
 mod municipal;
 mod national;
 mod parents;
+mod places;
+pub use places::PlaceView;
 mod sources;
 mod states;
 mod updates;
 mod world;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
-pub use municipal::topology::{MAJOR_CELL_DEG, MAJOR_COVER_DEG, MajorCells};
+pub use municipal::topology::{CountryCells, MAJOR_CELL_DEG, MAJOR_COVER_DEG, MajorCells};
 /// The ISO codes of the two countries a land-border line separates.
 pub type CountryPair = [[u8; 3]; 2];
 
@@ -147,7 +149,7 @@ pub struct BoundaryData {
     /// `municipal::borders`) in place of the Natural Earth country line they cover.
     pub world_cities_country: Vec<Line>,
     /// Where `world_cities_country` replaces the Natural Earth country lines.
-    pub municipal_country_cells: Arc<MajorCells>,
+    pub municipal_country_cells: Arc<CountryCells>,
     /// For each line of `countries`, the two countries it separates (Natural Earth's
     /// `ADM0_A3_L`/`ADM0_A3_R`), when known.
     pub country_pairs: Vec<Option<CountryPair>>,
@@ -265,6 +267,9 @@ const CITY_RANK_2_3_MAX_ALTITUDE_KM: f64 = 4000.0;
 const CITY_RANK_4_5_MAX_ALTITUDE_KM: f64 = 2000.0;
 const CITY_RANK_6_7_MAX_ALTITUDE_KM: f64 = 900.0;
 const OTHER_CITY_MAX_ALTITUDE_KM: f64 = 300.0;
+const PLACE_TOWN_MAX_ALTITUDE_KM: f64 = 150.0;
+const PLACE_VILLAGE_MAX_ALTITUDE_KM: f64 = 50.0;
+const PLACE_HAMLET_MAX_ALTITUDE_KM: f64 = 20.0;
 
 pub(super) fn is_big_country(feature: &serde_json::Value) -> bool {
     let Some(props) = feature.get("properties") else {
@@ -308,7 +313,12 @@ impl MapLabel {
     /// Whether this is a municipality's name from the municipal layer (rather than
     /// one of the populated places shown with place names).
     pub fn is_municipal(&self) -> bool {
-        self.kind == LabelKind::City && self.rank >= LOCAL_BIG_LABEL_RANK
+        self.kind == LabelKind::City
+            && (LOCAL_BIG_LABEL_RANK..=LOCAL_LABEL_RANK).contains(&self.rank)
+    }
+    /// Whether this is an OpenStreetMap place name (see `places`).
+    pub fn is_place(&self) -> bool {
+        self.kind == LabelKind::City && self.rank >= places::PLACE_TOWN_RANK
     }
     /// Whether the label should be shown at the given camera altitude (km).
     /// Bigger places (lower rank) appear first, smaller ones only when zoomed in.
@@ -334,7 +344,11 @@ impl MapLabel {
                     // Municipal labels from local sources: big ones (rank 9)
                     // arrive with the interior lines; small ones once they are full.
                     LOCAL_BIG_LABEL_RANK => municipal_detail_max_km,
-                    _ => municipal_detail_max_km * MUNICIPAL_DETAIL_FADE_FULL_RATIO,
+                    LOCAL_LABEL_RANK => municipal_detail_max_km * MUNICIPAL_DETAIL_FADE_FULL_RATIO,
+                    // OpenStreetMap places: towns, then villages, then hamlets.
+                    places::PLACE_TOWN_RANK => PLACE_TOWN_MAX_ALTITUDE_KM,
+                    places::PLACE_VILLAGE_RANK => PLACE_VILLAGE_MAX_ALTITUDE_KM,
+                    _ => PLACE_HAMLET_MAX_ALTITUDE_KM,
                 }
             }
         }
@@ -353,6 +367,8 @@ pub enum Layer {
     States,
     Cities,
     WorldCities,
+    /// OpenStreetMap town, village and island names around the view.
+    Places,
 }
 
 /// One finished piece of overlay data, sent from a loader thread to the UI thread.
@@ -384,8 +400,10 @@ pub struct MunicipalStaging {
     pub major_cells: Arc<MajorCells>,
     /// Municipal country borders.
     pub country_lines: Vec<Line>,
+    /// The border each of `country_lines` draws, when known.
+    pub country_pairs: Vec<Option<CountryPair>>,
     /// Where `country_lines` run, so the Natural Earth country lines hand over too.
-    pub country_cells: Arc<MajorCells>,
+    pub country_cells: Arc<CountryCells>,
 }
 
 #[derive(Default)]

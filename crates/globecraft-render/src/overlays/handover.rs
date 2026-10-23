@@ -19,6 +19,11 @@ const CUT_PRECISION_DEG: f64 = MAJOR_COVER_DEG / 30.0;
 /// river bend it cut off, a smoothed corner): the municipal border already draws that
 /// border there, so the stretch is dropped instead of left as a stray piece.
 const MAX_DETOUR_KM: f64 = 30.0;
+/// A detour is dropped only if all of it lies this close to a municipal border (about
+/// 16 km), so that border really bridges it. Without this, a coarse stretch over a hole
+/// in the municipal data (the undefined border across the Southern Patagonian Ice
+/// Field) was dropped with nothing drawn in its place.
+const DETOUR_REACH_DEG: f64 = 0.15;
 const KM_PER_DEGREE: f64 = 111.32;
 
 fn length_km(line: &[(f64, f64)]) -> f64 {
@@ -75,7 +80,8 @@ pub(super) fn uncovered_runs(line: &[(f64, f64)], cells: &MajorCells) -> Vec<Vec
                 } else {
                     // Reaching it: the current run ends at the cut.
                     run.push(cut);
-                    let detour = after_cover && length_km(&run) < MAX_DETOUR_KM;
+                    let detour =
+                        after_cover && length_km(&run) < MAX_DETOUR_KM && bridged(&run, cells);
                     if run.len() >= 2 && !detour {
                         runs.push(std::mem::take(&mut run));
                     }
@@ -93,6 +99,20 @@ pub(super) fn uncovered_runs(line: &[(f64, f64)], cells: &MajorCells) -> Vec<Vec
         runs.push(run);
     }
     runs
+}
+
+/// Whether a municipal border passes within `DETOUR_REACH_DEG` of every point of
+/// `run`, sampled about every 2 km.
+fn bridged(run: &[(f64, f64)], cells: &MajorCells) -> bool {
+    run.windows(2).all(|pair| {
+        let (a, b) = (pair[0], pair[1]);
+        let (dlat, dlon) = (b.0 - a.0, wrapped_delta(b.1 - a.1));
+        let steps = (dlat.abs().max(dlon.abs()) / 0.02).ceil().max(1.0) as usize;
+        (0..=steps).all(|step| {
+            let t = step as f64 / steps as f64;
+            cells.reaches(a.0 + dlat * t, wrap_lon(a.1 + dlon * t), DETOUR_REACH_DEG)
+        })
+    })
 }
 
 fn wrapped_delta(dlon: f64) -> f64 {
@@ -180,6 +200,20 @@ mod tests {
         // A stretch past the end of the municipal data stays too.
         let runs = uncovered_runs(&along_48n(8.5, 9.5), &cells);
         assert_eq!(runs.len(), 1);
+        // A short stretch over a hole in the municipal data (nothing within reach of
+        // its middle) is not bridged: it stays, or nothing would be drawn there.
+        let hole = MajorCells::of(&[
+            Arc::new(vec![(48.0, 8.0), (48.0, 8.3)]),
+            Arc::new(vec![(48.0, 8.6), (48.0, 9.0)]),
+        ]);
+        let mut around = along_48n(8.0, 8.32);
+        around.extend([(48.25, 8.4), (48.25, 8.5)]);
+        around.extend(along_48n(8.58, 9.0));
+        assert_eq!(
+            uncovered_runs(&around, &hole).len(),
+            1,
+            "the unbridged stretch stays"
+        );
     }
 
     #[test]
@@ -260,7 +294,31 @@ mod tests {
                 .collect()
         };
         let states = cut("state", "ne_state_all");
-        let countries = cut("country", "ne_country_all");
+        // Country lines are cut per border, as the renderer does.
+        let pairs = |key: &str| -> Vec<Option<globecraft_data::boundaries::CountryPair>> {
+            serde_json::from_value::<Vec<Option<[String; 2]>>>(value[key].clone())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|pair| {
+                    pair.and_then(|[a, b]| {
+                        Some([a.as_bytes().try_into().ok()?, b.as_bytes().try_into().ok()?])
+                    })
+                })
+                .collect()
+        };
+        let country_cells = globecraft_data::boundaries::CountryCells::of(
+            &lines("country"),
+            &pairs("country_pairs"),
+        );
+        let ne_pairs = pairs("ne_country_pairs");
+        let countries: Vec<Vec<(f64, f64)>> = lines("ne_country_all")
+            .iter()
+            .enumerate()
+            .flat_map(|(index, line)| {
+                let cells = country_cells.for_pair(ne_pairs.get(index).copied().flatten());
+                uncovered_runs(line, cells)
+            })
+            .collect();
         println!(
             "{} Natural Earth state runs and {} country runs stay drawn",
             states.len(),

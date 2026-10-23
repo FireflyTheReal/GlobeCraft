@@ -552,6 +552,13 @@ impl eframe::App for App {
             },
             &self.boundaries,
         );
+        self.boundary_loader
+            .request_places(globecraft_data::boundaries::PlaceView {
+                enabled: self.layer(MapLayer::PlaceLabels) && earth_visible,
+                lat: self.cam.lat,
+                lon: self.cam.lon,
+                altitude_km: self.cam.alt,
+            });
         // Brazil's municipal outlines stream per state like every other country;
         // this whole-country pass only supplies names.
         self.boundary_loader.request_visible_layers(

@@ -1,6 +1,7 @@
 use super::*;
 
 const NO_BORDERS: CountryBorderLines<'static> = CountryBorderLines {
+    land: &[],
     lines: &[],
     pairs: &[],
 };
@@ -342,7 +343,7 @@ fn one_country_draws_a_shared_border_once_the_land_borders_are_indexed() {
         staging.country_lines
     );
     assert_eq!(count(&patch.lines), 0, "the other copy is hidden");
-    assert!(staging.country_cells.covers(48.25, 8.01));
+    assert!(staging.country_cells.for_pair(None).covers(48.25, 8.01));
 }
 
 /// Real data, outside the repository: set `GLOBECRAFT_MUNICIPAL_CHECK` to a folder
@@ -504,7 +505,20 @@ fn real_countries_classify_their_borders() {
         }
         border_lines.extend(lines.into_iter().map(|line| (line, [left, right])));
     }
-    store.borders = Some(Arc::new(borders::CountryBorders::new(border_lines)));
+    // Natural Earth's country outlines, which tell land borders from coasts, as the app
+    // holds them (outer rings).
+    let mut land_rings = Vec::new();
+    for feature in features("ne10.geojson") {
+        if let Some(geometry) = feature.get("geometry") {
+            let (_, rings) = super::super::geojson::collect_country_geometry(geometry);
+            land_rings.extend(rings.into_iter().map(|ring| ring.line));
+        }
+    }
+    let land = (!land_rings.is_empty()).then(|| borders::Land::new(&land_rings));
+    store.borders = Some(Arc::new(borders::CountryBorders::with_land(
+        border_lines,
+        land,
+    )));
     // Diagnostics: why outline segments near a land border do not match it.
     let mut unmatched = Vec::new();
     if let Some(index) = store.borders.as_deref() {
@@ -516,7 +530,7 @@ fn real_countries_classify_their_borders() {
             for ring in &data.lines {
                 for (segment, pair) in ring.line.windows(2).enumerate() {
                     let class = ring.classes[segment];
-                    let matched = index.across(pair[0], pair[1], country).is_some();
+                    let matched = index.across(pair[0], pair[1], country, false).is_some();
                     *by_class.entry((class, matched)).or_insert(0_usize) += 1;
                     if !matched && matches!(class, topology::OUTER | topology::COUNTRY) {
                         unmatched.push(vec![pair[0], pair[1]]);
@@ -586,14 +600,49 @@ fn real_countries_classify_their_borders() {
     };
     let plain =
         |lines: &[Line]| -> Vec<Vec<(f64, f64)>> { lines.iter().map(|l| l.to_vec()).collect() };
+    // Natural Earth's land borders in the area with the pair each separates, as the
+    // app holds them.
+    let (ne_borders, ne_pairs) = {
+        let inside = GeoBox::around(area[0], area[1], area[2] * 1.2);
+        let (mut lines, mut pairs) = (Vec::new(), Vec::new());
+        for feature in features("ne_10m_admin_0_boundary_lines_land.geojson") {
+            let code = |key: &str| -> Option<String> {
+                feature
+                    .pointer(&format!("/properties/{key}"))?
+                    .as_str()
+                    .map(str::to_owned)
+            };
+            let pair = code("ADM0_A3_L").zip(code("ADM0_A3_R"));
+            let mut found = Vec::new();
+            if let Some(coords) = feature.pointer("/geometry/coordinates") {
+                super::super::geojson::collect_geojson_lines(coords, &mut found);
+            }
+            for line in found {
+                if line.iter().any(|p| inside.contains(p.0, p.1)) {
+                    lines.push(line.to_vec());
+                    pairs.push(pair.clone().map(|(a, b)| [a, b]));
+                }
+            }
+        }
+        (lines, pairs)
+    };
+    let country_pairs: Vec<Option<[String; 2]>> = staging
+        .country_pairs
+        .iter()
+        .map(|pair| {
+            pair.map(|[a, b]| [a, b].map(|code| String::from_utf8_lossy(&code).into_owned()))
+        })
+        .collect();
     let json = serde_json::json!({
         "state": plain(&patch.lines_big),
         "interior": plain(&patch.lines),
         "ne_state": kept(ne("ne_10m_admin_1_states_provinces_lines.geojson"), &staging.major_cells),
         "ne_state_all": plain(&ne("ne_10m_admin_1_states_provinces_lines.geojson")),
         "country": plain(&staging.country_lines),
+        "country_pairs": country_pairs,
+        "ne_country_pairs": ne_pairs,
         "ne_country": plain(&ne("ne_10m_admin_0_boundary_lines_land.geojson")),
-        "ne_country_all": plain(&ne("ne_10m_admin_0_boundary_lines_land.geojson")),
+        "ne_country_all": ne_borders,
         "unmatched_outline": unmatched,
     });
     std::fs::write(format!("{dir}/check.json"), json.to_string()).unwrap();

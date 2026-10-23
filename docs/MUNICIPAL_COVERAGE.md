@@ -14,9 +14,14 @@ state lines. The state level is the one matching Natural Earth's admin-1 (ADM1, 
 Belgium, Burkina Faso, Bosnia and Herzegovina, Guinea, Greece, Sri Lanka, Malawi and the
 Philippines at ADM2, and Italy and Uganda at ADM3). Country borders are drawn from one
 side's municipal outline only, since two countries' sources rarely trace their border
-alike: a national source beats geoBoundaries, otherwise the lower ISO code; the Natural
-Earth country line is cut where that outline runs and stays where it does not (a
-neighbour's coast, an area not loaded yet).
+alike: a national source beats geoBoundaries, otherwise the lower ISO code. Where that
+side's file has no line, the other side's outline draws the border. An edge both
+countries' outlines share counts as border even 16 km from Natural Earth's line, which
+only names the neighbour there. The Natural Earth line of a border is cut wherever the
+municipal version of the same border runs within about 11 km, and stays where it does
+not (a neighbour's coast, an area not loaded yet, a gap in both files). Land both files
+claim is not drawn as a border. `scripts/border-audit` measures all of this on every
+land border with geoBoundaries data on both sides.
 
 **Checked on real data (2026-10-22), not yet on screen:** Czechia, Poland, Austria,
 Slovakia and Italy through the actual loading and classification code; every municipality

@@ -543,11 +543,12 @@ impl MunicipalStreamer {
             return;
         }
         self.borders = Some(key);
-        let lines = lines.to_owned();
+        let (land, lines) = (lines.land_rings(), lines.to_owned());
         let (store, wake) = (self.store.clone(), self.wake_publisher.clone());
         self.runtime.spawn(async move {
             let Ok(borders) = crate::cpu::run(crate::cpu::Service::Features, move || {
-                Ok(Arc::new(borders::CountryBorders::new(lines)))
+                let land = (!land.is_empty()).then(|| borders::Land::new(&land));
+                Ok(Arc::new(borders::CountryBorders::with_land(lines, land)))
             })
             .await
             else {
@@ -739,6 +740,8 @@ const NATIONAL_SOURCES: [[u8; 3]; 6] = [*b"DEU", *b"FRA", *b"ESP", *b"USA", *b"C
 struct MergedRing {
     line: Line,
     classes: Vec<u8>,
+    /// The border each segment draws, once `borders::resolve` decided.
+    pairs: Vec<Option<super::CountryPair>>,
     country: Option<[u8; 3]>,
 }
 
@@ -776,6 +779,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
                     entry.insert(MergedRing {
                         line: unit_line.line.clone(),
                         classes: unit_line.classes.to_vec(),
+                        pairs: vec![None; unit_line.classes.len()],
                         country: unit_line.parent.country,
                     });
                     order.push(unit_line.id);
@@ -802,6 +806,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
             .map(|ring| borders::BorderRing {
                 line: &ring.line,
                 classes: &mut ring.classes,
+                pairs: &mut ring.pairs,
                 country: ring.country,
             })
             .collect();
@@ -824,10 +829,11 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
     let mut split = topology::SplitLines::default();
     for id in order {
         let ring = &rings[&id];
-        topology::split(&ring.line, &ring.classes, &mut split);
+        topology::split(&ring.line, &ring.classes, &ring.pairs, &mut split);
     }
     let topology::SplitLines {
         country,
+        country_pairs,
         major,
         interior,
     } = split;
@@ -837,7 +843,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
         0.0
     };
     let major_cells = Arc::new(topology::MajorCells::of(&major));
-    let country_cells = Arc::new(topology::MajorCells::of(&country));
+    let country_cells = Arc::new(topology::CountryCells::of(&country, &country_pairs));
     Patch {
         layer: Layer::WorldCities,
         pairs: Vec::new(),
@@ -853,6 +859,7 @@ fn assemble(store: &Snapshot, area: GeoBox) -> Patch {
             ),
             major_cells,
             country_lines: country,
+            country_pairs,
             country_cells,
         }),
     }
