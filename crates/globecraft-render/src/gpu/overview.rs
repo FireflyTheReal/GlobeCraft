@@ -353,7 +353,11 @@ pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
 /// change (as the CPU renderer did before 2026-10-23).
 fn lod_height(request: &RenderRequest) -> u32 {
     let scale = f64::from(request.cfg.lod_scale);
-    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
     ((request.height as f64 / scale).round() as u32).max(1)
 }
 fn tile_hash(z: u32, x: u32, y: u32) -> usize {
