@@ -163,3 +163,65 @@ fn aircraft_mesh_repaint_cost() {
         samples[ROUNDS / 2]
     );
 }
+
+/// Below 650 km flights get callsign labels. Building them once froze the app: the
+/// label font was resolved inside egui's font lock, which is not re-entrant.
+#[test]
+fn labelled_flights_below_650_km_draw_without_freezing() {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let input = ProjectionInput {
+            view: ProjectionView {
+                basis: Cam {
+                    lat: 0.0,
+                    lon: 0.0,
+                    heading: 0.0,
+                    alt: 300.0,
+                }
+                .basis(4.0 / 3.0),
+                rect,
+                altitude_km: 300.0,
+                map_scale: 1.0,
+                pixels_per_point: 1.0,
+            },
+            data: Arc::new(AircraftSnapshot {
+                aircraft: vec![Aircraft {
+                    hex: "aa1234".into(),
+                    callsign: "FLIGHT".into(),
+                    latitude: 0.0,
+                    longitude: 0.0,
+                    heading_deg: 90.0,
+                    speed_knots: Some(400.0),
+                    altitude_feet: Some(30_000.0),
+                    observed_unix: 1000.0,
+                }]
+                .into(),
+                ..Default::default()
+            }),
+            unix_secs: 1010.0,
+        };
+        let geometry = AircraftPreparer::default().prepare(input.clone());
+        assert_eq!(geometry.labels, [0], "the flight is labelled at 300 km");
+        let mut overlay = AircraftOverlay::new(ctx.clone());
+        overlay.accept(geometry, input.unix_secs);
+        let raw = egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        let _ = crate::app::test_ui::run(&ctx, raw, |ui| {
+            overlay.draw(ui.painter(), input.clone(), Lang::En)
+        });
+        let texts = overlay
+            .shapes
+            .iter()
+            .filter(|shape| matches!(shape, egui::Shape::Text(_)))
+            .count();
+        done.send(texts).unwrap();
+    });
+    let texts = finished
+        .recv_timeout(Duration::from_secs(20))
+        .expect("drawing labelled flights froze");
+    assert_eq!(texts, 2, "callsign and its shadow");
+}

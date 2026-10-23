@@ -101,6 +101,10 @@ pub(super) fn build(painter: &egui::Painter, geometry: &AircraftGeometry) -> Vec
     let mut trails = Vec::new();
     let mut planes = egui::Mesh::default();
     let symbol = airplane_symbol();
+    // Resolved before `fonts_mut`: `map_font` reads the fonts too, and egui's context
+    // lock is not re-entrant, so resolving it inside the closure froze the app as soon
+    // as the first label appeared (below 650 km).
+    let label_font = crate::app::fonts::map_font(painter.ctx(), LABEL_FONT_POINTS * ms);
     let mut labels = geometry.labels.iter().copied().peekable();
     for (index, flight) in geometry.flights.iter().enumerate() {
         trails.push(Shape::line_segment(flight.trail, trail_stroke));
@@ -125,7 +129,7 @@ pub(super) fn build(painter: &egui::Painter, geometry: &AircraftGeometry) -> Vec
                         position + offset,
                         Align2::LEFT_BOTTOM,
                         &code,
-                        crate::app::fonts::map_font(painter.ctx(), LABEL_FONT_POINTS * ms),
+                        label_font.clone(),
                         color,
                     )
                 }));
