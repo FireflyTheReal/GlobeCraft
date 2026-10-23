@@ -175,7 +175,6 @@ pub(super) async fn load_stage(log: &StatusLog, stage: StateStage) -> Option<Pat
     Some(Patch {
         layer: Layer::States,
         pairs: Vec::new(),
-        disputed: Vec::new(),
         lines: lines.lines,
         lines_big: lines.lines_big,
         labels,

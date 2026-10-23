@@ -385,7 +385,6 @@ async fn load_polygon_layer(
     Some(Patch {
         layer,
         pairs: Vec::new(),
-        disputed: Vec::new(),
         lines: output.lines,
         lines_big: output.lines_big,
         labels: output.labels,
@@ -440,7 +439,6 @@ async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch
     Some(Patch {
         layer: Layer::Cities,
         pairs: Vec::new(),
-        disputed: Vec::new(),
         lines: vec![],
         lines_big: vec![],
         labels,
@@ -451,45 +449,27 @@ async fn load_places(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch
 }
 
 fn disputed_type(feature: &serde_json::Value) -> bool {
-    matches!(
-        map_unit_type(feature),
-        Some("Disputed" | "Indeterminate" | "Lease" | "Overlay")
-    )
-}
-fn map_unit_type(feature: &serde_json::Value) -> Option<&str> {
-    feature
+    let value = feature
         .get("properties")
         .and_then(|p| p.get("TYPE").or_else(|| p.get("type")))
-        .and_then(|v| v.as_str())
-}
-/// Whether a Natural Earth border line or map unit is disputed: a disputed line, a line
-/// of control, an indeterminate frontier or an unrecognised one, or the outline of a
-/// disputed or indeterminate territory. Leases, overlays and undemarcated ("indefinite")
-/// lines are not.
-fn is_disputed(feature: &serde_json::Value) -> bool {
-    let class = feature
-        .pointer("/properties/FEATURECLA")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    class.starts_with("Disputed")
-        || class.starts_with("Line of control")
-        || class.starts_with("Indeterminant")
-        || class.starts_with("Unrecognized")
-        || matches!(map_unit_type(feature), Some("Disputed" | "Indeterminate"))
+        .and_then(|v| v.as_str());
+    matches!(
+        value,
+        Some("Disputed" | "Indeterminate" | "Lease" | "Overlay")
+    )
 }
 
 async fn load_disputed(log: &StatusLog, sources: &[FeatureSource]) -> Option<Patch> {
     let started = std::time::Instant::now();
-    let (lines, disputed) = first_features(
+    let lines = first_features(
         log,
         "Disputed boundaries",
         sources,
-        |f: &serde_json::Value, (out, disputed): &mut (Vec<Line>, Vec<bool>)| {
+        |f: &serde_json::Value, out: &mut Vec<Line>| {
             if disputed_type(f)
                 && let Some(coords) = f.pointer("/geometry/coordinates")
             {
                 collect_geojson_lines(coords, out);
-                disputed.resize(out.len(), is_disputed(f));
             }
         },
     )
@@ -505,7 +485,6 @@ async fn load_disputed(log: &StatusLog, sources: &[FeatureSource]) -> Option<Pat
     Some(Patch {
         layer: Layer::Countries,
         pairs: Vec::new(),
-        disputed,
         lines,
         lines_big: vec![],
         labels: vec![],
@@ -531,10 +510,9 @@ async fn load_countries(log: &StatusLog, level: DetailLevel) -> Option<Patch> {
     .await?;
     patch.replace = true;
     // Draw shared land borders only; the polygon rings above are lookup data.
-    if let Some((lines, pairs, disputed)) = load_border_lines(log, level).await {
+    if let Some((lines, pairs)) = load_border_lines(log, level).await {
         patch.lines = lines;
         patch.pairs = pairs;
-        patch.disputed = disputed;
     }
     // A detail upgrade replaces the previous outlines, so disputed linework must
     // travel in the same patch or it would be discarded with them.
@@ -542,11 +520,7 @@ async fn load_countries(log: &StatusLog, level: DetailLevel) -> Option<Patch> {
     if !disputed.is_empty()
         && let Some(more) = load_disputed(log, &disputed).await
     {
-        // Flags stay aligned with the lines: the border lines' first, then these.
-        patch.pairs.resize(patch.lines.len(), None);
-        patch.disputed.resize(patch.lines.len(), false);
         patch.lines.extend(more.lines);
-        patch.disputed.extend(more.disputed);
     }
     Some(patch)
 }
@@ -562,23 +536,24 @@ fn border_pair(feature: &serde_json::Value) -> Option<super::CountryPair> {
     Some([code("ADM0_A3_L")?, code("ADM0_A3_R")?])
 }
 
-/// Land border lines with the pair of countries each separates, and whether each is
-/// disputed.
-type BorderLines = (Vec<Line>, Vec<Option<super::CountryPair>>, Vec<bool>);
-async fn load_border_lines(log: &StatusLog, level: DetailLevel) -> Option<BorderLines> {
+/// Land border lines with the pair of countries each separates.
+async fn load_border_lines(
+    log: &StatusLog,
+    level: DetailLevel,
+) -> Option<(Vec<Line>, Vec<Option<super::CountryPair>>)> {
     let started = std::time::Instant::now();
-    let (lines, pairs, disputed) = first_features(
+    let (lines, pairs) = first_features(
         log,
         "Country borders",
         &sources::border_sources(level),
-        |feature: &serde_json::Value, (lines, pairs, disputed): &mut BorderLines| {
+        |feature: &serde_json::Value,
+         (lines, pairs): &mut (Vec<Line>, Vec<Option<super::CountryPair>>)| {
             if let Some(coords) = feature
                 .get("geometry")
                 .and_then(|geometry| geometry.get("coordinates"))
             {
                 collect_geojson_lines(coords, lines);
                 pairs.resize(lines.len(), border_pair(feature));
-                disputed.resize(lines.len(), is_disputed(feature));
             }
         },
     )
@@ -591,7 +566,7 @@ async fn load_border_lines(log: &StatusLog, level: DetailLevel) -> Option<Border
             started.elapsed().as_millis()
         ),
     );
-    Some((lines, pairs, disputed))
+    Some((lines, pairs))
 }
 
 #[cfg(test)]
@@ -610,29 +585,6 @@ mod tests {
         assert_eq!(border_pair(&feature), Some([*b"DEU", *b"CZE"]));
         let feature = serde_json::json!({"properties": {"ADM0_A3_L": "-99", "ADM0_A3_R": "CZE"}});
         assert_eq!(border_pair(&feature), None);
-    }
-
-    #[test]
-    fn disputed_lines_and_territories_are_marked() {
-        let line = |class: &str| serde_json::json!({"properties": {"FEATURECLA": class}});
-        for class in [
-            "Disputed (please verify)",
-            "Line of control (please verify)",
-            "Indeterminant frontier",
-            "Unrecognized",
-        ] {
-            assert!(is_disputed(&line(class)), "{class}");
-        }
-        for class in [
-            "International boundary (verify)",
-            "Indefinite (please verify)",
-            "Lease limit",
-        ] {
-            assert!(!is_disputed(&line(class)), "{class}");
-        }
-        let unit = |kind: &str| serde_json::json!({"properties": {"TYPE": kind}});
-        assert!(is_disputed(&unit("Disputed")) && is_disputed(&unit("Indeterminate")));
-        assert!(!is_disputed(&unit("Lease")) && !is_disputed(&unit("Overlay")));
     }
 
     #[test]

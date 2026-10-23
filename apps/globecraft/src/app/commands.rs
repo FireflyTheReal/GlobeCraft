@@ -616,7 +616,7 @@ impl App {
                 };
                 let line = str_param(p, "line")
                     .and_then(LineType::from_code)
-                    .ok_or("line must be country, state, municipal or disputed")?;
+                    .ok_or("line must be country, state or municipal")?;
                 let color = match str_param(p, "color") {
                     Some(text) => {
                         Some(Rgba::parse_hex(text).ok_or("color must be #rrggbb or #rrggbbaa")?)

@@ -16,17 +16,14 @@ pub enum LineType {
     Country,
     State,
     Municipal,
-    /// Disputed borders and lines of control (Natural Earth's feature classes).
-    Disputed,
 }
 impl LineType {
-    pub const ALL: [Self; 4] = [Self::Country, Self::State, Self::Municipal, Self::Disputed];
+    pub const ALL: [Self; 3] = [Self::Country, Self::State, Self::Municipal];
     pub fn code(self) -> &'static str {
         match self {
             Self::Country => "country",
             Self::State => "state",
             Self::Municipal => "municipal",
-            Self::Disputed => "disputed",
         }
     }
     pub fn from_code(code: &str) -> Option<Self> {
@@ -165,7 +162,6 @@ pub struct MapStyle {
     pub country: LineStyle,
     pub state: LineStyle,
     pub municipal: LineStyle,
-    pub disputed: LineStyle,
     pub labels: LabelSizes,
 }
 /// States and municipalities share one look by default, so the handover between them
@@ -185,11 +181,6 @@ impl Default for MapStyle {
             },
             state: SUBNATIONAL_LINE,
             municipal: SUBNATIONAL_LINE,
-            disputed: LineStyle {
-                color: Rgba([235, 64, 64, 245]),
-                width_points: 1.6,
-                dash: DashStyle::Solid,
-            },
             labels: LabelSizes {
                 country_points: 12.0,
                 state_points: 10.0,
@@ -204,7 +195,6 @@ impl MapStyle {
             LineType::Country => &self.country,
             LineType::State => &self.state,
             LineType::Municipal => &self.municipal,
-            LineType::Disputed => &self.disputed,
         }
     }
     pub fn line_mut(&mut self, kind: LineType) -> &mut LineStyle {
@@ -212,7 +202,6 @@ impl MapStyle {
             LineType::Country => &mut self.country,
             LineType::State => &mut self.state,
             LineType::Municipal => &mut self.municipal,
-            LineType::Disputed => &mut self.disputed,
         }
     }
     pub(super) fn apply(&mut self, value: &Value) {

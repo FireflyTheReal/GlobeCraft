@@ -15,7 +15,6 @@ fn line_name(kind: LineType) -> &'static str {
         LineType::Country => "settings-map-style-line-country",
         LineType::State => "settings-map-style-line-state",
         LineType::Municipal => "settings-map-style-line-municipal",
-        LineType::Disputed => "settings-map-style-line-disputed",
     }
 }
 
@@ -39,7 +38,6 @@ fn label_name(kind: LabelType) -> &'static str {
 pub(super) const KEYWORDS: &[&str] = &[
     "settings-map-style-line-country",
     "settings-map-style-line-state",
-    "settings-map-style-line-disputed",
     "settings-map-style-line-municipal",
     "settings-map-style-color-label",
     "settings-map-style-width-label",

@@ -161,10 +161,7 @@ fn faded_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         // Municipal state borders replace the coarse state lines in the same geometry
         // (the covered stretch is cut out there), so they never fade in: a fade would
         // leave frames with neither line.
-        BorderKind::CityMajor
-        | BorderKind::CityCountry
-        | BorderKind::Country
-        | BorderKind::Disputed => ARRIVAL_FADE_STEPS,
+        BorderKind::CityMajor | BorderKind::CityCountry | BorderKind::Country => ARRIVAL_FADE_STEPS,
     };
     let arrival = smoothstep(f64::from(arrived) / f64::from(ARRIVAL_FADE_STEPS));
     layer_opacity(kind, policy) * arrival
@@ -207,19 +204,18 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
             (municipal_detail_max_km - altitude_km)
                 / (municipal_detail_max_km * (1.0 - MUNICIPAL_DETAIL_FADE_FULL_RATIO)),
         ),
-        BorderKind::Country | BorderKind::Disputed => 1.0,
+        BorderKind::Country => 1.0,
     }
 }
 
 /// Every border kind, in `BorderKind` declaration order (so `kind as usize` indexes it).
-pub(super) const BORDER_KINDS: [BorderKind; 7] = [
+pub(super) const BORDER_KINDS: [BorderKind; 6] = [
     BorderKind::Country,
     BorderKind::StateBig,
     BorderKind::State,
     BorderKind::CityMajor,
     BorderKind::City,
     BorderKind::CityCountry,
-    BorderKind::Disputed,
 ];
 
 /// The user's colour for a border kind. Municipal state borders take the state style

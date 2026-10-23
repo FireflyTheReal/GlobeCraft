@@ -845,7 +845,6 @@ settings-map-style-line-country = Country borders
 settings-map-style-line-state = State and province borders
 
 settings-map-style-line-municipal = Municipal borders
-settings-map-style-line-disputed = Disputed borders
 
 settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
 
@@ -872,7 +871,7 @@ settings-map-style-label-city = Cities and towns
 settings-map-style-reset-action = Reset map style
 
 cmd-style-line = Border style
-cmd-style-line-help = Set the color, width and dash of country, state, municipal or disputed borders.
+cmd-style-line-help = Set the color, width and dash of country, state or municipal borders.
 cmd-style-label-size = Name size
 cmd-style-label-size-help = Set the font size of country, state or city names.
 cmd-style-reset = Reset map style
