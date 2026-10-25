@@ -45,6 +45,8 @@ pub const MUNICIPAL_MIN_ZOOM: u8 = 11;
 pub struct OsmBorderLines {
     /// `admin_level` 2.
     pub country: Vec<Line>,
+    /// `admin_level` 2 lines OpenMapTiles marks disputed, and claim lines.
+    pub disputed: Vec<Line>,
     /// `admin_level` 3–4, of the big countries (see `BIG_COUNTRIES_A3`), sorted out when
     /// the lines reach the boundary data.
     pub state_big: Vec<Line>,
@@ -59,6 +61,7 @@ pub struct OsmBorderLines {
 impl OsmBorderLines {
     pub fn is_empty(&self) -> bool {
         self.country.is_empty()
+            && self.disputed.is_empty()
             && self.state.is_empty()
             && self.state_big.is_empty()
             && self.municipal.is_empty()
@@ -424,6 +427,7 @@ impl Publication {
         };
         let lines = OsmBorderLines {
             country: gather(|c| &c.country),
+            disputed: gather(|c| &c.disputed),
             state: gather(|c| &c.state),
             municipal: gather(|c| &c.municipal),
             state_big: Vec::new(),

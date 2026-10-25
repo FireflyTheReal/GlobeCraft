@@ -96,6 +96,7 @@ const ISLAND_VILLAGE_MAX_ZOOM: u8 = 12;
 #[derive(Clone, Default)]
 pub(super) struct TileContent {
     pub(super) country: Vec<Line>,
+    pub(super) disputed: Vec<Line>,
     pub(super) state: Vec<Line>,
     pub(super) municipal: Vec<Line>,
     pub(super) places: Vec<MapLabel>,
@@ -109,12 +110,15 @@ impl TileContent {
         let extent = f64::from(compact::EXTENT);
         let to_geo = |(x, y): (i32, i32)| key.point(f64::from(x) / extent, f64::from(y) / extent);
         let mut content = Self::default();
+        let mut disputed_seen = std::collections::HashSet::new();
         for line in &filtered.lines {
-            // Alternative claim lines are not drawn yet (ROADMAP 13.19, disputed borders).
-            if line.flags & compact::CLAIM != 0 {
+            let disputed = line.flags & (compact::DISPUTED | compact::CLAIM) != 0;
+            // Each claimant may carry its own copy of a disputed line: draw it once.
+            if line.level == 2 && disputed && !disputed_seen.insert(line.points.clone()) {
                 continue;
             }
             let out = match line.level {
+                2 if disputed => &mut content.disputed,
                 2 => &mut content.country,
                 l if STATE_LEVELS.contains(&l) => &mut content.state,
                 l if MUNICIPAL_LEVELS.contains(&l) => &mut content.municipal,
@@ -158,6 +162,7 @@ impl TileContent {
         };
         Self {
             country: lines(&self.country),
+            disputed: lines(&self.disputed),
             state: lines(&self.state),
             municipal: lines(&self.municipal),
             places: self
@@ -242,6 +247,37 @@ pub(super) fn clip(line: &[(f64, f64)], b: TileBounds) -> Vec<Vec<(f64, f64)>> {
 mod tests {
     use super::super::mvt::encode::{TestFeature, TestValue, layer, tile};
     use super::*;
+
+    #[test]
+    fn disputed_lines_are_drawn_once_apart_from_settled_ones() {
+        use compact::{CLAIM, DISPUTED, FilteredLine};
+        let line = |flags, y| FilteredLine {
+            level: 2,
+            flags,
+            points: vec![(0, y), (4096, y)],
+        };
+        let filtered = Filtered {
+            lines: vec![
+                line(0, 100),
+                line(DISPUTED, 200),
+                // Each claimant's copy of the same line.
+                line(DISPUTED | CLAIM, 300),
+                line(DISPUTED | CLAIM, 300),
+                line(CLAIM, 400),
+            ],
+            places: Vec::new(),
+        };
+        let content = TileContent::from_filtered(
+            TileKey {
+                z: 8,
+                x: 180,
+                y: 110,
+            },
+            &filtered,
+        );
+        assert_eq!(content.country.len(), 1);
+        assert_eq!(content.disputed.len(), 3);
+    }
 
     #[test]
     fn tile_keys_round_trip_and_nest() {

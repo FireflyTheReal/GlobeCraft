@@ -56,6 +56,7 @@ pub struct BorderDashes {
     pub country: Option<(f32, f32)>,
     pub state: Option<(f32, f32)>,
     pub municipal: Option<(f32, f32)>,
+    pub disputed: Option<(f32, f32)>,
 }
 impl BorderDashes {
     pub fn of(style: &MapStyle) -> Self {
@@ -63,6 +64,7 @@ impl BorderDashes {
             country: dash_points(style.country.dash),
             state: dash_points(style.state.dash),
             municipal: dash_points(style.municipal.dash),
+            disputed: dash_points(style.disputed.dash),
         }
     }
     fn of_kind(self, kind: BorderKind) -> Option<(f32, f32)> {
@@ -70,6 +72,7 @@ impl BorderDashes {
             LineType::Country => self.country,
             LineType::State => self.state,
             LineType::Municipal => self.municipal,
+            LineType::Disputed => self.disputed,
         }
     }
 }
@@ -103,6 +106,8 @@ pub enum BorderKind {
     /// Municipal country borders, drawn by one side per border, in the country style in
     /// place of the Natural Earth country line they cover.
     CityCountry,
+    /// Disputed country borders and claim lines, from the OpenStreetMap tiles.
+    Disputed,
 }
 
 impl BorderKind {
@@ -113,6 +118,7 @@ impl BorderKind {
             Self::Country | Self::CityCountry => LineType::Country,
             Self::StateBig | Self::State | Self::CityMajor => LineType::State,
             Self::City => LineType::Municipal,
+            Self::Disputed => LineType::Disputed,
         }
     }
 }
@@ -310,6 +316,7 @@ pub fn project_borders(
             }
             if !view.layers.countries && view.altitude_km < states_far {
                 draw_cut(&osm.country, BorderKind::StateBig, None, step);
+                draw_cut(&osm.disputed, BorderKind::StateBig, None, step);
             }
         }
         if municipal {
@@ -319,11 +326,13 @@ pub fn project_borders(
                 draw_cut(&osm.state, BorderKind::City, None, step);
                 if !view.layers.countries {
                     draw_cut(&osm.country, BorderKind::City, None, step);
+                    draw_cut(&osm.disputed, BorderKind::City, None, step);
                 }
             }
         }
         if view.layers.countries {
             draw_cut(&osm.country, BorderKind::Country, None, step);
+            draw_cut(&osm.disputed, BorderKind::Disputed, None, step);
         }
         return;
     }
@@ -807,6 +816,7 @@ mod tests {
                     BorderKind::City => "City",
                     BorderKind::CityMajor => "CityMajor",
                     BorderKind::CityCountry => "CityCountry",
+                    BorderKind::Disputed => "Disputed",
                 };
                 *kinds.entry(name).or_default() += (b - a).length();
             });
@@ -846,6 +856,7 @@ mod tests {
         data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
         data.osm_borders = Arc::new(globecraft_data::boundaries::OsmBorderLines {
             country: vec![line(48.0)],
+            disputed: vec![line(48.05)],
             state: vec![line(48.01)],
             municipal: vec![line(48.02)],
             zoom: OSM_MUNICIPAL_MIN_ZOOM + 1,
@@ -886,6 +897,7 @@ mod tests {
                     BorderKind::City => "City",
                     BorderKind::CityMajor => "CityMajor",
                     BorderKind::CityCountry => "CityCountry",
+                    BorderKind::Disputed => "Disputed",
                 };
                 kinds.insert((lat, name));
             });
@@ -893,17 +905,17 @@ mod tests {
         };
         assert_eq!(
             draw(true, true, true, true),
-            vec![(0, "Country"), (1, "State"), (2, "City")],
+            vec![(0, "Country"), (1, "State"), (2, "City"), (5, "Disputed")],
             "each tile line once, in its own style; nothing from the other sources"
         );
         assert_eq!(
             draw(false, false, true, true),
-            vec![(0, "City"), (1, "City"), (2, "City")],
+            vec![(0, "City"), (1, "City"), (2, "City"), (5, "City")],
             "municipalities alone are closed by the higher borders"
         );
         assert_eq!(
             draw(false, true, true, true),
-            vec![(0, "StateBig"), (1, "State"), (2, "City")],
+            vec![(0, "StateBig"), (1, "State"), (2, "City"), (5, "StateBig")],
             "states close at country borders"
         );
         // Without the tile layer the other sources draw as before.
