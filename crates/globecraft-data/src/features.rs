@@ -1,12 +1,6 @@
 //! Stream a feature collection, retaining projected data rather than the JSON tree.
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use std::{
-    fmt,
-    io::BufReader,
-    path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
-};
-use tokio::io::AsyncWriteExt;
+use std::fmt;
 
 struct Collection<'a, T, F> {
     out: &'a mut T,
@@ -79,104 +73,6 @@ pub(crate) fn project<T: Default, F: Fn(&serde_json::Value, &mut T)>(
     .deserialize(&mut deserializer)?;
     deserializer.end()?;
     Ok(out)
-}
-async fn read<T: Default + Send + 'static, F: Fn(&serde_json::Value, &mut T) + Send + 'static>(
-    path: PathBuf,
-    consume: F,
-) -> Result<T, crate::Error> {
-    crate::cpu::run(crate::cpu::Service::Features, move || {
-        project(BufReader::new(std::fs::File::open(path)?), consume)
-    })
-    .await
-}
-struct Temporary(PathBuf);
-impl Drop for Temporary {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-async fn download(url: &str, path: &std::path::Path) -> Result<(), crate::Error> {
-    let mut response = crate::http::client(crate::http::Policy::Boundary)?
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut file = tokio::fs::File::create(path).await?;
-    let mut total = 0;
-    while let Some(chunk) = response.chunk().await? {
-        total += chunk.len() as u64;
-        if total > crate::http::MAX_JSON_RESPONSE_BYTES {
-            return Err("boundary response exceeds read limit".into());
-        }
-        file.write_all(&chunk).await?;
-    }
-    file.flush().await?;
-    Ok(())
-}
-pub(crate) async fn fetch<T, F>(url: &str, consume: F) -> Result<T, crate::Error>
-where
-    T: Default + Send + 'static,
-    F: Fn(&serde_json::Value, &mut T) + Clone + Send + 'static,
-{
-    fetch_inner(url, consume, true).await
-}
-
-/// Fetch a one-off viewport query without growing the on-disk feature cache.
-pub(crate) async fn fetch_ephemeral<T, F>(url: &str, consume: F) -> Result<T, crate::Error>
-where
-    T: Default + Send + 'static,
-    F: Fn(&serde_json::Value, &mut T) + Clone + Send + 'static,
-{
-    fetch_inner(url, consume, false).await
-}
-
-async fn fetch_inner<T, F>(url: &str, consume: F, cache: bool) -> Result<T, crate::Error>
-where
-    T: Default + Send + 'static,
-    F: Fn(&serde_json::Value, &mut T) + Clone + Send + 'static,
-{
-    // Bound concurrent downloads and projection, including readers of cached files.
-    static PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-    let _permit = PERMITS
-        .acquire()
-        .await
-        .expect("feature semaphore remains open");
-    let path = crate::http::geo_cache_path(url);
-    if cache && let Ok(out) = read(path.clone(), consume.clone()).await {
-        return Ok(out);
-    }
-    let cache_writable = cache
-        && match path.parent() {
-            Some(dir) => tokio::fs::create_dir_all(dir).await.is_ok(),
-            None => false,
-        };
-    let mut last = None;
-    for _ in 0..crate::http::JSON_REQUEST_ATTEMPTS {
-        let name = format!(
-            "globecraft-download-{}-{}",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        );
-        let temporary = Temporary(if cache_writable {
-            path.with_extension(&name)
-        } else {
-            std::env::temp_dir().join(name)
-        });
-        match download(url, &temporary.0).await {
-            Ok(()) => match read(temporary.0.clone(), consume.clone()).await {
-                Ok(out) => {
-                    if cache_writable {
-                        let _ = tokio::fs::rename(&temporary.0, &path).await;
-                    }
-                    return Ok(out);
-                }
-                Err(error) => last = Some(error),
-            },
-            Err(error) => last = Some(error),
-        }
-    }
-    Err(last.expect("at least one feature request attempt"))
 }
 #[cfg(test)]
 mod tests {

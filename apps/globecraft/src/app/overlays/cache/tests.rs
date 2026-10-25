@@ -25,7 +25,6 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
             states: true,
             cities: false,
             labels: true,
-            osm_tiles: false,
         },
         map_scale: 1.0,
         lang: Lang::En,
@@ -47,6 +46,7 @@ fn label(text: &str, kind: LabelKind, rank: u8) -> MapLabel {
         kind,
         rank,
         big: true,
+        from_tiles: false,
     }
 }
 
@@ -309,7 +309,6 @@ fn projected_shapes_preserve_priority_stable_ties_and_border_endpoints() {
             layers: OverlayLayers {
                 countries: false,
                 labels: false,
-                osm_tiles: false,
                 states: true,
                 ..style.layers
             },
@@ -356,17 +355,23 @@ fn projected_shapes_preserve_priority_stable_ties_and_border_endpoints() {
 }
 
 #[test]
-fn municipal_outlines_match_the_state_visual_for_a_smooth_handoff() {
+fn municipal_lines_match_the_state_visual_by_default() {
     headless(|painter| {
         let (mut view, mut style, mut data) = scene();
         view.altitude_km = 100.0;
         data.countries.clear();
         data.labels.clear();
-        let line = Arc::new(vec![(0.0, -1.2), (0.0, 1.2)]);
-        data.states = vec![line.clone()];
-        data.world_cities = vec![line.clone()];
         data.municipal_detail_max_km =
             globecraft_data::boundaries::MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+        let line = Arc::new(vec![(0.0, -1.2), (0.0, 1.2)]);
+        let tiles = |state: Vec<_>, municipal: Vec<_>| {
+            Arc::new(globecraft_data::boundaries::OsmBorderLines {
+                state,
+                municipal,
+                zoom: globecraft_data::boundaries::OSM_MUNICIPAL_MIN_ZOOM,
+                ..Default::default()
+            })
+        };
         let strokes = |shapes: &[Shape]| -> Vec<(f32, [u8; 4])> {
             shapes
                 .iter()
@@ -378,25 +383,17 @@ fn municipal_outlines_match_the_state_visual_for_a_smooth_handoff() {
                 })
                 .collect()
         };
-
         style.layers.cities = false;
+        data.osm_borders = tiles(vec![line.clone()], Vec::new());
         let state_style = strokes(&projected::build(painter, view, &data, style));
-
-        // Only the municipal layer draws, over the same line geometry.
-        data.states.clear();
         style.layers.cities = true;
+        data.osm_borders = tiles(Vec::new(), vec![line]);
         let city_style = strokes(&projected::build(painter, view, &data, style));
-
         assert!(state_style.len() > 1, "state borders must be dashed");
         assert_eq!(
             state_style, city_style,
-            "municipal outlines must use the same color, width and dash as states"
+            "municipal lines use the same color, width and dash as states by default"
         );
-        // Municipal state borders, which take over first, look the same too.
-        data.world_cities = vec![];
-        data.world_cities_major = vec![line];
-        let major_style = strokes(&projected::build(painter, view, &data, style));
-        assert_eq!(state_style, major_style);
     });
 }
 
@@ -475,7 +472,6 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
                     states: true,
                     cities: false,
                     labels: false,
-                    osm_tiles: false,
                 },
                 dashes: globecraft_render::overlays::BorderDashes::default(),
             },

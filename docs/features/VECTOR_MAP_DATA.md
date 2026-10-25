@@ -6,6 +6,13 @@ engine as they are. It does not describe code that exists yet.
 
 ## Implemented so far
 
+> **Superseded 2026-10-25.** Borders and names now come from OpenStreetMap vector
+> tiles (OpenMapTiles via OpenFreeMap) with only the bundled Natural Earth 1:110m set
+> as fallback; see `docs/BORDER_PIPELINE.md`. The Natural Earth ladder, the national
+> municipal adapters, geoBoundaries and Overpass described below were removed (code
+> kept on the branch `snapshot/2026-10-25-before-cleanup`). The section is kept as
+> history.
+
 The first migration step landed ahead of the rebuild:
 
 - The 1:110m Natural Earth country and place sets are compiled into

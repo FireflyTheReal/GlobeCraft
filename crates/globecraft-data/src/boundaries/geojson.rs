@@ -43,15 +43,14 @@ pub(super) fn label_center(geometry: &serde_json::Value) -> Option<(f64, f64)> {
     (min_lat <= max_lat).then_some(((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0))
 }
 
-/// Brazilian cities exist both in the world populated-places set and in the IBGE municipality set;
-/// keep only the most prominent entry (lowest rank) per name and ~0.5° cell.
+/// Keeps only the most prominent entry (lowest rank) per city name and ~0.5° cell.
 pub fn dedupe_city_labels(labels: &mut Vec<MapLabel>) {
     let mut best: HashMap<(String, i32, i32), usize> = HashMap::new();
     let mut drop = vec![false; labels.len()];
     for (i, l) in labels.iter().enumerate() {
-        // Place names come and go with the view; the renderer skips the ones another
+        // Tile names come and go with the view; the renderer skips the ones another
         // label already shows (see `project_labels`).
-        if l.kind != LabelKind::City || l.is_place() {
+        if l.kind != LabelKind::City || l.from_tiles {
             continue;
         }
         for (dla, dlo) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
@@ -184,6 +183,7 @@ mod tests {
             kind: LabelKind::City,
             rank,
             big: false,
+            from_tiles: false,
         };
         let mut labels = vec![city("São Paulo", 9), city("Sao Paulo", 1)];
         dedupe_city_labels(&mut labels);

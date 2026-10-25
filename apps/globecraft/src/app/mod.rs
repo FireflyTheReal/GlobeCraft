@@ -179,6 +179,13 @@ pub(crate) struct App {
 
 impl App {
     /// Whether a map layer is shown (its own switch; parents are checked by callers that care).
+    /// Whether any layer draws from the border tiles (borders or place names).
+    pub(super) fn uses_border_tiles(&self) -> bool {
+        self.layer(MapLayer::CountryBorders)
+            || self.layer(MapLayer::StateBorders)
+            || self.layer(MapLayer::MunicipalBorders)
+            || self.layer(MapLayer::PlaceLabels)
+    }
     pub(crate) fn layer(&self, layer: MapLayer) -> bool {
         match layer {
             // Refinements draw only with their parent.
@@ -542,62 +549,17 @@ impl eframe::App for App {
         );
         let earth_visible =
             self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
-        let country = self
-            .boundaries
-            .country_at(self.cam.lat, self.cam.lon)
-            .map(str::to_owned);
-        let is_brazil = earth_visible && country.as_deref() == Some("BRA");
-        // OpenStreetMap border tiles replace the municipal outlines and the Overpass
-        // names once the first tiles arrived; until then (or if the service fails)
-        // the other sources keep the globe bordered and named.
-        let osm_tiles = earth_visible && self.layer(MapLayer::OsmBorderTiles);
-        let osm_ready = osm_tiles && self.boundary_loader.has_osm_tiles();
-        self.boundary_loader.request_municipal(
-            globecraft_data::boundaries::MunicipalView {
-                // Municipal outlines also sharpen the state and country borders up
-                // close, so they load for any of the three border layers.
-                enabled: (self.layer(MapLayer::MunicipalBorders)
-                    || self.layer(MapLayer::StateBorders)
-                    || self.layer(MapLayer::CountryBorders))
-                    && earth_visible
-                    && !osm_ready,
-                altitude_km: self.cam.alt,
-                lat: self.cam.lat,
-                lon: self.cam.lon,
-                countries: &self.settings.municipal_countries,
-            },
-            &self.boundaries,
-        );
-        self.boundary_loader
-            .request_places(globecraft_data::boundaries::PlaceView {
-                enabled: self.layer(MapLayer::PlaceLabels) && earth_visible && !osm_ready,
-                lat: self.cam.lat,
-                lon: self.cam.lon,
-                altitude_km: self.cam.alt,
-            });
+        // Borders and names stream from OpenStreetMap tiles around the view while any
+        // border or name layer shows.
         self.boundary_loader
             .request_osm_tiles(globecraft_data::boundaries::OsmTileView {
-                enabled: osm_tiles,
+                enabled: earth_visible && self.uses_border_tiles(),
                 lat: self.cam.lat,
                 lon: self.cam.lon,
                 altitude_km: self.cam.alt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
                 claims: self.settings.map_style.disputed_claims,
             });
-        // Brazil's municipal outlines stream per state like every other country;
-        // this whole-country pass only supplies names.
-        self.boundary_loader.request_visible_layers(
-            false,
-            self.layer(MapLayer::PlaceLabels) && is_brazil,
-            self.cam.alt,
-        );
-        self.boundary_loader.request_world_detail(self.cam.alt);
-        if earth_visible
-            && (self.layer(MapLayer::StateBorders) || self.layer(MapLayer::PlaceLabels))
-        {
-            self.boundary_loader
-                .request_states(self.cam.alt, self.settings.state_max_altitude_km);
-        }
         if self.boundary_loader.is_loading() {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }

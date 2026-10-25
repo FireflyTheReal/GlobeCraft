@@ -197,9 +197,12 @@ fn reused_bounds_give_the_same_visibility_as_a_fresh_index() {
         .collect();
     let first = BoundaryIndex::new(&data);
     // A patch adds a layer; the country lines are the same shared `Arc`s.
-    data.states = (0..40)
-        .map(|i| line(i as f64 - 20.0, i as f64 * 9.0 - 175.0))
-        .collect();
+    data.osm_borders = Arc::new(globecraft_data::boundaries::OsmBorderLines {
+        state: (0..40)
+            .map(|i| line(i as f64 - 20.0, i as f64 * 9.0 - 175.0))
+            .collect(),
+        ..Default::default()
+    });
     let reused = BoundaryIndex::reusing(&data, Some(&first));
     let fresh = BoundaryIndex::new(&data);
     assert_eq!(reused.entries.len(), 80);

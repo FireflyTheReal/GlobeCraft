@@ -449,7 +449,7 @@ impl App {
                 ],
             );
         }
-        if self.layer(MapLayer::OsmBorderTiles) {
+        if self.uses_border_tiles() && self.boundary_loader.has_osm_tiles() {
             // OpenFreeMap's terms ask clients without MapLibre to show this credit.
             attribution = lg.format(
                 "osm-tiles-combined-credit",

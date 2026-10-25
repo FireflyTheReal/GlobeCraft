@@ -82,6 +82,7 @@ fn overlay_projection_and_label_occupancy_time() {
             kind: LabelKind::Country,
             rank: (i % 10) as u8,
             big: true,
+            from_tiles: false,
         })
         .collect();
     let cam = Cam {
@@ -104,7 +105,6 @@ fn overlay_projection_and_label_occupancy_time() {
             states: false,
             cities: false,
             labels: true,
-            osm_tiles: false,
         },
         map_scale: 1.0,
         lang: Lang::En,

@@ -8,7 +8,6 @@ use globecraft_data::boundaries::{
 use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use std::collections::HashMap;
 pub mod grid;
-mod handover;
 mod labels;
 mod spatial;
 mod worker;
@@ -21,7 +20,6 @@ const SIMPLIFY_BORDER_ALTITUDE_KM: f64 = 1500.0;
 const MIN_BORDER_SEGMENT_POINTS: f32 = 1.4;
 const MAX_BORDER_SUBDIVISIONS: usize = 96;
 const CLOSE_BORDER_ALTITUDE_KM: f64 = 500.0;
-const MEDIUM_BORDER_ALTITUDE_KM: f64 = 5000.0;
 /// Screen-space dash patterns, on/off in points. States and municipalities use the
 /// dashed pattern by default, so the states→municipal handoff keeps one visual.
 const DASHED_ON_POINTS: f32 = 7.0;
@@ -35,8 +33,6 @@ pub struct OverlayLayers {
     pub states: bool,
     pub cities: bool,
     pub labels: bool,
-    /// Borders from OpenStreetMap vector tiles replace the other border sources.
-    pub osm_tiles: bool,
 }
 pub struct OverlayProjection<'a> {
     pub basis: &'a Basis,
@@ -98,25 +94,18 @@ pub enum BorderKind {
     /// across its own band, but with the same color, width and dash.
     StateBig,
     State,
-    /// Municipal segments on state borders: the accurate version of the state lines,
-    /// drawn from the municipal altitude down in place of the stretches they cover.
-    CityMajor,
-    /// Interior municipal lines, drawn only below the data's detail altitude.
+    /// Municipal lines, drawn only below the data's detail altitude.
     City,
-    /// Municipal country borders, drawn by one side per border, in the country style in
-    /// place of the Natural Earth country line they cover.
-    CityCountry,
     /// Disputed country borders and claim lines, from the OpenStreetMap tiles.
     Disputed,
 }
 
 impl BorderKind {
-    /// The user-styled line type this kind draws with. Municipal state and country
-    /// borders replace the coarse lines up close, so they take those styles.
+    /// The user-styled line type this kind draws with.
     pub fn line_type(self) -> LineType {
         match self {
-            Self::Country | Self::CityCountry => LineType::Country,
-            Self::StateBig | Self::State | Self::CityMajor => LineType::State,
+            Self::Country => LineType::Country,
+            Self::StateBig | Self::State => LineType::State,
             Self::City => LineType::Municipal,
             Self::Disputed => LineType::Disputed,
         }
@@ -251,215 +240,66 @@ pub fn project_borders(
         }
     };
     let close_zoom = view.altitude_km <= CLOSE_BORDER_ALTITUDE_KM;
-    // Municipal outlines only make sense at close range: they are drawn from
-    // `MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM` down.
-    let municipal_visible = view.altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
-    // Where municipal state borders were loaded, the coarse state lines hand over to
-    // them: the covered parts are cut out (see `handover`). Elsewhere the coarse lines
-    // stay, since municipal data rarely covers the whole view.
-    // The sharper state borders belong to the state layer, not to the municipal one.
-    let state_cells = Some(&*boundaries.municipal_major_cells)
-        .filter(|cells| municipal_visible && view.layers.states && !cells.is_empty());
-    // Likewise for country lines, with the country layer. With the country layer off
-    // and the state layer on, country borders close the states (drawn in the state
-    // style), and the same handover applies to them.
-    let states_close_countries = view.layers.states && !view.layers.countries;
-    let country_cells = Some(&*boundaries.municipal_country_cells).filter(|cells| {
-        municipal_visible && (view.layers.countries || states_close_countries) && !cells.is_empty()
-    });
-    let cells_for = |kind: BorderKind| match kind {
-        BorderKind::State | BorderKind::StateBig => state_cells,
-        _ => None,
-    };
-    // A Natural Earth country line is cut by the municipal version of its own border.
-    let country_line_cells = |index: usize| {
-        country_cells
-            .map(|cells| cells.for_pair(boundaries.country_pairs.get(index).copied().flatten()))
-    };
-    // `cells`: where municipal borders replace these lines (see `handover`).
-    let mut draw_cut = |lines: &[globecraft_data::boundaries::Line],
-                        kind: BorderKind,
-                        cells: Option<&globecraft_data::boundaries::MajorCells>,
-                        max_step_deg: f64| {
+    let mut draw = |lines: &[globecraft_data::boundaries::Line], kind: BorderKind, step: f64| {
         for line in lines {
-            if visible.is_some_and(|set| !set.contains_line(line)) {
-                continue;
-            }
-            let Some(cells) = cells else {
-                draw_line(line, kind, max_step_deg);
-                continue;
-            };
-            for run in handover::uncovered_runs(line, cells) {
-                draw_line(&run, kind, max_step_deg);
+            if visible.is_none_or(|set| set.contains_line(line)) {
+                draw_line(line, kind, step);
             }
         }
     };
-
-    // Borders from OpenStreetMap vector tiles: one line per border, already chosen for
-    // the zoom level, so nothing is cut or handed over. The buttons keep their meaning:
-    // a line belongs to the lowest level it bounds, and with that level's layer off it
-    // is drawn in the style of the next layer that is on, so no area is left open.
+    let states_far = STATE_BIG_VISIBLE_MAX_ALTITUDE_KM.max(view.state_visible_max_km);
     let osm = &boundaries.osm_borders;
-    if view.layers.osm_tiles && !osm.is_empty() {
-        let step = if close_zoom { 0.12 } else { 1.0 };
-        let states_far = STATE_BIG_VISIBLE_MAX_ALTITUDE_KM.max(view.state_visible_max_km);
-        let municipal = view.layers.cities
-            && municipal_visible
-            && osm.zoom >= OSM_MUNICIPAL_MIN_ZOOM
-            && view.altitude_km <= boundaries.municipal_detail_max_km;
-        if view.layers.states {
-            if view.altitude_km < STATE_BIG_VISIBLE_MAX_ALTITUDE_KM {
-                draw_cut(&osm.state_big, BorderKind::StateBig, None, step);
-            }
-            if view.altitude_km < view.state_visible_max_km {
-                draw_cut(&osm.state, BorderKind::State, None, step);
-            }
-            if !view.layers.countries && view.altitude_km < states_far {
-                draw_cut(&osm.country, BorderKind::StateBig, None, step);
-                draw_cut(&osm.disputed, BorderKind::StateBig, None, step);
-            }
-        }
-        if municipal {
-            draw_cut(&osm.municipal, BorderKind::City, None, step);
-            if !view.layers.states {
-                draw_cut(&osm.state_big, BorderKind::City, None, step);
-                draw_cut(&osm.state, BorderKind::City, None, step);
-                if !view.layers.countries {
-                    draw_cut(&osm.country, BorderKind::City, None, step);
-                    draw_cut(&osm.disputed, BorderKind::City, None, step);
-                }
-            }
-        }
-        if view.layers.countries {
-            draw_cut(&osm.country, BorderKind::Country, None, step);
-            draw_cut(&osm.disputed, BorderKind::Disputed, None, step);
+    if osm.is_empty() {
+        // Until the first border tile is loaded (or offline): Natural Earth's bundled
+        // land borders, as country lines, or closing the states with only those on.
+        let kind = if view.layers.countries {
+            Some(BorderKind::Country)
+        } else if view.layers.states && view.altitude_km < states_far {
+            Some(BorderKind::StateBig)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            let step = if close_zoom { 0.25 } else { 2.0 };
+            draw(&boundaries.countries, kind, step);
         }
         return;
     }
-
-    // State/province lines, minus the stretches municipal state borders replace.
+    // Borders from OpenStreetMap vector tiles: one line per border, already chosen for
+    // the zoom level. The buttons keep their meaning: a line belongs to the lowest level
+    // it bounds, and with that level's layer off it is drawn in the style of the next
+    // layer that is on, so no area is left open.
+    let step = if close_zoom { 0.12 } else { 1.0 };
+    let municipal = view.layers.cities
+        && view.altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM
+        && osm.zoom >= OSM_MUNICIPAL_MIN_ZOOM
+        && view.altitude_km <= boundaries.municipal_detail_max_km;
     if view.layers.states {
-        let step = if close_zoom {
-            0.12
-        } else if view.altitude_km <= MEDIUM_BORDER_ALTITUDE_KM {
-            0.5
-        } else {
-            2.0
-        };
-
-        // Provinces of the big countries read well much earlier than the rest;
-        // both the lines and their labels use the same altitude policy.
         if view.altitude_km < STATE_BIG_VISIBLE_MAX_ALTITUDE_KM {
-            draw_cut(
-                &boundaries.states_big,
-                BorderKind::StateBig,
-                cells_for(BorderKind::StateBig),
-                step,
-            );
+            draw(&osm.state_big, BorderKind::StateBig, step);
         }
-        // State/province lines appear only from the same altitude as their
-        // labels; the app fades them in across a short band below it. The
-        // threshold is the app's user-tunable setting.
         if view.altitude_km < view.state_visible_max_km {
-            draw_cut(
-                &boundaries.states,
-                BorderKind::State,
-                cells_for(BorderKind::State),
-                step,
-            );
+            draw(&osm.state, BorderKind::State, step);
         }
-        // Without the country layer, the country borders close the states, from the
-        // altitude the big countries' provinces appear.
-        if states_close_countries
-            && view.altitude_km < STATE_BIG_VISIBLE_MAX_ALTITUDE_KM.max(view.state_visible_max_km)
-        {
-            // Cut like country lines: the municipal country borders replace them.
-            for (index, line) in boundaries.countries.iter().enumerate() {
-                draw_cut(
-                    std::slice::from_ref(line),
-                    BorderKind::StateBig,
-                    country_line_cells(index),
-                    step,
-                );
-            }
+        if !view.layers.countries && view.altitude_km < states_far {
+            draw(&osm.country, BorderKind::StateBig, step);
+            draw(&osm.disputed, BorderKind::StateBig, step);
         }
     }
-    if municipal_visible {
-        let step = if close_zoom { 0.12 } else { 1.0 };
-        // State borders traced by municipalities come first; the interior lines
-        // (most of the line count) wait until the municipalities are a reasonable
-        // size on screen.
-        if view.layers.states {
-            draw_cut(
-                &boundaries.world_cities_major,
-                BorderKind::CityMajor,
-                None,
-                step,
-            );
-            // Without the country layer, municipal country borders close the states.
+    if municipal {
+        draw(&osm.municipal, BorderKind::City, step);
+        if !view.layers.states {
+            draw(&osm.state_big, BorderKind::City, step);
+            draw(&osm.state, BorderKind::City, step);
             if !view.layers.countries {
-                draw_cut(
-                    &boundaries.world_cities_country,
-                    BorderKind::CityMajor,
-                    None,
-                    step,
-                );
+                draw(&osm.country, BorderKind::City, step);
+                draw(&osm.disputed, BorderKind::City, step);
             }
-        }
-        if view.layers.cities && view.altitude_km <= boundaries.municipal_detail_max_km {
-            draw_cut(
-                &boundaries.cities,
-                BorderKind::City,
-                cells_for(BorderKind::City),
-                step,
-            );
-            draw_cut(
-                &boundaries.world_cities,
-                BorderKind::City,
-                cells_for(BorderKind::City),
-                step,
-            );
-            // With the state or country layer off, the municipal segments on those
-            // borders are ordinary municipal lines; without them the municipalities
-            // would have gaps.
-            if !view.layers.states {
-                draw_cut(
-                    &boundaries.world_cities_major,
-                    BorderKind::City,
-                    cells_for(BorderKind::City),
-                    step,
-                );
-            }
-            if !view.layers.countries && !view.layers.states {
-                draw_cut(
-                    &boundaries.world_cities_country,
-                    BorderKind::City,
-                    None,
-                    step,
-                );
-            }
-        }
-        if view.layers.countries {
-            draw_cut(
-                &boundaries.world_cities_country,
-                BorderKind::CityCountry,
-                cells_for(BorderKind::CityCountry),
-                step,
-            );
         }
     }
-    // Country outlines are drawn last so they stay legible above any
-    // subnational layer.
     if view.layers.countries {
-        let step = if close_zoom { 0.25 } else { 2.0 };
-        for (index, line) in boundaries.countries.iter().enumerate() {
-            draw_cut(
-                std::slice::from_ref(line),
-                BorderKind::Country,
-                country_line_cells(index),
-                step,
-            );
-        }
+        draw(&osm.country, BorderKind::Country, step);
+        draw(&osm.disputed, BorderKind::Disputed, step);
     }
 }
 
@@ -528,12 +368,8 @@ pub fn project_labels<'a>(
                 label.visible_at(view.altitude_km)
                     && country_label_apparent(label, basis, rect, boundaries)
             }
-            // Municipal names belong to the municipal layer; its data also loads for
-            // the sharper state and country borders.
             LabelKind::City => {
-                (view.layers.cities || !label.is_municipal())
-                    && label
-                        .visible_with_detail(view.altitude_km, boundaries.municipal_detail_max_km)
+                label.visible_with_detail(view.altitude_km, boundaries.municipal_detail_max_km)
             }
             LabelKind::State => {
                 view.layers.states
@@ -559,9 +395,9 @@ pub fn project_labels<'a>(
         }
     }
     cands.sort_by_key(|c| (c.0, c.1));
-    // An OpenStreetMap place name is skipped where a label already shown carries the
-    // same name nearby (the town from Natural Earth or the municipality), or an earlier
-    // copy of the place (an island tagged as both a point and an outline).
+    // A tile's place name is skipped where a label already shown carries the same name
+    // nearby (the city from Natural Earth), or an earlier copy of the place (an island
+    // tagged as both a point and an outline).
     let mut shown: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
     cands
         .into_iter()
@@ -570,7 +406,7 @@ pub fn project_labels<'a>(
                 return true;
             }
             let near = shown.entry(label.en.to_lowercase()).or_default();
-            if label.is_place()
+            if label.from_tiles
                 && near.iter().any(|&(lat, lon)| {
                     (lat - label.lat).abs() < SAME_NAME_DEG
                         && (lon - label.lon).abs() < SAME_NAME_DEG
@@ -645,82 +481,12 @@ mod tests {
         style.state.dash = DashStyle::Dotted;
         style.municipal.dash = DashStyle::Solid;
         let dashes = BorderDashes::of(&style);
-        // Municipal state borders keep the state look, interior lines the municipal one.
         assert_eq!(
-            dashes.of_kind(BorderKind::CityMajor),
+            dashes.of_kind(BorderKind::StateBig),
             dash_points(DashStyle::Dotted)
         );
         assert_eq!(dashes.of_kind(BorderKind::City), None);
-    }
-
-    #[test]
-    fn state_lines_hand_over_only_where_municipal_state_borders_were_loaded() {
-        use globecraft_core::camera::Cam;
-        use std::sync::Arc;
-        // A state line along 48°N from 8°E to 10°E; municipal state borders cover
-        // only its western half.
-        let mut data = BoundaryData::default();
-        data.states = vec![Arc::new(
-            (0..=40)
-                .map(|i| (48.0, 8.0 + f64::from(i) * 0.05))
-                .collect(),
-        )];
-        data.municipal_major_cells =
-            Arc::new(globecraft_data::boundaries::MajorCells::of(&[Arc::new(
-                vec![(48.0, 8.0), (48.0, 9.0)],
-            )]));
-        let basis = Cam {
-            lat: 48.0,
-            lon: 9.0,
-            heading: 0.0,
-            alt: 300.0,
-        }
-        .basis(1.0);
-        let layers = OverlayLayers {
-            countries: false,
-            states: true,
-            cities: true,
-            labels: false,
-            osm_tiles: false,
-        };
-        let project = |layers: OverlayLayers, data: &BoundaryData| {
-            let view = OverlayProjection {
-                basis: &basis,
-                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
-                altitude_km: 300.0,
-                state_visible_max_km: 1609.0,
-                dashes: BorderDashes::default(),
-                layers,
-            };
-            let mut state_points = 0.0_f32;
-            project_borders(&view, data, None, |kind, [a, b]| {
-                if matches!(kind, BorderKind::State) {
-                    state_points += (b - a).length();
-                }
-            });
-            state_points
-        };
-        // The covered western half is cut out; the eastern half stays. The upgrade
-        // belongs to the state layer: it happens with the municipal layer off too.
-        let whole = project(layers, &{
-            let mut plain = data.clone();
-            plain.municipal_major_cells = Arc::default();
-            plain
-        });
-        let handed_over = project(layers, &data);
-        assert_eq!(
-            handed_over,
-            project(
-                OverlayLayers {
-                    cities: false,
-                    ..layers
-                },
-                &data
-            )
-        );
-        assert!(handed_over > 0.0, "the uncovered half stays");
-        let kept = handed_over / whole;
-        assert!((0.4..0.6).contains(&kept), "{kept} of the line kept");
+        assert!(dashes.of_kind(BorderKind::Disputed).is_some());
     }
 
     #[test]
@@ -734,10 +500,11 @@ mod tests {
             kind: LabelKind::City,
             rank,
             big: false,
+            from_tiles: rank >= globecraft_data::boundaries::PLACE_TOWN_RANK,
         };
         let mut data = BoundaryData::default();
         data.labels = vec![
-            // Natural Earth's town, then OpenStreetMap's town and a village (ranks 11, 12).
+            // Natural Earth's town, then the tiles' town and a village (ranks 11, 12).
             label("Fergana", 40.38, 71.78, 6),
             label("Fergana", 40.39, 71.79, 11),
             label("Qishloq", 40.42, 71.74, 12),
@@ -760,7 +527,6 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
-                osm_tiles: false,
             },
         };
         let names: Vec<(&str, u8)> = project_labels(&view, &data)
@@ -771,88 +537,13 @@ mod tests {
     }
 
     #[test]
-    fn country_borders_close_the_states_when_only_states_are_on() {
-        use globecraft_core::camera::Cam;
-        use std::sync::Arc;
-        let mut data = BoundaryData::default();
-        // Natural Earth's country line along 48° N; the municipal country border
-        // replaces its western half.
-        data.countries = vec![Arc::new(
-            (0..=20).map(|i| (48.0, 8.0 + i as f64 * 0.1)).collect(),
-        )];
-        data.world_cities_country = vec![Arc::new(vec![(48.0, 8.0), (48.0, 9.0)])];
-        data.municipal_country_cells = Arc::new(globecraft_data::boundaries::CountryCells::of(
-            &data.world_cities_country,
-            &[],
-        ));
-        let basis = Cam {
-            lat: 48.0,
-            lon: 9.0,
-            heading: 0.0,
-            alt: 300.0,
-        }
-        .basis(1.0);
-        let draw = |countries: bool, states: bool, cities: bool| {
-            let view = OverlayProjection {
-                basis: &basis,
-                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
-                altitude_km: 300.0,
-                state_visible_max_km: 1609.0,
-                dashes: BorderDashes::default(),
-                layers: OverlayLayers {
-                    countries,
-                    states,
-                    cities,
-                    labels: false,
-                    osm_tiles: false,
-                },
-            };
-            let mut kinds = std::collections::BTreeMap::<&str, f32>::new();
-            project_borders(&view, &data, None, |kind, [a, b]| {
-                let name = match kind {
-                    BorderKind::Country => "Country",
-                    BorderKind::State => "State",
-                    BorderKind::StateBig => "StateBig",
-                    BorderKind::City => "City",
-                    BorderKind::CityMajor => "CityMajor",
-                    BorderKind::CityCountry => "CityCountry",
-                    BorderKind::Disputed => "Disputed",
-                };
-                *kinds.entry(name).or_default() += (b - a).length();
-            });
-            kinds
-        };
-        let states_only = draw(false, true, false);
-        assert!(states_only.contains_key("CityMajor"), "{states_only:?}");
-        assert!(!states_only.contains_key("Country") && !states_only.contains_key("City"));
-        // The coarse line is drawn in the state style, minus the half the municipal
-        // border replaces, exactly as in the country style (the two styles dash
-        // differently, so each is compared with its own municipal half).
-        let both = draw(true, true, false);
-        let ratio = |coarse: f32, fine: f32| coarse / fine;
-        assert!(
-            (ratio(states_only["StateBig"], states_only["CityMajor"]) - 1.0).abs() < 0.05
-                && (ratio(both["Country"], both["CityCountry"]) - 1.0).abs() < 0.05,
-            "{states_only:?} {both:?}"
-        );
-        assert!(
-            !both.contains_key("CityMajor"),
-            "drawn once, as country: {both:?}"
-        );
-        // With states on, the municipal layer does not draw the same segments again.
-        let with_cities = draw(false, true, true);
-        assert!(!with_cities.contains_key("City"), "{with_cities:?}");
-    }
-
-    #[test]
-    fn osm_tile_borders_replace_the_other_sources_and_keep_the_button_rules() {
+    fn tile_borders_keep_the_button_rules_and_the_bundled_ones_stand_in() {
         use globecraft_core::camera::Cam;
         use std::sync::Arc;
         let line = |lat: f64| Arc::new(vec![(lat, 8.9), (lat, 9.1)]);
-        // Natural Earth and municipal lines that the tiles must replace.
+        // Natural Earth's bundled line, which the tiles replace.
         let mut data = BoundaryData::default();
         data.countries = vec![line(48.03)];
-        data.world_cities = vec![line(48.04)];
         data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
         data.osm_borders = Arc::new(globecraft_data::boundaries::OsmBorderLines {
             country: vec![line(48.0)],
@@ -869,7 +560,7 @@ mod tests {
             alt: 30.0,
         }
         .basis(1.0);
-        let draw = |countries: bool, states: bool, cities: bool, osm_tiles: bool| {
+        let draw = |data: &BoundaryData, countries: bool, states: bool, cities: bool| {
             let view = OverlayProjection {
                 basis: &basis,
                 rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
@@ -881,12 +572,11 @@ mod tests {
                     states,
                     cities,
                     labels: false,
-                    osm_tiles,
                 },
             };
             // Which kinds draw the lines at each latitude, by hundredths of a degree.
             let mut kinds = std::collections::BTreeSet::<(i64, &str)>::new();
-            project_borders(&view, &data, None, |kind, [a, _]| {
+            project_borders(&view, data, None, |kind, [a, _]| {
                 let lat = basis
                     .pick(view.rect, a)
                     .map_or(-1, |(lat, _)| ((lat - 48.0) * 100.0).round() as i64);
@@ -895,8 +585,6 @@ mod tests {
                     BorderKind::State => "State",
                     BorderKind::StateBig => "StateBig",
                     BorderKind::City => "City",
-                    BorderKind::CityMajor => "CityMajor",
-                    BorderKind::CityCountry => "CityCountry",
                     BorderKind::Disputed => "Disputed",
                 };
                 kinds.insert((lat, name));
@@ -904,69 +592,23 @@ mod tests {
             kinds.into_iter().collect::<Vec<_>>()
         };
         assert_eq!(
-            draw(true, true, true, true),
+            draw(&data, true, true, true),
             vec![(0, "Country"), (1, "State"), (2, "City"), (5, "Disputed")],
             "each tile line once, in its own style; nothing from the other sources"
         );
         assert_eq!(
-            draw(false, false, true, true),
+            draw(&data, false, false, true),
             vec![(0, "City"), (1, "City"), (2, "City"), (5, "City")],
             "municipalities alone are closed by the higher borders"
         );
         assert_eq!(
-            draw(false, true, true, true),
+            draw(&data, false, true, true),
             vec![(0, "StateBig"), (1, "State"), (2, "City"), (5, "StateBig")],
             "states close at country borders"
         );
-        // Without the tile layer the other sources draw as before.
-        assert!(draw(true, true, true, false).contains(&(3, "Country")));
-    }
-
-    #[test]
-    fn municipal_state_borders_close_the_municipalities_when_states_are_off() {
-        use globecraft_core::camera::Cam;
-        use std::sync::Arc;
-        let mut data = BoundaryData::default();
-        data.world_cities_major = vec![Arc::new(vec![(48.0, 8.5), (48.0, 9.5)])];
-        data.world_cities = vec![Arc::new(vec![(48.2, 8.5), (48.2, 9.5)])];
-        data.municipal_detail_max_km = 400.0;
-        let basis = Cam {
-            lat: 48.0,
-            lon: 9.0,
-            heading: 0.0,
-            alt: 300.0,
-        }
-        .basis(1.0);
-        let kinds = |states: bool, cities: bool| {
-            let view = OverlayProjection {
-                basis: &basis,
-                rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 800.0)),
-                altitude_km: 300.0,
-                state_visible_max_km: 1609.0,
-                dashes: BorderDashes::default(),
-                layers: OverlayLayers {
-                    countries: true,
-                    states,
-                    cities,
-                    labels: false,
-                    osm_tiles: false,
-                },
-            };
-            let (mut major, mut city) = (0, 0);
-            project_borders(&view, &data, None, |kind, _| match kind {
-                BorderKind::CityMajor => major += 1,
-                BorderKind::City => city += 1,
-                _ => {}
-            });
-            (major, city)
-        };
-        let (major, city_with_states) = kinds(true, true);
-        assert!(major > 0);
-        // States off: the state-border segments join the municipal lines.
-        let (major_off, city_without_states) = kinds(false, true);
-        assert_eq!(major_off, 0);
-        assert!(city_without_states > city_with_states);
-        // Municipalities off too: nothing municipal at all.
-        assert_eq!(kinds(false, false), (0, 0));
+        // Before the first tile: the bundled borders, as country or closing the states.
+        data.osm_borders = Arc::default();
+        assert_eq!(draw(&data, true, true, true), vec![(3, "Country")]);
+        assert_eq!(draw(&data, false, true, false), vec![(3, "StateBig")]);
     }
 }

@@ -85,9 +85,6 @@ pub struct Settings {
     pub earth_model: EarthModel,
     #[serde(serialize_with = "serialize_ruler_unit")]
     pub ruler_unit: RulerUnit,
-    /// ISO 3166-1 alpha-3 codes of the countries whose municipal borders load;
-    /// empty loads every country.
-    pub municipal_countries: Vec<String>,
 }
 fn serialize_earth_model<S: serde::Serializer>(
     model: &EarthModel,
@@ -126,22 +123,9 @@ impl Default for Settings {
             distance_units: UnitPreference::System,
             earth_model: EarthModel::default(),
             ruler_unit: RulerUnit::Automatic,
-            municipal_countries: Vec::new(),
         }
     }
 }
-/// Upper-case, three-letter, sorted and without duplicates; anything else is dropped.
-pub fn normalize_country_codes<'a>(codes: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut out: Vec<String> = codes
-        .into_iter()
-        .map(|code| code.trim().to_ascii_uppercase())
-        .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase()))
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
 /// Policy bounds for the user-tunable state-line visibility altitude (km):
 /// the shipped default and a sane clamp ceiling for the Layers panel input.
 pub const STATE_MAX_ALTITUDE_DEFAULT_KM: f64 = 1_609.0;
@@ -185,8 +169,6 @@ struct SettingsInput {
     earth_model: Option<String>,
     #[serde(default, deserialize_with = "crate::json_fields::string")]
     ruler_unit: Option<String>,
-    #[serde(default)]
-    municipal_countries: Option<serde_json::Value>,
 }
 impl Settings {
     fn apply_json(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
@@ -261,14 +243,6 @@ impl Settings {
         }
         if let Some(value) = input.grid_numbers {
             self.grid_numbers = value;
-        }
-        if let Some(codes) = input
-            .municipal_countries
-            .as_ref()
-            .and_then(|v| v.as_array())
-        {
-            self.municipal_countries =
-                normalize_country_codes(codes.iter().filter_map(|c| c.as_str()));
         }
         Ok(())
     }
@@ -521,7 +495,6 @@ mod tests {
             distance_units: UnitPreference::System,
             earth_model: EarthModel::default(),
             ruler_unit: RulerUnit::Automatic,
-            municipal_countries: vec!["FRA".into()],
         };
         settings
             .apply_json(
@@ -558,20 +531,5 @@ mod tests {
             .apply_json(&serde_json::to_vec(&settings).unwrap())
             .unwrap();
         assert!(restored.hide_navigation_controls);
-    }
-
-    #[test]
-    fn municipal_countries_are_normalized_and_restored() {
-        let mut settings = Settings::default();
-        assert!(settings.municipal_countries.is_empty());
-        settings
-            .apply_json(br#"{"municipal_countries": ["fra", "DEU", "FRA", "x", 4]}"#)
-            .unwrap();
-        assert_eq!(settings.municipal_countries, ["DEU", "FRA"]);
-        let mut restored = Settings::default();
-        restored
-            .apply_json(&serde_json::to_vec(&settings).unwrap())
-            .unwrap();
-        assert_eq!(restored.municipal_countries, ["DEU", "FRA"]);
     }
 }

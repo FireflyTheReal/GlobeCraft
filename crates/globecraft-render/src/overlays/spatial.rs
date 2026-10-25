@@ -169,12 +169,6 @@ impl BoundaryIndex {
             .unwrap_or_default();
         let entries: Vec<_> = [
             &data.countries,
-            &data.states,
-            &data.states_big,
-            &data.cities,
-            &data.world_cities_major,
-            &data.world_cities_country,
-            &data.world_cities,
             &data.osm_borders.country,
             &data.osm_borders.disputed,
             &data.osm_borders.state_big,

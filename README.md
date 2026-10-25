@@ -62,8 +62,8 @@ Developers: start with [the architecture](docs/ARCHITECTURE.md),
 ## Credits
 
 GlobeCraft stands on open maps, data and code from many people and organisations:
-Esri, OpenStreetMap contributors, OpenTopoMap, Mapterhorn, NASA, Natural Earth,
-geoBoundaries, national mapping agencies, OpenSky Network, ADSB.lol, CelesTrak,
+Esri, OpenStreetMap contributors, OpenFreeMap, OpenMapTiles, OpenTopoMap,
+Mapterhorn, NASA, Natural Earth, OpenSky Network, ADSB.lol, CelesTrak,
 RainViewer and more. The full list, with licences, is in **[CREDITS.md](CREDITS.md)**.
 
 Based on [EarthCraft](https://github.com/therichronicles/EarthCraft) by

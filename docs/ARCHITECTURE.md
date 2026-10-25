@@ -134,8 +134,7 @@ conversion. Snapshots are allocated before publication, so applying a result
 swaps shared ownership instead of cloning fleets or road arrays. Service URLs,
 refresh intervals, retries, source fallback and draw order remain unchanged.
 Traffic completions from a replaced or cleared API key are discarded.
-OSM municipal requests never overlap; municipal loading status is separate from
-the initial border/name datasets.
+Border tile loading status is separate from the bundled border/name datasets.
 
 `globecraft-core::orbit` owns the existing approximate two-body propagation;
 data owns CelesTrak format/epoch decoding. This preserves the existing educational
@@ -207,60 +206,33 @@ running. Six async tile workers use
 48-job admission, current-view priority and delayed retries; stale queued detail
 is retired while active work and coarse overview jobs remain.
 
-Boundary processors stream GeoJSON feature collections, share immutable coordinate
-lines, merge/deduplicate patches, and publish immutable geometry/name snapshots.
-World detail follows the camera. A cold start draws the 1:110m country and place
-sets compiled into the data crate, so no network request is needed to see the
-globe. Below 10,000 km the world layers reload from Natural Earth 1:50m and
-below 1,500 km from 1:10m; each upgrade replaces the previous outlines and
-labels instead of appending to them. The country loader also retains each
-feature's outer rings in memory, so the app can identify the country under the
-camera without a second dataset; holes are drawn but excluded from
-point-in-polygon lookup. Natural Earth `map_units` supplies the `Disputed`,
-`Indeterminate`, `Lease` and `Overlay` linework on the country layer and travels
-in the same patch as the outlines. Disputed linework is
-absent at the lowest level because the 1:110m edition has no admin-1 or map units.
+Borders and place names come from OpenStreetMap vector tiles (OpenMapTiles schema,
+served by OpenFreeMap) in `boundaries::osm_tiles`, streamed like imagery: a tile level
+for the altitude (at most zoom 12), the tiles around the view, and ahead of a zoom
+out the view's ancestors, a view-wide block at the next three levels up and the
+world to zoom 3. A missing tile is drawn from its nearest loaded ancestor. Only land
+borders (raw `admin_level`, disputed, claim and country-edge flags) and names are
+kept, in a compact format, in memory (bounded by vertices, tiles to zoom 6 pinned)
+and in a size-limited SQLite cache on disk (`osm_borders.sqlite`, least recently
+used dropped first). Lines cut at tile edges are joined again, and the visible set
+is composed off the UI thread and published as one replacing `OsmBorders` patch.
+OpenStreetMap stores each border once, so no border is matched, cut or deduplicated
+between sources. `admin_level` 2 draws as country, 3–4 as state, 5–8 as municipal
+(from zoom 11); the disputed view is neutral by default, with claims as a map-style
+option. Small names appear with the municipal lines, below `municipal_detail_max_km`.
 
-States and provinces load in their own job (`boundaries::states`), independent of
-the world detail level and ahead of the altitude where they appear: provinces of
-the ten largest countries from 1:50m below 6,400 km, every country's from 1:10m
-below 1.6 × the user's "States visible below" altitude. They come from Natural
-Earth's admin-1 *boundary lines* (shared borders once, no coastlines) with names
-from the admin-1 label points; the stage only rises, because lines above their
-altitude are not drawn.
+The bundled Natural Earth 1:110m countries and places are the fallback: they draw
+a cold or offline start before the first tile arrives, and the country polygons'
+outer rings answer which country is under the camera (holes are drawn but excluded
+from point-in-polygon lookup). Once tiles are loaded only tile lines are drawn.
+Details: `docs/BORDER_PIPELINE.md`.
 
-Municipal outlines stream by area (`boundaries::municipal`). The area around the
-camera is covered by units, loaded nearest first (three at a time) from about
-640 km down, ahead of the 402 → 322 km fade: grid cells of a national service with
-stable requests (US Census TIGERweb counties and Statistics Canada census
-divisions in 1° cells, BKG VG250 and Spain's IGN municipios in 1° cells, IGN ADMIN
-EXPRESS communes in 0.25° cells, each within a per-source radius), one Brazilian
-state from IBGE, or one whole country from geoBoundaries' simplified file, with
-OSM/Overpass 1° cells (one request at a time) when that file fails. Units stay in
-a bounded in-memory store (4 M vertices, farthest evicted first); a publisher sends
-the lines and names inside the view area as one replacing `WorldCities` patch at
-most every 250 ms, with rings shared by neighbouring cells kept once. Above about
-740 km the layer empties; the store keeps its units for the next descent. Brazil's
-whole-country IBGE pass only supplies names.
-
-Municipal outlines are staged (`municipal/topology.rs`). When a unit loads, every
-segment of every ring is classified off the UI thread by its nearest neighbouring
-outline within 0.012° (server-simplified copies of a border still match): no
-neighbour (coast, edge of the loaded area), the same state (interior), or another
-state (a state border). A shared segment is drawn by only one of the two rings. State
-border segments go to `world_cities_major` and draw from 402 km down, the accurate
-version of the Natural Earth state lines. Interior segments go to `world_cities` and,
-with the small municipal names, appear only below `municipal_detail_max_km`, the
-altitude at which about 400 municipalities of the loaded mean size fit on screen
-(about 75 km for Germany, 50 km for France; large US counties or Brazilian
-municipalities appear with the state borders).
-Labels can load independently. Loaded-name
-prefix search uses background-built Unicode-normalized FST indexes, with scanning
+Loaded-name prefix search uses background-built Unicode-normalized FST indexes, with scanning
 during rebuilds. Ranking and remote-result merging remain explicit.
 
-Boundary attribution (Natural Earth public domain,
-geoBoundaries CC BY 4.0, national statistical agencies, OSM ODbL) is shown under
-the layer controls.
+Boundary attribution (OpenStreetMap ODbL, OpenMapTiles, OpenFreeMap; Natural
+Earth public domain) is shown under the layer controls and on the globe while
+border tiles are in use.
 
 GeoRust `kml` owns XML reading/writing. A bounded quick-xml preparation pass skips
 empty Points, balances incomplete containers and wraps bare-coordinate fragments.

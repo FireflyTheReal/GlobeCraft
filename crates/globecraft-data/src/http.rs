@@ -3,8 +3,6 @@ use std::{path::PathBuf, time::Duration};
 const MAX_CACHE_FILENAME_CHARS: usize = 120;
 const JSON_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const JSON_READ_TIMEOUT: Duration = Duration::from_secs(90);
-pub(crate) const JSON_REQUEST_ATTEMPTS: usize = 2;
-pub(crate) const MAX_JSON_RESPONSE_BYTES: u64 = 1 << 30;
 
 pub(crate) fn geo_cache_path(url: &str) -> PathBuf {
     let clean: String = url
@@ -95,41 +93,6 @@ pub(crate) async fn parse_json(bytes: Vec<u8>) -> Result<serde_json::Value, crat
         .map_err(Into::into)
 }
 /// Fetch boundary JSON with bounded retries and disk-cache fallback.
-pub(crate) async fn fetch_json(url: &str) -> Result<serde_json::Value, crate::Error> {
-    fetch_json_at(url, geo_cache_path(url)).await
-}
-async fn fetch_json_at(url: &str, path: PathBuf) -> Result<serde_json::Value, crate::Error> {
-    if let Ok(bytes) = tokio::fs::read(&path).await
-        && let Ok(value) = parse_json(bytes).await
-    {
-        return Ok(value);
-    }
-    let client = client(Policy::Boundary)?;
-    let mut last = None;
-    for _ in 0..JSON_REQUEST_ATTEMPTS {
-        match body(client.get(url), MAX_JSON_RESPONSE_BYTES).await {
-            Ok(bytes) => {
-                let parsed = tokio::task::spawn_blocking(move || {
-                    serde_json::from_slice::<serde_json::Value>(&bytes).map(|value| (value, bytes))
-                })
-                .await?;
-                match parsed {
-                    Ok((value, bytes)) => {
-                        if let Some(dir) = path.parent() {
-                            let _ = tokio::fs::create_dir_all(dir).await;
-                        }
-                        let _ = tokio::fs::write(&path, bytes).await;
-                        return Ok(value);
-                    }
-                    Err(error) => last = Some(format!("Invalid JSON: {error}").into()),
-                }
-            }
-            Err(error) => last = Some(error),
-        }
-    }
-    Err(last.expect("at least one request attempt"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,23 +124,5 @@ mod tests {
             Err(crate::Error::Http(_))
         ));
         job.await.unwrap();
-    }
-    #[tokio::test]
-    async fn boundary_retry_and_disk_cache_avoid_a_second_network_fetch() {
-        let (url, job) = server(vec![
-            ("500 Server Error", "bad"),
-            ("200 OK", r#"{"features":[]}"#),
-        ])
-        .await;
-        let path = std::env::temp_dir().join(format!(
-            "globecraft-http-{}-{}.json",
-            std::process::id(),
-            globecraft_core::math::now_unix()
-        ));
-        let first = fetch_json_at(&url, path.clone()).await.unwrap();
-        job.await.unwrap();
-        let cached = fetch_json_at(&url, path.clone()).await.unwrap();
-        assert_eq!(first, cached);
-        tokio::fs::remove_file(path).await.unwrap();
     }
 }

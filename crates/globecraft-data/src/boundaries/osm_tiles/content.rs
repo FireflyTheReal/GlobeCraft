@@ -1,7 +1,7 @@
 //! What one OpenMapTiles tile holds for GlobeCraft: border lines by administrative
 //! level, and place names, in latitude/longitude and clipped to the tile.
-use super::super::places::{PLACE_HAMLET_RANK, PLACE_TOWN_RANK, PLACE_VILLAGE_RANK};
 use super::super::{LabelKind, Line, MapLabel};
+use super::super::{PLACE_HAMLET_RANK, PLACE_TOWN_RANK, PLACE_VILLAGE_RANK};
 use super::compact::{self, Filtered, PlaceClass};
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -92,6 +92,24 @@ const MUNICIPAL_LEVELS: std::ops::RangeInclusive<u8> = 5..=8;
 const ISLAND_TOWN_MAX_ZOOM: u8 = 9;
 const ISLAND_VILLAGE_MAX_ZOOM: u8 = 12;
 
+/// A place's label rank: cities by OpenMapTiles' importance rank on the populated-place
+/// scale (0–8, so the biggest show from far out), towns, villages and hamlets by
+/// class, islands by the zoom from which their tile holds them.
+fn place_rank(class: PlaceClass, importance: u8, z: u8) -> u8 {
+    match class {
+        PlaceClass::City if importance == 0 => CITY_UNRANKED_RANK,
+        PlaceClass::City => (importance - 1).min(CITY_UNRANKED_RANK),
+        PlaceClass::Town => PLACE_TOWN_RANK,
+        PlaceClass::Village => PLACE_VILLAGE_RANK,
+        PlaceClass::Hamlet => PLACE_HAMLET_RANK,
+        PlaceClass::Island if z <= ISLAND_TOWN_MAX_ZOOM => PLACE_TOWN_RANK,
+        PlaceClass::Island if z <= ISLAND_VILLAGE_MAX_ZOOM => PLACE_VILLAGE_RANK,
+        PlaceClass::Island | PlaceClass::State => PLACE_HAMLET_RANK,
+    }
+}
+/// The least important populated-place rank.
+const CITY_UNRANKED_RANK: u8 = 8;
+
 /// The borders and names of one tile (or of an ancestor clipped to it).
 #[derive(Clone, Default)]
 pub(super) struct TileContent {
@@ -134,13 +152,9 @@ impl TileContent {
             out.push(Arc::new(line.points.iter().copied().map(to_geo).collect()));
         }
         for place in &filtered.places {
-            let rank = match place.class {
-                PlaceClass::City | PlaceClass::Town => PLACE_TOWN_RANK,
-                PlaceClass::Village => PLACE_VILLAGE_RANK,
-                PlaceClass::Hamlet => PLACE_HAMLET_RANK,
-                PlaceClass::Island if key.z <= ISLAND_TOWN_MAX_ZOOM => PLACE_TOWN_RANK,
-                PlaceClass::Island if key.z <= ISLAND_VILLAGE_MAX_ZOOM => PLACE_VILLAGE_RANK,
-                PlaceClass::Island => PLACE_HAMLET_RANK,
+            let (kind, rank) = match place.class {
+                PlaceClass::State => (LabelKind::State, 0),
+                place_class => (LabelKind::City, place_rank(place_class, place.rank, key.z)),
             };
             let (lat, lon) = to_geo((place.x, place.y));
             let en = place.name_en.clone().unwrap_or_else(|| place.name.clone());
@@ -149,9 +163,10 @@ impl TileContent {
                 lon,
                 pt: place.name_pt.clone().unwrap_or_else(|| en.clone()),
                 en,
-                kind: LabelKind::City,
+                kind,
                 rank,
                 big: false,
+                from_tiles: true,
             });
         }
         content.points = filtered.points();

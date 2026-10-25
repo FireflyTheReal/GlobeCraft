@@ -93,6 +93,7 @@ mod tests {
             kind,
             rank,
             big: false,
+            from_tiles: false,
         })
         .collect();
         let remote = vec![

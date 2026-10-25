@@ -113,12 +113,10 @@ layers-state-altitude-label = Estados visíveis abaixo
 
 layers-place-labels-toggle = Nomes de países, estados e cidades
 
-layers-municipal-borders-toggle = Limites de municípios (Brasil IBGE; fontes nacionais; geoBoundaries/OSM como alternativa)
-layers-osm-border-tiles-toggle = Fronteiras e nomes dos blocos do OpenStreetMap (OpenFreeMap; teste)
-layers-osm-border-tiles-help = Teste: cada fronteira é uma linha do OpenStreetMap, comum aos dois lados, escolhida para o nível de zoom como as imagens. Substitui as outras camadas de fronteiras e os nomes de lugares assim que chegam os primeiros blocos. Os limites municipais aparecem a partir de cerca de 40 km.
+layers-municipal-borders-toggle = Limites municipais
 
 
-layers-boundary-attribution = Limites: Natural Earth (domínio público), geoBoundaries (CC BY 4.0), institutos nacionais de estatística e OpenStreetMap (ODbL).
+layers-boundary-attribution = Fronteiras e nomes: colaboradores do OpenStreetMap (ODbL) via OpenFreeMap e OpenMapTiles; Natural Earth (domínio público) sem internet.
 
 boundaries-loading-status = ⏳ Carregando limites e nomes…
 boundaries-osm-loading-status = ⏳ Carregando limites municipais detalhados…
@@ -681,8 +679,6 @@ cmd-layer-show = Mostrar camada
 cmd-layer-show-help = Mostra, oculta ou alterna uma camada do mapa.
 cmd-layer-terrain-exaggeration = Exagero
 cmd-layer-terrain-exaggeration-help = Define o exagero vertical do relevo 3D.
-cmd-layer-municipal-countries = Países dos municípios
-cmd-layer-municipal-countries-help = Escolhe os países cujos dados municipais são carregados: os municípios e, de perto, os limites estaduais e as fronteiras mais precisos. Uma lista vazia carrega todos.
 cmd-world-earth-model = Modelo da Terra
 cmd-world-earth-model-help = Escolhe o elipsoide WGS 84 ou uma esfera perfeita para geometria e distâncias.
 cmd-world-body = Mundo
@@ -814,7 +810,6 @@ ribbon-layer-countries = Países
 ribbon-layer-states = Estados
 ribbon-layer-labels = Nomes de lugares
 ribbon-layer-municipal = Municípios
-ribbon-layer-osm-border-tiles = Blocos OSM
 ribbon-layer-terrain = Relevo 3D
 ribbon-layer-grid = Grade
 ribbon-layer-grid-labels = Rótulos da grade
@@ -839,11 +834,6 @@ explore-results-empty = Busque um lugar na caixa no topo da janela; os resultado
 measure-total-label = Distância total
 measure-points-label = { $count } pontos
 measure-how-title = Como medir
-layers-municipal-countries-label = Países:
-layers-municipal-countries-all = Todos
-layers-municipal-only-here = Só este país
-layers-municipal-add-here = Adicionar este país
-layers-municipal-all-countries = Todos os países
 
 settings-category-map-style = Estilo do mapa
 

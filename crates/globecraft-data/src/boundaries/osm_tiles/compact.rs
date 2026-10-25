@@ -10,7 +10,7 @@ use super::mvt::{self, GeomType, Reader, Value};
 /// Tile units across a tile in this format (OpenMapTiles' usual extent).
 pub(super) const EXTENT: i32 = 4096;
 /// Bumped when the stored layout changes; rows of other versions are ignored.
-pub(super) const FORMAT_VERSION: u8 = 2;
+pub(super) const FORMAT_VERSION: u8 = 3;
 
 /// `FilteredLine::flags`: OpenMapTiles marks the line `disputed=1`.
 pub(super) const DISPUTED: u8 = 1;
@@ -30,6 +30,8 @@ pub(super) enum PlaceClass {
     Village,
     Hamlet,
     Island,
+    /// States and provinces.
+    State,
 }
 
 impl PlaceClass {
@@ -47,6 +49,7 @@ impl PlaceClass {
             "village" => Self::Village,
             "hamlet" => Self::Hamlet,
             "island" => Self::Island,
+            "state" | "province" => Self::State,
             _ => return None,
         })
     }
@@ -67,6 +70,8 @@ pub(super) struct FilteredPlace {
     /// Tile units, inside the tile.
     pub(super) x: i32,
     pub(super) y: i32,
+    /// OpenMapTiles' importance rank (1 most important; 0 when absent).
+    pub(super) rank: u8,
     pub(super) name: String,
     pub(super) name_en: Option<String>,
     pub(super) name_pt: Option<String>,
@@ -147,6 +152,7 @@ impl Filtered {
                                 class,
                                 x,
                                 y,
+                                rank: number("rank").map_or(0, |r| r.clamp(0.0, 255.0) as u8),
                                 name: name.to_owned(),
                                 name_en: name_en.filter(|en| *en != name).map(str::to_owned),
                                 name_pt: text("name:pt").map(str::to_owned),
@@ -185,6 +191,7 @@ impl Filtered {
             out.push(class.unwrap_or(0) as u8);
             varint(zigzag(place.x), &mut out);
             varint(zigzag(place.y), &mut out);
+            out.push(place.rank);
             text(&place.name, &mut out);
             for optional in [&place.name_en, &place.name_pt] {
                 match optional {
@@ -231,6 +238,7 @@ impl Filtered {
         for _ in 0..places {
             let class = *PlaceClass::ALL.get(usize::from(byte(&mut r)?))?;
             let (x, y) = (coordinate(&mut r)?, coordinate(&mut r)?);
+            let rank = byte(&mut r)?;
             let read_text =
                 |r: &mut Reader<'_>| Some(String::from_utf8_lossy(r.bytes()?).into_owned());
             let name = read_text(&mut r)?;
@@ -245,6 +253,7 @@ impl Filtered {
                 class,
                 x,
                 y,
+                rank,
                 name,
                 name_en,
                 name_pt,

@@ -4,8 +4,8 @@
 //!
 //! OpenStreetMap stores a border once, shared by the areas on both sides, and
 //! OpenMapTiles gives each line the lowest administrative level it belongs to. So a
-//! border is never drawn twice and never needs matching between two sources (the
-//! municipal pipeline's job, see `docs/BORDER_PIPELINE.md`). Each zoom level is
+//! border is never drawn twice and never needs matching between two sources (see
+//! `docs/BORDER_PIPELINE.md`). Each zoom level is
 //! generalised for its scale, so there is no handover between a coarse and a detailed
 //! line either: the view switches tile levels like it does for imagery.
 //!
@@ -199,6 +199,14 @@ impl OsmTileStreamer {
     }
 
     /// Whether any tile is loaded: until then the other border layers stay on.
+    /// Whether tiles around the view are being read or downloaded.
+    pub(super) fn is_loading(&self) -> bool {
+        self.context
+            .store
+            .lock()
+            .is_ok_and(|store| !store.disk_inflight.is_empty() || !store.net_inflight.is_empty())
+    }
+
     pub(super) fn has_tiles(&self) -> bool {
         self.context
             .store
@@ -566,13 +574,9 @@ impl Publication {
 fn send(tx: &mpsc::Sender<Patch>, lines: OsmBorderLines, places: Vec<MapLabel>) {
     let patch = |layer, labels, osm| Patch {
         layer,
-        pairs: Vec::new(),
         lines: Vec::new(),
-        lines_big: Vec::new(),
         labels,
         regions: Vec::new(),
-        replace: true,
-        municipal: None,
         osm,
     };
     let _ = tx.send(patch(Layer::OsmBorders, Vec::new(), Some(lines)));

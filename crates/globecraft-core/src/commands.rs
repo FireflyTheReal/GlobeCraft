@@ -333,15 +333,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "eye",
         Layers,
         View,
-        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","atmosphere","sunlight","stars","cinematic_sky","radar","clouds","flights","vessels","satellites","roads","traffic","osm_border_tiles"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
-    ),
-    command!(
-        "layer.municipalCountries",
-        "layer-municipal-countries",
-        "zoom_world",
-        Layers,
-        View,
-        r#"{"type":"object","properties":{"countries":{"type":"array","items":{"type":"string"},"description":"ISO 3166-1 alpha-3 codes, e.g. FRA; an empty list loads every country"},"add":{"type":"string","description":"One ISO3 code to add"},"remove":{"type":"string","description":"One ISO3 code to remove"}}}"#
+        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","atmosphere","sunlight","stars","cinematic_sky","radar","clouds","flights","vessels","satellites","roads","traffic"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
         "layer.terrainExaggeration",

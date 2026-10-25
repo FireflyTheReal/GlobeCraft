@@ -471,26 +471,6 @@ impl App {
                 }
                 json!({"layer": layer.code(), "visible": visible})
             }
-            "layer.municipalCountries" => {
-                use globecraft_data::settings::normalize_country_codes;
-                let mut codes = match p.get("countries").and_then(|v| v.as_array()) {
-                    Some(list) => list
-                        .iter()
-                        .filter_map(|c| c.as_str())
-                        .map(str::to_owned)
-                        .collect(),
-                    None => self.settings.municipal_countries.clone(),
-                };
-                if let Some(add) = str_param(p, "add") {
-                    codes.push(add.to_owned());
-                }
-                if let Some(remove) = str_param(p, "remove") {
-                    codes.retain(|c| !c.eq_ignore_ascii_case(remove));
-                }
-                self.settings.municipal_countries =
-                    normalize_country_codes(codes.iter().map(String::as_str));
-                json!({"countries": self.settings.municipal_countries})
-            }
             "layer.terrainExaggeration" => {
                 let value = required_f64(p, "value")? as f32;
                 self.settings.layers.terrain_exaggeration = value.clamp(
@@ -765,13 +745,6 @@ impl App {
             "layer.waybackCompare" => CommandState {
                 enabled: self.wayback_list.len() > 1,
                 checked: self.active_compare().is_some(),
-            },
-            "layer.municipalCountries" => CommandState {
-                enabled: earth
-                    && (self.layer(MapLayer::MunicipalBorders)
-                        || self.layer(MapLayer::StateBorders)
-                        || self.layer(MapLayer::CountryBorders)),
-                checked: false,
             },
             "layer.terrainExaggeration" => CommandState {
                 enabled: self.layer(MapLayer::Terrain),

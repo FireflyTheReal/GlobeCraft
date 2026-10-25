@@ -301,10 +301,10 @@ fn boundary_streaming_descent() {
         h.step();
         slowest.push((t.elapsed().as_secs_f64() * 1000.0, altitude));
         let data = &h.state().boundaries;
-        if first_states.is_none() && !data.states.is_empty() {
+        if first_states.is_none() && !data.osm_borders.state.is_empty() {
             first_states = Some(altitude);
         }
-        if first_municipal.is_none() && !data.world_cities.is_empty() {
+        if first_municipal.is_none() && !data.osm_borders.municipal.is_empty() {
             first_municipal = Some(altitude);
         }
         std::thread::sleep(std::time::Duration::from_millis(8));

@@ -9,8 +9,8 @@ use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Stroke, Vec2};
 #[cfg(test)]
 use globecraft_data::boundaries::BoundaryData;
 use globecraft_data::boundaries::{
-    LabelKind, MUNICIPAL_DETAIL_FADE_FULL_RATIO, MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM,
-    STATE_BIG_VISIBLE_MAX_ALTITUDE_KM, STATE_VISIBLE_MAX_ALTITUDE_KM,
+    LabelKind, MUNICIPAL_DETAIL_FADE_FULL_RATIO, STATE_BIG_VISIBLE_MAX_ALTITUDE_KM,
+    STATE_VISIBLE_MAX_ALTITUDE_KM,
 };
 use globecraft_data::settings::map_style::MapStyle;
 use globecraft_render::overlays::{BorderKind, LabelIndex, MAX_VISIBLE_LABELS};
@@ -158,13 +158,7 @@ fn faded_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         BorderKind::State => policy.arrival.states,
         BorderKind::StateBig => policy.arrival.states_big,
         BorderKind::City => policy.arrival.municipal,
-        // Municipal state borders replace the coarse state lines in the same geometry
-        // (the covered stretch is cut out there), so they never fade in: a fade would
-        // leave frames with neither line.
-        BorderKind::CityMajor
-        | BorderKind::CityCountry
-        | BorderKind::Country
-        | BorderKind::Disputed => ARRIVAL_FADE_STEPS,
+        BorderKind::Country | BorderKind::Disputed => ARRIVAL_FADE_STEPS,
     };
     let arrival = smoothstep(f64::from(arrived) / f64::from(ARRIVAL_FADE_STEPS));
     layer_opacity(kind, policy) * arrival
@@ -193,15 +187,6 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
         BorderKind::State => smoothstep(
             (state_max_km - altitude_km) / (state_max_km * (1.0 - STATE_FADE_FULL_RATIO)),
         ),
-        // Municipal state borders switch on at full strength in the same frame as
-        // the coarse stretches they cover are cut out: no cross-fade band, so no
-        // frame shows both lines at once.
-        BorderKind::CityMajor | BorderKind::CityCountry
-            if altitude_km <= MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM =>
-        {
-            1.0
-        }
-        BorderKind::CityMajor | BorderKind::CityCountry => 0.0,
         BorderKind::City if municipal_detail_max_km <= 0.0 => 0.0,
         BorderKind::City => smoothstep(
             (municipal_detail_max_km - altitude_km)
@@ -212,18 +197,15 @@ fn layer_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
 }
 
 /// Every border kind, in `BorderKind` declaration order (so `kind as usize` indexes it).
-pub(super) const BORDER_KINDS: [BorderKind; 7] = [
+pub(super) const BORDER_KINDS: [BorderKind; 5] = [
     BorderKind::Country,
     BorderKind::StateBig,
     BorderKind::State,
-    BorderKind::CityMajor,
     BorderKind::City,
-    BorderKind::CityCountry,
     BorderKind::Disputed,
 ];
 
-/// The user's colour for a border kind. Municipal state borders take the state style
-/// (see `BorderKind::line_type`), so the handover keeps one look.
+/// The user's colour for a border kind (see `BorderKind::line_type`).
 fn border_color(kind: BorderKind, style: &MapStyle) -> Color32 {
     let [r, g, b, a] = style.line(kind.line_type()).color.0;
     Color32::from_rgba_unmultiplied(r, g, b, a)
@@ -447,11 +429,9 @@ mod fade_tests {
     }
 
     #[test]
-    fn municipal_state_borders_lead_and_interior_lines_follow_the_detail_altitude() {
+    fn municipal_lines_fade_in_below_their_detail_altitude() {
         let detail_km = 75.0;
         let at = |kind, altitude_km| layer_opacity(kind, policy(altitude_km, 1609.0, detail_km));
-        // At 300 km the municipal state borders are nearly full, the interior absent.
-        assert!(at(BorderKind::CityMajor, 300.0) > 0.9);
         assert_eq!(at(BorderKind::City, 300.0), 0.0);
         assert_eq!(at(BorderKind::City, detail_km), 0.0);
         assert!(at(BorderKind::City, detail_km * 0.9) > 0.0);
@@ -462,36 +442,11 @@ mod fade_tests {
             ),
             1.0
         );
-    }
-
-    #[test]
-    fn municipal_state_borders_switch_on_at_once_and_never_fade_in() {
-        let at = |altitude_km, arrival| {
-            faded_opacity(
-                BorderKind::CityMajor,
-                FadePolicy {
-                    arrival,
-                    ..policy(altitude_km, 1609.0, 75.0)
-                },
-            )
-        };
+        // And they fade in when the tiles first bring them.
         let just_arrived = ArrivalFade {
             municipal: 0,
             ..ArrivalFade::SETTLED
         };
-        // Full strength from the first altitude they are drawn at, even while the
-        // municipal layer's arrival fade runs: the coarse lines they replace are
-        // already cut out of the same geometry.
-        assert_eq!(at(MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM, just_arrived), 1.0);
-        assert_eq!(at(300.0, ArrivalFade::SETTLED), 1.0);
-        assert_eq!(
-            at(
-                MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM + 1.0,
-                ArrivalFade::SETTLED
-            ),
-            0.0
-        );
-        // Interior lines, which replace nothing, keep their arrival fade.
         assert_eq!(
             faded_opacity(
                 BorderKind::City,

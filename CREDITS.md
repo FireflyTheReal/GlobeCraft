@@ -17,7 +17,7 @@ the app shows the matching attribution on screen while a source is in use.
 | --- | --- | --- |
 | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) — Esri, Maxar, Earthstar Geographics and the GIS user community | Satellite basemap | Esri terms of use; attribution shown in the app |
 | [Esri World Imagery Wayback](https://livingatlas.arcgis.com/wayback/) | Historical imagery by date | Esri terms of use |
-| [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | Streets basemap, place details, municipal fallback (Overpass) | ODbL; [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) |
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | Streets basemap, place details, road geometry (Overpass) | ODbL; [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) |
 | [OpenTopoMap](https://opentopomap.org/about) | Topographic basemap | CC BY-SA; data © OpenStreetMap contributors, SRTM |
 | [Mapterhorn](https://mapterhorn.com/) | 3D terrain elevation | See the Mapterhorn attribution page (Copernicus DEM and national elevation models) |
 | [NASA SVS 4851](https://svs.gsfc.nasa.gov/4851/) — NASA/Goddard Space Flight Center Scientific Visualization Studio | Milky Way background (bundled, reduced) | NASA media guidelines; see [assets/sky/README.md](assets/sky/README.md) |
@@ -27,15 +27,9 @@ the app shows the matching attribution on screen while a source is in use.
 
 | Source | Used for | Terms |
 | --- | --- | --- |
-| [Natural Earth](https://www.naturalearthdata.com/) | Countries, states/provinces, cities, disputed areas (1:110m bundled, finer levels downloaded) | Public domain |
-| [geoBoundaries](https://www.geoboundaries.org/) — William & Mary geoLab | Municipal borders for many countries | CC BY 4.0 (some countries ODbL) |
-| [IBGE](https://www.ibge.gov.br/) — Instituto Brasileiro de Geografia e Estatística | Brazilian municipalities and metropolitan regions | Open data, attribution |
-| [BKG VG250](https://gdz.bkg.bund.de/) — © GeoBasis-DE / BKG | German municipalities | GeoNutzV (free use; source noted as good practice) |
-| [IGN France ADMIN EXPRESS](https://geoservices.ign.fr/adminexpress) via data.geopf.fr | French communes | Licence Ouverte / Etalab 2.0 |
-| IGN / CNIG Spain (municipal boundaries, served through ArcGIS Online) | Spanish municipalities | CC BY 4.0, © Instituto Geográfico Nacional |
-| [U.S. Census Bureau TIGERweb](https://tigerweb.geo.census.gov/) | U.S. counties | Public domain |
-| [Statistics Canada](https://www.statcan.gc.ca/) boundary files | Canadian census subdivisions | Open Government Licence – Canada |
-| [Overture Maps Foundation](https://overturemaps.org/) divisions (optional, pre-baked) | Metropolitan areas | ODbL / CDLA Permissive 2.0 per theme |
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | Every border from country to municipality, disputed lines, place names | ODbL |
+| [OpenMapTiles](https://openmaptiles.org/) schema, served by [OpenFreeMap](https://openfreemap.org/) | Vector tiles carrying those borders and names | OpenMapTiles CC BY 4.0; OpenFreeMap free service, attribution shown in the app |
+| [Natural Earth](https://www.naturalearthdata.com/) | Countries and major cities (1:110m, bundled), shown before the first tile arrives and used to find the country under the camera | Public domain |
 
 ## Search
 

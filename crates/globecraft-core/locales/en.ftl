@@ -113,12 +113,10 @@ layers-state-altitude-label = States visible below
 
 layers-place-labels-toggle = Country, state and city names
 
-layers-municipal-borders-toggle = Municipal borders (Brazil IBGE; national sources; geoBoundaries/OSM fallback)
-layers-osm-border-tiles-toggle = Borders and names from OpenStreetMap tiles (OpenFreeMap; test)
-layers-osm-border-tiles-help = Test: every border is one OpenStreetMap line, shared by both sides, chosen for the zoom level like imagery. Replaces the other border layers and the place names once the first tiles arrive. Municipal lines show from about 40 km.
+layers-municipal-borders-toggle = Municipal borders
 
 
-layers-boundary-attribution = Borders: Natural Earth (public domain), geoBoundaries (CC BY 4.0), national statistical agencies, OpenStreetMap (ODbL).
+layers-boundary-attribution = Borders and names: OpenStreetMap contributors (ODbL) via OpenFreeMap and OpenMapTiles; Natural Earth (public domain) offline.
 
 boundaries-loading-status = ⏳ Loading borders and names…
 boundaries-osm-loading-status = ⏳ Loading detailed municipal borders…
@@ -681,8 +679,6 @@ cmd-layer-show = Show Layer
 cmd-layer-show-help = Show, hide or toggle a map layer.
 cmd-layer-terrain-exaggeration = Exaggeration
 cmd-layer-terrain-exaggeration-help = Set the vertical exaggeration of 3D terrain.
-cmd-layer-municipal-countries = Municipal countries
-cmd-layer-municipal-countries-help = Choose the countries whose municipal data loads: their municipalities, and their sharper state and country borders up close. An empty list loads every country.
 cmd-world-earth-model = Earth Model
 cmd-world-earth-model-help = Choose the WGS 84 ellipsoid or a perfect sphere for geometry and distances.
 cmd-world-body = World
@@ -814,7 +810,6 @@ ribbon-layer-countries = Countries
 ribbon-layer-states = States
 ribbon-layer-labels = Place Names
 ribbon-layer-municipal = Municipalities
-ribbon-layer-osm-border-tiles = OSM tiles
 ribbon-layer-terrain = 3D Terrain
 ribbon-layer-grid = Grid
 ribbon-layer-grid-labels = Grid Labels
@@ -839,11 +834,6 @@ explore-results-empty = Search for a place in the box at the top of the window; 
 measure-total-label = Total distance
 measure-points-label = { $count } points
 measure-how-title = How to measure
-layers-municipal-countries-label = Countries:
-layers-municipal-countries-all = All
-layers-municipal-only-here = Only this country
-layers-municipal-add-here = Add this country
-layers-municipal-all-countries = All countries
 
 settings-category-map-style = Map style
 

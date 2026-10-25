@@ -27,6 +27,7 @@ fn scene() -> Vec<MapLabel> {
                 kind,
                 rank: (id % 10) as u8,
                 big: id % 2 == 0,
+                from_tiles: false,
             }
         })
         .collect()
@@ -122,6 +123,7 @@ fn prefix_index_time() {
                 kind: LabelKind::City,
                 rank: (id % 10) as u8,
                 big: false,
+                from_tiles: false,
             })
             .collect(),
     );

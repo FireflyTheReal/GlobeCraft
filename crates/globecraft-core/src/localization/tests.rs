@@ -87,14 +87,7 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
     .unwrap();
     for (id, values) in fixture.as_object().unwrap() {
         for lang in Lang::ALL {
-            // Upstream added worldwide OSM municipal borders after the original fixture.
             let expected = match (id.as_str(), lang) {
-                ("layers-municipal-borders-toggle", Lang::En) => {
-                    "Municipal borders (Brazil IBGE; national sources; geoBoundaries/OSM fallback)"
-                }
-                ("layers-municipal-borders-toggle", Lang::PtBr) => {
-                    "Limites de municípios (Brasil IBGE; fontes nacionais; geoBoundaries/OSM como alternativa)"
-                }
                 // KMZ support intentionally updates the file-format labels.
                 ("kml-open-dialog-title", Lang::En) => "Open KML or KMZ",
                 ("kml-open-dialog-title", Lang::PtBr) => "Abrir KML ou KMZ",
@@ -133,6 +126,15 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
                 ("settings-title", Lang::PtBr) => "Configurações",
                 ("settings-folders-action", Lang::En) => "Change folders…",
                 ("settings-folders-action", Lang::PtBr) => "Mudar pastas…",
+                // Borders and municipal lines come from OpenStreetMap tiles (2026-10-25).
+                ("layers-municipal-borders-toggle", Lang::En) => "Municipal borders",
+                ("layers-municipal-borders-toggle", Lang::PtBr) => "Limites municipais",
+                ("layers-boundary-attribution", Lang::En) => {
+                    "Borders and names: OpenStreetMap contributors (ODbL) via OpenFreeMap and OpenMapTiles; Natural Earth (public domain) offline."
+                }
+                ("layers-boundary-attribution", Lang::PtBr) => {
+                    "Fronteiras e nomes: colaboradores do OpenStreetMap (ODbL) via OpenFreeMap e OpenMapTiles; Natural Earth (domínio público) sem internet."
+                }
                 _ => values[lang.code()].as_str().unwrap(),
             };
             assert_eq!(lang.text(id), expected, "{id}");
