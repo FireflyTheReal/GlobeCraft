@@ -415,39 +415,61 @@ impl App {
         });
     }
 
-    /// A drop-down of the Wayback release dates, grouped by year. Returns the release
+    /// A drop-down of the Wayback release dates: a menu of years, each opening its own
+    /// list of that year's releases (one year open at a time). Returns the release
     /// picked this frame, if any.
-    pub(super) fn wayback_date_menu(&self, ui: &mut Ui, id: &str, current: usize) -> Option<usize> {
+    pub(in crate::app) fn wayback_date_menu(
+        &self,
+        ui: &mut Ui,
+        id: &str,
+        current: usize,
+    ) -> Option<usize> {
         let selected = self
             .wayback_list
             .get(current)
             .map_or_else(|| "—".to_string(), |r| r.date.clone());
         let mut picked = None;
+        let year_of = |date: &str| date.get(..4).unwrap_or("").to_owned();
+        // The list runs newest first, so the years do too.
+        let mut years: Vec<String> = Vec::new();
+        for release in &self.wayback_list {
+            let year = year_of(&release.date);
+            if years.last() != Some(&year) {
+                years.push(year);
+            }
+        }
         ui.add_enabled_ui(!self.wayback_list.is_empty(), |ui| {
-            egui::ComboBox::from_id_salt(id)
-                .selected_text(egui::RichText::new(selected).monospace().size(11.5))
-                .height(360.0)
-                .show_ui(ui, |ui| {
-                    let mut year = "";
-                    for (index, release) in self.wayback_list.iter().enumerate() {
-                        let this_year = release.date.get(..4).unwrap_or("");
-                        if this_year != year {
-                            year = this_year;
-                            ui.label(egui::RichText::new(year).strong().size(11.0));
-                        }
-                        let mut choice = current;
-                        if super::selection::full_width_value(
-                            ui,
-                            &mut choice,
-                            index,
-                            egui::RichText::new(&release.date).monospace(),
-                        )
-                        .clicked()
-                        {
-                            picked = Some(index);
-                        }
-                    }
+            ui.push_id(id, |ui| {
+                let button = egui::RichText::new(format!("{selected} ⏷"))
+                    .monospace()
+                    .size(11.5);
+                ui.menu_button(button, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(WAYBACK_MENU_MAX_HEIGHT_POINTS)
+                        .show(ui, |ui| {
+                            for year in &years {
+                                let mut label = egui::RichText::new(year).monospace();
+                                if selected.starts_with(year.as_str()) {
+                                    label = label.strong();
+                                }
+                                ui.menu_button(label, |ui| {
+                                    let releases = self
+                                        .wayback_list
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, r)| year_of(&r.date) == *year);
+                                    for (index, release) in releases {
+                                        let date = egui::RichText::new(&release.date).monospace();
+                                        if ui.selectable_label(index == current, date).clicked() {
+                                            picked = Some(index);
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            }
+                        });
                 });
+            });
         });
         picked
     }
@@ -849,3 +871,6 @@ fn scroll_buttons<R>(
         ui.ctx().request_repaint();
     }
 }
+
+/// The year list of the Wayback date drop-down scrolls beyond this height.
+const WAYBACK_MENU_MAX_HEIGHT_POINTS: f32 = 360.0;

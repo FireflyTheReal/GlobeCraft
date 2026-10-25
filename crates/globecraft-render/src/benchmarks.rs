@@ -163,7 +163,6 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         atmo: true,
         sun: Some(globecraft_core::math::ll_to_v3(20.0, 45.0)),
         lod_scale: 1.0,
-        compare: None,
     };
     // Global overview warming must also cover parts of the globe that were
     // behind the camera at startup, including the dateline and poles.
@@ -273,7 +272,6 @@ fn warm_gpu_frame_time() {
                 atmo: true,
                 sun: Some(globecraft_core::math::ll_to_v3(20.0, 45.0)),
                 lod_scale: 1.0,
-                compare: None,
             },
             overlays: None,
             aircraft: None,
@@ -407,7 +405,6 @@ fn warm_gpu_frame_time() {
                 atmo: true,
                 sun: Some(globecraft_core::math::ll_to_v3(20.0, 45.0)),
                 lod_scale: 1.0,
-                compare: None,
             },
             overlays: None,
             aircraft: None,

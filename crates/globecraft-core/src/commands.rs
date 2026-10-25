@@ -325,7 +325,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "history",
         Layers,
         View,
-        r#"{"type":"object","properties":{"enabled":{"type":"boolean","description":"Omit to toggle"},"date":{"type":"string","description":"Release shown right of the split, as listed"},"step":{"type":"integer","description":"+1 for an older, -1 for a newer comparison release"},"split":{"type":"number","description":"Where the split runs, 0 (left edge) .. 1 (right edge)"}}}"#
+        r#"{"type":"object","properties":{"enabled":{"type":"boolean","description":"Omit to toggle"},"date":{"type":"string","description":"Release shown right of the split, as listed"},"left_date":{"type":"string","description":"Release shown left of the split, as listed"},"swap":{"type":"boolean","description":"Exchange the two sides' releases"},"step":{"type":"integer","description":"+1 for an older, -1 for a newer comparison release"},"split":{"type":"number","description":"Where the split runs, 0 (left edge) .. 1 (right edge)"}}}"#
     ),
     command!(
         "layer.show",

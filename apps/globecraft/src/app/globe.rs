@@ -154,9 +154,7 @@ impl App {
             aspect: render_aspect,
             provider: self.effective_provider(),
             release_index: self.wayback_idx,
-            compare: self
-                .active_compare()
-                .map(|compare| (compare.index, compare.split.to_bits())),
+            compare: self.active_compare().map(|compare| compare.index),
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
             terrain: self.layer(MapLayer::Terrain)
@@ -279,6 +277,24 @@ impl App {
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
+        }
+        // The swipe compare: the compare release's frame, right of the split.
+        if let (Some(compare), Some(texture)) = (
+            self.active_compare(),
+            self.compare_renderer
+                .as_ref()
+                .filter(|renderer| renderer.release == Some(compare_release(self)))
+                .and_then(|renderer| renderer.texture.as_ref()),
+        ) {
+            let x = rect.left() + rect.width() * compare.split;
+            painter
+                .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max))
+                .image(
+                    texture.id(),
+                    rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
         }
         if self.explorer.active != globecraft_core::body::Body::Earth {
             painter.rect_filled(rect, 0.0, Color32::BLACK);
@@ -533,9 +549,21 @@ fn draw_planet(
     painter.add(egui::Shape::mesh(mesh));
 }
 
+/// The release index the swipe compare shows right of the split.
+fn compare_release(app: &App) -> u16 {
+    app.active_compare()
+        .map_or(0, |compare| compare.index as u16)
+}
+
 /// Width of the grab area around the swipe-compare split, in points.
 const SPLIT_GRAB_POINTS: f32 = 24.0;
 const SPLIT_KNOB_RADIUS_POINTS: f32 = 13.0;
+/// The date drop-downs at the top of the split.
+const SPLIT_MENU_WIDTH_POINTS: f32 = 170.0;
+const SPLIT_MENU_HEIGHT_POINTS: f32 = 24.0;
+const SPLIT_MENU_GAP_POINTS: f32 = 14.0;
+const SPLIT_MENU_MARGIN_POINTS: f32 = 6.0;
+const SPLIT_SWAP_SIZE_POINTS: f32 = 22.0;
 
 impl App {
     /// The Wayback swipe compare's split: a vertical line with a knob that drags left and
@@ -562,7 +590,9 @@ impl App {
             if split != compare.split {
                 compare.split = split;
                 self.wayback_compare = Some(compare);
-                self.touch();
+                // Only the cut between the two finished frames moves: no new raster,
+                // and no switch to the lower-resolution frames of a moving camera.
+                ui.ctx().request_repaint();
             }
         }
         let x = rect.left() + rect.width() * compare.split;
@@ -585,26 +615,51 @@ impl App {
             FontId::proportional(10.0),
             Color32::WHITE,
         );
-        let date = |index: usize| {
-            self.wayback_list
-                .get(index)
-                .map_or_else(String::new, |release| release.date.clone())
-        };
-        let font = FontId::proportional(12.0 * self.settings.map_scale);
-        let shadow = Color32::from_black_alpha(180);
-        for (text, anchor, offset) in [
-            (date(self.wayback_idx), Align2::RIGHT_TOP, -8.0),
-            (date(compare.index), Align2::LEFT_TOP, 8.0),
-        ] {
-            let at = Pos2::new(x + offset, rect.top() + 8.0);
-            painter.text(
-                at + Vec2::new(1.0, 1.0),
-                anchor,
-                &text,
-                font.clone(),
-                shadow,
-            );
-            painter.text(at, anchor, text, font.clone(), Color32::WHITE);
+        // Each side's date, as a drop-down at the top, and a swap button under the knob.
+        let top = rect.top() + SPLIT_MENU_MARGIN_POINTS;
+        let sides = [
+            (
+                Rect::from_min_max(
+                    Pos2::new(x - SPLIT_MENU_WIDTH_POINTS - SPLIT_MENU_GAP_POINTS, top),
+                    Pos2::new(x - SPLIT_MENU_GAP_POINTS, top + SPLIT_MENU_HEIGHT_POINTS),
+                ),
+                egui::Layout::right_to_left(egui::Align::Center),
+                "split_left_date",
+                self.wayback_idx,
+                "left_date",
+            ),
+            (
+                Rect::from_min_max(
+                    Pos2::new(x + SPLIT_MENU_GAP_POINTS, top),
+                    Pos2::new(
+                        x + SPLIT_MENU_GAP_POINTS + SPLIT_MENU_WIDTH_POINTS,
+                        top + SPLIT_MENU_HEIGHT_POINTS,
+                    ),
+                ),
+                egui::Layout::left_to_right(egui::Align::Center),
+                "split_right_date",
+                compare.index,
+                "date",
+            ),
+        ];
+        for (area, layout, id, current, param) in sides {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(layout));
+            if let Some(index) = self.wayback_date_menu(&mut child, id, current) {
+                let date = self.wayback_list[index].date.clone();
+                self.run_reporting("layer.waybackCompare", serde_json::json!({ param: date }));
+            }
+        }
+        let swap = Rect::from_center_size(
+            knob + Vec2::new(0.0, SPLIT_KNOB_RADIUS_POINTS + SPLIT_SWAP_SIZE_POINTS),
+            Vec2::splat(SPLIT_SWAP_SIZE_POINTS),
+        );
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(swap));
+        if child
+            .add(egui::Button::new("⇄").small())
+            .on_hover_text(self.lang.text("wayback-compare-swap-tooltip"))
+            .clicked()
+        {
+            self.run_reporting("layer.waybackCompare", serde_json::json!({ "swap": true }));
         }
     }
 }

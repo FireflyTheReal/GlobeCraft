@@ -44,8 +44,10 @@ pub struct RasterView {
     pub aspect: f64,
     pub provider: Provider,
     pub release_index: usize,
-    /// Wayback swipe compare: the second release and the split's `f32` bits.
-    pub compare: Option<(usize, u32)>,
+    /// Wayback swipe compare: the second release, rendered as its own frame. The
+    /// split is not part of the key: moving it only moves where the UI cuts the two
+    /// frames, so it never needs a new raster.
+    pub compare: Option<usize>,
     pub grid: bool,
     pub atmosphere: bool,
     pub terrain: bool,
@@ -185,12 +187,12 @@ mod tests {
         assert_ne!(view.keys(180.0).presentation, moved.presentation);
         view.grid = true;
         assert_ne!(view.keys(120.0).presentation, moved.presentation);
-        // A swipe compare, and every move of its split, need a new frame.
+        // A swipe compare's release needs new frames (its split does not).
         let plain = view.keys(120.0);
-        view.compare = Some((4, 0.5_f32.to_bits()));
+        view.compare = Some(4);
         let compared = view.keys(120.0);
         assert_ne!(compared.presentation, plain.presentation);
-        view.compare = Some((4, 0.6_f32.to_bits()));
+        view.compare = Some(5);
         assert_ne!(view.keys(120.0).state, compared.state);
         view.compare = None;
         let before_resize = view.keys(120.0);

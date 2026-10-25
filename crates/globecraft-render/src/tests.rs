@@ -28,7 +28,6 @@ fn raster_matches_regression_fixtures() {
         atmo,
         sun,
         lod_scale: 1.0,
-        compare: None,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
     let scenarios = [
@@ -196,7 +195,6 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         atmo: true,
         sun: Some(ll_to_v3(20.0, 45.0)),
         lod_scale: 1.0,
-        compare: None,
     }
 }
 
@@ -363,27 +361,4 @@ fn celestial_backdrop_changes_only_sky_and_preserves_tile_priorities() {
 #[test]
 fn filter_ratio_exponent_threshold_is_a_1_25_texels_per_pixel_ratio() {
     assert!((tuning::TILE_FILTER_RATIO_EXONENT_MIN.exp2() - 1.25).abs() < 1e-12);
-}
-
-#[test]
-fn a_swipe_compare_samples_the_second_release_right_of_the_split() {
-    let cam = Cam {
-        lat: 40.0,
-        lon: 70.0,
-        heading: 0.0,
-        alt: 400.0,
-    };
-    let (w, h) = (64, 48);
-    let basis = cam.basis(w as f64 / h as f64);
-    let mut cfg = batch_reference_config(Provider::Wayback);
-    cfg.rel = 3;
-    cfg.compare = Some(ReleaseCompare { rel: 9, split: 0.5 });
-    let (_, missing, _) = render_pixels_tracked(w, h, &basis, &cfg, &|_| Lookup::Absent);
-    let releases: std::collections::HashSet<u16> =
-        missing.iter().map(|(key, _)| unkey(*key).4).collect();
-    assert_eq!(releases, [3, 9].into_iter().collect());
-    assert_eq!(cfg.release_at(0, w), 3);
-    assert_eq!(cfg.release_at(w / 2 - 1, w), 3);
-    assert_eq!(cfg.release_at(w / 2, w), 9);
-    assert_eq!(cfg.release_at(w - 1, w), 9);
 }

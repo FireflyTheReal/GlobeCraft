@@ -406,6 +406,8 @@ impl App {
                 let enabled = bool_param(p, "enabled").unwrap_or(
                     self.wayback_compare.is_none()
                         || p.get("date").is_some()
+                        || p.get("left_date").is_some()
+                        || p.get("swap").is_some()
                         || p.get("step").is_some()
                         || p.get("split").is_some(),
                 );
@@ -432,6 +434,21 @@ impl App {
                 if let Some(split) = p.get("split").and_then(Value::as_f64) {
                     compare.split = (split as f32)
                         .clamp(super::wayback::MIN_SPLIT, 1.0 - super::wayback::MIN_SPLIT);
+                }
+                // The left side is the shown release.
+                let mut left = self.wayback_idx;
+                if let Some(date) = str_param(p, "left_date") {
+                    left = self
+                        .wayback_list
+                        .iter()
+                        .position(|r| r.date.starts_with(date))
+                        .ok_or_else(|| format!("no release dated {date}"))?;
+                }
+                if bool_param(p, "swap") == Some(true) {
+                    (left, compare.index) = (compare.index, left);
+                }
+                if left != self.wayback_idx {
+                    self.set_wayback(left);
                 }
                 self.wayback_compare = Some(compare);
                 self.last_state = 0;

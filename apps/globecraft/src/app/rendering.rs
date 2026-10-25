@@ -208,13 +208,30 @@ impl App {
             atmo: self.layer(MapLayer::Atmosphere),
             sun,
             lod_scale: size.lod_scale,
-            compare: self
-                .active_compare()
-                .map(|compare| globecraft_render::ReleaseCompare {
-                    rel: compare.index as u16,
-                    split: compare.split,
-                }),
         };
+        // The swipe compare's release: the same view, rendered as a second frame.
+        match self.active_compare() {
+            Some(compare) => {
+                let renderer = self.compare_renderer.get_or_insert_with(|| {
+                    super::compare_frame::CompareRenderer::new(self.cache.clone(), self.ctx.clone())
+                });
+                renderer.submit(RenderRequest {
+                    width: size.width,
+                    height: size.height,
+                    cam: self.cam,
+                    basis,
+                    cfg: RenderCfg {
+                        rel: compare.index as u16,
+                        ..cfg.clone()
+                    },
+                    presentation,
+                    aircraft: None,
+                    live_layers: None,
+                    overlays: None,
+                });
+            }
+            None => self.compare_renderer = None,
+        }
         self.renderer.worker.submit(RenderRequest {
             width: size.width,
             height: size.height,
@@ -246,6 +263,9 @@ impl App {
     }
 
     pub(super) fn poll_render(&mut self, presentation: u64, ctx: &egui::Context) {
+        if let Some(compare) = &mut self.compare_renderer {
+            compare.poll(presentation, ctx);
+        }
         let Some(frame) = self.renderer.worker.take_completed(presentation) else {
             return;
         };

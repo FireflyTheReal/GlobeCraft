@@ -52,6 +52,7 @@ pub fn grid_step(altitude_km: f64, width: usize, height: usize) -> f64 {
 
 // ───────────────────────────── Rendering ─────────────────────────────
 
+#[derive(Clone)]
 pub struct RenderCfg {
     pub sky: Option<celestial::SkyBackdrop>,
     pub provider: Provider,
@@ -66,27 +67,6 @@ pub struct RenderCfg {
     /// this scale so motion frames pick the same zoom band as idle frames.
     /// 1.0 for full-resolution renders.
     pub lod_scale: f32,
-    /// Wayback swipe compare: right of the split, imagery from another release.
-    pub compare: Option<ReleaseCompare>,
-}
-
-/// A second imagery release shown right of a vertical split (Wayback swipe compare).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ReleaseCompare {
-    /// The release index shown right of the split.
-    pub rel: u16,
-    /// Where the split runs, as a fraction of the raster width (0 at the left edge).
-    pub split: f32,
-}
-
-impl RenderCfg {
-    /// The imagery release for raster column `x` of `width`.
-    fn release_at(&self, x: usize, width: usize) -> u16 {
-        match self.compare {
-            Some(compare) if (x as f32 + 0.5) >= compare.split * width as f32 => compare.rel,
-            _ => self.rel,
-        }
-    }
 }
 
 struct Local<'a, F> {
@@ -253,11 +233,11 @@ fn render_row<const ELLIPSOID: bool>(
                     Some((raised, light)) => shade_surface(
                         surface::<ELLIPSOID>(x, y, w, h, &raised, cfg, geometry),
                         cfg,
-                        cfg.release_at(x, w),
+                        cfg.rel,
                         loc,
                         light,
                     ),
-                    None => shade_surface(hit, cfg, cfg.release_at(x, w), loc, 1.0),
+                    None => shade_surface(hit, cfg, cfg.rel, loc, 1.0),
                 }
             } else {
                 sky(&ray, cc, cfg)

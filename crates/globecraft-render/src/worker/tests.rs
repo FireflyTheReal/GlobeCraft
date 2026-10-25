@@ -68,7 +68,6 @@ fn request(longitude: f64, presentation: u64) -> RenderRequest {
             atmo: true,
             sun: None,
             lod_scale: 1.0,
-            compare: None,
         },
         presentation,
         overlays: None,

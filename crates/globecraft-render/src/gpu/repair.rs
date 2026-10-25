@@ -45,10 +45,13 @@ pub(super) fn pixels(
                                 &request.cfg,
                                 request.basis.model.geometry(),
                             );
-                            let release = request
-                                .cfg
-                                .release_at(pack * crate::rays::RAY_LANES + lane, request.width);
-                            crate::shade_surface(surface, &request.cfg, release, &mut local, 1.0)
+                            crate::shade_surface(
+                                surface,
+                                &request.cfg,
+                                request.cfg.rel,
+                                &mut local,
+                                1.0,
+                            )
                         } else {
                             crate::sky(&ray, rays.camera_len_squared, &request.cfg)
                         };
