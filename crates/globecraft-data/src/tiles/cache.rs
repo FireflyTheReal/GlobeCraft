@@ -249,6 +249,13 @@ impl TileCache {
             _ => Lookup::Absent,
         }
     }
+    /// Whether the last download of `key` failed (a network error, not a missing tile).
+    pub fn failed(&self, key: TileKey) -> bool {
+        matches!(
+            self.requests.lock().unwrap().get(&key),
+            Some(RequestState::Failed(_))
+        )
+    }
     /// Estimated decoded-cache bytes; Moka maintenance may lag inserts and evictions.
     /// Renderer references and other allocations are not included in this metric.
     pub fn resident_bytes(&self) -> usize {
@@ -283,8 +290,11 @@ impl TileCache {
         }
         true
     }
-    /// Put the latest view first; retire old queued work while keeping active
-    /// downloads and the small satellite overview queue. Keys arrive coarse-first.
+    /// Requests `key` for background work (a screenshot), leaving a quarter of the
+    /// download slots to the view on screen. False when nothing was requested.
+    pub fn request_in_background(&self, key: TileKey) -> bool {
+        self.inflight() < MAX_INFLIGHT * 3 / 4 && self.request(key)
+    }
     /// Keeps `keys` queued whatever view is prioritized next, until `release_reserved`.
     pub fn reserve(&self, keys: &[TileKey]) {
         if let Ok(mut reserved) = self.reserved.lock() {
@@ -296,6 +306,8 @@ impl TileCache {
             reserved.clear();
         }
     }
+    /// Put the latest view first; retire old queued work while keeping active
+    /// downloads and the small satellite overview queue. Keys arrive coarse-first.
     pub fn prioritize_view(&self, keys: &[TileKey]) {
         #[cfg(feature = "profiling")]
         let _profile = crate::profiling::Span::new("tiles.admission");

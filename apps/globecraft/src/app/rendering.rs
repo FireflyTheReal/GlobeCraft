@@ -265,6 +265,7 @@ impl App {
             atmo: self.layer(MapLayer::Atmosphere),
             sun,
             lod_scale,
+            level_blend: true,
         }
     }
 

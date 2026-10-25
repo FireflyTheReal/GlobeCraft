@@ -396,6 +396,10 @@ impl App {
                 self.take_screenshot(quality)?;
                 json!({"folder": self.settings.screenshot_dir, "quality": quality.code()})
             }
+            "file.cancelScreenshot" => {
+                self.cancel_screenshot()?;
+                json!({"cancelling": true})
+            }
             "file.screenshotQuality" => {
                 let quality = str_param(p, "quality")
                     .and_then(ScreenshotQuality::from_code)
@@ -767,7 +771,11 @@ impl App {
                 checked: false,
             },
             "file.screenshot" => CommandState {
-                enabled: self.image.is_some(),
+                enabled: self.image.is_some() && !self.screenshot_running(),
+                checked: false,
+            },
+            "file.cancelScreenshot" => CommandState {
+                enabled: self.screenshot_running(),
                 checked: false,
             },
             "layer.basemap" => CommandState {

@@ -280,6 +280,7 @@ mod native_fallback_tests {
                 atmo: true,
                 sun: None,
                 lod_scale: 1.0,
+                level_blend: true,
             },
             overlays: None,
             aircraft: None,

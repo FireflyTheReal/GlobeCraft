@@ -268,7 +268,7 @@ and timeline (H) and the point-layer engine (I).
 | 6.8 | **Pane presets**: "Explore", "Measure" and "Present" (hide chrome, big globe, tour controls), saved as workspace layouts | S | `WorkspaceLayout` already persists |
 | 6.9 | Layers pane search and filter (by name, category and active state) | S | The catalogue itself is Add Data (section 2); this keeps a long Layers pane usable |
 | 6.10 | More languages (es, fr, de, ja) | S each | The Fluent setup makes this cheap; ask native speakers for review |
-| 6.11 | Touch and trackpad: pinch to zoom, two-finger rotate and tilt, inertia tuned for Mac trackpads | S–M | Mac users expect these gestures **2026-10-25:** pinch zooms and the two-finger turn rotates the view. Tilt does not exist yet: the camera has no pitch (always straight down), so it needs camera, rendering and picking work first |
+| 6.11 | Touch and trackpad: pinch to zoom, two-finger rotate and tilt, inertia tuned for Mac trackpads | S–M | Mac users expect these gestures **2026-10-25:** pinch zooms and the two-finger turn rotates the view. **Tilt landed the same day:** a look-at camera with pitch (up to 80°, the camera stays 300 m above the ground), right-drag or Shift-drag up and down, Shift+scroll, Shift+↑/↓, U for straight down, `tilt_deg` on `camera.set` and `camera.flyTo`. Zooming in while tilted stops at that height instead of flattening the tilt. Still open: a tilt control on the navigator, the scale bar and view disc for tilted views, and GPU parity |
 | 6.12 | Cursor info card: hover or long-press a point for elevation, local time, country/state/municipality, nearest place and copyable coordinates in every format | S–M | Everything is already in memory |
 
 ## 7. AI assistant
@@ -302,7 +302,7 @@ and timeline (H) and the point-layer engine (I).
 - **KML fidelity (L):** lines, polygons, styles, NetworkLinks and time spans. Only placemarks import today (the v0.2.0 plan deferred KML fidelity), and Google Earth users bring KML.
 - **GPX and GeoJSON import/export (M):** for hikers and data people.
 - **Movie export (L):** render a tour to MP4 frames, like Earth Studio-lite. It needs a deterministic render clock.
-- **Poster export (M):** high-resolution offscreen renders with a title, scale and attribution block.
+- **Poster export (M):** high-resolution offscreen renders with a title, scale and attribution block. **Screenshots, 2026-10-25:** four qualities, all waiting for every tile: Normal (screen size, as on screen), Plus (2×, one zoom level deeper), Pro (4×) and Pro Max (8×, tiles the view never showed). Plus and above show one imagery level per pixel (no level fade). The picture is rendered and written to the PNG strip by strip on its own thread pool, so it never needs to fit in memory and the globe stays responsive; *Cancel Screenshot* stops it. The poster layout is still open.
 - **Share a view link (S):** a `globecraft://` URL or text snippet carrying the camera, layers and time, which other GlobeCraft users can open.
 - **Measurement upgrades (M):** area, elevation profile along a ruler path (from the DEM cache), and line-of-sight and viewshed (after 8.1).
 

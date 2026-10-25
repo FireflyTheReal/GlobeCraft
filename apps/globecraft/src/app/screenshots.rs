@@ -409,3 +409,72 @@ fn boundary_streaming_descent() {
         println!("  {line}");
     }
 }
+
+/// A Pro Max screenshot rendering in the background while the user zooms a tilted view:
+/// the globe on screen must keep following the camera. Stills used to render on the
+/// view's thread pool and froze it until they finished (2026-10-25).
+#[test]
+#[ignore = "manual: starts the application; run alone with --release --ignored --nocapture"]
+fn a_screenshot_in_progress_does_not_freeze_the_view() {
+    let settings = globecraft_data::settings::Settings {
+        screenshot_dir: std::env::temp_dir()
+            .join(format!("globecraft-shot-{}", std::process::id()))
+            .display()
+            .to_string(),
+        ..Default::default()
+    };
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(eframe::egui::vec2(1480.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_eframe(move |cc| {
+            super::App::new(
+                cc,
+                settings,
+                std::sync::Arc::new(super::RestartRequest::default()),
+            )
+        });
+    let pass = |h: &mut egui_kittest::Harness<'static, App>| {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    };
+    for _ in 0..120 {
+        pass(&mut h);
+    }
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 46.5, "lon": 8.0, "altitude_km": 900.0, "heading_deg": 20.0, "tilt_deg": 55.0}),
+    );
+    for _ in 0..60 {
+        pass(&mut h);
+    }
+    h.state_mut()
+        .run("file.screenshot", json!({"quality": "pro_max"}))
+        .expect("screenshot starts");
+    let wheel = |notches: f32| eframe::egui::Event::MouseWheel {
+        unit: eframe::egui::MouseWheelUnit::Line,
+        delta: eframe::egui::vec2(0.0, notches),
+        phase: eframe::egui::TouchPhase::Move,
+        modifiers: eframe::egui::Modifiers::NONE,
+    };
+    // The longest run of passes in which the camera moved but the picture did not.
+    let (mut run, mut longest) = (0, 0);
+    let mut shown_before = None;
+    for i in 0..240 {
+        h.event(eframe::egui::Event::PointerMoved(eframe::egui::pos2(
+            740.0, 450.0,
+        )));
+        h.event(wheel(if (i / 60) % 2 == 0 { 1.0 } else { -1.0 }));
+        pass(&mut h);
+        let shown = h.state().renderer.displayed_view().map(|(cam, _)| cam.alt);
+        run = if shown == shown_before { run + 1 } else { 0 };
+        longest = longest.max(run);
+        shown_before = shown;
+    }
+    let _ = h.state_mut().run("file.cancelScreenshot", Value::Null);
+    println!(
+        "longest frozen run: {longest} passes; tilt {:.1}",
+        h.state().cam.tilt
+    );
+    assert!(longest < 30, "the view froze for {longest} passes");
+    assert_eq!(h.state().cam.tilt, 55.0, "zooming in keeps the tilt");
+}

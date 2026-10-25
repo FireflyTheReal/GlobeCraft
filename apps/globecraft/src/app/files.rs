@@ -1,7 +1,7 @@
 mod session;
 use super::App;
 use eframe::egui;
-use globecraft_core::{language::Lang, math::now_unix};
+use globecraft_core::language::Lang;
 use globecraft_data::files::{FileCompletion, FileKind, FileOutcome};
 pub(super) use session::KmlSession;
 use std::path::PathBuf;
@@ -136,16 +136,7 @@ impl App {
                     }
                     self.placemarks.extend(placemarks);
                 }
-                Ok(FileOutcome::ScreenshotSaved { path }) => {
-                    self.status = self.lang.format(
-                        "screenshot-save-success",
-                        &[("path", path.display().to_string().into())],
-                    );
-                    self.status_file = Some(FileStatus {
-                        message: self.status.clone(),
-                        path,
-                    });
-                }
+                Ok(FileOutcome::ScreenshotSaved { path }) => self.screenshot_saved(path),
                 Err(error) => {
                     let id = match kind {
                         FileKind::OpenKml | FileKind::RestoreKml => "kml-open-error",
@@ -211,26 +202,16 @@ impl App {
         }
     }
 
-    pub(super) fn save_screenshot(&mut self) {
-        match &self.image {
-            Some((width, height, pixels)) => {
-                let path = PathBuf::from(&self.settings.screenshot_dir)
-                    .join(format!("globecraft_{}.png", now_unix() as u64));
-                if let Err(error) = self.file_jobs.screenshot_with_credits(
-                    path,
-                    *width as u32,
-                    *height as u32,
-                    pixels,
-                    self.renderer.displayed_credits.clone(),
-                ) {
-                    self.status = Lang::En.format(
-                        "screenshot-save-error",
-                        &[("error", error.to_string().into())],
-                    );
-                }
-            }
-            None => self.status = Lang::En.text("screenshot-empty-error").into(),
-        }
+    /// Reports a saved screenshot in the status bar, with a link to the file.
+    pub(super) fn screenshot_saved(&mut self, path: PathBuf) {
+        self.status = self.lang.format(
+            "screenshot-save-success",
+            &[("path", path.display().to_string().into())],
+        );
+        self.status_file = Some(FileStatus {
+            message: self.status.clone(),
+            path,
+        });
     }
 
     pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {

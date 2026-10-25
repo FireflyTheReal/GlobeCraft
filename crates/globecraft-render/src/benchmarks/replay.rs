@@ -183,7 +183,8 @@ fn hole_rgba(cfg: &RenderCfg) -> [u8; 4] {
         tilt: 0.0,
     }
     .basis(1.0);
-    let (pixels, _, _) = render_pixels_into(8, 8, &basis, cfg, &|_| Lookup::Absent, Vec::new());
+    let (pixels, _, _) =
+        render_pixels_into(8, 8, 0..8, &basis, cfg, &|_| Lookup::Absent, Vec::new());
     let centre = (4 * 8 + 4) * RGBA_CHANNELS;
     pixels[centre..centre + 4].try_into().unwrap()
 }
@@ -223,6 +224,7 @@ fn replay(
         atmo: false,
         sun: None,
         lod_scale,
+        level_blend: true,
     };
     let hole = hole_rgba(&config(1.0));
     let used = Mutex::new(HashSet::<TileKey>::new());
@@ -248,8 +250,15 @@ fn replay(
             }
             found
         };
-        let (pixels, mut misses, waiting) =
-            render_pixels_into(w, h, &basis, &cfg, &lookup, std::mem::take(&mut buffer));
+        let (pixels, mut misses, waiting) = render_pixels_into(
+            w,
+            h,
+            0..h,
+            &basis,
+            &cfg,
+            &lookup,
+            std::mem::take(&mut buffer),
+        );
         misses.sort_by(|a, b| unkey(a.0).1.cmp(&unkey(b.0).1).then(a.1.total_cmp(&b.1)));
         let frame = RenderedView {
             pixels,

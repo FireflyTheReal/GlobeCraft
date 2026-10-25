@@ -230,6 +230,7 @@ mod tests {
                 sun: None,
                 terrain: None,
                 lod_scale,
+                level_blend: true,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -265,6 +266,7 @@ mod tests {
             atmo: false,
             sun: None,
             lod_scale: 1.0,
+            level_blend: true,
         };
         for latitude in [
             -90.0_f64,
@@ -318,6 +320,7 @@ mod tests {
             atmo: false,
             sun: None,
             lod_scale: 1.0,
+            level_blend: true,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

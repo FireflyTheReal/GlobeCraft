@@ -1,6 +1,7 @@
 //! Ordered, bounded file jobs; native dialogs and applying results stay in app.
 mod images;
 mod screenshot;
+pub use screenshot::PngStrips;
 mod session;
 use globecraft_core::{language::Lang, placemark::Places};
 pub use images::{ImageSource, ImageTarget, LoadedImage, PlanetSave};

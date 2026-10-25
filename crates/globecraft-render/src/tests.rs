@@ -29,6 +29,7 @@ fn raster_matches_regression_fixtures() {
         atmo,
         sun,
         lod_scale: 1.0,
+        level_blend: true,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
     let scenarios = [
@@ -202,6 +203,7 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         atmo: true,
         sun: Some(ll_to_v3(20.0, 45.0)),
         lod_scale: 1.0,
+        level_blend: true,
     }
 }
 
@@ -314,7 +316,15 @@ fn reused_buffers_overwrite_all_pixels_and_preserve_allocation() {
     let mut buffer = vec![123; expected.len() + 128];
     let pointer = buffer.as_ptr();
     buffer.truncate(expected.len());
-    let (pixels, _, _) = render_pixels_into(case.width, case.height, &basis, &cfg, &lookup, buffer);
+    let (pixels, _, _) = render_pixels_into(
+        case.width,
+        case.height,
+        0..case.height,
+        &basis,
+        &cfg,
+        &lookup,
+        buffer,
+    );
     assert_eq!(pixels.as_ptr(), pointer);
     assert_eq!(pixels, expected);
 }
@@ -369,4 +379,68 @@ fn celestial_backdrop_changes_only_sky_and_preserves_tile_priorities() {
 #[test]
 fn filter_ratio_exponent_threshold_is_a_1_25_texels_per_pixel_ratio() {
     assert!((tuning::TILE_FILTER_RATIO_EXONENT_MIN.exp2() - 1.25).abs() < 1e-12);
+}
+
+/// A 256-pixel tile of one colour, as the network loader would decode it.
+fn solid_tile(rgb: [u8; 3]) -> Arc<Tile> {
+    let image = image::RgbaImage::from_pixel(256, 256, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    Arc::new(Tile::decode(&bytes).unwrap())
+}
+
+#[test]
+fn without_level_blend_every_pixel_shows_one_level() {
+    // Even levels red, odd levels blue: a blended pixel mixes both.
+    let (red, blue) = (solid_tile([255, 0, 0]), solid_tile([0, 0, 255]));
+    let lookup = |key: TileKey| {
+        if unkey(key).1.is_multiple_of(2) {
+            Lookup::Ready(red.clone())
+        } else {
+            Lookup::Ready(blue.clone())
+        }
+    };
+    let (width, height) = (96, 64);
+    // A tilted view spans several levels, so some pixels sit in the fade band.
+    let basis = Cam {
+        lat: 45.0,
+        lon: 7.0,
+        heading: 0.0,
+        alt: 300.0,
+        tilt: 70.0,
+    }
+    .basis(width as f64 / height as f64);
+    let mut cfg = batch_reference_config(Provider::Satellite);
+    cfg.atmo = false;
+    cfg.sky = None;
+    cfg.sun = None;
+    // The same view in each colour alone: a single-level pixel equals one of them
+    // (up to rounding in the texel averaging).
+    let near = |a: &[u8], b: &[u8]| a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 2);
+    let (all_red, _, _) =
+        render_pixels_tracked(width, height, &basis, &cfg, &|_| Lookup::Ready(red.clone()));
+    let (all_blue, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &|_| {
+        Lookup::Ready(blue.clone())
+    });
+    let mixed = |pixels: &[u8]| {
+        pixels
+            .chunks(RGBA_CHANNELS)
+            .zip(all_red.chunks(RGBA_CHANNELS))
+            .zip(all_blue.chunks(RGBA_CHANNELS))
+            .filter(|((pixel, red), blue)| !near(pixel, red) && !near(pixel, blue))
+            .count()
+    };
+    let (blended, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    cfg.level_blend = false;
+    let (single, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    assert!(
+        mixed(&blended) > 0,
+        "the fixture view must cross a fade band"
+    );
+    assert_eq!(mixed(&single), 0);
 }

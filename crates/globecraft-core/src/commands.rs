@@ -316,7 +316,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera",
         Home,
         Files,
-        r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"],"description":"normal: as on screen; plus: every tile sharp; pro: twice the size, one zoom level deeper; pro_max: four times the size, two levels deeper. Default: the chosen quality"}}}"#
+        r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"],"description":"normal: screen size once every tile has loaded; plus: twice the size, one zoom level deeper; pro: four times the size, two levels deeper; pro_max: eight times the size, three levels deeper. Default: the chosen quality"}}}"#
     ),
     command!(
         "file.screenshotQuality",
@@ -325,6 +325,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Home,
         Files,
         r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"]}},"required":["quality"]}"#
+    ),
+    command!(
+        "file.cancelScreenshot",
+        "file-cancel-screenshot",
+        "close",
+        Home,
+        Files,
+        NO_PARAMS
     ),
     // Layers.
     command!(

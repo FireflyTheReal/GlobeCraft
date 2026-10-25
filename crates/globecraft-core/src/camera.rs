@@ -165,7 +165,12 @@ impl Cam {
     }
     /// Keeps the tilt within `max_tilt` after the distance changed.
     pub fn clamp_tilt(&mut self) {
-        self.tilt = self.tilt.clamp(0.0, self.max_tilt());
+        /// Rounding in `max_tilt` at the zoom limit must not nibble at the tilt.
+        const TILT_TOLERANCE_DEG: f64 = 1e-9;
+        let max = self.max_tilt();
+        if self.tilt > max + TILT_TOLERANCE_DEG || self.tilt < 0.0 {
+            self.tilt = self.tilt.clamp(0.0, max);
+        }
     }
     /// This camera with `clamp_tilt` applied.
     pub fn with_tilt_clamped(mut self) -> Self {
@@ -265,8 +270,23 @@ impl Cam {
         }
     }
 
+    /// Changes the distance by `factor`. A tilted camera keeps its tilt: zooming in
+    /// stops where the camera reaches `MIN_TILTED_HEIGHT_KM` above the ground (tilting
+    /// back lets it go closer). Flattening the tilt instead lost it for good, and a
+    /// zoom that undid the tilt looked like a frozen picture (user, 2026-10-25).
     pub fn zoom(&mut self, factor: f64) {
-        self.alt = (self.alt * factor).clamp(MIN_CAMERA_ALTITUDE_KM, MAX_CAMERA_ALTITUDE_KM);
+        let closest = if self.tilt > 0.0 {
+            (MIN_TILTED_HEIGHT_KM / self.tilt.to_radians().cos()).max(MIN_CAMERA_ALTITUDE_KM)
+        } else {
+            MIN_CAMERA_ALTITUDE_KM
+        };
+        let wanted = self.alt * factor;
+        self.alt = if factor < 1.0 && self.alt <= closest {
+            // Already at (or, after an earlier tilt, below) the limit: stay.
+            self.alt
+        } else {
+            wanted.clamp(closest.min(self.alt), MAX_CAMERA_ALTITUDE_KM)
+        };
         self.clamp_tilt();
     }
 
@@ -370,6 +390,14 @@ mod tests {
         assert_eq!(cam.tilt, 0.0);
         cam.set_tilt(60.0);
         cam.zoom(0.5);
+        assert_eq!(cam.tilt, 60.0);
+        // Zooming all the way in keeps the tilt and stops at the minimum height.
+        for _ in 0..200 {
+            cam.zoom(0.8);
+        }
+        assert_eq!(cam.tilt, 60.0);
+        assert!((cam.alt * cam.tilt.to_radians().cos() - MIN_TILTED_HEIGHT_KM).abs() < 1e-9);
+        cam.zoom(2.0);
         assert_eq!(cam.tilt, 60.0);
         // Very close in, the camera may not dip below the minimum height.
         cam.alt = 0.4;

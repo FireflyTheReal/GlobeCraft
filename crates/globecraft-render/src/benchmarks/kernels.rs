@@ -44,6 +44,7 @@ fn earth_model_kernel_time() {
         atmo: true,
         sun: Some(globecraft_core::math::ll_to_v3(20.0, 45.0)),
         lod_scale: 1.0,
+        level_blend: true,
     };
     for model in EarthModel::ALL {
         let views = views(model);
@@ -152,6 +153,7 @@ fn earth_model_raster_capture() {
                     atmo: true,
                     sun: Some(globecraft_core::math::ll_to_v3(20.0, 45.0)),
                     lod_scale: 1.0,
+                    level_blend: true,
                 };
                 let (pixels, _) =
                     render_pixels(127, 95, &basis, &cfg, &|_| Lookup::Ready(tile.clone()));

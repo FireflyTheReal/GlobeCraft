@@ -381,3 +381,32 @@ fn screenshot_credits_are_captured_with_the_submitted_pixels() {
     assert_eq!(metadata[0].keyword, "Source");
     assert_eq!(metadata[0].get_text().unwrap(), crate::sky::CREDIT);
 }
+
+#[test]
+fn a_png_written_in_strips_reads_back_whole_and_a_dropped_one_is_removed() {
+    let fixture = fixture();
+    let path = fixture.0.join("strips.png");
+    let (width, height) = (3_u32, 4_u32);
+    let pixels: Vec<u8> = (0..width * height * 4).map(|i| i as u8).collect();
+    let mut strips = PngStrips::create(&path, width, height, "Credits").unwrap();
+    let row = width as usize * 4;
+    strips.write_rows(&pixels[..row * 3]).unwrap();
+    strips.write_rows(&pixels[row * 3..]).unwrap();
+    assert_eq!(strips.finish().unwrap(), path);
+    let mut decoder =
+        png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&path).unwrap()))
+            .read_info()
+            .unwrap();
+    let mut buffer = vec![0; decoder.output_buffer_size().unwrap()];
+    decoder.next_frame(&mut buffer).unwrap();
+    assert_eq!(buffer, pixels);
+    // The name is taken now, so the next one gets a suffix; dropping it unfinished
+    // deletes the partial file.
+    let mut partial = PngStrips::create(&path, width, height, "Credits").unwrap();
+    let partial_path = partial.path().to_path_buf();
+    assert_ne!(partial_path, path);
+    partial.write_rows(&pixels[..row]).unwrap();
+    drop(partial);
+    assert!(!partial_path.exists());
+    assert!(path.exists());
+}

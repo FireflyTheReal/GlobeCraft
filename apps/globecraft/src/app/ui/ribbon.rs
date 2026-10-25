@@ -308,7 +308,13 @@ impl App {
         });
         group(ui, lang.text("ribbon-group-capture"), |ui| {
             big(ui, self, "file.screenshot", Value::Null);
-            col(ui, |ui| self.screenshot_quality_menu(ui));
+            col(ui, |ui| {
+                self.screenshot_quality_menu(ui);
+                // Large screenshots take a while: they can be stopped.
+                if self.screenshot_running() {
+                    small(ui, self, "file.cancelScreenshot", Value::Null);
+                }
+            });
         });
         group(ui, lang.text("ribbon-group-assistant"), |ui| {
             big(ui, self, "ui.pane.assistant", Value::Null);

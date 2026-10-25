@@ -68,6 +68,10 @@ pub struct RenderCfg {
     /// this scale so motion frames pick the same zoom band as idle frames.
     /// 1.0 for full-resolution renders.
     pub lod_scale: f32,
+    /// Fade between imagery levels near a level change, as on screen. Off for the
+    /// sharper screenshots (Plus, Pro, Pro Max): each pixel then shows one level, the
+    /// nearer one, so the picture depends only on which tiles were downloaded.
+    pub level_blend: bool,
 }
 
 struct Local<'a, F> {
@@ -179,6 +183,11 @@ fn shade_surface(
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
     terrain_light: f32,
 ) -> Vec4 {
+    if !cfg.level_blend {
+        let level = surface.z0 + i32::from(surface.frac >= 0.5);
+        let (col, _) = sample_chain(loc, cfg.provider, rel, level, &surface);
+        return finish_surface(col, surface, terrain_light);
+    }
     let (mut col, _) = sample_chain(loc, cfg.provider, rel, surface.z0, &surface);
     let blend = if cfg.provider.is_imagery() {
         // Short fade at the end of the level band: with an oversampled base,
@@ -198,6 +207,11 @@ fn shade_surface(
             col = col.lerp_monotonic(c2, blend);
         }
     }
+    finish_surface(col, surface, terrain_light)
+}
+
+/// Grid, lighting and rim over the imagery colour of a surface pixel.
+fn finish_surface(mut col: Vec4, surface: Surface, terrain_light: f32) -> Vec4 {
     if surface.grid {
         col = col.lerp_monotonic(GRID_COLOR, GRID_BLEND);
     }
@@ -307,8 +321,32 @@ pub fn render_view_into(
     cache: &TileCache,
     buffer: Vec<u8>,
 ) -> RenderedView {
+    render_rows_into(w, h, 0..h, basis, cfg, cache, buffer)
+}
+
+/// Rows `rows` of a `w`×`h` view: a strip of a picture too large to hold at once.
+pub fn render_rows(
+    w: usize,
+    h: usize,
+    rows: std::ops::Range<usize>,
+    basis: &Basis,
+    cfg: &RenderCfg,
+    cache: &TileCache,
+) -> RenderedView {
+    render_rows_into(w, h, rows, basis, cfg, cache, Vec::new())
+}
+
+fn render_rows_into(
+    w: usize,
+    h: usize,
+    rows: std::ops::Range<usize>,
+    basis: &Basis,
+    cfg: &RenderCfg,
+    cache: &TileCache,
+    buffer: Vec<u8>,
+) -> RenderedView {
     let (buf, mut list, waiting) =
-        render_pixels_into(w, h, basis, cfg, &|key| cache.lookup(key), buffer);
+        render_pixels_into(w, h, rows, basis, cfg, &|key| cache.lookup(key), buffer);
 
     // Request missing tiles: lowest zoom first, then closest to the center.
     list.sort_by(|a, b| {
@@ -345,18 +383,20 @@ fn render_pixels_tracked(
     cfg: &RenderCfg,
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
 ) -> (Vec<u8>, Vec<(TileKey, f32)>, Vec<TileKey>) {
-    render_pixels_into(w, h, basis, cfg, lookup, Vec::new())
+    render_pixels_into(w, h, 0..h, basis, cfg, lookup, Vec::new())
 }
 
 fn render_pixels_into(
     w: usize,
     h: usize,
+    rows: std::ops::Range<usize>,
     basis: &Basis,
     cfg: &RenderCfg,
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
     mut buf: Vec<u8>,
 ) -> (Vec<u8>, Vec<(TileKey, f32)>, Vec<TileKey>) {
-    buf.resize(w * h * RGBA_CHANNELS, 0);
+    let first_row = rows.start;
+    buf.resize(w * rows.len() * RGBA_CHANNELS, 0);
     let row_bytes = w * RGBA_CHANNELS;
     let rays = RayCaster::new(w, h, basis);
     let unit_sphere = rays.uses_unit_sphere();
@@ -373,7 +413,7 @@ fn render_pixels_into(
             for (offset, row) in rows.chunks_mut(row_bytes).enumerate() {
                 if unit_sphere {
                     render_row::<false>(
-                        batch * ROWS_PER_TILE_BATCH + offset,
+                        first_row + batch * ROWS_PER_TILE_BATCH + offset,
                         w,
                         h,
                         &rays,
@@ -383,7 +423,7 @@ fn render_pixels_into(
                     );
                 } else {
                     render_row::<true>(
-                        batch * ROWS_PER_TILE_BATCH + offset,
+                        first_row + batch * ROWS_PER_TILE_BATCH + offset,
                         w,
                         h,
                         &rays,
