@@ -505,7 +505,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "symbology",
         Settings,
         View,
-        r##"{"type":"object","properties":{"line":{"type":"string","enum":["country","state","municipal"],"description":"Country borders, state/province borders (also the municipal state borders that replace them up close), or interior municipal borders"},"color":{"type":"string","description":"Hex colour #rrggbb or #rrggbbaa (aa is opacity)"},"width":{"type":"number","description":"Line width in points, 0.5..6"},"dash":{"type":"string","enum":["solid","dashed","dotted"]}},"required":["line"]}"##
+        r##"{"type":"object","properties":{"line":{"type":"string","enum":["country","state","municipal","disputed"],"description":"Country borders, state/province borders, municipal borders, or disputed borders"},"color":{"type":"string","description":"Hex colour #rrggbb or #rrggbbaa (aa is opacity)"},"width":{"type":"number","description":"Line width in points, 0.5..6"},"dash":{"type":"string","enum":["solid","dashed","dotted"]}},"required":["line"]}"##
     ),
     command!(
         "style.labelSize",
@@ -514,6 +514,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Settings,
         View,
         r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
+    ),
+    command!(
+        "style.disputedClaims",
+        "style-disputed-claims",
+        "symbology",
+        Settings,
+        View,
+        r#"{"type":"object","properties":{"enabled":{"type":"boolean","description":"Omit to toggle. Off: one neutral line per disputed border; on: each country's claimed line too"}}}"#
     ),
     command!(
         "style.reset",

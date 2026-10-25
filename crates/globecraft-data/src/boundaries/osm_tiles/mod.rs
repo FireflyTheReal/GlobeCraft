@@ -34,8 +34,13 @@ const MAX_DISK_INFLIGHT: usize = 8;
 /// Decoded tiles kept in memory, counted in vertices (16 bytes each as lines).
 const MAX_STORED_POINTS: usize = 2_000_000;
 const FAILED_RETRY: Duration = Duration::from_secs(60);
-/// Levels above the view's that are loaded ahead, so zooming out finds them ready.
-const PREFETCH_PARENT_LEVELS: u8 = 2;
+/// Levels above the view's whose surrounding ring is loaded ahead too.
+const RING_PARENT_LEVELS: usize = 2;
+/// The whole world is loaded ahead down to this zoom (1 + 4 + 16 + 64 tiles).
+const WORLD_PRELOAD_MAX_ZOOM: u8 = 3;
+/// Tiles of this zoom and above stay in memory: few and small, and what a quick zoom
+/// out needs at once.
+const PINNED_MAX_ZOOM: u8 = 6;
 /// Tiles at least this deep hold municipal lines (OpenMapTiles adds `admin_level` 7–8
 /// at zoom 11).
 pub const MUNICIPAL_MIN_ZOOM: u8 = 11;
@@ -45,7 +50,8 @@ pub const MUNICIPAL_MIN_ZOOM: u8 = 11;
 pub struct OsmBorderLines {
     /// `admin_level` 2.
     pub country: Vec<Line>,
-    /// `admin_level` 2 lines OpenMapTiles marks disputed, and claim lines.
+    /// `admin_level` 2 lines OpenMapTiles marks disputed (the neutral line), and with
+    /// `OsmTileView::claims` each country's claimed line too.
     pub disputed: Vec<Line>,
     /// `admin_level` 3–4, of the big countries (see `BIG_COUNTRIES_A3`), sorted out when
     /// the lines reach the boundary data.
@@ -80,6 +86,8 @@ pub struct OsmTileView {
     pub altitude_km: f64,
     /// The disk cache's size limit (Settings → Cache).
     pub cache_limit_bytes: u64,
+    /// Draw each country's claimed line of disputed borders too (Settings → Map style).
+    pub claims: bool,
 }
 
 /// Ancestors cut to the missing tile they stand in for, by (shown tile, source tile).
@@ -128,8 +136,11 @@ impl Store {
             self.tiles.iter().map(|(k, e)| (*k, e.used)).collect();
         by_age.sort_by_key(|(_, used)| *used);
         for (old, _) in by_age {
-            if self.points <= MAX_STORED_POINTS * 3 / 4 || old == key {
+            if self.points <= MAX_STORED_POINTS * 3 / 4 {
                 break;
+            }
+            if old == key || old.z <= PINNED_MAX_ZOOM {
+                continue;
             }
             if let Some(entry) = self.tiles.remove(&old) {
                 self.points -= entry.content.points;
@@ -153,6 +164,7 @@ pub(super) struct OsmTileStreamer {
     /// What was published last: each shown tile and the tile it came from.
     published: Vec<(TileKey, TileKey)>,
     published_revision: u64,
+    published_claims: bool,
     /// The latest publication; older ones still being built are dropped.
     generation: Arc<AtomicU64>,
     /// Ancestors cut to a missing tile, shared with the publication jobs.
@@ -178,6 +190,7 @@ impl OsmTileStreamer {
             },
             published: Vec::new(),
             published_revision: 0,
+            published_claims: false,
             generation: Arc::default(),
             clipped: Arc::default(),
             limit_bytes: 0,
@@ -237,9 +250,13 @@ impl OsmTileStreamer {
             }
         }
         let shown = compose(&store.tiles, &wanted);
-        if shown == self.published && store.revision == self.published_revision {
+        if shown == self.published
+            && store.revision == self.published_revision
+            && view.claims == self.published_claims
+        {
             return;
         }
+        self.published_claims = view.claims;
         let contents: Vec<(TileKey, TileKey, Arc<TileContent>)> = shown
             .iter()
             .filter_map(|&(tile, source)| {
@@ -254,6 +271,7 @@ impl OsmTileStreamer {
             contents,
             zoom,
             municipal_max_km: pick::max_altitude_km_for_zoom(view.lat, MUNICIPAL_MIN_ZOOM),
+            claims: view.claims,
             generation,
             latest: self.generation.clone(),
             clipped: self.clipped.clone(),
@@ -343,35 +361,64 @@ impl OsmTileStreamer {
     }
 }
 
-/// Tiles worth loading ahead of need: the view's parents (for zooming out) and the
-/// ring of tiles around it (for panning).
+/// Tiles worth loading ahead of need, most useful first:
+/// - every level above the view, so a quick zoom out finds its tiles ready;
+/// - the ring around the view and around its next `RING_PARENT_LEVELS` levels up, for
+///   panning and for the wider area a zoom out shows;
+/// - the whole world down to `WORLD_PRELOAD_MAX_ZOOM` (85 small tiles, kept on disk
+///   after the first time), so the globe never waits for borders from far out.
 fn prefetch(wanted: &[TileKey]) -> Vec<TileKey> {
     let set: HashSet<TileKey> = wanted.iter().copied().collect();
     let mut out: Vec<TileKey> = Vec::new();
-    let mut seen = HashSet::new();
-    let mut parents: Vec<TileKey> = wanted.to_vec();
-    for _ in 0..PREFETCH_PARENT_LEVELS {
-        parents = parents.iter().filter_map(|k| k.parent()).collect();
+    let mut seen = set.clone();
+    let mut push = |key: TileKey, out: &mut Vec<TileKey>| {
+        if seen.insert(key) {
+            out.push(key);
+        }
+    };
+    let mut levels: Vec<Vec<TileKey>> = vec![wanted.to_vec()];
+    loop {
+        let mut parents: Vec<TileKey> = Vec::new();
+        for parent in levels
+            .last()
+            .into_iter()
+            .flatten()
+            .filter_map(|k| k.parent())
+        {
+            if !parents.contains(&parent) {
+                parents.push(parent);
+            }
+        }
+        if parents.is_empty() {
+            break;
+        }
         for &parent in &parents {
-            if seen.insert(parent) {
-                out.push(parent);
+            push(parent, &mut out);
+        }
+        levels.push(parents);
+    }
+    for level in levels.iter().take(1 + RING_PARENT_LEVELS) {
+        for key in level {
+            let n = TileKey::tiles_per_side(key.z) as i64;
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let y = key.y as i64 + dy;
+                if !(0..n).contains(&y) {
+                    continue;
+                }
+                let neighbour = TileKey {
+                    z: key.z,
+                    x: (key.x as i64 + dx).rem_euclid(n) as u32,
+                    y: y as u32,
+                };
+                push(neighbour, &mut out);
             }
         }
     }
-    for key in wanted {
-        let n = TileKey::tiles_per_side(key.z) as i64;
-        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-            let y = key.y as i64 + dy;
-            if !(0..n).contains(&y) {
-                continue;
-            }
-            let neighbour = TileKey {
-                z: key.z,
-                x: (key.x as i64 + dx).rem_euclid(n) as u32,
-                y: y as u32,
-            };
-            if !set.contains(&neighbour) && seen.insert(neighbour) {
-                out.push(neighbour);
+    for z in 0..=WORLD_PRELOAD_MAX_ZOOM {
+        let n = TileKey::tiles_per_side(z);
+        for y in 0..n {
+            for x in 0..n {
+                push(TileKey { z, x, y }, &mut out);
             }
         }
     }
@@ -383,6 +430,7 @@ struct Publication {
     contents: Vec<(TileKey, TileKey, Arc<TileContent>)>,
     zoom: u8,
     municipal_max_km: f64,
+    claims: bool,
     generation: u64,
     latest: Arc<AtomicU64>,
     clipped: ClippedCache,
@@ -432,7 +480,16 @@ impl Publication {
         };
         let lines = OsmBorderLines {
             country: gather(|c| &c.country),
-            disputed: gather(|c| &c.disputed),
+            disputed: {
+                let mut lines: Vec<Line> = contents
+                    .iter()
+                    .flat_map(|c| c.disputed.iter().cloned())
+                    .collect();
+                if self.claims {
+                    lines.extend(contents.iter().flat_map(|c| c.claims.iter().cloned()));
+                }
+                join::join(lines, tolerance)
+            },
             state: gather(|c| &c.state),
             municipal: gather(|c| &c.municipal),
             state_big: Vec::new(),
@@ -546,8 +603,15 @@ mod tests {
             y: 350,
         };
         let around = prefetch(&[centre]);
-        assert!(around.contains(&centre.parent().unwrap()));
-        assert!(around.contains(&centre.parent().unwrap().parent().unwrap()));
+        // Every level above, the world overview, and parents before neighbours.
+        let mut ancestor = centre;
+        while let Some(parent) = ancestor.parent() {
+            assert!(around.contains(&parent), "{parent:?}");
+            ancestor = parent;
+        }
+        assert!(around.contains(&TileKey { z: 3, x: 7, y: 7 }));
+        let position = |key| around.iter().position(|k| *k == key).unwrap();
+        assert!(position(centre.parent().unwrap()) < position(TileKey { x: 536, ..centre }));
         assert!(around.contains(&TileKey { x: 536, ..centre }));
         assert!(!around.contains(&centre));
         // Across the date line.

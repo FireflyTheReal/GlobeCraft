@@ -10,12 +10,17 @@ use super::mvt::{self, GeomType, Reader, Value};
 /// Tile units across a tile in this format (OpenMapTiles' usual extent).
 pub(super) const EXTENT: i32 = 4096;
 /// Bumped when the stored layout changes; rows of other versions are ignored.
-pub(super) const FORMAT_VERSION: u8 = 1;
+pub(super) const FORMAT_VERSION: u8 = 2;
 
 /// `FilteredLine::flags`: OpenMapTiles marks the line `disputed=1`.
 pub(super) const DISPUTED: u8 = 1;
-/// `FilteredLine::flags`: an alternative line of a claim (`claimed_by` is set).
+/// `FilteredLine::flags`: the line belongs to a claim (`claimed_by` is set).
 pub(super) const CLAIM: u8 = 2;
+/// `FilteredLine::flags`: the line is part of a country's actual border (OpenMapTiles
+/// names the countries either side, `adm0_l`/`adm0_r`). OpenMapTiles merges each
+/// OpenStreetMap way into one feature, so the line where a disputed border actually
+/// runs carries `claimed_by` too; this flag tells it from a claim-only line.
+pub(super) const COUNTRY_EDGE: u8 = 4;
 
 /// Place kinds kept from the `place` layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +111,9 @@ impl Filtered {
                         }
                         if text("claimed_by").is_some() {
                             flags |= CLAIM;
+                        }
+                        if text("adm0_l").is_some() || text("adm0_r").is_some() {
+                            flags |= COUNTRY_EDGE;
                         }
                         for part in &feature.parts {
                             let scaled: Vec<(f64, f64)> =
@@ -319,7 +327,7 @@ mod tests {
                 "boundary",
                 4096,
                 &[
-                    line(2, 0, vec![]),
+                    line(2, 0, vec![("adm0_l", TestValue::Text("Germany"))]),
                     line(8, 0, vec![]),
                     line(2, 1, vec![]),
                     line(
@@ -379,7 +387,10 @@ mod tests {
     fn keeps_land_borders_with_levels_and_flags_cut_at_the_edge() {
         let filtered = Filtered::from_mvt(&sample()).unwrap();
         let summary: Vec<(u8, u8)> = filtered.lines.iter().map(|l| (l.level, l.flags)).collect();
-        assert_eq!(summary, vec![(2, 0), (8, 0), (2, DISPUTED | CLAIM)]);
+        assert_eq!(
+            summary,
+            vec![(2, COUNTRY_EDGE), (8, 0), (2, DISPUTED | CLAIM)]
+        );
         assert_eq!(
             filtered.lines[0].points,
             vec![(0, 1000), (2048, 1000), (EXTENT, 1000)]

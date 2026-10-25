@@ -16,7 +16,11 @@ pub(super) struct CompareRenderer {
 }
 
 impl CompareRenderer {
-    pub(super) fn new(cache: Arc<globecraft_data::tiles::TileCache>, ctx: egui::Context) -> Self {
+    pub(super) fn new(
+        cache: Arc<globecraft_data::tiles::TileCache>,
+        ctx: egui::Context,
+        demand: super::rendering::SharedDemand,
+    ) -> Self {
         let admission_cache = cache.clone();
         let mut backend = globecraft_render::backend::FrameRenderer::new(
             globecraft_render::backend::BackendPreference::from_environment(),
@@ -25,7 +29,14 @@ impl CompareRenderer {
             worker: RenderWorker::with_prepare(
                 move |request, buffer| backend.render(request, &cache, buffer),
                 move || ctx.request_repaint(),
-                move |frame| admission_cache.prioritize_view(&frame.required_tiles()),
+                move |frame| {
+                    super::rendering::ViewDemand::report(
+                        &demand,
+                        &admission_cache,
+                        super::rendering::DemandSlot::Compare,
+                        frame.required_tiles(),
+                    )
+                },
                 |request, pixels| {
                     egui::ColorImage::from_rgba_unmultiplied(
                         [request.width, request.height],

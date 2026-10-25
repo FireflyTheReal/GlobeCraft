@@ -97,6 +97,8 @@ const ISLAND_VILLAGE_MAX_ZOOM: u8 = 12;
 pub(super) struct TileContent {
     pub(super) country: Vec<Line>,
     pub(super) disputed: Vec<Line>,
+    /// Each claimant's own line of a disputed border (`claimed_by`).
+    pub(super) claims: Vec<Line>,
     pub(super) state: Vec<Line>,
     pub(super) municipal: Vec<Line>,
     pub(super) places: Vec<MapLabel>,
@@ -112,12 +114,17 @@ impl TileContent {
         let mut content = Self::default();
         let mut disputed_seen = std::collections::HashSet::new();
         for line in &filtered.lines {
+            // A claimed line that is no country's actual border is a claim only; the
+            // actual border of a disputed area is the one neutral line.
+            let claim = line.flags & compact::CLAIM != 0 && line.flags & compact::COUNTRY_EDGE == 0;
             let disputed = line.flags & (compact::DISPUTED | compact::CLAIM) != 0;
-            // Each claimant may carry its own copy of a disputed line: draw it once.
-            if line.level == 2 && disputed && !disputed_seen.insert(line.points.clone()) {
+            // Claimants may carry identical copies of a line: draw it once.
+            if line.level == 2 && (claim || disputed) && !disputed_seen.insert(line.points.clone())
+            {
                 continue;
             }
             let out = match line.level {
+                2 if claim => &mut content.claims,
                 2 if disputed => &mut content.disputed,
                 2 => &mut content.country,
                 l if STATE_LEVELS.contains(&l) => &mut content.state,
@@ -163,6 +170,7 @@ impl TileContent {
         Self {
             country: lines(&self.country),
             disputed: lines(&self.disputed),
+            claims: lines(&self.claims),
             state: lines(&self.state),
             municipal: lines(&self.municipal),
             places: self
@@ -250,7 +258,7 @@ mod tests {
 
     #[test]
     fn disputed_lines_are_drawn_once_apart_from_settled_ones() {
-        use compact::{CLAIM, DISPUTED, FilteredLine};
+        use compact::{CLAIM, COUNTRY_EDGE, DISPUTED, FilteredLine};
         let line = |flags, y| FilteredLine {
             level: 2,
             flags,
@@ -258,12 +266,14 @@ mod tests {
         };
         let filtered = Filtered {
             lines: vec![
-                line(0, 100),
+                line(COUNTRY_EDGE, 100),
                 line(DISPUTED, 200),
-                // Each claimant's copy of the same line.
+                // Each claimant's copy of the same claim-only line.
                 line(DISPUTED | CLAIM, 300),
                 line(DISPUTED | CLAIM, 300),
                 line(CLAIM, 400),
+                // Where the disputed border actually runs: claimed, but a country edge.
+                line(DISPUTED | CLAIM | COUNTRY_EDGE, 500),
             ],
             places: Vec::new(),
         };
@@ -276,7 +286,9 @@ mod tests {
             &filtered,
         );
         assert_eq!(content.country.len(), 1);
-        assert_eq!(content.disputed.len(), 3);
+        // The neutral lines apart from the claims, each claimed line once.
+        assert_eq!(content.disputed.len(), 2);
+        assert_eq!(content.claims.len(), 2);
     }
 
     #[test]

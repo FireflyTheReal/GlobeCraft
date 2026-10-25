@@ -580,6 +580,7 @@ impl eframe::App for App {
                 lon: self.cam.lon,
                 altitude_km: self.cam.alt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
+                claims: self.settings.map_style.disputed_claims,
             });
         // Brazil's municipal outlines stream per state like every other country;
         // this whole-country pass only supplies names.

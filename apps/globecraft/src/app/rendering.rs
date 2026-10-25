@@ -10,6 +10,9 @@ use globecraft_render::RenderCfg;
 use globecraft_render::worker::{RenderRequest, RenderWorker};
 use std::sync::Arc;
 
+/// Raster scale of the swipe compare's frame while the camera moves.
+const COMPARE_MOTION_SCALE: f32 = 0.5;
+
 struct PreparedFrame {
     image: egui::ColorImage,
     overlays: Option<super::overlays::PreparedOverlay>,
@@ -17,8 +20,57 @@ struct PreparedFrame {
     live_layers: Option<Arc<globecraft_render::live_layers::LiveGeometry>>,
 }
 
+/// The imagery tiles each frame worker needs. The tile cache keeps only the requests
+/// of the view it was last given, so the main frame and the swipe compare's frame report
+/// here and both lists go to the cache together (the main view's tiles first);
+/// alone, each worker cancelled the other's downloads.
+#[derive(Default)]
+pub(super) struct ViewDemand {
+    main: Vec<globecraft_data::tiles::TileKey>,
+    compare: Vec<globecraft_data::tiles::TileKey>,
+}
+
+pub(super) type SharedDemand = Arc<std::sync::Mutex<ViewDemand>>;
+
+/// Which frame worker reports its tiles.
+#[derive(Clone, Copy)]
+pub(super) enum DemandSlot {
+    Main,
+    Compare,
+}
+
+impl ViewDemand {
+    /// Records `keys` for `slot` and hands the cache both views' tiles.
+    pub(super) fn report(
+        demand: &SharedDemand,
+        cache: &globecraft_data::tiles::TileCache,
+        slot: DemandSlot,
+        keys: Vec<globecraft_data::tiles::TileKey>,
+    ) {
+        let combined = {
+            let Ok(mut demand) = demand.lock() else {
+                cache.prioritize_view(&keys);
+                return;
+            };
+            match slot {
+                DemandSlot::Main => demand.main = keys,
+                DemandSlot::Compare => demand.compare = keys,
+            }
+            demand.combined()
+        };
+        cache.prioritize_view(&combined);
+    }
+    fn combined(&self) -> Vec<globecraft_data::tiles::TileKey> {
+        let mut keys = self.main.clone();
+        keys.extend(self.compare.iter().copied());
+        keys
+    }
+}
+
 pub(super) struct Renderer {
     worker: RenderWorker<PreparedFrame>,
+    /// Shared with the swipe compare's worker (see `ViewDemand`).
+    pub(super) demand: SharedDemand,
     displayed: Option<(Cam, Basis)>,
     displayed_rect: Option<egui::Rect>,
     displayed_grid_step: Option<f64>,
@@ -41,7 +93,10 @@ impl Renderer {
         let overlay_ctx = ctx.clone();
         let mut live_preparer = globecraft_render::live_layers::LivePreparer::default();
         let mut aircraft_preparer = globecraft_render::aircraft::AircraftPreparer::default();
+        let demand = SharedDemand::default();
+        let admit_demand = demand.clone();
         Self {
+            demand,
             worker: RenderWorker::with_prepare(
                 move |request, buffer| {
                     #[cfg(feature = "profiling")]
@@ -56,7 +111,12 @@ impl Renderer {
                 },
                 move || ctx.request_repaint(),
                 move |frame| {
-                    admission_cache.prioritize_view(&frame.required_tiles());
+                    ViewDemand::report(
+                        &admit_demand,
+                        &admission_cache,
+                        DemandSlot::Main,
+                        frame.required_tiles(),
+                    );
                 },
                 move |request, pixels| {
                     #[cfg(feature = "profiling")]
@@ -117,7 +177,7 @@ impl Renderer {
     ) {
         let now = std::time::Instant::now();
         if changed || self.retry_at.is_some_and(|deadline| now >= deadline) {
-            cache.prioritize_view(&self.required);
+            ViewDemand::report(&self.demand, cache, DemandSlot::Main, self.required.clone());
             self.retry_at = cache.retry_delay(&self.required).map(|delay| now + delay);
         }
         if let Some(deadline) = self.retry_at {
@@ -213,15 +273,27 @@ impl App {
         match self.active_compare() {
             Some(compare) => {
                 let renderer = self.compare_renderer.get_or_insert_with(|| {
-                    super::compare_frame::CompareRenderer::new(self.cache.clone(), self.ctx.clone())
+                    super::compare_frame::CompareRenderer::new(
+                        self.cache.clone(),
+                        self.ctx.clone(),
+                        self.renderer.demand.clone(),
+                    )
                 });
+                // While the camera moves the compare side renders at a lower resolution,
+                // so the second frame costs a quarter of the main one; at rest it is full.
+                let reduce = if size.lod_scale < 1.0 {
+                    COMPARE_MOTION_SCALE
+                } else {
+                    1.0
+                };
                 renderer.submit(RenderRequest {
-                    width: size.width,
-                    height: size.height,
+                    width: ((size.width as f32 * reduce).round() as usize).max(1),
+                    height: ((size.height as f32 * reduce).round() as usize).max(1),
                     cam: self.cam,
                     basis,
                     cfg: RenderCfg {
                         rel: compare.index as u16,
+                        lod_scale: cfg.lod_scale * reduce,
                         ..cfg.clone()
                     },
                     presentation,
@@ -230,7 +302,13 @@ impl App {
                     overlays: None,
                 });
             }
-            None => self.compare_renderer = None,
+            None => {
+                if self.compare_renderer.take().is_some()
+                    && let Ok(mut demand) = self.renderer.demand.lock()
+                {
+                    demand.compare.clear();
+                }
+            }
         }
         self.renderer.worker.submit(RenderRequest {
             width: size.width,

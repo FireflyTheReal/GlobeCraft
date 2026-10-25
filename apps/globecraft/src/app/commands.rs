@@ -672,6 +672,12 @@ impl App {
                 self.settings.map_style.labels.set(label, size);
                 json!({"label": label.code(), "size": size})
             }
+            "style.disputedClaims" => {
+                let enabled =
+                    bool_param(p, "enabled").unwrap_or(!self.settings.map_style.disputed_claims);
+                self.settings.map_style.disputed_claims = enabled;
+                json!({"disputed_claims": enabled})
+            }
             "style.reset" => {
                 self.settings.map_style = Default::default();
                 json!({})
@@ -824,6 +830,10 @@ impl App {
             "ruler.unit" => {
                 on(str_param(params, "unit").is_some_and(|u| u == self.settings.ruler_unit.code()))
             }
+            "style.disputedClaims" => CommandState {
+                enabled: true,
+                checked: self.settings.map_style.disputed_claims,
+            },
             "style.reset" => CommandState {
                 enabled: self.settings.map_style != Default::default(),
                 checked: false,
