@@ -213,9 +213,12 @@ impl App {
             ui.label(label);
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(value).desired_width(300.0));
-                if ui
-                    .button(lg.text("settings-folder-browse-action"))
-                    .clicked()
+                if super::super::icons::button(
+                    ui,
+                    "catalog",
+                    lg.text("settings-folder-browse-action"),
+                )
+                .clicked()
                 {
                     let mut dlg = rfd::FileDialog::new().set_title(title);
                     if std::path::Path::new(value.as_str()).is_dir() {

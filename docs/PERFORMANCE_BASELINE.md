@@ -403,3 +403,35 @@ border rules of ROADMAP 13.15 (land test, other-side fallback, joined runs, cont
 check). It runs on the feature pool since 14.10, so frames do not wait for it. The land
 index (Natural Earth outlines by 0.05° latitude row) is built once per detail level,
 with the border index.
+
+### Streaming replay baseline (2026-10-25, roadmap 1.1)
+
+`globecraft-render/src/benchmarks/replay.rs`: four recorded camera paths in real time
+against a local fixture tile server (one shared link, 22.6 KB JPEG tiles), each from an
+empty cache, through the production request path (motion/idle raster sizes, view
+priority, idle overview and zoom-out warmups). 960 × 600 pt view at 1 px/pt, release
+build, 2-core container. "Complete" and "sharp" count from the moment the camera stops;
+"wasted" are tiles downloaded but never sampled by a frame.
+
+Link 60 ms, 4 MB/s:
+
+| Path | Motion frame ms (median / p95) | Holes while moving | Complete after stop | Sharp after stop | Tiles | MB | Wasted |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| zoom into a city | 15.2 / 21.2 | 0.64 % | 0.01 s | 0.01 s | 362 | 8.17 | 66 (18 %) |
+| fly across | 16.9 / 22.0 | 1.54 % | 0.00 s | 0.66 s | 318 | 7.18 | 28 (9 %) |
+| drag-pan | 16.1 / 20.7 | 2.20 % | 0.02 s | 0.22 s | 249 | 5.62 | 13 (5 %) |
+| orbit | 18.0 / 22.0 | 1.65 % | 0.02 s | 0.02 s | 103 | 2.32 | 10 (10 %) |
+
+Link 150 ms, 1 MB/s:
+
+| Path | Motion frame ms (median / p95) | Holes while moving | Complete after stop | Sharp after stop | Tiles | MB | Wasted |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| zoom into a city | 14.4 / 19.0 | 1.48 % | 0.01 s | 0.29 s | 237 | 5.35 | 55 (23 %) |
+| fly across | 16.7 / 22.2 | 3.57 % | 0.02 s | 1.36 s | 224 | 5.01 | 31 (14 %) |
+| drag-pan | 14.8 / 19.6 | 4.90 % | 0.00 s | 0.76 s | 190 | 4.24 | 25 (13 %) |
+| orbit | 18.4 / 24.1 | 3.71 % | 0.00 s | 0.00 s | 103 | 2.32 | 5 (5 %) |
+
+Reading: once the camera stops the view is complete at once and sharp within 1.4 s
+even on the slow link; the cost shows while moving (holes of 1.5–5 % on the slow
+link, mostly at the leading edge of a pan or fly) and in wasted downloads during a
+zoom (levels passed through before their tiles arrive).

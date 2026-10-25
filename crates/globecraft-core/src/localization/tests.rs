@@ -79,6 +79,14 @@ fn catalogs_have_matching_keys_variables_and_format_every_message() {
         }
     }
 }
+/// The emoji that labels once started with are drawn as vector icons since roadmap 0.6;
+/// the wording after them is unchanged.
+fn without_emoji_icon(text: &str) -> &str {
+    match text.split_once(' ') {
+        Some((head, rest)) if head.chars().all(|c| c >= '\u{2190}') => rest,
+        _ => text,
+    }
+}
 #[test]
 fn all_original_labels_keep_exact_wording_and_help_newlines() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -101,14 +109,14 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
                 ("settings-kml-folder-label", Lang::PtBr) => "Arquivos KML/KMZ:",
                 ("settings-kml-folder-dialog-title", Lang::En) => "KML/KMZ folder",
                 ("settings-kml-folder-dialog-title", Lang::PtBr) => "Pasta dos KML/KMZ",
-                ("kml-drop-zone-hint", Lang::En) => "📥 Drag a .kml or .kmz file here",
-                ("kml-drop-zone-hint", Lang::PtBr) => "📥 Arraste um arquivo .kml ou .kmz aqui",
+                ("kml-drop-zone-hint", Lang::En) => "Drag a .kml or .kmz file here",
+                ("kml-drop-zone-hint", Lang::PtBr) => "Arraste um arquivo .kml ou .kmz aqui",
                 ("kml-save-tooltip", Lang::En) => "Saves into the KML/KMZ folder (see Settings)",
                 ("kml-save-tooltip", Lang::PtBr) => {
                     "Salva na pasta de KML/KMZ (veja Configurações)"
                 }
-                ("kml-open-action", Lang::En) => "📂 Open KML/KMZ…",
-                ("kml-open-action", Lang::PtBr) => "📂 Abrir KML/KMZ…",
+                ("kml-open-action", Lang::En) => "Open KML/KMZ…",
+                ("kml-open-action", Lang::PtBr) => "Abrir KML/KMZ…",
                 ("menu-kml-open", Lang::En) => "Open KML/KMZ…",
                 ("menu-kml-open", Lang::PtBr) => "Abrir KML/KMZ…",
                 ("menu-kml-save", Lang::En) => "Save KML/KMZ",
@@ -135,7 +143,13 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
                 ("layers-boundary-attribution", Lang::PtBr) => {
                     "Fronteiras e nomes: colaboradores do OpenStreetMap (ODbL) via OpenFreeMap e OpenMapTiles; Natural Earth (domínio público) sem internet."
                 }
-                _ => values[lang.code()].as_str().unwrap(),
+                ("boundaries-osm-loading-status", Lang::En) => "Loading OpenStreetMap borders…",
+                ("boundaries-osm-loading-status", Lang::PtBr) => {
+                    "Carregando limites do OpenStreetMap…"
+                }
+                // Decorative symbols in the easter egg stay.
+                ("flat-earth-title", _) => values[lang.code()].as_str().unwrap(),
+                _ => without_emoji_icon(values[lang.code()].as_str().unwrap()),
             };
             assert_eq!(lang.text(id), expected, "{id}");
         }
@@ -257,7 +271,7 @@ fn original_dynamic_messages_preserve_output_except_requested_pluralization() {
                 ("search-results-status", Lang::PtBr) => "1234 resultados encontrados.",
                 ("kml-import-success", Lang::En) => "1234 placemarks imported. — a & b/locais.kml",
                 ("kml-import-success", Lang::PtBr) => "1234 locais importados. — a & b/locais.kml",
-                _ => values[lang.code()].as_str().unwrap(),
+                _ => without_emoji_icon(values[lang.code()].as_str().unwrap()),
             };
             assert_eq!(lang.format(id, &args), expected, "{id}");
         }

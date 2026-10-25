@@ -94,6 +94,8 @@ pub struct TileCache {
     tx: tokio::sync::mpsc::Sender<TileKey>,
     generation: AtomicU64,
     inflight: AtomicUsize,
+    /// Benchmarks only: every tile comes from `{base}/{provider}/{z}/{x}/{y}/{release}`.
+    fixture_source: Option<Arc<str>>,
 }
 
 impl TileCache {
@@ -139,6 +141,7 @@ impl TileCache {
             tx,
             generation: AtomicU64::new(0),
             inflight: AtomicUsize::new(0),
+            fixture_source: None,
         }
     }
     pub fn new(
@@ -163,16 +166,45 @@ impl TileCache {
     ) -> Arc<Self> {
         Self::with_budgets_in(repaint, runtime, cache_dir(), budgets)
     }
+    /// A cache that downloads every tile from a local fixture server at `base`
+    /// (`{base}/{provider code}/{z}/{x}/{y}/{release}`), for the streaming replay
+    /// benchmark. Disk caching in `directory` works as in production.
+    pub fn with_fixture_source(
+        repaint: impl Fn() + Send + Sync + 'static,
+        runtime: &tokio::runtime::Handle,
+        directory: PathBuf,
+        base: &str,
+    ) -> Arc<Self> {
+        Self::spawn(
+            repaint,
+            runtime,
+            directory,
+            CacheBudgets::default(),
+            Some(base.trim_end_matches('/').into()),
+        )
+    }
     fn with_budgets_in(
         repaint: impl Fn() + Send + Sync + 'static,
         runtime: &tokio::runtime::Handle,
         directory: PathBuf,
         budgets: CacheBudgets,
     ) -> Arc<Self> {
+        Self::spawn(repaint, runtime, directory, budgets, None)
+    }
+    fn spawn(
+        repaint: impl Fn() + Send + Sync + 'static,
+        runtime: &tokio::runtime::Handle,
+        directory: PathBuf,
+        budgets: CacheBudgets,
+        fixture_source: Option<Arc<str>>,
+    ) -> Arc<Self> {
         let repaint: Arc<dyn Fn() + Send + Sync> = Arc::new(repaint);
         let (tx, rx) = tokio::sync::mpsc::channel(MAX_INFLIGHT);
         let rx = Arc::new(tokio::sync::Mutex::new(rx));
-        let cache = Arc::new(Self::with_budgets_at(tx, budgets, directory));
+        let cache = Arc::new(Self {
+            fixture_source,
+            ..Self::with_budgets_at(tx, budgets, directory)
+        });
         for _ in 0..TILE_WORKER_COUNT {
             let (c, r, x) = (cache.clone(), rx.clone(), repaint.clone());
             runtime.spawn(worker(Arc::downgrade(&c), r, x));
@@ -366,7 +398,11 @@ async fn decode(bytes: Vec<u8>) -> Result<(Tile, Vec<u8>), crate::Error> {
     })
     .await
 }
-async fn fetch_tile(k: TileKey, disk: &DiskCache) -> Result<FetchedTile, TileFailure> {
+async fn fetch_tile(
+    k: TileKey,
+    disk: &DiskCache,
+    fixture_source: Option<&str>,
+) -> Result<FetchedTile, TileFailure> {
     let (provider, zoom, x, y, release) = unkey(k);
     let path = disk.path(k)?;
     if let Some(bytes) = disk.read(&path).await {
@@ -386,7 +422,10 @@ async fn fetch_tile(k: TileKey, disk: &DiskCache) -> Result<FetchedTile, TileFai
             }
         }
     }
-    let url = provider.url(zoom, x, y, release);
+    let url = match fixture_source {
+        Some(base) => format!("{base}/{}/{zoom}/{x}/{y}/{release}", provider.code()),
+        None => provider.url(zoom, x, y, release),
+    };
     if url.is_empty() {
         return Err(crate::Error::from("empty tile URL").into());
     }
@@ -426,7 +465,7 @@ async fn worker(
         let Some((key, epoch)) = cache.next_job() else {
             continue;
         };
-        match fetch_tile(key, &cache.disk).await {
+        match fetch_tile(key, &cache.disk, cache.fixture_source.as_deref()).await {
             Ok(FetchedTile { tile, persistence }) => {
                 // Publish before optional SQLite persistence, so writes/eviction do
                 // not delay imagery readiness. Persistence keeps its original epoch.

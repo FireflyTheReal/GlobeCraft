@@ -335,6 +335,62 @@ fn maneuver(p: &P, kind: &str) {
     }
 }
 
+/// A button with icon `name` before `text`, styled like egui's own buttons (framed, or
+/// frameless with a hover fill inside menus).
+pub(in crate::app) fn button(
+    ui: &mut egui::Ui,
+    name: &str,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let pad = ui.spacing().button_padding;
+    let icon = ui.text_style_height(&egui::TextStyle::Button).max(14.0);
+    let gap = ui.spacing().icon_spacing.max(4.0);
+    let galley = text.into().into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let size = egui::vec2(
+        pad.x * 2.0 + icon + gap + galley.size().x,
+        (pad.y * 2.0 + galley.size().y.max(icon)).max(ui.spacing().interact_size.y),
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), galley.text())
+    });
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let framed = ui.visuals().button_frame;
+        if framed || response.hovered() || response.is_pointer_button_down_on() {
+            ui.painter().rect(
+                rect.expand(visuals.expansion),
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                if framed {
+                    visuals.bg_stroke
+                } else {
+                    Stroke::NONE
+                },
+                egui::StrokeKind::Inside,
+            );
+        }
+        let ink = visuals.text_color();
+        let accent = super::theme::Tokens::get(ui.ctx()).accent;
+        let icon_rect = Rect::from_min_size(
+            pos2(rect.left() + pad.x, rect.center().y - icon / 2.0),
+            egui::vec2(icon, icon),
+        );
+        paint(ui.painter(), icon_rect, name, ink, accent);
+        let text_pos = pos2(
+            icon_rect.right() + gap,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter().galley(text_pos, galley, ink);
+    }
+    response
+}
+
 /// Paints icon `name` into `r`. `ink` draws outlines, `accent` the colour parts.
 pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32, accent: Color32) {
     let p = P {

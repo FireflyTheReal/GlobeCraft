@@ -8,13 +8,13 @@ screenshot-empty-error = Nada para salvar ainda.
 
 kml-drop-type-error = Só é possível soltar arquivos .kml ou .kmz aqui.
 
-globe-placemark-action = 📍 Adicionar local aqui
+globe-placemark-action = Adicionar local aqui
 
-globe-fly-to-action = ✈ Voar até aqui
+globe-fly-to-action = Voar até aqui
 
-globe-ruler-point-action = 📏 Adicionar ponto na régua
+globe-ruler-point-action = Adicionar ponto na régua
 
-globe-copy-coordinates-action = 📋 Copiar coordenadas
+globe-copy-coordinates-action = Copiar coordenadas
 
 globe-context-menu-hint = Clique sobre o globo.
 
@@ -26,7 +26,7 @@ search-pending-status = Buscando…
 
 search-input-placeholder = Buscar lugar, endereço ou “lat, lon”
 
-search-submit-action = 🔍 Buscar
+search-submit-action = Buscar
 
 settings-open-tooltip = Configurações
 toolbar-ruler-tooltip = Medir distâncias
@@ -70,7 +70,7 @@ settings-map-scale-label = Texto do mapa (nomes, régua, escala)
 
 settings-folders-section-title = Onde salvar os arquivos
 
-settings-folder-browse-action = 📁 Procurar…
+settings-folder-browse-action = Procurar…
 
 settings-screenshot-folder-label = Capturas de tela (PNG):
 
@@ -96,7 +96,7 @@ settings-cache-usage-unavailable = Cache size unavailable
 
 layers-section-title = Camadas
 
-wayback-loading-status = ⏳ Carregando datas disponíveis…
+wayback-loading-status = Carregando datas disponíveis…
 
 wayback-older-tooltip = Mais antiga
 
@@ -118,8 +118,8 @@ layers-municipal-borders-toggle = Limites municipais
 
 layers-boundary-attribution = Fronteiras e nomes: colaboradores do OpenStreetMap (ODbL) via OpenFreeMap e OpenMapTiles; Natural Earth (domínio público) sem internet.
 
-boundaries-loading-status = ⏳ Carregando limites e nomes…
-boundaries-osm-loading-status = ⏳ Carregando limites municipais detalhados…
+boundaries-loading-status = Carregando limites e nomes…
+boundaries-osm-loading-status = Carregando limites do OpenStreetMap…
 
 layers-atmosphere-toggle = Atmosfera e estrelas
 
@@ -142,9 +142,9 @@ layers-live-overlays-help = Aviões reais, com cobertura incompleta: atualizaç�
 
 navigation-section-title = Navegação
 
-navigation-reset-north-action = 🧭 Norte para cima
+navigation-reset-north-action = Norte para cima
 
-navigation-global-view-action = 🌐 Visão global
+navigation-global-view-action = Visão global
 
 search-results-label = Resultados da busca:
 
@@ -152,19 +152,19 @@ placemarks-section-title = Locais (Placemarks)
 
 placemarks-name-placeholder = Nome
 
-placemarks-add-center-action = ➕ No centro
+placemarks-add-center-action = No centro
 
 placemarks-fly-to-action = Ir
 
-kml-drop-zone-hint = 📥 Arraste um arquivo .kml ou .kmz aqui
+kml-drop-zone-hint = Arraste um arquivo .kml ou .kmz aqui
 
-kml-save-action = 💾 Salvar
+kml-save-action = Salvar
 
 kml-save-tooltip = Salva na pasta de KML/KMZ (veja Configurações)
 
-kml-save-as-action = 💾 Salvar como…
+kml-save-as-action = Salvar como…
 
-kml-open-action = 📂 Abrir KML/KMZ…
+kml-open-action = Abrir KML/KMZ…
 
 ruler-section-title = Régua
 
@@ -174,7 +174,7 @@ ruler-clear-action = Limpar régua
 
 export-section-title = Exportar
 
-screenshot-save-action = 📷 Salvar captura (PNG)
+screenshot-save-action = Salvar captura (PNG)
 
 settings-folders-action = Mudar pastas…
 
@@ -239,7 +239,7 @@ export-folder-label = Pasta: { $path }
 
 ruler-measurement-summary = Pontos: { $count }   Total: { $distance }
 
-statusbar-tiles-loading = ⏳ carregando { $count } tiles
+statusbar-tiles-loading = carregando { $count } tiles
 
 statusbar-camera-center = Centro: { $latitude }°, { $longitude }°
 
@@ -277,9 +277,9 @@ explorer-radar-credit = Fonte do radar: RainViewer
 explorer-radar-source = Radar meteorológico RainViewer
 explorer-radar-explanation = Verde/amarelo/vermelho indicam a intensidade aproximada da chuva (refletividade do radar), não a temperatura infravermelha do satélite. A cobertura e atualização variam.
 explorer-bodies = Corpos celestes
-explorer-earth = 🌍 Terra
-explorer-moon = 🌙 Lua
-explorer-custom-planet = 🪐 Planeta customizável
+explorer-earth = Terra
+explorer-moon = Lua
+explorer-custom-planet = Planeta customizável
 explorer-moon-fixed = A Lua é fixa e não editável. As imagens abaixo pertencem exclusivamente ao planeta customizável.
 explorer-name = Nome:
 explorer-image = Imagem:
@@ -423,7 +423,7 @@ flat-earth-title = ✦ TERRA PLANA SECRETA
 flat-earth-unlocked = Easter egg Terra Plana desbloqueado! Esc para voltar.
 flat-earth-disclaimer = Uma brincadeira visual, não um modelo científico.
 flat-earth-hint = Arraste: girar · Shift: mover · Roda: zoom · Duplo clique: reiniciar · Esc: sair
-flat-earth-return = ↩ Voltar ao globo
+flat-earth-return = Voltar ao globo
 flat-earth-image-error = Não foi possível carregar a ilustração secreta.
 layers-vessels-toggle = Navios AIS do mundo inteiro
 layers-satellites-toggle = Satélites (órbitas CelesTrak, estimadas)
@@ -679,6 +679,8 @@ cmd-layer-show = Mostrar camada
 cmd-layer-show-help = Mostra, oculta ou alterna uma camada do mapa.
 cmd-layer-terrain-exaggeration = Exagero
 cmd-layer-terrain-exaggeration-help = Define o exagero vertical do relevo 3D.
+cmd-layer-state-altitude = Estados visíveis abaixo
+cmd-layer-state-altitude-help = Define a altitude da câmera abaixo da qual os limites de estados e províncias aparecem.
 cmd-world-earth-model = Modelo da Terra
 cmd-world-earth-model-help = Escolhe o elipsoide WGS 84 ou uma esfera perfeita para geometria e distâncias.
 cmd-world-body = Mundo

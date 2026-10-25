@@ -8,13 +8,13 @@ screenshot-empty-error = Nothing to save yet.
 
 kml-drop-type-error = Only .kml or .kmz files can be dropped here.
 
-globe-placemark-action = 📍 Add placemark here
+globe-placemark-action = Add placemark here
 
-globe-fly-to-action = ✈ Fly here
+globe-fly-to-action = Fly here
 
-globe-ruler-point-action = 📏 Add ruler point
+globe-ruler-point-action = Add ruler point
 
-globe-copy-coordinates-action = 📋 Copy coordinates
+globe-copy-coordinates-action = Copy coordinates
 
 globe-context-menu-hint = Click on the globe.
 
@@ -26,7 +26,7 @@ search-pending-status = Searching…
 
 search-input-placeholder = Search a place, address or “lat, lon”
 
-search-submit-action = 🔍 Search
+search-submit-action = Search
 
 settings-open-tooltip = Settings
 toolbar-ruler-tooltip = Measure distances
@@ -70,7 +70,7 @@ settings-map-scale-label = Map text (names, ruler, scale)
 
 settings-folders-section-title = Where to save files
 
-settings-folder-browse-action = 📁 Browse…
+settings-folder-browse-action = Browse…
 
 settings-screenshot-folder-label = Screenshots (PNG):
 
@@ -96,7 +96,7 @@ settings-cache-usage-unavailable = Cache size unavailable
 
 layers-section-title = Layers
 
-wayback-loading-status = ⏳ Loading available dates…
+wayback-loading-status = Loading available dates…
 
 wayback-older-tooltip = Older
 
@@ -118,8 +118,8 @@ layers-municipal-borders-toggle = Municipal borders
 
 layers-boundary-attribution = Borders and names: OpenStreetMap contributors (ODbL) via OpenFreeMap and OpenMapTiles; Natural Earth (public domain) offline.
 
-boundaries-loading-status = ⏳ Loading borders and names…
-boundaries-osm-loading-status = ⏳ Loading detailed municipal borders…
+boundaries-loading-status = Loading borders and names…
+boundaries-osm-loading-status = Loading OpenStreetMap borders…
 
 layers-atmosphere-toggle = Atmosphere and stars
 
@@ -142,9 +142,9 @@ layers-live-overlays-help = Aircraft positions come from live tracking (coverage
 
 navigation-section-title = Navigation
 
-navigation-reset-north-action = 🧭 North up
+navigation-reset-north-action = North up
 
-navigation-global-view-action = 🌐 Global view
+navigation-global-view-action = Global view
 
 search-results-label = Search results:
 
@@ -152,19 +152,19 @@ placemarks-section-title = Placemarks
 
 placemarks-name-placeholder = Name
 
-placemarks-add-center-action = ➕ At center
+placemarks-add-center-action = At center
 
 placemarks-fly-to-action = Go
 
-kml-drop-zone-hint = 📥 Drag a .kml or .kmz file here
+kml-drop-zone-hint = Drag a .kml or .kmz file here
 
-kml-save-action = 💾 Save
+kml-save-action = Save
 
 kml-save-tooltip = Saves into the KML/KMZ folder (see Settings)
 
-kml-save-as-action = 💾 Save as…
+kml-save-as-action = Save as…
 
-kml-open-action = 📂 Open KML/KMZ…
+kml-open-action = Open KML/KMZ…
 
 ruler-section-title = Ruler
 
@@ -174,7 +174,7 @@ ruler-clear-action = Clear ruler
 
 export-section-title = Export
 
-screenshot-save-action = 📷 Save screenshot (PNG)
+screenshot-save-action = Save screenshot (PNG)
 
 settings-folders-action = Change folders…
 
@@ -239,7 +239,7 @@ export-folder-label = Folder: { $path }
 
 ruler-measurement-summary = Points: { $count }   Total: { $distance }
 
-statusbar-tiles-loading = ⏳ loading { $count } tiles
+statusbar-tiles-loading = loading { $count } tiles
 
 statusbar-camera-center = Center: { $latitude }°, { $longitude }°
 
@@ -277,9 +277,9 @@ explorer-radar-credit = Radar source: RainViewer
 explorer-radar-source = RainViewer weather radar
 explorer-radar-explanation = Green/yellow/red indicates approximate rain intensity (radar reflectivity), not infrared satellite temperature. Coverage and freshness vary.
 explorer-bodies = Celestial bodies
-explorer-earth = 🌍 Earth
-explorer-moon = 🌙 Moon
-explorer-custom-planet = 🪐 Custom planet
+explorer-earth = Earth
+explorer-moon = Moon
+explorer-custom-planet = Custom planet
 explorer-moon-fixed = The Moon is fixed and cannot be edited. The settings below apply only to the custom planet.
 explorer-name = Name:
 explorer-image = Image:
@@ -423,7 +423,7 @@ flat-earth-title = ✦ SECRET FLAT EARTH
 flat-earth-unlocked = Flat-Earth Easter egg unlocked! Press Esc to return.
 flat-earth-disclaimer = A visual joke, not a scientific Earth model.
 flat-earth-hint = Drag: rotate · Shift: pan · Scroll: zoom · Double-click: reset · Esc: exit
-flat-earth-return = ↩ Back to globe
+flat-earth-return = Back to globe
 flat-earth-image-error = Could not load the hidden illustration.
 layers-vessels-toggle = Worldwide AIS ships
 layers-satellites-toggle = Satellites (predicted CelesTrak orbits)
@@ -679,6 +679,8 @@ cmd-layer-show = Show Layer
 cmd-layer-show-help = Show, hide or toggle a map layer.
 cmd-layer-terrain-exaggeration = Exaggeration
 cmd-layer-terrain-exaggeration-help = Set the vertical exaggeration of 3D terrain.
+cmd-layer-state-altitude = States visible below
+cmd-layer-state-altitude-help = Set the camera altitude below which state and province borders are drawn.
 cmd-world-earth-model = Earth Model
 cmd-world-earth-model-help = Choose the WGS 84 ellipsoid or a perfect sphere for geometry and distances.
 cmd-world-body = World

@@ -234,8 +234,7 @@ impl App {
                     .hint_text(lang.text("placemarks-name-placeholder"))
                     .desired_width(110.0),
             );
-            if ui
-                .button(lang.text("placemarks-add-center-action"))
+            if super::icons::button(ui, "point_tool", lang.text("placemarks-add-center-action"))
                 .clicked()
             {
                 self.add_center_placemark();

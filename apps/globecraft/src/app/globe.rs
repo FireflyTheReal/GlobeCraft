@@ -521,13 +521,13 @@ impl App {
                 let at = serde_json::json!({"lat": la, "lon": lo});
                 let fly = serde_json::json!({"lat": la, "lon": lo,
                     "altitude_km": (self.cam.alt * POINT_FLY_ALTITUDE_RATIO).max(MIN_POINT_FLY_ALTITUDE_KM)});
-                for (key, id, params) in [
-                    ("globe-placemark-action", "places.add", at.clone()),
-                    ("globe-fly-to-action", "camera.flyTo", fly),
-                    ("globe-ruler-point-action", "ruler.addPoint", at.clone()),
-                    ("globe-copy-coordinates-action", "copy", at),
+                for (icon, key, id, params) in [
+                    ("places", "globe-placemark-action", "places.add", at.clone()),
+                    ("fly", "globe-fly-to-action", "camera.flyTo", fly),
+                    ("measure", "globe-ruler-point-action", "ruler.addPoint", at.clone()),
+                    ("copy", "globe-copy-coordinates-action", "copy", at),
                 ] {
-                    if ui.button(lg.text(key)).clicked() {
+                    if super::ui::icons::button(ui, icon, lg.text(key)).clicked() {
                         chosen = Some((id, params));
                         ui.close();
                     }

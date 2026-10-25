@@ -2081,6 +2081,7 @@ dependencies = [
  "rayon",
  "rstar",
  "serde_json",
+ "tokio",
  "wgpu",
  "wide",
 ]

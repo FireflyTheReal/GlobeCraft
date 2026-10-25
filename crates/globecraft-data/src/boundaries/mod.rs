@@ -288,8 +288,16 @@ pub struct Patch {
 /// Human-readable load log shown in the Layers panel, so failures are never silent.
 pub type StatusLog = Arc<Mutex<Vec<String>>>;
 
+/// Lines kept in the status log; older ones are dropped (an offline session logs one
+/// line per failed tile).
+const STATUS_LOG_LINES: usize = 64;
+
 pub(super) fn log_status(log: &StatusLog, msg: String) {
     if let Ok(mut v) = log.lock() {
+        if v.len() >= STATUS_LOG_LINES {
+            let excess = v.len() + 1 - STATUS_LOG_LINES;
+            v.drain(..excess);
+        }
         v.push(msg);
     }
 }
@@ -297,6 +305,16 @@ pub(super) fn log_status(log: &StatusLog, msg: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_status_log_keeps_only_its_latest_lines() {
+        let log: StatusLog = Arc::default();
+        for i in 0..200 {
+            log_status(&log, i.to_string());
+        }
+        let lines = log.lock().unwrap();
+        assert_eq!(lines.len(), STATUS_LOG_LINES);
+        assert_eq!(lines.last().map(String::as_str), Some("199"));
+    }
     #[test]
     fn country_lookup_uses_the_outer_ring_not_its_label_centre() {
         let ring = CountryRing::new(Arc::new(vec![

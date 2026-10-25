@@ -231,12 +231,12 @@ impl App {
         let lg = self.lang;
         ui.heading(lg.text("explorer-bodies"));
         ui.horizontal(|ui| {
-            for (body, label) in [
-                (Body::Earth, "explorer-earth"),
-                (Body::Moon, "explorer-moon"),
-                (Body::Custom, "explorer-custom-planet"),
+            for (body, icon, label) in [
+                (Body::Earth, "earth", "explorer-earth"),
+                (Body::Moon, "moon", "explorer-moon"),
+                (Body::Custom, "planet", "explorer-custom-planet"),
             ] {
-                if ui.button(lg.text(label)).clicked() {
+                if super::ui::icons::button(ui, icon, lg.text(label)).clicked() {
                     self.flat_earth.open = false;
                     self.explorer.choose(body, &self.file_jobs);
                 }

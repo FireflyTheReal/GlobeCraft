@@ -479,6 +479,15 @@ impl App {
                 );
                 json!({"terrain_exaggeration": self.settings.layers.terrain_exaggeration})
             }
+            "layer.stateAltitude" => {
+                let km = required_f64(p, "km")?;
+                if !km.is_finite() {
+                    return Err("km must be a number".into());
+                }
+                self.settings.state_max_altitude_km =
+                    km.clamp(0.0, globecraft_data::settings::STATE_MAX_ALTITUDE_MAX_KM);
+                json!({"km": self.settings.state_max_altitude_km})
+            }
             "world.earthModel" => {
                 let model = str_param(p, "model")
                     .and_then(EarthModel::from_code)
@@ -748,6 +757,10 @@ impl App {
             },
             "layer.terrainExaggeration" => CommandState {
                 enabled: self.layer(MapLayer::Terrain),
+                checked: false,
+            },
+            "layer.stateAltitude" => CommandState {
+                enabled: self.layer(MapLayer::StateBorders),
                 checked: false,
             },
             "world.earthModel" => {

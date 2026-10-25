@@ -1,6 +1,7 @@
 //! Manual CPU-frame comparison using isolated disk-cache fixtures and production APIs.
 use super::*;
 mod kernels;
+mod replay;
 use globecraft_core::{camera::Cam, math::now_unix};
 use std::{
     hint::black_box,

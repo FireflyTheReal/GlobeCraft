@@ -344,6 +344,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"value":{"type":"number","description":"Vertical exaggeration, 0.5..3"}},"required":["value"]}"#
     ),
     command!(
+        "layer.stateAltitude",
+        "layer-state-altitude",
+        "scale_range",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"km":{"type":"number","description":"States and provinces are drawn below this camera altitude, 0..8000 km (default 1609)"}},"required":["km"]}"#
+    ),
+    command!(
         "world.earthModel",
         "world-earth-model",
         "globe_view",

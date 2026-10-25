@@ -11,17 +11,16 @@ impl App {
         let (mut save_now, mut save_as, mut open_dialog, mut open_typed) =
             (false, false, false, false);
         ui.horizontal_wrapped(|ui| {
-            if ui
-                .button(lg.text("kml-save-action"))
+            if super::icons::button(ui, "save", lg.text("kml-save-action"))
                 .on_hover_text(lg.text("kml-save-tooltip"))
                 .clicked()
             {
                 save_now = true;
             }
-            if ui.button(lg.text("kml-save-as-action")).clicked() {
+            if super::icons::button(ui, "save_as", lg.text("kml-save-as-action")).clicked() {
                 save_as = true;
             }
-            if ui.button(lg.text("kml-open-action")).clicked() {
+            if super::icons::button(ui, "add_data", lg.text("kml-open-action")).clicked() {
                 open_dialog = true;
             }
         });

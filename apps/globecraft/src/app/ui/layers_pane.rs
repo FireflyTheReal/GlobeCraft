@@ -158,6 +158,23 @@ fn note(ui: &mut Ui, t: &Tokens, text: &str) {
         });
 }
 
+/// A note with a spinner before it, for something still loading.
+fn loading_note(ui: &mut Ui, t: &Tokens, text: &str) {
+    egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: (INDENT + 46.0) as i8,
+            ..egui::Margin::ZERO
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(11.0).color(t.text_dim));
+                ui.add(
+                    egui::Label::new(egui::RichText::new(text).size(11.0).color(t.text_dim)).wrap(),
+                );
+            });
+        });
+}
+
 fn credit(ui: &mut Ui, text: &str, url: &str) {
     ui.horizontal(|ui| {
         ui.add_space(INDENT + 46.0);
@@ -241,10 +258,10 @@ impl App {
             }
             if group == LayerGroup::Geography {
                 if self.boundary_loader.is_loading_base_layers() {
-                    note(ui, &t, lang.text("boundaries-loading-status"));
+                    loading_note(ui, &t, lang.text("boundaries-loading-status"));
                 }
                 if self.boundary_loader.is_loading_local() {
-                    note(ui, &t, lang.text("boundaries-osm-loading-status"));
+                    loading_note(ui, &t, lang.text("boundaries-osm-loading-status"));
                 }
                 // The loader appends; only the latest lines are worth reading here.
                 let log: Vec<String> = self
@@ -273,7 +290,7 @@ impl App {
         let lang = self.lang;
         ui.indent("wayback_ui", |ui| {
             if self.wayback_list.is_empty() {
-                note(ui, t, lang.text("wayback-loading-status"));
+                loading_note(ui, t, lang.text("wayback-loading-status"));
             } else {
                 let n = self.wayback_list.len();
                 let mut idx = self.wayback_idx;
