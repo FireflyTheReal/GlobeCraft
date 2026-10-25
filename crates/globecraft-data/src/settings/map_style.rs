@@ -166,9 +166,6 @@ pub struct MapStyle {
     pub state: LineStyle,
     pub municipal: LineStyle,
     pub disputed: LineStyle,
-    /// Draw each claimant's own line of a disputed border too. Off: the neutral view,
-    /// one line where the border actually runs.
-    pub disputed_claims: bool,
     pub labels: LabelSizes,
 }
 /// States and municipalities share one look by default, so the handover between them
@@ -188,13 +185,12 @@ impl Default for MapStyle {
             },
             state: SUBNATIONAL_LINE,
             municipal: SUBNATIONAL_LINE,
-            // Like the country lines, dashed: the neutral look of Google's map.
+            // Like the country lines, dashed, as on Google's map.
             disputed: LineStyle {
                 color: Rgba([255, 255, 255, 245]),
                 width_points: 1.6,
                 dash: DashStyle::Dashed,
             },
-            disputed_claims: false,
             labels: LabelSizes {
                 country_points: 12.0,
                 state_points: 10.0,
@@ -225,9 +221,6 @@ impl MapStyle {
             if let Some(line) = value.get(kind.code()) {
                 self.line_mut(kind).apply(line);
             }
-        }
-        if let Some(claims) = value.get("disputed_claims").and_then(Value::as_bool) {
-            self.disputed_claims = claims;
         }
         if let Some(labels) = value.get("labels") {
             for kind in LabelType::ALL {
@@ -260,7 +253,6 @@ mod tests {
         style.municipal.dash = DashStyle::Dotted;
         style.country.width_points = 3.0;
         style.labels.city_points = 14.0;
-        style.disputed_claims = true;
         let json = serde_json::to_value(style).unwrap();
         let mut restored = MapStyle::default();
         restored.apply(&json);

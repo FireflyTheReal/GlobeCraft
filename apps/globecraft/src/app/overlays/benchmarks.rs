@@ -105,6 +105,7 @@ fn overlay_projection_and_label_occupancy_time() {
             states: false,
             cities: false,
             labels: true,
+            sun: None,
         },
         map_scale: 1.0,
         lang: Lang::En,

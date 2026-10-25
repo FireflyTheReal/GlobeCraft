@@ -29,6 +29,9 @@ use std::time::{Duration, Instant};
 
 /// Parallel tile downloads (OpenFreeMap asks bulk clients for at most 4).
 const MAX_NETWORK_INFLIGHT: usize = 4;
+/// Of those, at most this many load ahead of need, so the view's own tiles always
+/// find a free slot.
+const MAX_AHEAD_NETWORK_INFLIGHT: usize = 2;
 /// Parallel reads from the disk cache.
 const MAX_DISK_INFLIGHT: usize = 8;
 /// Decoded tiles kept in memory, counted in vertices (16 bytes each as lines).
@@ -51,8 +54,8 @@ pub const MUNICIPAL_MIN_ZOOM: u8 = 11;
 pub struct OsmBorderLines {
     /// `admin_level` 2.
     pub country: Vec<Line>,
-    /// `admin_level` 2 lines OpenMapTiles marks disputed (the neutral line), and with
-    /// `OsmTileView::claims` each country's claimed line too.
+    /// `admin_level` 2 lines OpenMapTiles marks disputed or claimed (`claimed_by`):
+    /// every side's line.
     pub disputed: Vec<Line>,
     /// `admin_level` 3–4, of the big countries (see `BIG_COUNTRIES_A3`), sorted out when
     /// the lines reach the boundary data.
@@ -61,6 +64,8 @@ pub struct OsmBorderLines {
     pub state: Vec<Line>,
     /// `admin_level` 5–8.
     pub municipal: Vec<Line>,
+    /// The sea's outline (OpenMapTiles `water`, class ocean), for the night side.
+    pub coast: Vec<Line>,
     /// The zoom level of the tiles wanted for the view.
     pub zoom: u8,
     /// Below this altitude (at the view's latitude) the tiles hold municipal lines;
@@ -87,8 +92,10 @@ pub struct OsmTileView {
     pub altitude_km: f64,
     /// The disk cache's size limit (Settings → Cache).
     pub cache_limit_bytes: u64,
-    /// Draw each country's claimed line of disputed borders too (Settings → Map style).
-    pub claims: bool,
+    /// Whether tiles may be downloaded ahead of need now. The app clears it while the
+    /// view's imagery is still loading: OpenMapTiles tiles carry every layer (roads,
+    /// buildings…), so loading ahead would take the imagery's bandwidth.
+    pub load_ahead: bool,
 }
 
 /// Ancestors cut to the missing tile they stand in for, by (shown tile, source tile).
@@ -165,7 +172,6 @@ pub(super) struct OsmTileStreamer {
     /// What was published last: each shown tile and the tile it came from.
     published: Vec<(TileKey, TileKey)>,
     published_revision: u64,
-    published_claims: bool,
     /// The latest publication; older ones still being built are dropped.
     generation: Arc<AtomicU64>,
     /// Ancestors cut to a missing tile, shared with the publication jobs.
@@ -191,7 +197,6 @@ impl OsmTileStreamer {
             },
             published: Vec::new(),
             published_revision: 0,
-            published_claims: false,
             generation: Arc::default(),
             clipped: Arc::default(),
             limit_bytes: 0,
@@ -248,10 +253,23 @@ impl OsmTileStreamer {
         let Some(template) = store.template.clone() else {
             return;
         };
-        let ready = self.request_tiles(&mut store, &wanted, &template, now, true);
+        let ready = self.request_tiles(
+            &mut store,
+            &wanted,
+            &template,
+            now,
+            true,
+            MAX_NETWORK_INFLIGHT,
+        );
         let ahead = prefetch(&wanted);
         if ready {
-            self.request_tiles(&mut store, &ahead, &template, now, false);
+            // Disk reads ahead are cheap; downloads ahead wait for idle imagery.
+            let downloads = if view.load_ahead {
+                MAX_AHEAD_NETWORK_INFLIGHT
+            } else {
+                0
+            };
+            self.request_tiles(&mut store, &ahead, &template, now, false, downloads);
         }
         // Tiles loaded ahead count as in use, so the memory budget forgets the areas the
         // view left rather than what a zoom out is about to need.
@@ -261,13 +279,9 @@ impl OsmTileStreamer {
             }
         }
         let shown = compose(&store.tiles, &wanted);
-        if shown == self.published
-            && store.revision == self.published_revision
-            && view.claims == self.published_claims
-        {
+        if shown == self.published && store.revision == self.published_revision {
             return;
         }
-        self.published_claims = view.claims;
         let contents: Vec<(TileKey, TileKey, Arc<TileContent>)> = shown
             .iter()
             .filter_map(|&(tile, source)| {
@@ -282,7 +296,6 @@ impl OsmTileStreamer {
             contents,
             zoom,
             municipal_max_km: pick::max_altitude_km_for_zoom(view.lat, MUNICIPAL_MIN_ZOOM),
-            claims: view.claims,
             generation,
             latest: self.generation.clone(),
             clipped: self.clipped.clone(),
@@ -316,8 +329,8 @@ impl OsmTileStreamer {
     }
 
     /// Starts loads for `keys` in order: a disk read for tiles not looked up yet, then
-    /// a download for tiles missing or of an older set (`refresh`). Returns whether
-    /// every key has some content to show.
+    /// a download for tiles missing or of an older set (`refresh`), while fewer than
+    /// `network_limit` downloads run. Returns whether every key has some content to show.
     fn request_tiles(
         &self,
         store: &mut Store,
@@ -325,6 +338,7 @@ impl OsmTileStreamer {
         template: &Arc<str>,
         now: Instant,
         refresh: bool,
+        network_limit: usize,
     ) -> bool {
         let mut ready = true;
         // Missing tiles first, then stale ones.
@@ -356,7 +370,7 @@ impl OsmTileStreamer {
                     .failed
                     .get(&key)
                     .is_some_and(|at| now.duration_since(*at) < FAILED_RETRY);
-                if failed_recently || store.net_inflight.len() >= MAX_NETWORK_INFLIGHT {
+                if failed_recently || store.net_inflight.len() >= network_limit {
                     continue;
                 }
                 store.net_inflight.insert(key);
@@ -493,7 +507,6 @@ struct Publication {
     contents: Vec<(TileKey, TileKey, Arc<TileContent>)>,
     zoom: u8,
     municipal_max_km: f64,
-    claims: bool,
     generation: u64,
     latest: Arc<AtomicU64>,
     clipped: ClippedCache,
@@ -543,18 +556,10 @@ impl Publication {
         };
         let lines = OsmBorderLines {
             country: gather(|c| &c.country),
-            disputed: {
-                let mut lines: Vec<Line> = contents
-                    .iter()
-                    .flat_map(|c| c.disputed.iter().cloned())
-                    .collect();
-                if self.claims {
-                    lines.extend(contents.iter().flat_map(|c| c.claims.iter().cloned()));
-                }
-                join::join(lines, tolerance)
-            },
+            disputed: gather(|c| &c.disputed),
             state: gather(|c| &c.state),
             municipal: gather(|c| &c.municipal),
+            coast: gather(|c| &c.coast),
             state_big: Vec::new(),
             zoom: self.zoom,
             municipal_max_km: self.municipal_max_km,

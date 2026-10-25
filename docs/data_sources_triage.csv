@@ -1,0 +1,206 @@
+id,source,verdict,needs_or_gate,why,effort_mark
+1.1,AWS Terrain Tiles (Terrarium),🔧 Moderate,elevation decoder (B),Tile fetch is trivial; decode in the tile worker. Hillshade or elevation readout is easy; true 3D relief means ray-caster heightfield work,🟢
+1.2,Mapterhorn,🔧 Moderate,"`pmtiles` + `image-webp` + decoder (B), (C)",Best data (LiDAR to 0.4 m); one PMTiles reader also unlocks five other rows,🟡
+1.3,EMODnet Bathymetry,✅ Easy,WMS adapter (A),One GetMap per tile bbox; sea-only overlay,🟢
+1.4,Copernicus DEM (GLO-30 / GLO-90),🏗️ Pre-bake,offline step,Pre-bake (per-region COG reads via async-tiff); not a runtime source at whole-globe scale,🔴
+1.5,"GEBCO grid (GEBCO_2026, released April 2026)",🏗️ Pre-bake,offline step,"Pre-bake, or a user-directed ~4 GB regional download at runtime",🔴
+1.6,GEBCO WMS — zero-effort ocean-floor tiles,✅ Easy,WMS adapter (A),Styled seafloor basemap; GetMap verified 200 PNG,🟢
+2.1,NASA GIBS,✅ Easy,time parameter; `proj4rs` for polar,Reuse the tile path; default epsg3857,🟢
+2.2,EOX Sentinel-2 cloudless,✅ Easy,gate: licence,Plain WMTS; ship only after the licence check,🟢
+2.3,OpenWeatherMap Maps 1.0,✅ Easy,key (D),XYZ with appid from env,🟢
+2.4,RainViewer radar,✅ Easy,two-step JSON index,Check whether the existing radar layer already covers it,🟢
+2.5,NOAA GFS 10 m wind,🔧 Moderate,`grib` crate,"NOMADS subset → decode GRIB2, or pre-bake JSON",🟡
+2.6,OSCAR ocean currents,🏗️ Pre-bake,account login; offline step,Pre-bake netCDF per month; Earthdata auth blocks anonymous runtime fetch,🔴
+2.7,Open-Meteo,✅ Easy,gate: non-commercial,Point JSON for a cursor weather probe; NC only,🟡
+2.8,NASA Earth Observations (NEO),🔧 Moderate,static overlays,Vendored equirectangular images,🟡
+2.9,Esri World Imagery + Wayback (GlobeCraft's current default imagery),✅ Easy,already wired,Make opt-in per Esri ToU (see watch-list),🟢
+3.1,Global Wind Atlas 3,🏗️ Pre-bake,offline step,Pre-bake per country of interest; no tile endpoint exists,🔴
+3.2,"Wind Toolkit (NLR, ex-NREL)",🔧 Moderate,key (D),"Key client; the dataset is frozen (2007–2014), so one runtime import or a bundled copy",🟡
+3.3,ERA5 (Copernicus CDS),🏗️ Pre-bake,account login; offline step,Pre-bake only; CDS queue/credentials make runtime fetch pointless,🔴
+4.1,Global Solar Atlas,🏗️ Pre-bake,offline step,Pre-bake the 3.6 GB world raster into tiles outside the app,🔴
+4.2,PVGIS 5.3 (EU JRC),✅ Easy,—,Single GET per click; 30 calls/s cap,🟡
+4.3,NASA POWER,✅ Easy,backoff,Point JSON; throttles rapid repeats,🟡
+4.4,"NSRDB solar (PSM v4) (NLR, ex-NREL)",🔧 Moderate,key (D),"Key client, point-or-area CSV pull at runtime",🟡
+5.1,Open Infrastructure Map,🔧 Moderate,—,Vector-tile decode or reuse the Overpass pattern; safest is a bundled PMTiles copy,🟡
+5.2,WRI Global Power Plant Database,✅ Easy,bundle,11.97 MB CSV (verified) → compact placemark file,🟡
+5.3,Protomaps OSM basemap,🔧 Moderate,`pmtiles` (C),PMTiles path; or pre-extract a country and bundle,🟡
+5.4,"UMN ""Primary Resources Extracted""",⛔ No,gate: permission,Redistribution needs permission,🟡
+5.5,Renewable Energy Data Explorer (NREL),🔧 Moderate,—,Bundle per selected layer,🟡
+6.1,ESA WorldCover 2021 v200,🏗️ Pre-bake,offline step,Pre-bake COG subsets per region (async-tiff),🔴
+6.2,ESA WorldCereal,🔧 Moderate,—,Geo fetch GeoParquet (source.coop range reads),🟡
+6.3,USDA Cropland Data Layer,🏗️ Pre-bake,offline step,Pre-bake US mosaic,🔴
+6.4,SoilGrids 2.0 (ISRIC),🏗️ Pre-bake,offline step,Pre-bake GeoTIFF volumes; do not depend on the paused REST API,🔴
+6.5,Hansen Global Forest Change,🏗️ Pre-bake,offline step,Geo fetch of 10° GeoTIFFs via async-tiff; or consume the keyless GFW tile PNGs (13.5) as a far easier run…,🔴
+6.6,NASA SEDAC Global Agricultural Lands,🏗️ Pre-bake,offline step,Vendored snapshot,🔴
+6.7,WorldClim,🏗️ Pre-bake,offline step,Vendored snapshot (small),🔴
+6.8,HydroSHEDS,🏗️ Pre-bake,offline step,Vendored snapshot,🔴
+6.9,Natural Earth / GSHHG,✅ Easy,bundle,Vendored GeoJSON,🟡
+7.1,VIDA Google + Microsoft footprints,🔧 Moderate,`pmtiles` (C),"PMTiles over HTTP range-requests, or pre-extract a metro area for interactive use",🟡
+7.2,Overture Maps buildings,🏗️ Pre-bake,offline step,Pre-extract at build time (5.6 GB GeoParquet is not a runtime source),🔴
+7.3,GHSL population (EU JRC),🏗️ Pre-bake,offline step,Pre-bake per region,🔴
+7.4,GHS-POP COG mirror (unofficial),🏗️ Pre-bake,offline step,Pre-bake; convenience mirror only,🔴
+8.1,OpenSky Network,✅ Easy,already in binary,Already merged with ADSB.lol,🟡
+8.2,AISstream.io,🔧 Moderate,WebSocket client + key (D),HTTP fallbacks already wired; AISstream is beta,🟡
+8.3,CelesTrak GP,🔧 Moderate,`sgp4` crate,OMM decode exists; replace two-body with SGP4,🟡
+8.4,NASA FIRMS,🔧 Moderate,key (D),"Key client; 5,000 requests / 10 min",🟡
+8.5,NOAA SWPC aurora (OVATION),✅ Easy,—,One JSON → filled polygons,🟡
+8.6,NOAA SWPC space weather,✅ Easy,—,Same pattern as 8.5,🟡
+8.7,NWS active alerts,✅ Easy,User-Agent header,GeoJSON alerts; send an identifying UA,🟡
+8.8,NOAA AviationWeather,✅ Easy,—,METAR / SIGMET JSON,🟡
+8.9,NOAA NDBC buoys,✅ Easy,text parser,`latest_obs.txt`,🟡
+8.10,USGS earthquakes,✅ Easy,—,"GeoJSON summary feeds, no key",🟡
+9.1,NASA Moon Trek,🔧 Moderate,per-body projection,Needs body-aware tile math (Moon is an embedded image today),🟡
+9.2,NASA Mars Trek,🔧 Moderate,per-body projection,As 9.1,🟡
+9.3,NASA Vesta Trek,🔧 Moderate,per-body projection,As 9.1,🟡
+10.1,Earth Search (Element84),➖ n/a,,"Discovery catalogue, not a layer",🔴
+10.2,Microsoft Planetary Computer,➖ n/a,,"Discovery catalogue, not a layer",🔴
+10.3,Esri Open Data Hub,➖ n/a,,Discovery portal,n/a
+13.1,Global Fishing Watch (4WINGS),🔧 Moderate,key (D); gate: non-commercial,CC BY-NC: non-commercial builds only,🟡
+13.2,OpenAQ v3 air quality,🔧 Moderate,key (D),Per-provider licences; honour `/v3/licenses`,🟡
+13.3,Dynamic World 10 m land cover,⛔ No,blocked,No usable runtime path,🔴 (blocked)
+13.4,VIIRS night lights (NASA Black Marble),🏗️ Pre-bake,account login; offline step,Pre-bake HDF5 per region,🔴
+13.5,Global Forest Watch tiles (Hansen layers),✅ Easy,—,Keyless 512 px XYZ PNG; easiest forest layer,🟡
+13.6,NOAA CO-OPS tides and currents,✅ Easy,—,JSON per station; public domain,🟡
+13.7,Smithsonian GVP volcano list,✅ Easy,use NCEI endpoint,Prefer NOAA NCEI JSON over Smithsonian,🟡
+13.8,ADS-B Exchange (live aircraft),⛔ No,paid,Use adsb.lol (already in binary),🟡 self via adsb.lol / 🔴 paid
+14.1,GSI Japan elevation tiles 地理 院標⾼タイル (ja),✅ Easy,GSI decoder (B),Plain XYZ + ~15-line decode (not Terrarium),🟢
+14.2,PDOK aerial photos Luchtfoto (nl),✅ Easy,TileMatrixSet name,"WMTS REST, CC BY",🟢
+14.3,PDOK BRT Achtergrondkaart (nl),✅ Easy,—,"WMTS REST, CC BY 4.0",🟢
+14.4,swisstopo geo.admin.ch (de / fr),✅ Easy,—,Open Government Data; attribution,🟢
+14.5,DWD radar and weather WMS (de),✅ Easy,WMS adapter (A),"CC BY 4.0, commercial use allowed",🟡
+14.6,DWD Open Data (de),🔧 Moderate,—,Geo fetch over the HTTPS file tree,🟡
+14.7,IGN Géoplateforme (fr),🔧 Moderate,gate: licence unconfirmed,Confirm the licence first,🟡
+14.8,NGII background and satellite maps 영상지도·배경지도 (ko),🔧 Moderate,key (D),Key client with attribution string in the map footer,🟡
+14.9,VWorld 브이월드 (ko),🔧 Moderate,key (D); WMS adapter (A),Key client,🟡
+14.10,Tianditu 天地图 (zh),🔧 Moderate,key (D),Key client (registration + phone verification),🟡
+14.11,CNIG MDT05 / MDS05 (es),🔧 Moderate,—,WCS client or pre-extract per region,🟡
+14.12,IGN LiDAR HD (fr),🏗️ Pre-bake,offline step,Pre-extract LiDAR tiles per region,🔴
+14.13,swissALTI3D / swissSURFACE3D (de / fr),🏗️ Pre-bake,offline step,Pre-extract,🔴
+14.14,AHN Actueel Hoogtebestand Nederland (nl),🏗️ Pre-bake,offline step,Pre-extract (already inside Mapterhorn 1.2 — prefer that),🔴
+14.15,JAXA ALOS World 3D (AW3D30) (ja / en),🏗️ Pre-bake,account login; offline step,Pre-extract after free registration,🔴
+14.16,PLATEAU 3D city models (ja),🏗️ Pre-bake,offline step,Bundle per city (3D Tiles or GeoJSON/GeoParquet extract),🔴
+14.17,MapBiomas (pt),🏗️ Pre-bake,offline step,Pre-bake from an Earth Engine export,🔴
+14.18,GLC_FCS30D (zh / en),🏗️ Pre-bake,offline step,Pre-bake from the Zenodo record,🔴
+14.19,Geoportale Nazionale / PCN (it),🔧 Moderate,gate: CC BY-NC-ND,Display-only; terms murky,🟢
+14.20,Regione Piemonte Geoportale (it),✅ Easy,gate: licence †,Verify per dataset,🟢
+14.21,Portale Geocartografico Trentino (it),✅ Easy,gate: licence †,Verify per dataset,🟢
+14.22,geoportal.gov.pl Ortofotomapa WMTS (pl),✅ Easy,—,Plain WMTS confirmed live,🟢
+14.23,geoportal.gov.pl NMT / LiDAR point clouds (pl),🏗️ Pre-bake,offline step,Pre-extract LAS/GeoTIFF,🔴
+14.24,"Dataforsyningen (Klimadatastyrelsen, da)",✅ Easy,read GetCapabilities,Anonymous WMTS confirmed,🟢
+14.25,Lantmäteriet öppna geodata (sv),🔧 Moderate,paths unverified,CC0; read capabilities first,🟢
+14.26,Kartverket topo4 WMTS + NiB + hoydedata (no),✅ Easy,—,CC BY 4.0,🟢
+14.27,Maanmittauslaitos avoimet aineistot (fi),✅ Easy,key (D),Free key for the tile service,🟢
+14.28,Landmælingar Íslands gagnatorg (is),🔧 Moderate,licence text †,Small agency; confirm terms,🟢
+14.29,map.is / Loftmyndir ehf (is),⛔ No,commercial,No open tile API,✗ (was 🟢)
+14.30,Rosreestr Публичная кадастровая карта / НСПД (ru),⛔ No,restricted,No open licence,✗ (was 🟡)
+14.31,Bhuvan / NRSC Open EO Data Archive (NOEDA) (hi),⛔ No,registration + restrictions,Not a runtime source,🟡
+14.32,İBB Şehir Haritası + data.ibb.gov.tr (tr),🔧 Moderate,terms †,Istanbul only,🟢
+14.33,TKGM Ada/Parsel Sorgu / TKKG (tr),⛔ No,registration,Restricted use,🟡
+15.1,Natural Earth 1:10m ladder (the immediate win),✅ Easy,URL swap,13.3 MB countries (verified),🟡
+15.2,geoBoundaries gbOpen (William & Mary geoLab),🔧 Moderate,LFS-aware URL,`raw.githubusercontent.com` returns an LFS pointer; use `github.com/…/raw/…`,🟡
+15.3,geoBoundaries CGAZ composites,🏗️ Pre-bake,LFS + pre-simplify,Hundreds of MB in Git LFS,🔴
+15.4,Overture Divisions,🏗️ Pre-bake,offline step,Pre-bake per-country slices at build time (theme is ~5.6 GB zstd; bbox-scanning in-app is awkward). Best …,🔴
+15.5,GADM v4.1,⛔ No,licence,"Non-commercial, no redistribution",🔴
+15.6,UN SALB,⛔ No,licence,"Non-commercial, revocable",🔴
+15.7,US Census cartographic boundaries,✅ Easy,—,Tiny public-domain files (verified sizes),🟡
+15.8,Statistics Canada boundary files,✅ Easy,—,OGL-Canada,🟡
+15.9,France IGN ADMIN EXPRESS / COG,✅ Easy,—,Keyless Atom API,🟡
+15.10,Germany BKG VG250 / VG2500,✅ Easy,—,GeoNutzV,🟡
+15.11,Spain CNIG / IGN municipalities,✅ Easy,—,CC BY 4.0,🟡
+15.12,Mexico INEGI Marco Geoestadístico,✅ Easy,—,Libre Uso MX,🟡
+15.13,NZ LINZ / Stats NZ boundaries,✅ Easy,—,CC BY 4.0,🟡
+15.14,GeoFabrik OSM extracts,🏗️ Pre-bake,offline step,Too broad for runtime; use for offline preprocessing only,🔴
+15.15,ne_10m_urban_areas,✅ Easy,—,27.9 MB GeoJSON (verified),🟡
+15.16,osm-boundaries.com,⛔ No,OAuth-gated,No anonymous fetch path,🔴
+16.1,Earth Traffic (iTIC/ELEMNT platform),🔧 Moderate,—,"MVT decode is new code (no vector parser for H3 yet); great for replay/time-slider, not for live jam colo…",🟡
+16.2,NDW (Netherlands road data),🏗️ Pre-bake,offline step,Custom DATEX II parser + location tables; useful per-country pattern only,🔴
+16.3,GIBS Earth at Night (Black Marble city lights),✅ Easy,resolve date once,GIBS night lights; hard-code the date,🟢
+16.4,OurAirports,✅ Easy,—,CSV into placemarks,🟡
+16.5,NOAA GOES GLM lightning,🏗️ Pre-bake,offline step,S3 netCDF polling is real engineering; practical variant is a small pre-parsed flash JSON snapshot per 10…,🔴
+16.6,Blitzortung.org,⛔ No,participants only,No app-tier feed,✗
+16.7,FreeLightning (parsed GLM),🔧 Moderate,text parser,Trivial parse; hobbyist host,🟡
+16.8,ETOPO 2022 / ETOPO1 relief,🔧 Moderate,—,Mid-res grid bundleable,🟡
+16.9,EMAG2 v3 magnetic anomalies,🔧 Moderate,—,Bundle GeoTIFF,🟡
+16.10,GloFAS river discharge (Copernicus CEMS),🔧 Moderate,WMS adapter (A),WMS-T flood maps; account for analytics,🔴
+16.11,GeoNames gazetteer,✅ Easy,bundle `cities15000`,CC BY 4.0,🟡
+17.1,OpenTopography global DEM API — incl. ANADEM,🔧 Moderate,user key (D),Keys may not be embedded in a distributed app,🔴
+17.2,OpenTopography archaeology LiDAR collections,🔧 Moderate,—,"Pre-bake — ground-classified DEM tiles per landmark Maya site, bundled; .laz too heavy for runtime",🟡
+17.3,USGS 3DEP,🔧 Moderate,—,Tile path / point query; out of primary target area but free of every caveat,🟡
+17.4,"NASA GEDI L3 + ICESat-2 ATL08 (spaceborne, combined)",✅ Easy,—,Geo fetch as background ground-elevation sanity check only — neither reveals earthworks or tells,🟢
+17.5,Figshare: ML-ready Maya remote sensing (Chactún),🏗️ Pre-bake,offline step,"Pre-bake — decode ALS rasters to hillshade/relief tiles offline, bundle as the first fly-over Maya landmark",🔴
+17.6,Stonehenge LiDAR Archaeology Landscape (Zenodo),✅ Easy,—,Bundle — small pre-encoded show-case site (Neolithic/Medieval analogue for tells),🟢
+17.7,Geoglyph DTM-anomaly toolkit (Zenodo),🔧 Moderate,—,Offline guidance only — the algorithm GlobeCraft could run over 17.1 ANADEM tiles,🟡
+17.8,"Dryad PACUNAM 2,144 km² Guatemala LiDAR",⛔ No,terrain closed,Derived shapes only,🔴
+17.9,Archaeology Data Service (ADS),➖ n/a,,"Pattern to copy, not a pipeline",n/a (was 🟢)
+17.10,GeoSampa — city of São Paulo LiDAR,🔧 Moderate,—,Pre-bake MDT excerpt — the model open Brazilian municipal LiDAR stack,🟡
+17.11,IGC-SP — São Paulo state LiDAR 2023/24,🔧 Moderate,—,Pre-bake via the IGC download flow once reachable; the WMS geoportal is bot-blocked,🟡
+17.12,INEGI MDE / historical LiDAR tiles (Mexico),🔧 Moderate,—,Geo fetch of tile catalogue — the workflow pattern to copy (per-tile LAS/LAZ + raster MDT),🟡
+17.13,"Acre geoglyph site vectors (de Souza 2018, Nat Commun)",🔧 Moderate,—,Bundle site vectors as placemark overlay on the ANADEM (17.1) hillshade,🟡
+17.14,"SE-Acre mound villages (Iriarte 2020, JCAA)",🔧 Moderate,—,Extract Table 1 → placemark layer; terrain stays research-held,🟡
+17.15,"Loreto sites gazetteer (Coomes 2021, Sci Data)",🔧 Moderate,—,Bundle vector placemarks — the target list for any future LiDAR there,🟡
+17.16,Peru / Colombia / Ecuador national LiDAR,⛔ No,not open,Closed or non-existent,–
+17.17,City of Cape Town LiDAR DEM/DTM,🔧 Moderate,—,Pre-bake or live ArcGIS REST pull — the cleanest fully-open African municipal LiDAR,🟡
+17.18,Kruger NP river LiDAR 2012 (CEDA),🏗️ Pre-bake,offline step,Link-only (point cloud) — the only verified open airborne point-cloud archive on the continent,🔴
+17.19,Rwanda 10 m DEM (via Mapterhorn),🔧 Moderate,—,Bundle; cross-ref the 1.2 pipeline,🟡
+17.20,IGN RGE ALTI + LiDAR HD — Réunion & Mayotte,🔧 Moderate,—,Bundle/mirror via Mapterhorn,🟡
+17.21,"Kilwa Kisiwani 3D (CyArk, Zenodo)",🔧 Moderate,gate: NC-SA,Non-commercial licence,🟡
+17.22,Great Zimbabwe (Zamani Project),⛔ No,on request,No bulk data,🔴
+17.23,CD:NGI South Africa + eThekwini footprints,🔧 Moderate,—,On-demand pulls only; do not bundle,🟡
+18.1,GeoNames heritage feature codes,✅ Easy,filter over existing dumps,No new fetch,🟢
+18.2,Pleiades (ancient Mediterranean places),✅ Easy,bundle CSV,"41k places, CC BY 3.0",🟡
+18.3,EMODnet Human Activities — Cultural Heritage,✅ Easy,WMS adapter (A),Shipwreck layers,🟢
+18.4,NOAA ENC chart data — WRECKS/OBSTRN,🏗️ Pre-bake,offline step,"Pre-bake — S-57 → GeoJSON offline (no runtime S-57 decoder), ship as wreck placemarks",🔴
+18.5,NPS National Register of Historic Places,🔧 Moderate,JS-hidden link †,Bulk CSV link not confirmed,🟡
+18.6,National heritage registers: UK / IE,🔧 Moderate,key (D),Per-country plugin in the 15.9–15.12 pattern (key from config if required),🟡
+18.7,UNESCO World Heritage list,🔧 Moderate,—,Geo fetch with browser-like headers; kiosk-quality fallback: OSM heritage=2 tag mining via Overpass (alre…,🟡
+18.8,UNESCO Underwater Cultural Heritage database,⛔ No,no API,Viewer only,🔴
+18.9,"Wikidata ""archaeological site"" (Q839954) SPARQL",✅ Easy,SPARQL one-shot,CC0,🟡
+19.1,GBIF species occurrences,✅ Easy,—,Keyless REST,🟡
+19.2,Paleobiology Database (fossils),✅ Easy,—,Keyless JSON; use `colls/list.json`,🟡
+19.3,Randolph Glacier Inventory (RGI 7.0) / GLIMS,🏗️ Pre-bake,offline step,"Pre-bake — glacier polygons as terrain ""icing"" mask or white-cap overlay",🔴
+19.4,Movebank animal tracking,🔧 Moderate,account login,Geo fetch — animated migration overlay for flagship open-licence studies only,🟡
+19.5,openAIP airspace,🔧 Moderate,key (D); gate: non-commercial,"Key client — opt-in plugin only, like GFW 13.1; never a default layer",🟡
+19.6,timezone-boundary-builder,✅ Easy,`tzf-rs` crate,Embedded polygons; ODbL attribution,🟡
+19.7,USGS historical topographic maps (topoView),🏗️ Pre-bake,offline step,"Pre-bake — georeferenced quad scans for ""time-travel"" imagery over US landmarks",🔴
+19.8,NLS Scotland historic maps + NL Topotijdreis,🔧 Moderate,—,Tile path with a year-parameter (time-travel mode for Europe's oldest mapped places),🟡
+19.9,GEBCO Undersea Feature Names gazetteer,🔧 Moderate,URL moved †,Locate download on gebco.net,🟡
+20.1,Fields of The World (FTW) Global Field Boundary Map v1.1 (Microsoft Research + FTW),🏗️ Pre-bake,offline step,Pre-bake regional extracts; locate the cloud-native paths on the project page before planning,🔴
+20.2,FTW harmonized field data catalogue (Source Cooperative `ftw/harmonized-field-data`),🔧 Moderate,`pmtiles` (C),Tile path for PMTiles (via `pmtiles` crate) or Geo fetch of one country; start with France (Licence Ouver…,🟡
+20.3,France RPG (Registre Parcellaire Graphique) at source,🔧 Moderate,`pmtiles` (C),Same as 20.2 (France collection),🟡
+20.4,AI4Boundaries (JRC),➖ n/a,,"Research benchmark, not a layer",🔴
+20.5,MapSPAM SPAM2010 v2.0 (IFPRI),🏗️ Pre-bake,offline step,"Pre-bake a crop-share raster (wheat, maize, rice…) into PNG tiles; 10 km fits globe-scale zooms",🔴
+20.6,GAEZ+ 2015 gridded crop dataset (FAO / IIASA; Scientific Data 2022),🏗️ Pre-bake,offline step,Pre-bake like 20.5; newer than MapSPAM's 2010 base,🔴
+20.7,GMIA v5.0 (Global Map of Irrigation Areas) and MIRCA2000 v1.1,🏗️ Pre-bake,offline step,Vendored snapshot; old (2000s) data,🔴
+20.8,Global Synergy Cropland Map v3.0 †,🏗️ Pre-bake,offline step,Lead only; ESA WorldCover (6.1) covers the same need at 10 m,🔴
+20.9,WaPOR (FAO) and Gridded Livestock of the World (GLW4) †,➖ n/a,,Leads only,—
+21.1,Global Energy Monitor trackers (`gem.wiki`),🔧 Moderate,licence †,Vendored CSV into placemarks,🟡
+21.2,US Wind Turbine Database (USWTDB) V8.2 (10 Dec 2025),✅ Easy,—,API by bbox; verified current release,🟡
+21.3,ENTSO-E Transparency Platform,🔧 Moderate,key (D),Key client plus XML parser; live generation by country as an overlay,🟡
+21.4,Climate TRACE,🔧 Moderate,—,Vendored CSV into a facility layer,🟡
+21.5,"GRanD dams, global solar-farm inventory, Global Wind Atlas API †",➖ n/a,,Leads only,—
+22.1,"Marine Regions: EEZ v12 + High Seas v2 (VLIZ, IOC-UNESCO)",🔧 Moderate,`pmtiles` (C); WMS adapter (A),Tile path for the PMTiles (vector); draw as a border overlay like 15.x,🟡
+22.2,IMF PortWatch,✅ Easy,—,ArcGIS query per port,🟡
+22.3,NHC GIS products (US National Hurricane Center),🔧 Moderate,—,Geo fetch of the JSON status plus KMZ (the app already reads KML via GeoRust `kml`); cone and track overlay,🟡
+22.4,IBTrACS tropical cyclone best tracks (NOAA NCEI),🔧 Moderate,—,Vendored CSV; animate history,🟡
+22.5,TeleGeography submarine cable map,⛔ No,not open,Commercial data,✗
+22.6,"WDPA, EMODnet vessel density, GDACS, Copernicus Marine †",➖ n/a,,Leads only,—
+23.1,ECMWF Open Data (IFS + AIFS),🔧 Moderate,`grib` crate (prototype),Small GRIB2 subsets; otherwise pre-bake,🔴
+23.2,dynamical.org Icechunk Zarr (AWS Open Data),🏗️ Pre-bake,offline step,Pre-bake. Rust `icechunk` + `zarrs` crates exist (25.11) but are heavy,🔴
+23.3,NVIDIA Earth2Studio data sources,➖ n/a,,Reference only,—
+24.1,OpenZenith DEM (Hugging Face `aliasfox/openzenith-dem`),✅ Easy,Terrarium decode (B),Tile path; vendor z0–8 to avoid host risk,🟢
+24.2,ArcticDEM (Polar Geospatial Center),🏗️ Pre-bake,offline step,Pre-bake or COG window reads (`async-tiff`); EPSG:3413 needs `proj4rs`,🔴
+24.3,REMA (Reference Elevation Model of Antarctica),🏗️ Pre-bake,offline step,As 24.2 (EPSG:3031),🔴
+24.4,Sonny's LiDAR Digital Terrain Models of Europe,🏗️ Pre-bake,offline step,"Mostly superseded by Mapterhorn (1.2). Use for gaps, offline only",🔴
+24.5,Viewfinder Panoramas (J. de Ferranti),⛔ No,licence,Research/private use,✗
+24.6,FABDEM,⛔ No,licence,Commercial use requires purchase,✗
+24.7,Open Topo Data and Open-Elevation (point APIs),🔧 Moderate,—,Cursor-elevation readout,🟡
+24.8,HeightMap (`jaluebbe/HeightMap`),➖ n/a,,Reference only,—
+24.9,opendem.info link directory,➖ n/a,,Discovery only,—
+24.10,GMRT 4.0 (100 m multibeam) and SRTM15+ V2.1 (15″) †,➖ n/a,,Leads only,—
+26.1,"TESSERA v1 embeddings (GeoTessera, global 2024)",🏗️ Pre-bake,offline step,"Not a runtime layer: ~184 MB per tile (int8), and a back-of-envelope global land total is ~190 TB uncompr…",🔴
+26.2,TESSERA v1.1 and v2 variants,🏗️ Pre-bake,offline step,"Pin one (version, variant) per bundle; directory names and manifests change between versions",🔴
+26.3,TESSERA Zarr v3 store (cloud-native),🏗️ Pre-bake,`zarrs` + `object_store`,Research project; RGB pyramid unverified,🔴
+26.4,Pre-baked TESSERA PCA tiles (`geotessera visualize` + `webmap`),🔧 Moderate,offline PCA + MBTiles pack †,Showcase-region false-colour layer; colours not comparable across regions,🟡
+26.5,Tessera coverage map and globe viewer,➖ n/a,—,Reference only: 0.1° tile outlines from a manifest are trivial to draw as a coverage overlay,—
+26.6,TESSERA model and inference (`ucam-eo/tessera`),➖ n/a,—,Not for GlobeCraft: running inference is out of scope for a viewer,—
+26.7,GeoTessera client design (reference),➖ n/a,—,Two ideas fit GlobeCraft: a small availability manifest per sparse provider (avoids requesting tiles that…,—

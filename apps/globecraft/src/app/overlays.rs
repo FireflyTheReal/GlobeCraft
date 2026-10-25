@@ -69,6 +69,11 @@ impl App {
             states: self.layer(MapLayer::StateBorders),
             cities: self.layer(MapLayer::MunicipalBorders),
             labels: self.layer(MapLayer::PlaceLabels),
+            sun: self.layer(MapLayer::Sunlight).then(|| {
+                let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
+                let time = (globecraft_core::math::now_unix() / interval).floor() * interval;
+                globecraft_core::math::subsolar(time)
+            }),
         }
     }
 

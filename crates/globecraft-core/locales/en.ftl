@@ -59,6 +59,11 @@ navigation-zoom-in-tooltip = Zoom in (hold)
 navigation-zoom-out-tooltip = Zoom out (hold)
 
 navigation-zoom-slider-tooltip = Drag to zoom
+navigation-east-tooltip = East up
+navigation-south-tooltip = South up
+navigation-west-tooltip = West up
+navigation-ring-tooltip = Drag the ring to rotate the view
+navigation-globe-tooltip = Drag to turn the globe
 
 settings-title = Settings
 
@@ -845,8 +850,6 @@ settings-map-style-line-state = State and province borders
 
 settings-map-style-line-municipal = Municipal borders
 settings-map-style-line-disputed = Disputed borders
-settings-map-style-disputed-claims = Show both countries' claims on disputed borders
-settings-map-style-disputed-claims-help = Off: one neutral line where the border actually runs. On: each country's claimed line too.
 
 settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
 
@@ -876,7 +879,5 @@ cmd-style-line = Border style
 cmd-style-line-help = Set the color, width and dash of country, state, municipal or disputed borders.
 cmd-style-label-size = Name size
 cmd-style-label-size-help = Set the font size of country, state or city names.
-cmd-style-disputed-claims = Disputed claims
-cmd-style-disputed-claims-help = Show each country's claimed line on disputed borders, or only the one neutral line.
 cmd-style-reset = Reset map style
 cmd-style-reset-help = Restore the default border colors, widths, dashes and name sizes.

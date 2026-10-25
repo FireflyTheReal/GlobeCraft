@@ -26,6 +26,8 @@ fn main() -> Result<(), eframe::Error> {
     if let Err(error) = globecraft_data::migrate_legacy_data() {
         eprintln!("Could not copy EarthCraft settings and caches: {error}");
     }
+    // Downloads of the border pipeline removed on 2026-10-25.
+    std::thread::spawn(globecraft_data::remove_retired_caches);
     let restart = Arc::new(RestartRequest::default());
     loop {
         let settings = globecraft_data::settings::Settings::load();

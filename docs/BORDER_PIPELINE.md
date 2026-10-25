@@ -33,11 +33,11 @@ levels: there is no coarse-to-detailed handover.
   whole world to zoom 3.
 - Tiles to zoom 6 stay in memory; the rest are bounded by 3 million vertices, least
   recently used dropped first. Tiles loaded ahead count as used.
-- Up to 4 downloads (OpenFreeMap's limit for bulk clients) and 8 disk reads at once.
+- Up to 4 downloads (OpenFreeMap's limit for bulk clients) and 8 disk reads at once. Tiles ahead of need download only while the view's imagery is complete, on at most 2 of those slots: an OpenMapTiles tile carries every layer, so loading ahead would slow the imagery.
 
 ## 3. What is kept (`osm_tiles/content.rs`, `osm_tiles/compact.rs`)
 
-Only land borders and names are decoded from a tile; maritime lines are dropped.
+Only land borders, the sea's outline (the `water` layer's ocean polygons, without the tile edges) and names are decoded from a tile; maritime lines are dropped. The sea outline is drawn only on the night side when Sunlight is on (13.4): there the imagery no longer shows where land ends.
 Each line keeps its raw `admin_level` and three flags: disputed, claim
 (`claimed_by` present) and country edge (`adm0_l`/`adm0_r` present). Lines cut at
 tile edges are joined again (`join.rs`), so dashes run on without restarting.
@@ -48,11 +48,14 @@ tile edges are joined again (`join.rs`), so dashes run on without restarting.
 | 3–4 | State (thicker inside the largest countries) | States |
 | 5–8 | Municipal, from zoom 11 (about 40 km) | Municipal borders |
 
-**Disputed borders.** The neutral view (default) draws one line: the de facto
-border, dashed where it is disputed. A claim line (claim flag, no country edge) is
-drawn only with *Settings → Map style → Show both countries' claims on disputed borders*. The de facto
-line also carries `claimed_by` because OpenMapTiles merges each OSM way, so the
-country-edge flag is what tells the two apart.
+**Disputed borders.** Every `admin_level` 2 line marked disputed or claimed
+(`claimed_by`) is drawn once in the dashed disputed style: both sides' lines. A
+neutral view (only the line that is a country edge) was tried on 2026-10-25 and
+removed: it hid most of OpenStreetMap's disputed linework. Zoom 0–4 tiles come from
+Natural Earth and zoom 5 and closer from OpenStreetMap, so the disputed lines differ
+between those levels (measured on a real cache: Arunachal Pradesh 760–940 km of
+disputed line at zoom 0–4, 1,600 km of claim lines from zoom 5; Western Sahara is
+marked disputed only from zoom 5).
 
 **Names.** City ranks come from OpenMapTiles' `rank` (minus one, 0–8; unranked 8);
 towns, villages and hamlets follow at ranks 11, 12 and 13, so small names appear
@@ -61,7 +64,7 @@ names stay underneath as fallback.
 
 ## 4. Disk cache (`osm_tiles/store.rs`)
 
-Tiles are stored in the compact format (format version 3) in `osm_borders.sqlite`
+Tiles are stored in the compact format (format version 4) in `osm_borders.sqlite`
 in the cache folder, bounded by *Settings → Cache → Border tile cache on disk* (64 MiB default,
 8–1024 MiB, applies at once). The least recently used tiles are deleted first
 (`auto_vacuum=FULL`, so the file shrinks). The disk is read first; the network is

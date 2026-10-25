@@ -22,6 +22,7 @@ globecraft-render.workspace = true
 globecraft-assistant.workspace = true
 serde_json.workspace = true
 eframe.workspace = true
+glam.workspace = true
 egui-wgpu.workspace = true
 wgpu.workspace = true
 emath.workspace = true

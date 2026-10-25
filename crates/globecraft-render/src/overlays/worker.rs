@@ -227,6 +227,7 @@ mod tests {
                 states: false,
                 cities: false,
                 labels: false,
+                sun: None,
             },
         };
         let projection = OverlayProjection {
@@ -281,6 +282,7 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
+                sun: None,
             },
         };
         let (tx, rx) = mpsc::channel();
@@ -393,6 +395,7 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
+                sun: None,
             },
         };
         worker.submit(view, data.clone());

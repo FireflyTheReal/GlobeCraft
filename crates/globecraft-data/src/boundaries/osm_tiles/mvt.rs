@@ -359,6 +359,10 @@ pub(super) mod encode {
                         (x, y) = (px, py);
                     }
                 }
+                // Polygon rings end with ClosePath.
+                if feature.kind == 3 {
+                    varint(u64::from(7_u32 | 1 << 3), &mut geometry);
+                }
             }
             let mut encoded = Vec::new();
             bytes(2, &tags, &mut encoded);

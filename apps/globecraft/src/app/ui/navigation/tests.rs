@@ -58,3 +58,45 @@ fn held_navigation_retains_pointer_until_release() {
         assert!(!frame(10.3, vec![]));
     }
 }
+
+#[test]
+fn cardinal_snaps_take_the_short_way_round() {
+    assert_eq!(nearest_heading(350.0, 0.0), 360.0);
+    assert_eq!(nearest_heading(10.0, 270.0), -90.0);
+    assert_eq!(nearest_heading(100.0, 90.0), 90.0);
+    assert_eq!(nearest_heading(-170.0, 180.0), -180.0);
+}
+
+#[test]
+fn the_view_disc_grows_with_altitude_up_to_the_visible_hemisphere() {
+    let close = view_cap_fraction(10.0, 1.6);
+    let mid = view_cap_fraction(2_000.0, 1.6);
+    let far = view_cap_fraction(40_000.0, 1.6);
+    assert!(close < 0.01, "{close}");
+    assert!(close < mid && mid < far, "{close} {mid} {far}");
+    // Far out the whole visible side is in view: the horizon's cap.
+    let radius = globecraft_core::EARTH_RADIUS_KM;
+    let horizon = (radius / (radius + 40_000.0)).acos().sin();
+    assert!((far - horizon).abs() < 1e-9);
+    // A portrait view is limited by its width.
+    assert!(view_cap_fraction(2_000.0, 0.5) < mid);
+}
+
+#[test]
+fn the_mini_globe_centres_the_camera_and_turns_with_the_heading() {
+    let centre = Pos2::new(100.0, 100.0);
+    let north_up = MiniGlobe::new(centre, 60.0, 48.0, 11.0, 0.0);
+    let at = north_up.project(48.0, 11.0).unwrap();
+    assert!((at - centre).length() < 1e-3);
+    // North of the camera is up on screen, east to the right; the far side is hidden.
+    assert!(north_up.project(58.0, 11.0).unwrap().y < centre.y);
+    assert!(north_up.project(48.0, 25.0).unwrap().x > centre.x);
+    assert!(north_up.project(-48.0, -169.0).is_none());
+    // Heading 90°: east is up.
+    let east_up = MiniGlobe::new(centre, 60.0, 48.0, 11.0, 90.0);
+    let east = east_up.project(48.0, 25.0).unwrap();
+    assert!(
+        east.y < centre.y && (east.x - centre.x).abs() < 5.0,
+        "{east:?}"
+    );
+}

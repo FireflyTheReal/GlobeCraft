@@ -174,6 +174,7 @@ impl BoundaryIndex {
             &data.osm_borders.state_big,
             &data.osm_borders.state,
             &data.osm_borders.municipal,
+            &data.osm_borders.coast,
         ]
         .into_iter()
         .flatten()

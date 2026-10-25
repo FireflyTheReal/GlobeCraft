@@ -114,11 +114,12 @@ const CITY_UNRANKED_RANK: u8 = 8;
 #[derive(Clone, Default)]
 pub(super) struct TileContent {
     pub(super) country: Vec<Line>,
+    /// Disputed lines and each claimant's claimed line (`claimed_by`), all drawn.
     pub(super) disputed: Vec<Line>,
-    /// Each claimant's own line of a disputed border (`claimed_by`).
-    pub(super) claims: Vec<Line>,
     pub(super) state: Vec<Line>,
     pub(super) municipal: Vec<Line>,
+    /// The sea's outline, drawn on the night side.
+    pub(super) coast: Vec<Line>,
     pub(super) places: Vec<MapLabel>,
     /// Vertices held, for the memory budget.
     pub(super) points: usize,
@@ -132,17 +133,15 @@ impl TileContent {
         let mut content = Self::default();
         let mut disputed_seen = std::collections::HashSet::new();
         for line in &filtered.lines {
-            // A claimed line that is no country's actual border is a claim only; the
-            // actual border of a disputed area is the one neutral line.
-            let claim = line.flags & compact::CLAIM != 0 && line.flags & compact::COUNTRY_EDGE == 0;
+            // Every side's line of a disputed border is drawn (the user found one
+            // neutral line unreliable, 2026-10-25).
             let disputed = line.flags & (compact::DISPUTED | compact::CLAIM) != 0;
             // Claimants may carry identical copies of a line: draw it once.
-            if line.level == 2 && (claim || disputed) && !disputed_seen.insert(line.points.clone())
-            {
+            if line.level == 2 && disputed && !disputed_seen.insert(line.points.clone()) {
                 continue;
             }
             let out = match line.level {
-                2 if claim => &mut content.claims,
+                compact::COAST_LEVEL => &mut content.coast,
                 2 if disputed => &mut content.disputed,
                 2 => &mut content.country,
                 l if STATE_LEVELS.contains(&l) => &mut content.state,
@@ -185,9 +184,9 @@ impl TileContent {
         Self {
             country: lines(&self.country),
             disputed: lines(&self.disputed),
-            claims: lines(&self.claims),
             state: lines(&self.state),
             municipal: lines(&self.municipal),
+            coast: lines(&self.coast),
             places: self
                 .places
                 .iter()
@@ -272,7 +271,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn disputed_lines_are_drawn_once_apart_from_settled_ones() {
+    fn every_disputed_and_claimed_line_is_drawn_once() {
         use compact::{CLAIM, COUNTRY_EDGE, DISPUTED, FilteredLine};
         let line = |flags, y| FilteredLine {
             level: 2,
@@ -301,9 +300,8 @@ mod tests {
             &filtered,
         );
         assert_eq!(content.country.len(), 1);
-        // The neutral lines apart from the claims, each claimed line once.
-        assert_eq!(content.disputed.len(), 2);
-        assert_eq!(content.claims.len(), 2);
+        // Every disputed and claimed line, the claimants' copies once.
+        assert_eq!(content.disputed.len(), 4);
     }
 
     #[test]
@@ -408,5 +406,97 @@ mod tests {
         assert_eq!(top_left.places.len(), 1, "Fais lies in the top-left child");
         let bottom_left = content.clipped(key.children()[2].bounds());
         assert!(bottom_left.country.is_empty() && bottom_left.places.is_empty());
+    }
+
+    /// Which disputed and claimed lines a real cache holds per zoom level, for a few
+    /// disputed regions. Set `GLOBECRAFT_BORDER_CACHE` to an `osm_borders.sqlite`.
+    #[test]
+    #[ignore = "needs a border cache file"]
+    fn disputed_lines_per_zoom_in_a_cache() {
+        let Ok(path) = std::env::var("GLOBECRAFT_BORDER_CACHE") else {
+            return;
+        };
+        let db = rusqlite::Connection::open(path).unwrap();
+        let regions = [
+            ("Kashmir", 32.0, 37.5, 72.5, 80.5),
+            ("Arunachal", 26.5, 29.8, 91.5, 97.5),
+            ("Western Sahara", 21.0, 28.0, -17.5, -8.5),
+            ("Crimea", 44.3, 46.3, 32.4, 36.7),
+        ];
+        let mut query = db
+            .prepare("SELECT z, x, y, data FROM tiles ORDER BY z")
+            .unwrap();
+        let rows: Vec<(u8, u32, u32, Vec<u8>)> = query
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        for (name, south, north, west, east) in regions {
+            println!("== {name}");
+            for z in 0..=12_u8 {
+                // (flags) -> (lines, km)
+                let mut by_flags: std::collections::BTreeMap<u8, (usize, f64)> = Default::default();
+                let mut tiles = 0;
+                for (_, x, y, data) in rows.iter().filter(|r| r.0 == z) {
+                    let key = TileKey { z, x: *x, y: *y };
+                    let b = key.bounds();
+                    if b.north < south || b.south > north || b.east < west || b.west > east {
+                        continue;
+                    }
+                    tiles += 1;
+                    let Some(filtered) = Filtered::decode(data) else {
+                        continue;
+                    };
+                    let extent = f64::from(compact::EXTENT);
+                    for line in filtered.lines.iter().filter(|l| l.level == 2) {
+                        let geo: Vec<(f64, f64)> = line
+                            .points
+                            .iter()
+                            .map(|&(x, y)| key.point(f64::from(x) / extent, f64::from(y) / extent))
+                            .collect();
+                        let inside = geo.iter().any(|&(lat, lon)| {
+                            (south..north).contains(&lat) && (west..east).contains(&lon)
+                        });
+                        if !inside {
+                            continue;
+                        }
+                        let km: f64 = geo
+                            .windows(2)
+                            .map(|w| {
+                                let dlat = w[1].0 - w[0].0;
+                                let dlon = (w[1].1 - w[0].1) * w[0].0.to_radians().cos();
+                                111.2 * (dlat * dlat + dlon * dlon).sqrt()
+                            })
+                            .sum();
+                        let entry = by_flags.entry(line.flags).or_default();
+                        entry.0 += 1;
+                        entry.1 += km;
+                    }
+                }
+                if tiles == 0 {
+                    continue;
+                }
+                let summary: Vec<String> = by_flags
+                    .iter()
+                    .map(|(flags, (n, km))| {
+                        let mut name = String::new();
+                        if flags & compact::DISPUTED != 0 {
+                            name.push('D');
+                        }
+                        if flags & compact::CLAIM != 0 {
+                            name.push('C');
+                        }
+                        if flags & compact::COUNTRY_EDGE != 0 {
+                            name.push('E');
+                        }
+                        if name.is_empty() {
+                            name.push('-');
+                        }
+                        format!("{name}: {n} lines {km:.0} km")
+                    })
+                    .collect();
+                println!("z{z:<2} {tiles:>3} tiles  {}", summary.join(" | "));
+            }
+        }
     }
 }

@@ -27,12 +27,19 @@ const DASHED_OFF_POINTS: f32 = 5.0;
 const DOTTED_ON_POINTS: f32 = 1.5;
 const DOTTED_OFF_POINTS: f32 = 3.0;
 pub const MAX_VISIBLE_LABELS: usize = 500;
+/// Coast lines are drawn where the sun is below the horizon (the cosine of the sun's
+/// angle from the zenith is below this): the imagery's twilight is already dark there.
+const NIGHT_COAST_MAX_SUN_DOT: f64 = 0.0;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct OverlayLayers {
     pub countries: bool,
     pub states: bool,
     pub cities: bool,
     pub labels: bool,
+    /// Sunlight on: the subsolar point (latitude, longitude), to the minute. Country
+    /// outlines along the sea are then drawn on the night side, where the imagery no
+    /// longer shows the coast (roadmap 13.4).
+    pub sun: Option<(f64, f64)>,
 }
 pub struct OverlayProjection<'a> {
     pub basis: &'a Basis,
@@ -301,6 +308,54 @@ pub fn project_borders(
         draw(&osm.country, BorderKind::Country, step);
         draw(&osm.disputed, BorderKind::Disputed, step);
     }
+    // At night the imagery no longer shows where land ends, so the country outline
+    // along the sea is drawn there (roadmap 13.4), in the style of the outermost
+    // border layer that is on. Daylit coasts stay undrawn, as the user asked.
+    let coast_kind = if view.layers.countries {
+        Some(BorderKind::Country)
+    } else if view.layers.states && view.altitude_km < states_far {
+        Some(BorderKind::StateBig)
+    } else {
+        None
+    };
+    if let (Some((sun_lat, sun_lon)), Some(kind)) = (view.layers.sun, coast_kind) {
+        let sun = globecraft_core::math::ll_to_v3(sun_lat, sun_lon);
+        for line in osm.coast.iter() {
+            if visible.is_some_and(|set| !set.contains_line(line)) {
+                continue;
+            }
+            for run in night_runs(line, sun) {
+                draw_line(&line[run], kind, step);
+            }
+        }
+    }
+}
+
+/// The stretches of `line` on the night side: runs of segments with at least one end
+/// in the dark, so each run reaches the terminator.
+fn night_runs(line: &[(f64, f64)], sun: glam::DVec3) -> Vec<std::ops::RangeInclusive<usize>> {
+    let night: Vec<bool> = line
+        .iter()
+        .map(|&(lat, lon)| {
+            globecraft_core::math::ll_to_v3(lat, lon).dot(sun) < NIGHT_COAST_MAX_SUN_DOT
+        })
+        .collect();
+    let mut runs = Vec::new();
+    let mut start: Option<usize> = None;
+    for i in 0..line.len().saturating_sub(1) {
+        match (night[i] || night[i + 1], start) {
+            (true, None) => start = Some(i),
+            (false, Some(first)) => {
+                runs.push(first..=i);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(first) = start {
+        runs.push(first..=line.len() - 1);
+    }
+    runs
 }
 
 pub struct ProjectedLabel<'a> {
@@ -454,6 +509,17 @@ mod tests {
     }
 
     #[test]
+    fn coasts_are_drawn_from_the_terminator_into_the_night() {
+        // The sun over (0°, 0°): night lies beyond 90° east and west.
+        let sun = globecraft_core::math::ll_to_v3(0.0, 0.0);
+        let line: Vec<(f64, f64)> = (0..=8).map(|i| (0.0, 40.0 + 15.0 * f64::from(i))).collect();
+        // 40, 55, 70, 85 are lit; 100 onwards is dark. The run starts at 85°.
+        assert_eq!(night_runs(&line, sun), vec![3..=8]);
+        let day: Vec<(f64, f64)> = vec![(10.0, -20.0), (10.0, 20.0)];
+        assert!(night_runs(&day, sun).is_empty());
+    }
+
+    #[test]
     fn dashes_keep_phase_across_joined_segments_and_restart_on_breaks() {
         // 4 pt on / 2 pt off across two joined 6 pt segments: the second segment
         // must continue the pattern instead of restarting it.
@@ -527,6 +593,7 @@ mod tests {
                 states: true,
                 cities: false,
                 labels: true,
+                sun: None,
             },
         };
         let names: Vec<(&str, u8)> = project_labels(&view, &data)
@@ -572,6 +639,7 @@ mod tests {
                     states,
                     cities,
                     labels: false,
+                    sun: None,
                 },
             };
             // Which kinds draw the lines at each latitude, by hundredths of a degree.

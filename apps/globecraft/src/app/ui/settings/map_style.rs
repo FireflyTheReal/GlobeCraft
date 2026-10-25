@@ -40,7 +40,6 @@ pub(super) const KEYWORDS: &[&str] = &[
     "settings-map-style-line-country",
     "settings-map-style-line-state",
     "settings-map-style-line-disputed",
-    "settings-map-style-disputed-claims",
     "settings-map-style-line-municipal",
     "settings-map-style-color-label",
     "settings-map-style-width-label",
@@ -102,17 +101,6 @@ impl App {
                     ui.end_row();
                 }
             });
-        let mut claims = self.settings.map_style.disputed_claims;
-        if ui
-            .checkbox(&mut claims, lg.text("settings-map-style-disputed-claims"))
-            .on_hover_text(lg.text("settings-map-style-disputed-claims-help"))
-            .changed()
-        {
-            self.run_reporting(
-                "style.disputedClaims",
-                serde_json::json!({ "enabled": claims }),
-            );
-        }
         ui.weak(lg.text("settings-map-style-line-help"));
         ui.add_space(ui.spacing().item_spacing.y);
         ui.strong(lg.text("settings-map-style-labels-title"));

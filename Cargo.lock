@@ -2000,6 +2000,7 @@ dependencies = [
  "emath",
  "fontdb",
  "gilrs",
+ "glam",
  "globecraft-assistant",
  "globecraft-core",
  "globecraft-data",

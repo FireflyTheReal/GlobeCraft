@@ -178,6 +178,10 @@ impl Renderer {
             ctx.request_repaint_after(deadline.saturating_duration_since(now));
         }
     }
+    /// Whether the last frame still misses imagery it wants.
+    pub(super) fn waits_for_tiles(&self) -> bool {
+        !self.required.is_empty()
+    }
     pub(super) fn is_idle(&self) -> bool {
         self.worker.is_idle()
     }

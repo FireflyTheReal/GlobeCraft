@@ -64,6 +64,11 @@ fn parse_wayback_config(v: &serde_json::Value) -> Vec<WaybackRelease> {
     out.truncate(MAX_WAYBACK_RELEASES);
     out
 }
+/// The release list's file in the shared download folder, kept by
+/// `remove_retired_caches`.
+pub(crate) fn release_list_path() -> std::path::PathBuf {
+    geo_cache_path(WAYBACK_CONFIG)
+}
 /// Fetches the release list (network first so that new releases show up; disk cache as fallback).
 pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error> {
     let path = geo_cache_path(WAYBACK_CONFIG);

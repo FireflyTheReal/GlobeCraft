@@ -23,6 +23,34 @@ pub fn migrate_legacy_data() -> std::io::Result<bool> {
     migrate_folder(&data_base().join(LEGACY_DATA_FOLDER), &cache_dir())
 }
 
+/// Deletes what the removed border pipeline (before 2026-10-25) downloaded: national
+/// municipal files, geoBoundaries, Natural Earth detail levels and Overpass answers in
+/// the `geo` folder (often hundreds of MB), and the empty `overture` folder. Only the
+/// Wayback release list still lives in `geo`. Returns the bytes freed. Cheap when
+/// there is nothing to remove; run it off the UI thread.
+pub fn remove_retired_caches() -> u64 {
+    remove_retired_in(&cache_dir(), &crate::wayback::release_list_path())
+}
+
+fn remove_retired_in(root: &Path, keep: &Path) -> u64 {
+    let mut freed = 0;
+    if let Ok(entries) = std::fs::read_dir(root.join("geo")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() || path.file_name() == keep.file_name() {
+                continue;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                freed += meta.len();
+            }
+        }
+    }
+    // Only removed when empty.
+    let _ = std::fs::remove_dir(root.join("overture"));
+    freed
+}
+
 fn migrate_folder(legacy: &Path, target: &Path) -> std::io::Result<bool> {
     if target.exists() || !legacy.is_dir() {
         return Ok(false);
@@ -95,6 +123,22 @@ mod tests {
         );
         // Nothing to migrate on a fresh machine.
         assert!(!migrate_folder(&root.join("missing"), &root.join("other")).unwrap());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn retired_downloads_go_and_the_wayback_list_stays() {
+        let root = std::env::temp_dir().join(format!("globecraft-retired-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("geo")).unwrap();
+        std::fs::create_dir_all(root.join("overture")).unwrap();
+        let keep = root.join("geo").join("wayback_config");
+        std::fs::write(&keep, b"list").unwrap();
+        std::fs::write(root.join("geo").join("old_municipal_file"), b"0123456789").unwrap();
+        assert_eq!(remove_retired_in(&root, &keep), 10);
+        assert!(keep.exists());
+        assert!(!root.join("overture").exists());
+        assert_eq!(remove_retired_in(&root, &keep), 0);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

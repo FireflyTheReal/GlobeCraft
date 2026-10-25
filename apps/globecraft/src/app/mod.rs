@@ -175,6 +175,8 @@ pub(crate) struct App {
 
     kml_drop_rect: Rect,
     ring_drag: bool,
+    /// A navigator cardinal button turns the view to this heading, easing in.
+    nav_snap_heading: Option<f64>,
 }
 
 impl App {
@@ -354,6 +356,7 @@ impl App {
             sugg_rx: None,
             kml_drop_rect: Rect::NOTHING,
             ring_drag: false,
+            nav_snap_heading: None,
             runtime,
         };
         app.restore_kml_session();
@@ -558,7 +561,7 @@ impl eframe::App for App {
                 lon: self.cam.lon,
                 altitude_km: self.cam.alt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
-                claims: self.settings.map_style.disputed_claims,
+                load_ahead: self.renderer.is_idle() && !self.renderer.waits_for_tiles(),
             });
         if self.boundary_loader.is_loading() {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);

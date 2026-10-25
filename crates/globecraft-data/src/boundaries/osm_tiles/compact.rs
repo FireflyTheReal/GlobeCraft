@@ -1,7 +1,7 @@
 //! What GlobeCraft keeps of an OpenMapTiles tile, and how it is stored on disk.
 //!
 //! A downloaded tile is a whole basemap tile (roads, buildings, land use); only its land
-//! border lines and place names are kept. Lines are cut at the tile's edge, so edge
+//! border lines, the sea's outline (coast) and place names are kept. Lines are cut at the tile's edge, so edge
 //! points of neighbouring tiles coincide, and stored with their raw `admin_level` and
 //! disputed flags, so a later change in how levels are drawn needs no new download.
 //! Coordinates are integer tile units, stored as zig-zag varint deltas.
@@ -10,7 +10,11 @@ use super::mvt::{self, GeomType, Reader, Value};
 /// Tile units across a tile in this format (OpenMapTiles' usual extent).
 pub(super) const EXTENT: i32 = 4096;
 /// Bumped when the stored layout changes; rows of other versions are ignored.
-pub(super) const FORMAT_VERSION: u8 = 3;
+/// 4: coast lines; state names keep their class on disk.
+pub(super) const FORMAT_VERSION: u8 = 4;
+/// `FilteredLine::level` of a coast line: the outline of the `water` layer's ocean,
+/// without the tile's edges. Administrative levels start at 1.
+pub(super) const COAST_LEVEL: u8 = 0;
 
 /// `FilteredLine::flags`: OpenMapTiles marks the line `disputed=1`.
 pub(super) const DISPUTED: u8 = 1;
@@ -35,12 +39,13 @@ pub(super) enum PlaceClass {
 }
 
 impl PlaceClass {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::City,
         Self::Town,
         Self::Village,
         Self::Hamlet,
         Self::Island,
+        Self::State,
     ];
     fn parse(class: &str) -> Option<Self> {
         Some(match class {
@@ -87,7 +92,9 @@ pub(super) struct Filtered {
 impl Filtered {
     /// Keeps the land borders and places of a vector tile. `None` when it is malformed.
     pub(super) fn from_mvt(bytes: &[u8]) -> Option<Self> {
-        let layers = mvt::decode(bytes, |name| name == "boundary" || name == "place")?;
+        let layers = mvt::decode(bytes, |name| {
+            name == "boundary" || name == "place" || name == "water"
+        })?;
         let mut out = Self::default();
         for layer in &layers {
             let scale = f64::from(EXTENT) / f64::from(layer.extent.max(1));
@@ -129,6 +136,21 @@ impl Filtered {
                                     flags,
                                     points: clipped,
                                 });
+                            }
+                        }
+                    }
+                    ("water", GeomType::Polygon) if text("class") == Some("ocean") => {
+                        for ring in &feature.parts {
+                            let scaled: Vec<(f64, f64)> =
+                                ring.iter().map(|&(x, y)| (x * scale, y * scale)).collect();
+                            for clipped in clip_to_tile(&scaled) {
+                                for points in without_tile_edges(clipped) {
+                                    out.lines.push(FilteredLine {
+                                        level: COAST_LEVEL,
+                                        flags: 0,
+                                        points,
+                                    });
+                                }
                             }
                         }
                     }
@@ -289,6 +311,33 @@ fn text(value: &str, out: &mut Vec<u8>) {
 /// The parts of a polyline (tile units) inside the tile, rounded to whole units. Cut
 /// points lie exactly on the edge (0 or `EXTENT`), so a line crossing into the next
 /// tile ends where that tile's copy starts (up to the tiles' separate simplification).
+/// Splits a clipped ring outline where it runs along the tile's edge: there the
+/// polygon was cut, not the coast.
+fn without_tile_edges(points: Vec<(i32, i32)>) -> Vec<Vec<(i32, i32)>> {
+    let on_edge = |a: (i32, i32), b: (i32, i32)| {
+        (a.0 == b.0 && (a.0 <= 0 || a.0 >= EXTENT)) || (a.1 == b.1 && (a.1 <= 0 || a.1 >= EXTENT))
+    };
+    let mut runs: Vec<Vec<(i32, i32)>> = Vec::new();
+    let mut run: Vec<(i32, i32)> = Vec::new();
+    for pair in points.windows(2) {
+        if on_edge(pair[0], pair[1]) {
+            if run.len() >= 2 {
+                runs.push(std::mem::take(&mut run));
+            }
+            run.clear();
+            continue;
+        }
+        if run.is_empty() {
+            run.push(pair[0]);
+        }
+        run.push(pair[1]);
+    }
+    if run.len() >= 2 {
+        runs.push(run);
+    }
+    runs
+}
+
 fn clip_to_tile(line: &[(f64, f64)]) -> Vec<Vec<(i32, i32)>> {
     let max = f64::from(EXTENT);
     let bounds = super::content::TileBounds {
@@ -408,6 +457,59 @@ mod tests {
         assert_eq!(names, ["Fais", "München"]);
         assert_eq!(filtered.places[1].name_en.as_deref(), Some("Munich"));
         assert_eq!(filtered.places[1].name_pt.as_deref(), Some("Munique"));
+    }
+
+    #[test]
+    fn keeps_the_ocean_outline_without_the_tile_edges_and_state_names_survive_the_disk() {
+        let polygon = |class: &'static str, ring: Vec<(i32, i32)>| TestFeature {
+            tags: vec![("class", TestValue::Text(class))],
+            kind: 3,
+            parts: vec![ring],
+        };
+        let raw = tile(&[
+            layer(
+                "water",
+                4096,
+                &[
+                    // Runs out of the tile: only the two sides inside are coast.
+                    polygon(
+                        "ocean",
+                        vec![(2000, 5000), (2000, 2000), (5000, 2000), (5000, 5000)],
+                    ),
+                    // Two sides lie on the tile's edge: cut there.
+                    polygon("ocean", vec![(0, 0), (1000, 0), (1000, 1000), (0, 1000)]),
+                    polygon("lake", vec![(100, 100), (200, 100), (200, 200)]),
+                ],
+            ),
+            layer(
+                "place",
+                4096,
+                &[TestFeature {
+                    tags: vec![
+                        ("class", TestValue::Text("state")),
+                        ("name", TestValue::Text("Bayern")),
+                    ],
+                    kind: 1,
+                    parts: vec![vec![(500, 500)]],
+                }],
+            ),
+        ]);
+        let filtered = Filtered::from_mvt(&raw).unwrap();
+        let coasts: Vec<&Vec<(i32, i32)>> = filtered
+            .lines
+            .iter()
+            .filter(|l| l.level == COAST_LEVEL)
+            .map(|l| &l.points)
+            .collect();
+        assert_eq!(
+            coasts,
+            [
+                &vec![(2000, EXTENT), (2000, 2000), (EXTENT, 2000)],
+                &vec![(1000, 0), (1000, 1000), (0, 1000)],
+            ]
+        );
+        let restored = Filtered::decode(&filtered.encode()).unwrap();
+        assert_eq!(restored.places[0].class, PlaceClass::State);
     }
 
     #[test]

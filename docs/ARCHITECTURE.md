@@ -218,8 +218,7 @@ used dropped first). Lines cut at tile edges are joined again, and the visible s
 is composed off the UI thread and published as one replacing `OsmBorders` patch.
 OpenStreetMap stores each border once, so no border is matched, cut or deduplicated
 between sources. `admin_level` 2 draws as country, 3–4 as state, 5–8 as municipal
-(from zoom 11); the disputed view is neutral by default, with claims as a map-style
-option. Small names appear with the municipal lines, below `municipal_detail_max_km`.
+(from zoom 11); disputed and claimed lines draw dashed, every side's. Small names appear with the municipal lines, below `municipal_detail_max_km`.
 
 The bundled Natural Earth 1:110m countries and places are the fallback: they draw
 a cold or offline start before the first tile arrives, and the country polygons'

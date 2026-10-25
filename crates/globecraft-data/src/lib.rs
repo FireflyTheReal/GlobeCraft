@@ -11,7 +11,7 @@ pub mod settings;
 pub mod tiles;
 pub mod wayback;
 pub use error::Error;
-pub use paths::migrate_legacy_data;
+pub use paths::{migrate_legacy_data, remove_retired_caches};
 mod cpu;
 mod features;
 pub mod files;
