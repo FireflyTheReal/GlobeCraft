@@ -195,39 +195,40 @@ impl Cam {
 
     /// Moves the camera so `pick` (the point under the cursor) returns `target` again,
     /// keeping the heading: zooming toward a point never turns north away (user,
-    /// 2026-10-25). Each step turns the camera rigidly, then restores the heading;
-    /// the next step corrects what that moved.
+    /// 2026-10-25). Each step turns the camera rigidly toward the target, then restores
+    /// the heading; the next step corrects what that moved. Where a fixed heading cannot
+    /// hold the point exactly (near the globe's edge, or the pole), the closest match is
+    /// kept: north stays locked and the point may slip by a little.
     fn anchor_keeping_heading(
         &mut self,
         target: (f64, f64),
         pick: impl Fn(&Self) -> Option<(f64, f64)>,
     ) {
-        const MAX_ANCHOR_ITERATIONS: usize = 16;
+        const MAX_ANCHOR_ITERATIONS: usize = 24;
         const ANCHOR_TOLERANCE_KM: f64 = 1e-8;
-        /// Beyond this the fixed heading cannot hold the point (at the pole, where
-        /// north turns around the camera): the camera turns rigidly instead.
-        const HEADING_ANCHOR_MAX_ERROR_KM: f64 = 1e-7;
-        let start = *self;
-        let off = |cam: &Self| pick(cam).map(|p| crate::math::haversine_km(p, target));
-        for keep_heading in [true, false] {
-            if !keep_heading {
-                *self = start;
+        /// Within a degree of a pole north points every way: the camera turns rigidly.
+        const FREE_HEADING_MIN_LATITUDE_DEG: f64 = 89.0;
+        let heading = self.heading;
+        let keep_heading = self.lat.abs() < FREE_HEADING_MIN_LATITUDE_DEG;
+        let mut best: Option<(f64, Self)> = None;
+        for _ in 0..MAX_ANCHOR_ITERATIONS {
+            let Some(p1) = pick(self) else {
+                break;
+            };
+            let error = crate::math::haversine_km(p1, target);
+            if best.is_none_or(|(least, _)| error < least) {
+                best = Some((error, *self));
             }
-            for _ in 0..MAX_ANCHOR_ITERATIONS {
-                let Some(p1) = pick(self) else {
-                    break;
-                };
-                if crate::math::haversine_km(p1, target) <= ANCHOR_TOLERANCE_KM {
-                    break;
-                }
-                self.rotate(ll_to_v3(p1.0, p1.1), ll_to_v3(target.0, target.1));
-                if keep_heading {
-                    self.heading = start.heading;
-                }
+            if error <= ANCHOR_TOLERANCE_KM {
+                break;
             }
-            if off(self).is_none_or(|km| km <= HEADING_ANCHOR_MAX_ERROR_KM) {
-                return;
+            self.rotate(ll_to_v3(p1.0, p1.1), ll_to_v3(target.0, target.1));
+            if keep_heading {
+                self.heading = heading;
             }
+        }
+        if let Some((_, cam)) = best {
+            *self = cam;
         }
     }
 
@@ -276,6 +277,44 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    #[test]
+    fn zooming_toward_the_cursor_keeps_north_from_any_altitude_and_spot() {
+        let mut turned = Vec::new();
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            for alt in [20_000.0, 8_000.0, 2_000.0, 300.0, 20.0, 1.0] {
+                for (dx, dy) in [
+                    (-300.0, 200.0),
+                    (250.0, -150.0),
+                    (60.0, 30.0),
+                    (-380.0, -260.0),
+                ] {
+                    let (mut cam, rect, aspect) = test_app_cam(Cam {
+                        lat: 30.0,
+                        lon: 20.0,
+                        heading: 0.0,
+                        alt,
+                    });
+                    let cursor = rect.center() + Vec2::new(dx, dy);
+                    let Some(before) = cam.basis_for_model(aspect, model).pick(rect, cursor) else {
+                        continue;
+                    };
+                    for _ in 0..10 {
+                        cam.zoom_at_for_model(0.8, Some(cursor), rect, aspect, model);
+                    }
+                    let after = cam
+                        .basis_for_model(aspect, model)
+                        .pick(rect, cursor)
+                        .unwrap();
+                    // North stays; near the globe's edge the point may slip a little.
+                    if cam.heading.abs() > 1e-9 || model.distance_km(before, after) > alt * 0.01 {
+                        turned.push((model, alt, dx, dy, cam.heading));
+                    }
+                }
+            }
+        }
+        assert!(turned.is_empty(), "{turned:?}");
+    }
 
     #[test]
     fn zooming_toward_the_cursor_keeps_north_where_it_was() {

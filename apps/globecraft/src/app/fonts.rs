@@ -4,11 +4,29 @@ use fontdb::{Database, Family, Query};
 use std::sync::{Arc, mpsc};
 const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
 const MAP_FAMILY: &str = "globecraft-map";
+/// Installed fonts tried, in order, for scripts the bundled fonts lack (Chinese,
+/// Japanese, Korean, Arabic, Hebrew, Thai, Devanagari…): place names come in every
+/// script. One broad face is usually enough; macOS ships Arial Unicode MS.
+const FALLBACK_FAMILIES: [&str; 9] = [
+    "Arial Unicode MS",
+    "Noto Sans CJK SC",
+    "Noto Sans CJK JP",
+    "Microsoft YaHei",
+    "Hiragino Sans",
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    "Nirmala UI",
+    "Noto Sans",
+];
+/// At most this many fallback faces, and this many bytes of them in memory.
+const MAX_FALLBACK_FACES: usize = 2;
+const MAX_FALLBACK_BYTES: usize = 40 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Request {
     ui: String,
     map: String,
 }
+#[derive(Clone)]
 struct Face {
     bytes: Vec<u8>,
     index: u32,
@@ -20,6 +38,7 @@ enum Response {
         ui: Option<Face>,
         ui_semibold: Option<Face>,
         map: Option<Face>,
+        fallbacks: Vec<Face>,
         errors: Vec<String>,
     },
 }
@@ -50,6 +69,7 @@ impl FontService {
                 if responses.send(Response::Families(families)).is_err() {
                     return;
                 }
+                let fallbacks = fallback_faces(&db);
                 ctx.request_repaint();
                 while let Ok(mut request) = requests.recv() {
                     while let Ok(newer) = requests.try_recv() {
@@ -74,6 +94,7 @@ impl FontService {
                             ui,
                             ui_semibold,
                             map,
+                            fallbacks: fallbacks.clone(),
                             errors,
                         })
                         .is_err()
@@ -133,9 +154,10 @@ impl FontService {
                     ui,
                     ui_semibold,
                     map,
+                    fallbacks,
                     errors,
                 } if request == desired => {
-                    ctx.set_fonts(definitions(ui, ui_semibold, map));
+                    ctx.set_fonts(definitions(ui, ui_semibold, map, &fallbacks));
                     self.error = if errors.is_empty() {
                         None
                     } else {
@@ -148,6 +170,25 @@ impl FontService {
         }
         changed
     }
+}
+/// The installed faces that cover the scripts the bundled fonts lack, best first.
+fn fallback_faces(db: &Database) -> Vec<Face> {
+    let mut faces: Vec<Face> = Vec::new();
+    let mut bytes = 0;
+    for family in FALLBACK_FAMILIES {
+        if faces.len() >= MAX_FALLBACK_FACES {
+            break;
+        }
+        let Ok(Some(face)) = load_face(db, family, fontdb::Weight::NORMAL) else {
+            continue;
+        };
+        if bytes + face.bytes.len() > MAX_FALLBACK_BYTES {
+            continue;
+        }
+        bytes += face.bytes.len();
+        faces.push(face);
+    }
+    faces
 }
 fn load_face(db: &Database, family: &str, weight: fontdb::Weight) -> Result<Option<Face>, String> {
     let families = [if family.is_empty() {
@@ -189,12 +230,13 @@ fn load_face(db: &Database, family: &str, weight: fontdb::Weight) -> Result<Opti
 /// Bundled fonts only, with every family the interface names: installed before the first frame
 /// so no text asks for a family that isn't there yet.
 pub(super) fn base_definitions() -> egui::FontDefinitions {
-    definitions(None, None, None)
+    definitions(None, None, None, &[])
 }
 fn definitions(
     ui: Option<Face>,
     ui_semibold: Option<Face>,
     map: Option<Face>,
+    fallbacks: &[Face],
 ) -> egui::FontDefinitions {
     let mut definitions = egui::FontDefinitions::default();
     let mut map_fonts = definitions.families[&egui::FontFamily::Proportional].clone();
@@ -232,6 +274,19 @@ fn definitions(
                 map_fonts.insert(0, name.into());
             }
         }
+    }
+    // Fallbacks go last everywhere: they only draw what nothing before them can.
+    for (i, face) in fallbacks.iter().enumerate() {
+        let name = format!("installed-fallback-{i}");
+        let mut data = egui::FontData::from_owned(face.bytes.clone());
+        data.index = face.index;
+        definitions.font_data.insert(name.clone(), Arc::new(data));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(fonts) = definitions.families.get_mut(&family) {
+                fonts.push(name.clone());
+            }
+        }
+        map_fonts.push(name);
     }
     definitions
         .families
@@ -280,8 +335,23 @@ mod tests {
                 index: 0,
             }),
             None,
-            Some(Face { bytes, index: 0 }),
+            Some(Face {
+                bytes: bytes.clone(),
+                index: 0,
+            }),
+            &[Face { bytes, index: 0 }],
         );
+        // Fallbacks draw last, in every family.
+        for family in [
+            egui::FontFamily::Proportional,
+            egui::FontFamily::Name(MAP_FAMILY.into()),
+            egui::FontFamily::Name(crate::app::ui::theme::SEMIBOLD_FAMILY.into()),
+        ] {
+            assert_eq!(
+                custom.families[&family].last().map(String::as_str),
+                Some("installed-fallback-0")
+            );
+        }
         assert_eq!(
             custom.families[&egui::FontFamily::Proportional][0],
             "installed-ui"

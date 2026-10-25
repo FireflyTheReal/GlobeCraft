@@ -186,7 +186,7 @@ settings-folders-action = Change folders…
 controls-help-toggle = Show controls help
 
 controls-help-text = • Drag (left): rotate the globe
-    • Right-drag / Shift+drag: rotate the view
+    • Right-drag / Shift+drag / two-finger turn: rotate the view
     • Wheel / pinch or +/-: zoom
     • Double-click: fly to the point
     • Arrow keys: move   • N: north up
@@ -555,7 +555,7 @@ settings-cache-disk-label = Encoded disk target
 settings-cache-restart-help = Budget changes apply after restarting. Memory eviction is best effort; frame references and other app allocations are additional. Disk counts managed imagery files, including SQLite overhead.
 settings-cache-borders-label = Border tile cache on disk
 settings-cache-borders-usage = OpenStreetMap borders and names: { $size } used. Applies at once; the tiles used longest ago are dropped first.
-settings-cache-downloads = Downloaded this session: imagery { $imagery } ({ $imagery_tiles } tiles), borders and names { $borders } ({ $border_tiles } tiles).
+settings-cache-downloads = Downloaded this session: imagery for the view { $imagery } ({ $imagery_tiles } tiles), imagery loaded ahead { $ahead } ({ $ahead_tiles } tiles), borders and names { $borders } ({ $border_tiles } tiles). Read from the disk cache instead: { $disk } ({ $disk_tiles } tiles).
 settings-cache-resident-label = Current decoded cache: { $size }
 settings-cache-confirm = Clear downloaded map imagery? Settings and geographic documents are kept.
 settings-confirm-action = Confirm

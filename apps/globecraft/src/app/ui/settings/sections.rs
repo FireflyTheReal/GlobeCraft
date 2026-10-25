@@ -293,20 +293,19 @@ impl App {
         );
         {
             use globecraft_data::download_stats::{DownloadKind, totals};
-            let (imagery, borders) = (
-                totals(DownloadKind::Imagery),
-                totals(DownloadKind::BorderTiles),
-            );
             let size = crate::app::cache::cache_size_text;
-            ui.weak(lg.format(
-                "settings-cache-downloads",
-                &[
-                    ("imagery", size(imagery.bytes).into()),
-                    ("imagery_tiles", imagery.responses.to_string().into()),
-                    ("borders", size(borders.bytes).into()),
-                    ("border_tiles", borders.responses.to_string().into()),
-                ],
-            ));
+            let mut args = Vec::new();
+            for (kind, bytes, tiles) in [
+                (DownloadKind::Imagery, "imagery", "imagery_tiles"),
+                (DownloadKind::ImageryAhead, "ahead", "ahead_tiles"),
+                (DownloadKind::BorderTiles, "borders", "border_tiles"),
+                (DownloadKind::ImageryFromDisk, "disk", "disk_tiles"),
+            ] {
+                let total = totals(kind);
+                args.push((bytes, size(total.bytes).into()));
+                args.push((tiles, total.responses.to_string().into()));
+            }
+            ui.weak(lg.format("settings-cache-downloads", &args));
         }
         ui.label(lg.format(
             "settings-cache-resident-label",

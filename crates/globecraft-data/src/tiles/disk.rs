@@ -8,7 +8,8 @@ use std::{
 };
 
 mod mbtiles;
-pub(super) const DEFAULT_DISK_BUDGET_BYTES: u64 = 128 * 1024 * 1024;
+pub(super) const DEFAULT_DISK_BUDGET_BYTES: u64 =
+    crate::settings::cache::DEFAULT_DISK_CACHE_MIB as u64 * 1024 * 1024;
 
 pub(super) struct DiskCache {
     tilesets: mbtiles::Mbtiles,

@@ -156,7 +156,7 @@ User instructions and the requested scope take precedence over these defaults.
 - Persist imagery through MBTiles and the single tokio-rusqlite worker. Keep
   provider/release/encoded-format identities separate, convert XYZ rows to TMS,
   retain legacy-file fallback/migration and respect the disk epoch on writeback.
-  The 128 MiB disk target counts managed file bytes, including SQLite overhead;
+  The 1 GiB default disk target (Settings → Cache) counts managed file bytes, including SQLite overhead;
   reclaim pages when evicting and prefer coarse overview retention. Publish tiles
   before optional persistence. Keep SQLite out of UI/pixel loops. Clear only owned
   tile directories, preserve other data and report actual usage. R-tree/FTS5

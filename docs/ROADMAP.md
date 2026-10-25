@@ -268,7 +268,7 @@ and timeline (H) and the point-layer engine (I).
 | 6.8 | **Pane presets**: "Explore", "Measure" and "Present" (hide chrome, big globe, tour controls), saved as workspace layouts | S | `WorkspaceLayout` already persists |
 | 6.9 | Layers pane search and filter (by name, category and active state) | S | The catalogue itself is Add Data (section 2); this keeps a long Layers pane usable |
 | 6.10 | More languages (es, fr, de, ja) | S each | The Fluent setup makes this cheap; ask native speakers for review |
-| 6.11 | Touch and trackpad: pinch to zoom, two-finger rotate and tilt, inertia tuned for Mac trackpads | S–M | Mac users expect these gestures |
+| 6.11 | Touch and trackpad: pinch to zoom, two-finger rotate and tilt, inertia tuned for Mac trackpads | S–M | Mac users expect these gestures **2026-10-25:** pinch zooms and the two-finger turn rotates the view. Tilt does not exist yet: the camera has no pitch (always straight down), so it needs camera, rendering and picking work first |
 | 6.12 | Cursor info card: hover or long-press a point for elevation, local time, country/state/municipality, nearest place and copyable coordinates in every format | S–M | Everything is already in memory |
 
 ## 7. AI assistant

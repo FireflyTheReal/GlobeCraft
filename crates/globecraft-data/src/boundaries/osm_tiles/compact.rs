@@ -160,7 +160,12 @@ impl Filtered {
                         else {
                             continue;
                         };
-                        let name_en = text("name:en").or_else(|| text("name_en"));
+                        // English, else OpenMapTiles' international (usually Latin)
+                        // spelling, so a name in another script has a readable form.
+                        let name_en = text("name:en")
+                            .or_else(|| text("name_en"))
+                            .or_else(|| text("name_int"))
+                            .or_else(|| text("name:latin"));
                         for part in &feature.parts {
                             let Some(&(px, py)) = part.first() else {
                                 continue;

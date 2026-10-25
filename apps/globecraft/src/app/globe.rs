@@ -81,6 +81,17 @@ impl App {
                 }
                 interacting = true;
             }
+            // Trackpad two-finger rotation turns the map with the fingers, as the
+            // navigator's ring does.
+            let turn = f64::from(ui.input(|i| i.rotation_delta()));
+            if turn != 0.0 {
+                self.fly = None;
+                self.cam.heading = wrap_lon(
+                    self.cam.heading
+                        - turn.to_degrees() * self.settings.navigation.rotation_sensitivity,
+                );
+                interacting = true;
+            }
             if (zd - 1.0).abs() > 1e-4 {
                 self.fly = None;
                 if self.explorer.active == globecraft_core::body::Body::Earth {

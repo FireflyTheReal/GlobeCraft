@@ -331,7 +331,7 @@ See [releases](RELEASING.md) for artifact names, install policy and integrity li
 | Storage | Policy |
 | --- | --- |
 | Decoded tiles | Moka `sync`, weighted LRU, 256 MiB best-effort target; temporary overshoot and frame references are separate |
-| Encoded imagery | MBTiles 1.3 through one tokio-rusqlite worker; 128 MiB managed-file target, including SQLite overhead |
+| Encoded imagery | MBTiles 1.3 through one tokio-rusqlite worker; 1 GiB managed-file target by default (Settings → Cache; 128 MiB before 2026-10-25), including SQLite overhead |
 
 MBTiles separates providers, stable Wayback releases and encoded formats, converts
 XYZ rows to TMS, and lazily imports legacy tile files. Eviction favors coarse

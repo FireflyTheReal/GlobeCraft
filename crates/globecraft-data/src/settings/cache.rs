@@ -8,6 +8,13 @@ pub const MAX_DISK_CACHE_MIB: u32 = 16384;
 /// Bounds of the border tile cache (OpenStreetMap borders and names, compact format).
 pub const MIN_BORDER_CACHE_MIB: u32 = 8;
 pub const MAX_BORDER_CACHE_MIB: u32 = 1024;
+/// The imagery disk cache by default. 128 MiB (the default before 2026-10-25) filled
+/// within one session (137 MiB downloaded), so places already seen were downloaded
+/// again.
+pub const DEFAULT_DISK_CACHE_MIB: u32 = 1024;
+/// The old default: a saved value of exactly this was never chosen by the user and
+/// moves to the new default.
+const OLD_DEFAULT_DISK_CACHE_MIB: u64 = 128;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct CachePreferences {
     pub decoded_mib: u32,
@@ -18,7 +25,7 @@ impl Default for CachePreferences {
     fn default() -> Self {
         Self {
             decoded_mib: 256,
-            disk_mib: 128,
+            disk_mib: DEFAULT_DISK_CACHE_MIB,
             borders_mib: 64,
         }
     }
@@ -58,5 +65,22 @@ impl CachePreferences {
                 *target = number.clamp(u64::from(min), u64::from(max)) as u32;
             }
         }
+        if value.get("disk_mib").and_then(|v| v.as_u64()) == Some(OLD_DEFAULT_DISK_CACHE_MIB) {
+            self.disk_mib = DEFAULT_DISK_CACHE_MIB;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_old_imagery_cache_default_moves_to_the_new_one_and_choices_stay() {
+        let mut prefs = CachePreferences::default();
+        prefs.apply(&serde_json::json!({"disk_mib": 128}));
+        assert_eq!(prefs.disk_mib, DEFAULT_DISK_CACHE_MIB);
+        prefs.apply(&serde_json::json!({"disk_mib": 300}));
+        assert_eq!(prefs.disk_mib, 300);
     }
 }

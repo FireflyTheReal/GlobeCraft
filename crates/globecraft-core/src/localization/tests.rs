@@ -147,6 +147,13 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
                 ("boundaries-osm-loading-status", Lang::PtBr) => {
                     "Carregando limites do OpenStreetMap…"
                 }
+                // The trackpad's two-finger turn rotates the view (2026-10-25).
+                ("controls-help-text", Lang::En) => {
+                    "• Drag (left): rotate the globe\n• Right-drag / Shift+drag / two-finger turn: rotate the view\n• Wheel / pinch or +/-: zoom\n• Double-click: fly to the point\n• Arrow keys: move   • N: north up\n• Right-click: context menu"
+                }
+                ("controls-help-text", Lang::PtBr) => {
+                    "• Arrastar (esq.): girar o globo\n• Botão direito/Shift+arrastar/giro com dois dedos: girar a vista\n• Roda/pinça ou +/-: zoom\n• Duplo clique: voar até o ponto\n• Setas: mover   • N: norte para cima\n• Botão direito (clique): menu de contexto"
+                }
                 // Decorative symbols in the easter egg stay.
                 ("flat-earth-title", _) => values[lang.code()].as_str().unwrap(),
                 _ => without_emoji_icon(values[lang.code()].as_str().unwrap()),

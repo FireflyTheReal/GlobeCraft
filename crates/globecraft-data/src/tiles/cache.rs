@@ -18,7 +18,9 @@ const MAX_TILE_RESPONSE_BYTES: u64 = 8_000_000;
 pub const MAX_INFLIGHT: usize = 48;
 
 enum RequestState {
-    Loading(u64),
+    /// The disk epoch at admission, and whether the tile is loaded ahead of need (a
+    /// warmup) rather than for the view.
+    Loading(u64, bool),
     Failed(Instant),
     /// The source answered that it has no tile here (Esri's "Map data not yet
     /// available"); never requested again this session.
@@ -27,7 +29,7 @@ enum RequestState {
 impl RequestState {
     fn is_pending(&self) -> bool {
         match self {
-            Self::Loading(_) | Self::Unavailable => true,
+            Self::Loading(..) | Self::Unavailable => true,
             Self::Failed(time) => time.elapsed() < FAILED_TILE_RETRY_DELAY,
         }
     }
@@ -260,7 +262,8 @@ impl TileCache {
         {
             return false;
         }
-        requests.insert(key, RequestState::Loading(self.disk.epoch()));
+        let ahead = limit < MAX_INFLIGHT;
+        requests.insert(key, RequestState::Loading(self.disk.epoch(), ahead));
         self.queue.lock().unwrap().push_back(key);
         self.inflight.fetch_add(1, Ordering::Relaxed);
         // If wake tickets are full, queued tickets already cover the bounded
@@ -293,11 +296,17 @@ impl TileCache {
                 let (provider, zoom, _, _, _) = unkey(*key);
                 let keep =
                     wanted.contains(key) || (provider == super::Provider::Satellite && zoom <= 4);
-                if !keep && matches!(requests.remove(key), Some(RequestState::Loading(_))) {
+                if !keep && matches!(requests.remove(key), Some(RequestState::Loading(..))) {
                     self.inflight.fetch_sub(1, Ordering::Relaxed);
                 }
                 keep
             });
+            // A tile the view now wants is no longer loaded ahead.
+            for key in keys {
+                if let Some(RequestState::Loading(_, ahead)) = requests.get_mut(key) {
+                    *ahead = false;
+                }
+            }
             let queued: HashSet<_> = queue.iter().copied().collect();
             let mut selected = HashSet::new();
             let mut ordered: VecDeque<_> = keys
@@ -323,7 +332,7 @@ impl TileCache {
                 Some(RequestState::Failed(time)) => {
                     Some(FAILED_TILE_RETRY_DELAY.saturating_sub(time.elapsed()))
                 }
-                Some(RequestState::Loading(_) | RequestState::Unavailable) => None,
+                Some(RequestState::Loading(..) | RequestState::Unavailable) => None,
                 None if self.inflight() < MAX_INFLIGHT && !self.ready.contains_key(key) => {
                     Some(Duration::ZERO)
                 }
@@ -332,13 +341,13 @@ impl TileCache {
             .min()
     }
 
-    fn next_job(&self) -> Option<(TileKey, u64)> {
+    fn next_job(&self) -> Option<(TileKey, u64, bool)> {
         let requests = self.requests.lock().unwrap();
         let key = self.queue.lock().unwrap().pop_front()?;
-        let Some(RequestState::Loading(epoch)) = requests.get(&key) else {
+        let Some(&RequestState::Loading(epoch, ahead)) = requests.get(&key) else {
             return None;
         };
-        Some((key, *epoch))
+        Some((key, epoch, ahead))
     }
 
     fn complete(&self, key: TileKey, result: Result<Tile, TileFailure>) {
@@ -356,7 +365,7 @@ impl TileCache {
         // Publish the decoded tile before removing Loading to avoid duplicate requests.
         let mut requests = self.requests.lock().unwrap();
         self.queue.lock().unwrap().retain(|&queued| queued != key);
-        let was_loading = matches!(requests.remove(&key), Some(RequestState::Loading(_)));
+        let was_loading = matches!(requests.remove(&key), Some(RequestState::Loading(..)));
         requests.retain(|_, state| state.is_pending());
         if unavailable {
             requests.insert(key, RequestState::Unavailable);
@@ -402,6 +411,7 @@ async fn fetch_tile(
     k: TileKey,
     disk: &DiskCache,
     fixture_source: Option<&str>,
+    ahead: bool,
 ) -> Result<FetchedTile, TileFailure> {
     let (provider, zoom, x, y, release) = unkey(k);
     let path = disk.path(k)?;
@@ -410,8 +420,13 @@ async fn fetch_tile(
             let _ = disk.invalidate(&path).await;
             return Err(TileFailure::Unavailable);
         }
+        let read = bytes.len();
         match decode(bytes).await {
             Ok((tile, _)) => {
+                crate::download_stats::record(
+                    crate::download_stats::DownloadKind::ImageryFromDisk,
+                    read,
+                );
                 return Ok(FetchedTile {
                     tile,
                     persistence: None,
@@ -438,7 +453,11 @@ async fn fetch_tile(
         Ok(bytes) if is_placeholder(&bytes) => return Err(TileFailure::Unavailable),
         Ok(bytes) => {
             crate::download_stats::record(
-                crate::download_stats::DownloadKind::Imagery,
+                if ahead {
+                    crate::download_stats::DownloadKind::ImageryAhead
+                } else {
+                    crate::download_stats::DownloadKind::Imagery
+                },
                 bytes.len(),
             );
             bytes
@@ -468,10 +487,10 @@ async fn worker(
         let Some(cache) = cache.upgrade() else {
             return;
         };
-        let Some((key, epoch)) = cache.next_job() else {
+        let Some((key, epoch, ahead)) = cache.next_job() else {
             continue;
         };
-        match fetch_tile(key, &cache.disk, cache.fixture_source.as_deref()).await {
+        match fetch_tile(key, &cache.disk, cache.fixture_source.as_deref(), ahead).await {
             Ok(FetchedTile { tile, persistence }) => {
                 // Publish before optional SQLite persistence, so writes/eviction do
                 // not delay imagery readiness. Persistence keeps its original epoch.

@@ -6,8 +6,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// A kind of download counted here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DownloadKind {
-    /// Imagery and terrain tiles.
+    /// Imagery and terrain tiles the view asked for.
     Imagery,
+    /// Imagery loaded ahead of need (the overview and zoom-out warmups).
+    ImageryAhead,
+    /// Imagery read from the disk cache instead of downloaded (not network traffic).
+    ImageryFromDisk,
     /// OpenStreetMap vector tiles for borders and names.
     BorderTiles,
 }
@@ -26,11 +30,15 @@ impl Counter {
 }
 
 static IMAGERY: Counter = Counter::new();
+static IMAGERY_AHEAD: Counter = Counter::new();
+static IMAGERY_FROM_DISK: Counter = Counter::new();
 static BORDER_TILES: Counter = Counter::new();
 
 fn counter(kind: DownloadKind) -> &'static Counter {
     match kind {
         DownloadKind::Imagery => &IMAGERY,
+        DownloadKind::ImageryAhead => &IMAGERY_AHEAD,
+        DownloadKind::ImageryFromDisk => &IMAGERY_FROM_DISK,
         DownloadKind::BorderTiles => &BORDER_TILES,
     }
 }

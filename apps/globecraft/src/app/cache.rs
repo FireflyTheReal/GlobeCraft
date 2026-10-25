@@ -173,16 +173,22 @@ impl App {
             return;
         }
         let imagery = totals(DownloadKind::Imagery);
+        let ahead = totals(DownloadKind::ImageryAhead);
         let borders = totals(DownloadKind::BorderTiles);
-        let bytes = imagery.bytes + borders.bytes;
+        let disk = totals(DownloadKind::ImageryFromDisk);
+        let bytes = imagery.bytes + ahead.bytes + borders.bytes + disk.bytes;
         self.download_log = (Instant::now(), bytes);
         if bytes != logged_bytes {
             eprintln!(
-                "Downloaded this session: imagery {} in {} tiles, border tiles {} in {} tiles",
+                "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles",
                 cache_size_text(imagery.bytes),
                 imagery.responses,
+                cache_size_text(ahead.bytes),
+                ahead.responses,
                 cache_size_text(borders.bytes),
-                borders.responses
+                borders.responses,
+                cache_size_text(disk.bytes),
+                disk.responses
             );
         }
     }
