@@ -2,8 +2,10 @@
 //! level around the view, nearest first.
 use super::content::{MAX_MERCATOR_LAT, TileKey};
 
-/// The deepest level OpenMapTiles is cut to; closer views draw its lines larger.
-const MAX_ZOOM: u8 = 14;
+/// The deepest level fetched. At zoom 12 OpenMapTiles' boundary layer already holds
+/// every `admin_level` up to 10; deeper tiles add only buildings and roads (hundreds of
+/// kilobytes the border layer throws away), so closer views draw zoom 12's lines.
+const MAX_ZOOM: u8 = 12;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
 const EARTH_RADIUS_KM: f64 = 6_371.0;
 const KM_PER_DEGREE: f64 = 111.32;

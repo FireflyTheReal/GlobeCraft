@@ -67,20 +67,20 @@ impl Layer {
     }
 }
 
-/// Protobuf wire reader.
-struct Reader<'a> {
+/// Protobuf wire reader (also reads the varints of the compact cache format).
+pub(super) struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(super) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, pos: 0 }
     }
-    fn done(&self) -> bool {
+    pub(super) fn done(&self) -> bool {
         self.pos >= self.bytes.len()
     }
-    fn varint(&mut self) -> Option<u64> {
+    pub(super) fn varint(&mut self) -> Option<u64> {
         let mut value = 0_u64;
         for shift in (0..64).step_by(7) {
             let byte = *self.bytes.get(self.pos)?;
@@ -92,13 +92,13 @@ impl<'a> Reader<'a> {
         }
         None
     }
-    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+    pub(super) fn take(&mut self, len: usize) -> Option<&'a [u8]> {
         let end = self.pos.checked_add(len)?;
         let slice = self.bytes.get(self.pos..end)?;
         self.pos = end;
         Some(slice)
     }
-    fn bytes(&mut self) -> Option<&'a [u8]> {
+    pub(super) fn bytes(&mut self) -> Option<&'a [u8]> {
         let len = usize::try_from(self.varint()?).ok()?;
         self.take(len)
     }

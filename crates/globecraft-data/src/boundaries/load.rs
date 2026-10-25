@@ -206,6 +206,11 @@ impl BoundaryLoader {
         self.osm_tiles.has_tiles()
     }
 
+    /// Bytes the border tile cache uses on disk.
+    pub fn border_cache_usage(&self) -> u64 {
+        self.osm_tiles.cache_usage()
+    }
+
     pub fn is_loading(&self) -> bool {
         self.is_loading_base_layers() || self.is_loading_local()
     }

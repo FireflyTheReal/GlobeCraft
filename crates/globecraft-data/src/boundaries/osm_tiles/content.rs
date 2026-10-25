@@ -2,7 +2,7 @@
 //! level, and place names, in latitude/longitude and clipped to the tile.
 use super::super::places::{PLACE_HAMLET_RANK, PLACE_TOWN_RANK, PLACE_VILLAGE_RANK};
 use super::super::{LabelKind, Line, MapLabel};
-use super::mvt::{self, GeomType, Value};
+use super::compact::{self, Filtered, PlaceClass};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
@@ -99,88 +99,52 @@ pub(super) struct TileContent {
     pub(super) state: Vec<Line>,
     pub(super) municipal: Vec<Line>,
     pub(super) places: Vec<MapLabel>,
+    /// Vertices held, for the memory budget.
+    pub(super) points: usize,
 }
 
 impl TileContent {
-    /// Reads an OpenMapTiles tile. `None` when the tile is malformed.
-    pub(super) fn from_tile(key: TileKey, bytes: &[u8]) -> Option<Self> {
-        let layers = mvt::decode(bytes, |name| name == "boundary" || name == "place")?;
-        let bounds = key.bounds();
+    /// The drawable content of a tile's kept data (see `compact`).
+    pub(super) fn from_filtered(key: TileKey, filtered: &Filtered) -> Self {
+        let extent = f64::from(compact::EXTENT);
+        let to_geo = |(x, y): (i32, i32)| key.point(f64::from(x) / extent, f64::from(y) / extent);
         let mut content = Self::default();
-        for layer in &layers {
-            let extent = f64::from(layer.extent.max(1));
-            let to_geo = |(px, py): (f64, f64)| key.point(px / extent, py / extent);
-            for feature in &layer.features {
-                let number = |tag: &str| layer.tag(feature, tag).and_then(Value::as_number);
-                let text = |tag: &str| layer.tag(feature, tag).and_then(Value::as_text);
-                match (layer.name.as_str(), feature.kind) {
-                    ("boundary", GeomType::Line) => {
-                        // Sea borders and the alternative lines of disputed claims
-                        // (`claimed_by`) are not land borders as drawn today.
-                        if number("maritime").unwrap_or(0.0) != 0.0
-                            || text("claimed_by").is_some_and(|c| !c.is_empty())
-                        {
-                            continue;
-                        }
-                        let Some(level) = number("admin_level").map(|l| l as u8) else {
-                            continue;
-                        };
-                        let out = match level {
-                            2 => &mut content.country,
-                            l if STATE_LEVELS.contains(&l) => &mut content.state,
-                            l if MUNICIPAL_LEVELS.contains(&l) => &mut content.municipal,
-                            _ => continue,
-                        };
-                        for part in &feature.parts {
-                            let geo: Vec<(f64, f64)> = part.iter().copied().map(to_geo).collect();
-                            out.extend(clip(&geo, bounds).into_iter().map(Arc::new));
-                        }
-                    }
-                    ("place", GeomType::Point) => {
-                        let rank = match text("class") {
-                            Some("city" | "town") => PLACE_TOWN_RANK,
-                            Some("village") => PLACE_VILLAGE_RANK,
-                            Some("hamlet") => PLACE_HAMLET_RANK,
-                            Some("island") if key.z <= ISLAND_TOWN_MAX_ZOOM => PLACE_TOWN_RANK,
-                            Some("island") if key.z <= ISLAND_VILLAGE_MAX_ZOOM => {
-                                PLACE_VILLAGE_RANK
-                            }
-                            Some("island") => PLACE_HAMLET_RANK,
-                            _ => continue,
-                        };
-                        let Some(en) = text("name:en")
-                            .or_else(|| text("name_en"))
-                            .or_else(|| text("name"))
-                            .filter(|name| !name.trim().is_empty())
-                        else {
-                            continue;
-                        };
-                        let pt = text("name:pt").unwrap_or(en);
-                        for part in &feature.parts {
-                            // Points in the tile's buffer belong to the neighbour.
-                            let Some(&(px, py)) = part.first() else {
-                                continue;
-                            };
-                            if !(0.0..extent).contains(&px) || !(0.0..extent).contains(&py) {
-                                continue;
-                            }
-                            let (lat, lon) = to_geo((px, py));
-                            content.places.push(MapLabel {
-                                lat,
-                                lon,
-                                en: en.to_owned(),
-                                pt: pt.to_owned(),
-                                kind: LabelKind::City,
-                                rank,
-                                big: false,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
+        for line in &filtered.lines {
+            // Alternative claim lines are not drawn yet (ROADMAP 13.19, disputed borders).
+            if line.flags & compact::CLAIM != 0 {
+                continue;
             }
+            let out = match line.level {
+                2 => &mut content.country,
+                l if STATE_LEVELS.contains(&l) => &mut content.state,
+                l if MUNICIPAL_LEVELS.contains(&l) => &mut content.municipal,
+                _ => continue,
+            };
+            out.push(Arc::new(line.points.iter().copied().map(to_geo).collect()));
         }
-        Some(content)
+        for place in &filtered.places {
+            let rank = match place.class {
+                PlaceClass::City | PlaceClass::Town => PLACE_TOWN_RANK,
+                PlaceClass::Village => PLACE_VILLAGE_RANK,
+                PlaceClass::Hamlet => PLACE_HAMLET_RANK,
+                PlaceClass::Island if key.z <= ISLAND_TOWN_MAX_ZOOM => PLACE_TOWN_RANK,
+                PlaceClass::Island if key.z <= ISLAND_VILLAGE_MAX_ZOOM => PLACE_VILLAGE_RANK,
+                PlaceClass::Island => PLACE_HAMLET_RANK,
+            };
+            let (lat, lon) = to_geo((place.x, place.y));
+            let en = place.name_en.clone().unwrap_or_else(|| place.name.clone());
+            content.places.push(MapLabel {
+                lat,
+                lon,
+                pt: place.name_pt.clone().unwrap_or_else(|| en.clone()),
+                en,
+                kind: LabelKind::City,
+                rank,
+                big: false,
+            });
+        }
+        content.points = filtered.points();
+        content
     }
 
     /// This content cut to `bounds`: an ancestor tile standing in for a missing one.
@@ -205,6 +169,7 @@ impl TileContent {
                 })
                 .cloned()
                 .collect(),
+            points: 0,
         }
     }
 }
@@ -360,7 +325,7 @@ mod tests {
             x: 1071,
             y: 991,
         };
-        let content = TileContent::from_tile(key, &bytes).unwrap();
+        let content = TileContent::from_filtered(key, &Filtered::from_mvt(&bytes).unwrap());
         assert_eq!(content.country.len(), 1);
         assert_eq!(content.state.len(), 1);
         assert_eq!(content.municipal.len(), 2);

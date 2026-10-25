@@ -267,6 +267,27 @@ impl App {
             });
         }
         ui.weak(lg.text("settings-cache-restart-help"));
+        ui.horizontal(|ui| {
+            ui.label(lg.text("settings-cache-borders-label"));
+            ui.add(
+                egui::DragValue::new(&mut self.settings.cache.borders_mib)
+                    .range(
+                        globecraft_data::settings::cache::MIN_BORDER_CACHE_MIB
+                            ..=globecraft_data::settings::cache::MAX_BORDER_CACHE_MIB,
+                    )
+                    .suffix(" MiB"),
+            );
+        });
+        ui.weak(
+            lg.format(
+                "settings-cache-borders-usage",
+                &[(
+                    "size",
+                    crate::app::cache::cache_size_text(self.boundary_loader.border_cache_usage())
+                        .into(),
+                )],
+            ),
+        );
         ui.label(lg.format(
             "settings-cache-resident-label",
             &[(

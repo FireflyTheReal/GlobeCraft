@@ -8,24 +8,34 @@
 //! municipal pipeline's job, see `docs/BORDER_PIPELINE.md`). Each zoom level is
 //! generalised for its scale, so there is no handover between a coarse and a detailed
 //! line either: the view switches tile levels like it does for imagery.
+//!
+//! Tiles come from a small disk cache first (`store`, in the compact format of
+//! `compact`), and from the network only when missing or from an older tile set.
+mod compact;
 mod content;
+mod join;
+mod loading;
 mod mvt;
 mod pick;
+mod store;
 
-use super::{Layer, Line, MapLabel, Patch, StatusLog, log_status};
+use super::{Layer, Line, MapLabel, Patch, StatusLog};
 use content::{TileContent, TileKey};
+use loading::Context;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-/// OpenFreeMap's TileJSON for the planet; it names the current tile set's URL.
-const TILEJSON_URL: &str = "https://tiles.openfreemap.org/planet";
-const MAX_TILE_BYTES: u64 = 4_000_000;
-const MAX_TILEJSON_BYTES: u64 = 200_000;
-/// Parallel tile requests (OpenFreeMap asks bulk clients for at most 4).
-const MAX_INFLIGHT: usize = 4;
-const MAX_STORED_TILES: usize = 600;
+/// Parallel tile downloads (OpenFreeMap asks bulk clients for at most 4).
+const MAX_NETWORK_INFLIGHT: usize = 4;
+/// Parallel reads from the disk cache.
+const MAX_DISK_INFLIGHT: usize = 8;
+/// Decoded tiles kept in memory, counted in vertices (16 bytes each as lines).
+const MAX_STORED_POINTS: usize = 2_000_000;
 const FAILED_RETRY: Duration = Duration::from_secs(60);
+/// Levels above the view's that are loaded ahead, so zooming out finds them ready.
+const PREFETCH_PARENT_LEVELS: u8 = 2;
 /// Tiles at least this deep hold municipal lines (OpenMapTiles adds `admin_level` 7–8
 /// at zoom 11).
 pub const MUNICIPAL_MIN_ZOOM: u8 = 11;
@@ -62,32 +72,86 @@ pub struct OsmTileView {
     pub lat: f64,
     pub lon: f64,
     pub altitude_km: f64,
+    /// The disk cache's size limit (Settings → Cache).
+    pub cache_limit_bytes: u64,
+}
+
+/// Ancestors cut to the missing tile they stand in for, by (shown tile, source tile).
+type ClippedCache = Arc<Mutex<HashMap<(TileKey, TileKey), Arc<TileContent>>>>;
+
+/// A decoded tile in memory.
+struct Entry {
+    content: Arc<TileContent>,
+    used: Instant,
+    /// The tile set it came from; empty for a cached tile of an older set.
+    version: Arc<str>,
 }
 
 #[derive(Default)]
 struct Store {
-    /// The tile URL template, once the TileJSON arrived.
-    template: Option<String>,
+    /// The current tile set's URL template (from the network, or cached on disk).
+    template: Option<Arc<str>>,
+    /// The network confirmed the template this session.
+    template_confirmed: bool,
     template_loading: bool,
     template_failed: Option<Instant>,
-    tiles: HashMap<TileKey, (Arc<TileContent>, Instant)>,
-    inflight: HashSet<TileKey>,
+    cached_template_requested: bool,
+    tiles: HashMap<TileKey, Entry>,
+    points: usize,
+    disk_inflight: HashSet<TileKey>,
+    net_inflight: HashSet<TileKey>,
+    /// Tiles already looked up on disk this session (found or not).
+    disk_checked: HashSet<TileKey>,
     failed: HashMap<TileKey, Instant>,
-    /// Bumped when a tile arrives, so the view is composed again.
+    /// Bumped when the shown content may change.
     revision: u64,
+}
+
+impl Store {
+    fn insert(&mut self, key: TileKey, entry: Entry) {
+        self.points += entry.content.points;
+        if let Some(old) = self.tiles.insert(key, entry) {
+            self.points -= old.content.points;
+        }
+        self.revision += 1;
+        if self.points <= MAX_STORED_POINTS {
+            return;
+        }
+        // Forget the tiles the view left longest ago; the disk still has them.
+        let mut by_age: Vec<(TileKey, Instant)> =
+            self.tiles.iter().map(|(k, e)| (*k, e.used)).collect();
+        by_age.sort_by_key(|(_, used)| *used);
+        for (old, _) in by_age {
+            if self.points <= MAX_STORED_POINTS * 3 / 4 || old == key {
+                break;
+            }
+            if let Some(entry) = self.tiles.remove(&old) {
+                self.points -= entry.content.points;
+                self.disk_checked.remove(&old);
+            }
+        }
+    }
+
+    fn is_current(&self, key: &TileKey) -> bool {
+        match (self.tiles.get(key), &self.template) {
+            (Some(entry), Some(template)) => entry.version == *template,
+            _ => false,
+        }
+    }
 }
 
 pub(super) struct OsmTileStreamer {
     runtime: tokio::runtime::Handle,
     tx: mpsc::Sender<Patch>,
-    log: StatusLog,
-    repaint: Arc<dyn Fn() + Send + Sync>,
-    store: Arc<Mutex<Store>>,
+    context: Context,
     /// What was published last: each shown tile and the tile it came from.
     published: Vec<(TileKey, TileKey)>,
     published_revision: u64,
-    /// Ancestors cut to a missing tile, kept while they are shown.
-    clipped: HashMap<(TileKey, TileKey), Arc<TileContent>>,
+    /// The latest publication; older ones still being built are dropped.
+    generation: Arc<AtomicU64>,
+    /// Ancestors cut to a missing tile, shared with the publication jobs.
+    clipped: ClippedCache,
+    limit_bytes: u64,
 }
 
 impl OsmTileStreamer {
@@ -100,143 +164,303 @@ impl OsmTileStreamer {
         Self {
             runtime,
             tx,
-            log,
-            repaint,
-            store: Arc::default(),
+            context: Context {
+                store: Arc::default(),
+                disk: Arc::new(store::DiskStore::in_data_folder()),
+                log,
+                repaint,
+            },
             published: Vec::new(),
             published_revision: 0,
-            clipped: HashMap::new(),
+            generation: Arc::default(),
+            clipped: Arc::default(),
+            limit_bytes: 0,
         }
     }
 
-    /// Whether any tile has arrived: until then the other border layers stay on.
+    /// Whether any tile is loaded: until then the other border layers stay on.
     pub(super) fn has_tiles(&self) -> bool {
-        self.store.lock().is_ok_and(|store| !store.tiles.is_empty())
+        self.context
+            .store
+            .lock()
+            .is_ok_and(|store| !store.tiles.is_empty())
     }
 
-    /// Follows the camera: loads the tiles around the view and publishes the borders
-    /// and names of the best tiles available for each. Cheap when nothing changed.
+    /// Bytes the disk cache uses.
+    pub(super) fn cache_usage(&self) -> u64 {
+        self.context.disk.usage()
+    }
+
+    /// Follows the camera: loads the tiles around the view (disk first) and publishes
+    /// the borders and names of the best tiles available. Cheap when nothing changed.
     pub(super) fn update(&mut self, view: OsmTileView) {
         if !view.enabled || !view.altitude_km.is_finite() {
             if !self.published.is_empty() {
                 self.published.clear();
-                self.clipped.clear();
-                self.send(OsmBorderLines::default(), Vec::new());
+                self.generation.fetch_add(1, Ordering::AcqRel);
+                send(&self.tx, OsmBorderLines::default(), Vec::new());
+                (self.context.repaint)();
             }
             return;
         }
+        if view.cache_limit_bytes < self.limit_bytes {
+            let disk = self.context.disk.clone();
+            let limit = view.cache_limit_bytes;
+            self.runtime.spawn(async move {
+                let _ = disk.shrink(limit).await;
+            });
+        }
+        self.limit_bytes = view.cache_limit_bytes;
         let (zoom, wanted) = pick::wanted(view.lat, view.lon, view.altitude_km);
-        let Ok(mut store) = self.store.lock() else {
+        let Ok(mut store) = self.context.store.lock() else {
             return;
         };
         let now = Instant::now();
+        self.request_template(&mut store, now);
         let Some(template) = store.template.clone() else {
-            let retry = store
-                .template_failed
-                .is_none_or(|at| now.duration_since(at) >= FAILED_RETRY);
-            if !store.template_loading && retry {
-                store.template_loading = true;
-                self.runtime.spawn(load_template(
-                    self.store.clone(),
-                    self.log.clone(),
-                    self.repaint.clone(),
-                ));
-            }
             return;
         };
-        for &key in &wanted {
-            if store.inflight.len() >= MAX_INFLIGHT {
-                break;
-            }
-            if store.tiles.contains_key(&key)
-                || store.inflight.contains(&key)
-                || store
-                    .failed
-                    .get(&key)
-                    .is_some_and(|at| now.duration_since(*at) < FAILED_RETRY)
-            {
-                continue;
-            }
-            store.inflight.insert(key);
-            self.runtime.spawn(load_tile(
-                key,
-                template.clone(),
-                self.store.clone(),
-                self.log.clone(),
-                self.repaint.clone(),
-            ));
+        let ready = self.request_tiles(&mut store, &wanted, &template, now, true);
+        if ready {
+            let prefetch = prefetch(&wanted);
+            self.request_tiles(&mut store, &prefetch, &template, now, false);
         }
         for key in &wanted {
             if let Some(entry) = store.tiles.get_mut(key) {
-                entry.1 = now;
+                entry.used = now;
             }
         }
         let shown = compose(&store.tiles, &wanted);
         if shown == self.published && store.revision == self.published_revision {
             return;
         }
-        let revision = store.revision;
-        let contents: Vec<Arc<TileContent>> = shown
+        let contents: Vec<(TileKey, TileKey, Arc<TileContent>)> = shown
             .iter()
             .filter_map(|&(tile, source)| {
-                let (content, _) = store.tiles.get(&source)?;
-                if tile == source {
-                    return Some(content.clone());
-                }
-                Some(
-                    self.clipped
-                        .entry((tile, source))
-                        .or_insert_with(|| Arc::new(content.clipped(tile.bounds())))
-                        .clone(),
-                )
+                Some((tile, source, store.tiles.get(&source)?.content.clone()))
             })
             .collect();
+        self.published_revision = store.revision;
         drop(store);
-        let shown_set: HashSet<(TileKey, TileKey)> = shown.iter().copied().collect();
-        self.clipped.retain(|key, _| shown_set.contains(key));
-        let mut lines = OsmBorderLines {
-            zoom,
-            ..Default::default()
-        };
-        let mut places = Vec::new();
-        for content in contents {
-            lines.country.extend(content.country.iter().cloned());
-            lines.state.extend(content.state.iter().cloned());
-            lines.municipal.extend(content.municipal.iter().cloned());
-            places.extend(content.places.iter().cloned());
-        }
         self.published = shown;
-        self.published_revision = revision;
-        self.send(lines, places);
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let job = Publication {
+            contents,
+            zoom,
+            generation,
+            latest: self.generation.clone(),
+            clipped: self.clipped.clone(),
+            tx: self.tx.clone(),
+            repaint: self.context.repaint.clone(),
+        };
+        self.runtime.spawn(async move {
+            let _ = crate::cpu::run(crate::cpu::Service::Features, move || {
+                job.run();
+                Ok(())
+            })
+            .await;
+        });
     }
 
-    fn send(&self, lines: OsmBorderLines, places: Vec<MapLabel>) {
-        let patch = |layer, labels, osm| Patch {
-            layer,
-            pairs: Vec::new(),
-            lines: Vec::new(),
-            lines_big: Vec::new(),
-            labels,
-            regions: Vec::new(),
-            replace: true,
-            municipal: None,
-            osm,
+    /// The tile set's URL: the cached one at once, the network's when it answers.
+    fn request_template(&self, store: &mut Store, now: Instant) {
+        if !store.cached_template_requested {
+            store.cached_template_requested = true;
+            self.runtime
+                .spawn(loading::cached_template(self.context.clone()));
+        }
+        let retry = store
+            .template_failed
+            .is_none_or(|at| now.duration_since(at) >= FAILED_RETRY);
+        if !store.template_confirmed && !store.template_loading && retry {
+            store.template_loading = true;
+            self.runtime
+                .spawn(loading::network_template(self.context.clone()));
+        }
+    }
+
+    /// Starts loads for `keys` in order: a disk read for tiles not looked up yet, then
+    /// a download for tiles missing or of an older set (`refresh`). Returns whether
+    /// every key has some content to show.
+    fn request_tiles(
+        &self,
+        store: &mut Store,
+        keys: &[TileKey],
+        template: &Arc<str>,
+        now: Instant,
+        refresh: bool,
+    ) -> bool {
+        let mut ready = true;
+        // Missing tiles first, then stale ones.
+        for stale_pass in [false, true] {
+            for &key in keys {
+                let present = store.tiles.contains_key(&key);
+                if stale_pass != present {
+                    continue;
+                }
+                ready &= present;
+                if present && (!refresh || store.is_current(&key)) {
+                    continue;
+                }
+                if store.disk_inflight.contains(&key) || store.net_inflight.contains(&key) {
+                    continue;
+                }
+                if !store.disk_checked.contains(&key) {
+                    if store.disk_inflight.len() < MAX_DISK_INFLIGHT {
+                        store.disk_inflight.insert(key);
+                        self.runtime.spawn(loading::from_disk(
+                            self.context.clone(),
+                            key,
+                            template.clone(),
+                        ));
+                    }
+                    continue;
+                }
+                let failed_recently = store
+                    .failed
+                    .get(&key)
+                    .is_some_and(|at| now.duration_since(*at) < FAILED_RETRY);
+                if failed_recently || store.net_inflight.len() >= MAX_NETWORK_INFLIGHT {
+                    continue;
+                }
+                store.net_inflight.insert(key);
+                self.runtime.spawn(loading::from_network(
+                    self.context.clone(),
+                    key,
+                    template.clone(),
+                    self.limit_bytes,
+                ));
+            }
+        }
+        ready
+    }
+}
+
+/// Tiles worth loading ahead of need: the view's parents (for zooming out) and the
+/// ring of tiles around it (for panning).
+fn prefetch(wanted: &[TileKey]) -> Vec<TileKey> {
+    let set: HashSet<TileKey> = wanted.iter().copied().collect();
+    let mut out: Vec<TileKey> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut parents: Vec<TileKey> = wanted.to_vec();
+    for _ in 0..PREFETCH_PARENT_LEVELS {
+        parents = parents.iter().filter_map(|k| k.parent()).collect();
+        for &parent in &parents {
+            if seen.insert(parent) {
+                out.push(parent);
+            }
+        }
+    }
+    for key in wanted {
+        let n = TileKey::tiles_per_side(key.z) as i64;
+        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let y = key.y as i64 + dy;
+            if !(0..n).contains(&y) {
+                continue;
+            }
+            let neighbour = TileKey {
+                z: key.z,
+                x: (key.x as i64 + dx).rem_euclid(n) as u32,
+                y: y as u32,
+            };
+            if !set.contains(&neighbour) && seen.insert(neighbour) {
+                out.push(neighbour);
+            }
+        }
+    }
+    out
+}
+
+/// Builds and sends one view's borders and names, off the UI thread.
+struct Publication {
+    contents: Vec<(TileKey, TileKey, Arc<TileContent>)>,
+    zoom: u8,
+    generation: u64,
+    latest: Arc<AtomicU64>,
+    clipped: ClippedCache,
+    tx: mpsc::Sender<Patch>,
+    repaint: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl Publication {
+    fn run(self) {
+        let stale = || self.latest.load(Ordering::Acquire) != self.generation;
+        let mut shown_pairs = HashSet::new();
+        let contents: Vec<Arc<TileContent>> = self
+            .contents
+            .iter()
+            .map(|(tile, source, content)| {
+                if tile == source {
+                    return content.clone();
+                }
+                shown_pairs.insert((*tile, *source));
+                let cached = self
+                    .clipped
+                    .lock()
+                    .ok()
+                    .and_then(|c| c.get(&(*tile, *source)).cloned());
+                cached.unwrap_or_else(|| {
+                    let cut = Arc::new(content.clipped(tile.bounds()));
+                    if let Ok(mut cache) = self.clipped.lock() {
+                        cache.insert((*tile, *source), cut.clone());
+                    }
+                    cut
+                })
+            })
+            .collect();
+        if let Ok(mut cache) = self.clipped.lock() {
+            cache.retain(|key, _| shown_pairs.contains(key));
+        }
+        if stale() {
+            return;
+        }
+        let tolerance = join::tolerance_deg(self.zoom);
+        let gather = |pick: fn(&TileContent) -> &Vec<Line>| -> Vec<Line> {
+            let lines: Vec<Line> = contents
+                .iter()
+                .flat_map(|c| pick(c).iter().cloned())
+                .collect();
+            join::join(lines, tolerance)
         };
-        let _ = self
-            .tx
-            .send(patch(Layer::OsmBorders, Vec::new(), Some(lines)));
-        let _ = self.tx.send(patch(Layer::Places, places, None));
+        let lines = OsmBorderLines {
+            country: gather(|c| &c.country),
+            state: gather(|c| &c.state),
+            municipal: gather(|c| &c.municipal),
+            state_big: Vec::new(),
+            zoom: self.zoom,
+        };
+        let places: Vec<MapLabel> = contents
+            .iter()
+            .flat_map(|c| c.places.iter().cloned())
+            .collect();
+        if stale() {
+            return;
+        }
+        send(&self.tx, lines, places);
         (self.repaint)();
     }
+}
+
+fn send(tx: &mpsc::Sender<Patch>, lines: OsmBorderLines, places: Vec<MapLabel>) {
+    let patch = |layer, labels, osm| Patch {
+        layer,
+        pairs: Vec::new(),
+        lines: Vec::new(),
+        lines_big: Vec::new(),
+        labels,
+        regions: Vec::new(),
+        replace: true,
+        municipal: None,
+        osm,
+    };
+    let _ = tx.send(patch(Layer::OsmBorders, Vec::new(), Some(lines)));
+    let _ = tx.send(patch(Layer::Places, places, None));
 }
 
 /// For each wanted tile, the tile whose content shows there: itself once loaded, else
 /// its nearest loaded ancestor (cut to it), else its loaded children. So a view never
 /// goes blank while a new zoom level loads, and no area is covered twice.
-fn compose(
-    tiles: &HashMap<TileKey, (Arc<TileContent>, Instant)>,
-    wanted: &[TileKey],
-) -> Vec<(TileKey, TileKey)> {
+fn compose(tiles: &HashMap<TileKey, Entry>, wanted: &[TileKey]) -> Vec<(TileKey, TileKey)> {
     let mut shown = Vec::new();
     for &key in wanted {
         if tiles.contains_key(&key) {
@@ -260,123 +484,20 @@ fn compose(
     shown
 }
 
-async fn load_template(
-    store: Arc<Mutex<Store>>,
-    log: StatusLog,
-    repaint: Arc<dyn Fn() + Send + Sync>,
-) {
-    let result = fetch_template().await;
-    if let Ok(mut store) = store.lock() {
-        store.template_loading = false;
-        match result {
-            Ok(template) => {
-                log_status(&log, format!("✔ OpenStreetMap border tiles: {template}"));
-                store.template = Some(template);
-            }
-            Err(error) => {
-                log_status(&log, format!("✖ OpenStreetMap border tiles: {error}"));
-                store.template_failed = Some(Instant::now());
-            }
-        }
-    }
-    repaint();
-}
-
-async fn fetch_template() -> Result<String, crate::Error> {
-    let client = crate::http::client(crate::http::Policy::Boundary)?;
-    let bytes = crate::http::body(client.get(TILEJSON_URL), MAX_TILEJSON_BYTES).await?;
-    let json = crate::http::parse_json(bytes).await?;
-    json["tiles"][0]
-        .as_str()
-        .filter(|url| url.contains("{z}") && url.contains("{x}") && url.contains("{y}"))
-        .map(str::to_owned)
-        .ok_or_else(|| "TileJSON without a tile URL".into())
-}
-
-async fn load_tile(
-    key: TileKey,
-    template: String,
-    store: Arc<Mutex<Store>>,
-    log: StatusLog,
-    repaint: Arc<dyn Fn() + Send + Sync>,
-) {
-    let result = fetch_tile(key, &template).await;
-    let Ok(mut store) = store.lock() else {
-        return;
-    };
-    store.inflight.remove(&key);
-    match result {
-        Ok(content) => {
-            store.tiles.insert(key, (Arc::new(content), Instant::now()));
-            store.revision += 1;
-            if store.tiles.len() > MAX_STORED_TILES {
-                // Forget the tiles the view left longest ago.
-                let mut by_age: Vec<(TileKey, Instant)> =
-                    store.tiles.iter().map(|(k, (_, at))| (*k, *at)).collect();
-                by_age.sort_by_key(|(_, at)| *at);
-                let excess = store.tiles.len() - MAX_STORED_TILES;
-                for (old, _) in by_age.into_iter().take(excess) {
-                    store.tiles.remove(&old);
-                }
-            }
-        }
-        Err(error) => {
-            log_status(
-                &log,
-                format!(
-                    "✖ OpenStreetMap border tile {}/{}/{}: {error}",
-                    key.z, key.x, key.y
-                ),
-            );
-            store.failed.insert(key, Instant::now());
-        }
-    }
-    drop(store);
-    repaint();
-}
-
-async fn fetch_tile(key: TileKey, template: &str) -> Result<TileContent, crate::Error> {
-    let url = template
-        .replace("{z}", &key.z.to_string())
-        .replace("{x}", &key.x.to_string())
-        .replace("{y}", &key.y.to_string());
-    let client = crate::http::client(crate::http::Policy::Boundary)?;
-    let bytes = match crate::http::body(client.get(&url), MAX_TILE_BYTES).await {
-        Ok(bytes) => bytes,
-        // Tiles of empty ocean may simply not exist.
-        Err(crate::Error::Http(error))
-            if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
-        {
-            Vec::new()
-        }
-        Err(error) => return Err(error),
-    };
-    crate::cpu::run(crate::cpu::Service::Features, move || {
-        let bytes = gunzip_if_needed(bytes)?;
-        TileContent::from_tile(key, &bytes)
-            .ok_or_else(|| crate::Error::from(format!("malformed vector tile {url}")))
-    })
-    .await
-}
-
-/// Tiles are often stored gzip-compressed; servers that pass them on without a
-/// `Content-Encoding` header leave the decompression to the client.
-fn gunzip_if_needed(bytes: Vec<u8>) -> Result<Vec<u8>, crate::Error> {
-    if !bytes.starts_with(&[0x1f, 0x8b]) {
-        return Ok(bytes);
-    }
-    let mut out = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn loaded(keys: &[TileKey]) -> HashMap<TileKey, (Arc<TileContent>, Instant)> {
+    fn loaded(keys: &[TileKey]) -> HashMap<TileKey, Entry> {
         keys.iter()
-            .map(|&k| (k, (Arc::default(), Instant::now())))
+            .map(|&k| {
+                let entry = Entry {
+                    content: Arc::default(),
+                    used: Instant::now(),
+                    version: Arc::from("v1"),
+                };
+                (k, entry)
+            })
             .collect()
     }
 
@@ -408,12 +529,58 @@ mod tests {
     }
 
     #[test]
+    fn prefetch_covers_parents_and_the_ring_around_the_view() {
+        let centre = TileKey {
+            z: 10,
+            x: 535,
+            y: 350,
+        };
+        let around = prefetch(&[centre]);
+        assert!(around.contains(&centre.parent().unwrap()));
+        assert!(around.contains(&centre.parent().unwrap().parent().unwrap()));
+        assert!(around.contains(&TileKey { x: 536, ..centre }));
+        assert!(!around.contains(&centre));
+        // Across the date line.
+        let east = TileKey { z: 3, x: 7, y: 3 };
+        assert!(prefetch(&[east]).contains(&TileKey { x: 0, ..east }));
+    }
+
+    #[test]
+    fn memory_holds_a_vertex_budget_and_forgets_the_oldest_tiles() {
+        let mut store = Store::default();
+        let heavy = |x: u32| {
+            let content = TileContent {
+                points: MAX_STORED_POINTS / 4,
+                ..Default::default()
+            };
+            (
+                TileKey { z: 12, x, y: 1 },
+                Entry {
+                    content: Arc::new(content),
+                    used: Instant::now(),
+                    version: Arc::from("v1"),
+                },
+            )
+        };
+        for x in 0..10 {
+            let (key, entry) = heavy(x);
+            store.disk_checked.insert(key);
+            store.insert(key, entry);
+        }
+        assert!(store.points <= MAX_STORED_POINTS, "{}", store.points);
+        assert!(store.tiles.contains_key(&TileKey { z: 12, x: 9, y: 1 }));
+        assert!(!store.tiles.contains_key(&TileKey { z: 12, x: 0, y: 1 }));
+        // An evicted tile is read from disk again when needed.
+        assert!(!store.disk_checked.contains(&TileKey { z: 12, x: 0, y: 1 }));
+    }
+
+    #[test]
     fn gzip_tiles_are_unpacked() {
         use std::io::Write;
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         encoder.write_all(b"tile").unwrap();
         let packed = encoder.finish().unwrap();
-        assert_eq!(gunzip_if_needed(packed).unwrap(), b"tile");
-        assert_eq!(gunzip_if_needed(b"raw".to_vec()).unwrap(), b"raw");
+        assert_eq!(loading::gunzip_if_needed(packed).unwrap(), b"tile");
+        assert_eq!(loading::gunzip_if_needed(b"raw".to_vec()).unwrap(), b"raw");
     }
 }
