@@ -270,7 +270,10 @@ async fn clearing_preserves_memory_and_the_original_epoch_of_queued_requests() {
     assert_eq!(cache.disk.epoch(), 1);
     assert!(matches!(cache.lookup(2), Lookup::Ready(_)));
     let requests = cache.requests.lock().unwrap();
-    assert!(matches!(requests.get(&1), Some(RequestState::Loading(0, _))));
+    assert!(matches!(
+        requests.get(&1),
+        Some(RequestState::Loading(0, _))
+    ));
 }
 
 #[test]
