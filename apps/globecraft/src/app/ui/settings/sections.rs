@@ -351,6 +351,24 @@ impl App {
             &mut self.settings.hide_navigation_controls,
             lg.text("settings-hide-navigation-controls-toggle"),
         );
+        ui.horizontal(|ui| {
+            use globecraft_data::settings::navigation::NavigatorStyle;
+            ui.label(lg.text("settings-navigator-style-label"));
+            for (style, label) in [
+                (NavigatorStyle::Globe, "settings-navigator-globe"),
+                (NavigatorStyle::Classic, "settings-navigator-classic"),
+            ] {
+                if ui
+                    .radio(self.settings.navigation.navigator == style, lg.text(label))
+                    .clicked()
+                {
+                    self.run_reporting(
+                        "ui.navigatorStyle",
+                        serde_json::json!({ "style": style.code() }),
+                    );
+                }
+            }
+        });
         egui::Grid::new("navigation-sensitivity")
             .num_columns(2)
             .show(ui, |ui| {

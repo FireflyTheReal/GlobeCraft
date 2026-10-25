@@ -368,6 +368,9 @@ altitude-cancel-action = Cancel
 altitude-input-error = Enter a number between { $minimum } and { $maximum } { $unit }.
 
 settings-hide-navigation-controls-toggle = Hide navigation controls
+settings-navigator-style-label = Navigator:
+settings-navigator-globe = Globe
+settings-navigator-classic = Classic
 
 settings-close-action = Close
 
@@ -706,6 +709,8 @@ cmd-ui-left-pane = Side Pane
 cmd-ui-left-pane-help = Show or hide the pane on the left of the globe.
 cmd-ui-navigation-controls = Navigator
 cmd-ui-navigation-controls-help = Show or hide the on-globe compass and zoom controls.
+cmd-ui-navigator-style = Navigator style
+cmd-ui-navigator-style-help = Choose the navigator with the mini globe or the classic ring, move pad and zoom slider.
 cmd-ui-ribbon = Collapse Ribbon
 cmd-ui-ribbon-help = Collapse or expand the ribbon (Ctrl+F1).
 cmd-ui-theme = Theme

@@ -52,6 +52,14 @@ fn interface_screenshots() {
     let mut h = harness(ThemePreference::Light);
     settle(&mut h, 6.0);
     save(&mut h, &dir, "01-home-light");
+    let _ = h
+        .state_mut()
+        .run("ui.navigatorStyle", json!({"style": "classic"}));
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "01-classic-navigator-light");
+    let _ = h
+        .state_mut()
+        .run("ui.navigatorStyle", json!({"style": "globe"}));
 
     let app = h.state_mut();
     app.settings.workspace.ribbon_tab = Tab::Layers;

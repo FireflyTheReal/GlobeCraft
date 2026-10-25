@@ -75,6 +75,9 @@ impl Category {
             Self::MapStyle => map_style::KEYWORDS,
             Self::Navigation => &[
                 "settings-hide-navigation-controls-toggle",
+                "settings-navigator-style-label",
+                "settings-navigator-globe",
+                "settings-navigator-classic",
                 "settings-pan-sensitivity",
                 "settings-rotation-sensitivity",
                 "settings-zoom-sensitivity",

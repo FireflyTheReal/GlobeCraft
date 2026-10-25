@@ -433,6 +433,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         View,
         TOGGLE
     ),
+    command!(
+        "ui.navigatorStyle",
+        "ui-navigator-style",
+        "nav_controls",
+        View,
+        View,
+        r#"{"type":"object","properties":{"style":{"type":"string","enum":["globe","classic"],"description":"globe: mini globe in the rotation ring; classic: ring, move pad and zoom slider"}},"required":["style"]}"#
+    ),
     command!("ui.ribbon", "ui-ribbon", "up", View, Interface, NO_PARAMS),
     command!(
         "ui.theme",

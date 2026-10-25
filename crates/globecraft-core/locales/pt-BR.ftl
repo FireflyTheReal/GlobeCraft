@@ -368,6 +368,9 @@ altitude-cancel-action = Cancelar
 altitude-input-error = Digite um número entre { $minimum } e { $maximum } { $unit }.
 
 settings-hide-navigation-controls-toggle = Ocultar controles de navegação
+settings-navigator-style-label = Controles de navegação:
+settings-navigator-globe = Globo
+settings-navigator-classic = Clássico
 
 settings-close-action = Fechar
 
@@ -706,6 +709,8 @@ cmd-ui-left-pane = Painel lateral
 cmd-ui-left-pane-help = Mostra ou oculta o painel à esquerda do globo.
 cmd-ui-navigation-controls = Navegador
 cmd-ui-navigation-controls-help = Mostra ou oculta a bússola e o zoom sobre o globo.
+cmd-ui-navigator-style = Estilo dos controles de navegação
+cmd-ui-navigator-style-help = Escolhe os controles com o miniglobo ou os clássicos: anel, controle de movimento e zoom.
 cmd-ui-ribbon = Recolher faixa
 cmd-ui-ribbon-help = Recolhe ou expande a faixa de opções (Ctrl+F1).
 cmd-ui-theme = Tema

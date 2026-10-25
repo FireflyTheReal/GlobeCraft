@@ -561,6 +561,14 @@ impl App {
                 self.settings.hide_navigation_controls = !shown;
                 json!({"shown": shown})
             }
+            "ui.navigatorStyle" => {
+                let style = str_param(p, "style")
+                    .and_then(globecraft_data::settings::navigation::NavigatorStyle::from_code)
+                    .ok_or("style must be globe or classic")?;
+                self.settings.navigation.navigator = style;
+                self.settings.hide_navigation_controls = false;
+                json!({"style": style.code()})
+            }
             "ui.ribbon" => {
                 self.settings.workspace.ribbon_minimized =
                     !self.settings.workspace.ribbon_minimized;
@@ -786,6 +794,8 @@ impl App {
             "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
+            "ui.navigatorStyle" => on(str_param(params, "style")
+                .is_some_and(|style| style == self.settings.navigation.navigator.code())),
             "ui.ribbon" => on(self.settings.workspace.ribbon_minimized),
             "ui.theme" => on(match str_param(params, "theme") {
                 Some("system") => self.settings.appearance.theme == ThemePreference::System,

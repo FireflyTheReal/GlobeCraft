@@ -1,6 +1,8 @@
 //! Desktop compass widgets; geographic bearings live in core.
-use eframe::egui::{self, Sense};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Sense, Vec2};
 use globecraft_core::{compass::heading_text, language::Lang};
+pub(super) const CARDINAL_FONT_POINTS: f32 = 10.5;
+pub(super) const NORTH_COLOR: Color32 = Color32::from_rgb(240, 90, 90);
 
 pub(super) fn heading_readout(ui: &mut egui::Ui, heading: f64, lang: Lang) -> bool {
     // Match the status bar's horizontal row height and baseline.
@@ -16,9 +18,71 @@ pub(super) fn heading_readout(ui: &mut egui::Ui, heading: f64, lang: Lang) -> bo
     .inner
 }
 
+/// Decorate the existing rotation ring without replacing its input or buttons.
+pub(super) fn draw_cardinals(
+    painter: &egui::Painter,
+    center: Pos2,
+    radius: f32,
+    scale: f32,
+    heading: f64,
+    lang: Lang,
+    ink: Color32,
+) {
+    for (offset, id) in [
+        (0.0_f64, "compass-north"),
+        (90.0, "compass-east"),
+        (180.0, "compass-south"),
+        (270.0, "compass-west"),
+    ] {
+        let angle = (offset - heading).to_radians();
+        let direction = Vec2::new(angle.sin() as f32, -angle.cos() as f32);
+        painter.text(
+            center + direction * radius,
+            Align2::CENTER_CENTER,
+            lang.text(id),
+            FontId::proportional(CARDINAL_FONT_POINTS * scale),
+            if offset == 0.0 { NORTH_COLOR } else { ink },
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compass_uses_displayed_heading_and_localized_cardinals() {
+        for lang in Lang::ALL {
+            let ctx = egui::Context::default();
+            let output = crate::app::test_ui::run(&ctx, egui::RawInput::default(), |ui| {
+                let ctx: &egui::Context = ui;
+                draw_cardinals(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    Pos2::new(100.0, 100.0),
+                    33.5,
+                    1.0,
+                    90.0,
+                    lang,
+                    egui::Color32::WHITE,
+                );
+            });
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(labels.len(), 4);
+            let north = labels.iter().find(|t| t.galley.job.text == "N").unwrap();
+            assert!(north.pos.x + north.galley.size().x < 100.0);
+            assert!(
+                labels
+                    .iter()
+                    .any(|t| t.galley.job.text == lang.text("compass-west"))
+            );
+        }
+    }
     #[test]
     fn heading_readout_resets_only_when_clicked_and_matches_status_baseline() {
         let ctx = egui::Context::default();
