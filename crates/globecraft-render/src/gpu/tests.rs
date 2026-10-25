@@ -63,6 +63,7 @@ fn gpu_overview_matches_cpu() {
                     overlays: None,
                     aircraft: None,
                     live_layers: None,
+                    compare: None,
                     presentation: 0,
                 };
                 for (loaded, pending) in [(false, false), (false, true), (true, false)] {
@@ -175,6 +176,7 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
         aircraft: None,
         live_layers: None,
         presentation: 0,
+        compare: None,
     };
     assert!(GpuRenderer::supports(&request));
     request.basis = request.cam.basis_for_model(
@@ -225,6 +227,7 @@ fn motion_and_idle_frames_choose_the_same_level() {
         aircraft: None,
         live_layers: None,
         presentation: 0,
+        compare: None,
     };
     // The motion raster is 0.4 of the idle one; both pick the idle raster's level.
     let idle = super::overview::supported_zoom(&request(2000, 1250, 1.0));

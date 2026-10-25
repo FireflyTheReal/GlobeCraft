@@ -15,62 +15,19 @@ const COMPARE_MOTION_SCALE: f32 = 0.5;
 
 struct PreparedFrame {
     image: egui::ColorImage,
+    /// The swipe compare's release of the same view, and that release.
+    compare: Option<(egui::ColorImage, u16)>,
     overlays: Option<super::overlays::PreparedOverlay>,
     aircraft: Option<Arc<globecraft_render::aircraft::AircraftGeometry>>,
     live_layers: Option<Arc<globecraft_render::live_layers::LiveGeometry>>,
 }
 
-/// The imagery tiles each frame worker needs. The tile cache keeps only the requests
-/// of the view it was last given, so the main frame and the swipe compare's frame report
-/// here and both lists go to the cache together (the main view's tiles first);
-/// alone, each worker cancelled the other's downloads.
-#[derive(Default)]
-pub(super) struct ViewDemand {
-    main: Vec<globecraft_data::tiles::TileKey>,
-    compare: Vec<globecraft_data::tiles::TileKey>,
-}
-
-pub(super) type SharedDemand = Arc<std::sync::Mutex<ViewDemand>>;
-
-/// Which frame worker reports its tiles.
-#[derive(Clone, Copy)]
-pub(super) enum DemandSlot {
-    Main,
-    Compare,
-}
-
-impl ViewDemand {
-    /// Records `keys` for `slot` and hands the cache both views' tiles.
-    pub(super) fn report(
-        demand: &SharedDemand,
-        cache: &globecraft_data::tiles::TileCache,
-        slot: DemandSlot,
-        keys: Vec<globecraft_data::tiles::TileKey>,
-    ) {
-        let combined = {
-            let Ok(mut demand) = demand.lock() else {
-                cache.prioritize_view(&keys);
-                return;
-            };
-            match slot {
-                DemandSlot::Main => demand.main = keys,
-                DemandSlot::Compare => demand.compare = keys,
-            }
-            demand.combined()
-        };
-        cache.prioritize_view(&combined);
-    }
-    fn combined(&self) -> Vec<globecraft_data::tiles::TileKey> {
-        let mut keys = self.main.clone();
-        keys.extend(self.compare.iter().copied());
-        keys
-    }
-}
+/// The compare release's raster, handed from the render step to the prepare step of
+/// the same job.
+type CompareRaster = Arc<std::sync::Mutex<Option<(usize, usize, u16, Vec<u8>)>>>;
 
 pub(super) struct Renderer {
     worker: RenderWorker<PreparedFrame>,
-    /// Shared with the swipe compare's worker (see `ViewDemand`).
-    pub(super) demand: SharedDemand,
     displayed: Option<(Cam, Basis)>,
     displayed_rect: Option<egui::Rect>,
     displayed_grid_step: Option<f64>,
@@ -93,10 +50,12 @@ impl Renderer {
         let overlay_ctx = ctx.clone();
         let mut live_preparer = globecraft_render::live_layers::LivePreparer::default();
         let mut aircraft_preparer = globecraft_render::aircraft::AircraftPreparer::default();
-        let demand = SharedDemand::default();
-        let admit_demand = demand.clone();
+        // The swipe compare renders in the same job as the main frame, right after it:
+        // both images arrive together for the same camera, their missing tiles reach
+        // the cache as one list, and a tile of either release wakes the next frame.
+        let compare_raster = CompareRaster::default();
+        let compare_out = compare_raster.clone();
         Self {
-            demand,
             worker: RenderWorker::with_prepare(
                 move |request, buffer| {
                     #[cfg(feature = "profiling")]
@@ -107,16 +66,42 @@ impl Renderer {
                         profile.values.height = request.height;
                         profile.values.inflight = cache.inflight();
                     }
-                    backend.render(request, &cache, buffer)
+                    let mut frame = backend.render(request, &cache, buffer);
+                    if let Some(compare) = request.compare {
+                        let size = |n: usize| ((n as f32 * compare.scale).round() as usize).max(1);
+                        let compare_request = RenderRequest {
+                            width: size(request.width),
+                            height: size(request.height),
+                            cam: request.cam,
+                            basis: request.basis,
+                            cfg: RenderCfg {
+                                rel: compare.rel,
+                                lod_scale: request.cfg.lod_scale * compare.scale,
+                                ..request.cfg.clone()
+                            },
+                            overlays: None,
+                            aircraft: None,
+                            live_layers: None,
+                            compare: None,
+                            presentation: request.presentation,
+                        };
+                        let second = backend.render(&compare_request, &cache, Vec::new());
+                        frame.waiting.extend(second.waiting);
+                        frame.requests.extend(second.requests);
+                        if let Ok(mut slot) = compare_raster.lock() {
+                            *slot = Some((
+                                compare_request.width,
+                                compare_request.height,
+                                compare.rel,
+                                second.pixels,
+                            ));
+                        }
+                    }
+                    frame
                 },
                 move || ctx.request_repaint(),
                 move |frame| {
-                    ViewDemand::report(
-                        &admit_demand,
-                        &admission_cache,
-                        DemandSlot::Main,
-                        frame.required_tiles(),
-                    );
+                    admission_cache.prioritize_view(&frame.required_tiles());
                 },
                 move |request, pixels| {
                     #[cfg(feature = "profiling")]
@@ -139,8 +124,17 @@ impl Renderer {
                             &overlay_ctx,
                         )
                     });
+                    let compare = request
+                        .compare
+                        .and_then(|_| compare_out.lock().ok()?.take())
+                        .map(|(width, height, rel, pixels)| {
+                            let image =
+                                egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels);
+                            (image, rel)
+                        });
                     PreparedFrame {
                         image,
+                        compare,
                         overlays: geometry,
                         live_layers: request.live_layers.clone().map(|mut input| {
                             input.unix_secs = now_unix();
@@ -177,7 +171,7 @@ impl Renderer {
     ) {
         let now = std::time::Instant::now();
         if changed || self.retry_at.is_some_and(|deadline| now >= deadline) {
-            ViewDemand::report(&self.demand, cache, DemandSlot::Main, self.required.clone());
+            cache.prioritize_view(&self.required);
             self.retry_at = cache.retry_delay(&self.required).map(|delay| now + delay);
         }
         if let Some(deadline) = self.retry_at {
@@ -269,46 +263,20 @@ impl App {
             sun,
             lod_scale: size.lod_scale,
         };
-        // The swipe compare's release: the same view, rendered as a second frame.
-        match self.active_compare() {
-            Some(compare) => {
-                let renderer = self.compare_renderer.get_or_insert_with(|| {
-                    super::compare_frame::CompareRenderer::new(
-                        self.cache.clone(),
-                        self.ctx.clone(),
-                        self.renderer.demand.clone(),
-                    )
-                });
-                // While the camera moves the compare side renders at a lower resolution,
-                // so the second frame costs a quarter of the main one; at rest it is full.
-                let reduce = if size.lod_scale < 1.0 {
-                    COMPARE_MOTION_SCALE
-                } else {
-                    1.0
-                };
-                renderer.submit(RenderRequest {
-                    width: ((size.width as f32 * reduce).round() as usize).max(1),
-                    height: ((size.height as f32 * reduce).round() as usize).max(1),
-                    cam: self.cam,
-                    basis,
-                    cfg: RenderCfg {
-                        rel: compare.index as u16,
-                        lod_scale: cfg.lod_scale * reduce,
-                        ..cfg.clone()
+        // While the camera moves the compare side renders at a lower resolution, so it
+        // costs a quarter of the main frame; at rest it is full size.
+        let compare =
+            self.active_compare()
+                .map(|compare| globecraft_render::worker::CompareRelease {
+                    rel: compare.index as u16,
+                    scale: if size.lod_scale < 1.0 {
+                        COMPARE_MOTION_SCALE
+                    } else {
+                        1.0
                     },
-                    presentation,
-                    aircraft: None,
-                    live_layers: None,
-                    overlays: None,
                 });
-            }
-            None => {
-                if self.compare_renderer.take().is_some()
-                    && let Ok(mut demand) = self.renderer.demand.lock()
-                {
-                    demand.compare.clear();
-                }
-            }
+        if compare.is_none() {
+            self.compare_texture = None;
         }
         self.renderer.worker.submit(RenderRequest {
             width: size.width,
@@ -316,6 +284,7 @@ impl App {
             cam: self.cam,
             basis,
             cfg,
+            compare,
             presentation,
             aircraft: (self.layer(MapLayer::Flights)
                 && self.explorer.active == globecraft_core::body::Body::Earth)
@@ -341,9 +310,6 @@ impl App {
     }
 
     pub(super) fn poll_render(&mut self, presentation: u64, ctx: &egui::Context) {
-        if let Some(compare) = &mut self.compare_renderer {
-            compare.poll(presentation, ctx);
-        }
         let Some(frame) = self.renderer.worker.take_completed(presentation) else {
             return;
         };
@@ -363,6 +329,7 @@ impl App {
 
         let PreparedFrame {
             image: img,
+            compare,
             overlays,
             aircraft,
             live_layers,
@@ -379,6 +346,27 @@ impl App {
         }
         if let Some(geometry) = overlays {
             self.overlay_cache.accept(geometry);
+        }
+        match compare {
+            Some((image, rel)) => {
+                let size = image.size;
+                match &mut self.compare_texture {
+                    Some((texture, shown)) if texture.size() == size => {
+                        texture.set_partial([0, 0], image, egui::TextureOptions::LINEAR);
+                        *shown = rel;
+                    }
+                    Some((texture, shown)) => {
+                        texture.set(image, egui::TextureOptions::LINEAR);
+                        *shown = rel;
+                    }
+                    None => {
+                        let texture =
+                            ctx.load_texture("globe-compare", image, egui::TextureOptions::LINEAR);
+                        self.compare_texture = Some((texture, rel));
+                    }
+                }
+            }
+            None => self.compare_texture = None,
         }
         match &mut self.texture {
             Some(t) if t.size() == [w, h] => {

@@ -24,7 +24,6 @@ use std::{
 mod assistant;
 mod cache;
 mod commands;
-mod compare_frame;
 mod controllers;
 mod explorer;
 mod files;
@@ -92,6 +91,8 @@ pub(crate) struct App {
     cache: Arc<TileCache>,
     cache_controls: cache::CacheControls,
     tile_warmup: TileWarmup,
+    /// Imagery loaded ahead of a zoom out, for the view (state key) it was made for.
+    zoom_out_warmup: Option<(u64, TileWarmup)>,
     boundaries: Arc<BoundaryData>,
     overlay_cache: overlays::OverlayCache,
     boundaries_rx: BoundaryUpdates,
@@ -158,8 +159,8 @@ pub(crate) struct App {
     /// Wayback swipe compare: the release shown right of the split, and where the split
     /// runs (a fraction of the view's width).
     wayback_compare: Option<wayback::Compare>,
-    /// Renders the compare release while a swipe compare is open.
-    compare_renderer: Option<compare_frame::CompareRenderer>,
+    /// The swipe compare's release of the displayed view, and which release it is.
+    compare_texture: Option<(egui::TextureHandle, u16)>,
     wayback_rx: Option<mpsc::Receiver<Result<Vec<WaybackRelease>, globecraft_data::Error>>>,
     wayback_started: bool,
     wayback_err: Option<String>,
@@ -262,6 +263,7 @@ impl App {
             renderer,
             scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache::default(),
             tile_warmup: TileWarmup::startup_satellite(),
+            zoom_out_warmup: None,
             cache_controls: cache::CacheControls::default(),
             boundaries: Arc::new(BoundaryData::default()),
             overlay_cache: overlays::OverlayCache::new(cc.egui_ctx.clone()),
@@ -332,7 +334,7 @@ impl App {
             wayback_list: vec![],
             wayback_idx: 0,
             wayback_compare: None,
-            compare_renderer: None,
+            compare_texture: None,
             wayback_rx: None,
             wayback_started: false,
             wayback_err: None,

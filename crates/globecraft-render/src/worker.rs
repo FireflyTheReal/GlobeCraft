@@ -12,8 +12,19 @@ pub struct RenderRequest {
     pub overlays: Option<crate::overlays::OverlayInput>,
     pub aircraft: Option<crate::aircraft::ProjectionInput>,
     pub live_layers: Option<crate::live_layers::LiveInput>,
+    /// A second imagery release of the same view (Wayback swipe compare), rendered in
+    /// the same job by the frontend's render step so both images arrive together.
+    pub compare: Option<CompareRelease>,
     // Camera motion may lag by one job; provider/style/size changes must not.
     pub presentation: u64,
+}
+
+/// The second release of a swipe compare and the raster scale it renders at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CompareRelease {
+    pub rel: u16,
+    /// Raster size relative to the main frame's (lower while the camera moves).
+    pub scale: f32,
 }
 
 pub struct RenderedFrame<T = ()> {

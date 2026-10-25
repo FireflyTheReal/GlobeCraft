@@ -32,10 +32,11 @@ const MAX_NETWORK_INFLIGHT: usize = 4;
 /// Parallel reads from the disk cache.
 const MAX_DISK_INFLIGHT: usize = 8;
 /// Decoded tiles kept in memory, counted in vertices (16 bytes each as lines).
-const MAX_STORED_POINTS: usize = 2_000_000;
+const MAX_STORED_POINTS: usize = 3_000_000;
 const FAILED_RETRY: Duration = Duration::from_secs(60);
-/// Levels above the view's whose surrounding ring is loaded ahead too.
-const RING_PARENT_LEVELS: usize = 2;
+/// Levels above the view's loaded as a block as wide as the view (a zoom out of 8×);
+/// above those, the view's ancestors and the world overview.
+const ZOOM_OUT_BLOCK_LEVELS: usize = 3;
 /// The whole world is loaded ahead down to this zoom (1 + 4 + 16 + 64 tiles).
 const WORLD_PRELOAD_MAX_ZOOM: u8 = 3;
 /// Tiles of this zoom and above stay in memory: few and small, and what a quick zoom
@@ -240,11 +241,13 @@ impl OsmTileStreamer {
             return;
         };
         let ready = self.request_tiles(&mut store, &wanted, &template, now, true);
+        let ahead = prefetch(&wanted);
         if ready {
-            let prefetch = prefetch(&wanted);
-            self.request_tiles(&mut store, &prefetch, &template, now, false);
+            self.request_tiles(&mut store, &ahead, &template, now, false);
         }
-        for key in &wanted {
+        // Tiles loaded ahead count as in use, so the memory budget forgets the areas the
+        // view left rather than what a zoom out is about to need.
+        for key in wanted.iter().chain(&ahead) {
             if let Some(entry) = store.tiles.get_mut(key) {
                 entry.used = now;
             }
@@ -363,8 +366,9 @@ impl OsmTileStreamer {
 
 /// Tiles worth loading ahead of need, most useful first:
 /// - every level above the view, so a quick zoom out finds its tiles ready;
-/// - the ring around the view and around its next `RING_PARENT_LEVELS` levels up, for
-///   panning and for the wider area a zoom out shows;
+/// - the ring around the view, for panning;
+/// - at the next `ZOOM_OUT_BLOCK_LEVELS` levels up, a block as wide as the view, the
+///   wider area a zoom out shows;
 /// - the whole world down to `WORLD_PRELOAD_MAX_ZOOM` (85 small tiles, kept on disk
 ///   after the first time), so the globe never waits for borders from far out.
 fn prefetch(wanted: &[TileKey]) -> Vec<TileKey> {
@@ -397,20 +401,71 @@ fn prefetch(wanted: &[TileKey]) -> Vec<TileKey> {
         }
         levels.push(parents);
     }
-    for level in levels.iter().take(1 + RING_PARENT_LEVELS) {
-        for key in level {
-            let n = TileKey::tiles_per_side(key.z) as i64;
-            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+    // Panning: one ring around the view.
+    let ring = |key: TileKey| {
+        let n = TileKey::tiles_per_side(key.z) as i64;
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .into_iter()
+            .filter_map(move |(dx, dy)| {
                 let y = key.y as i64 + dy;
-                if !(0..n).contains(&y) {
-                    continue;
-                }
-                let neighbour = TileKey {
+                (0..n).contains(&y).then(|| TileKey {
                     z: key.z,
                     x: (key.x as i64 + dx).rem_euclid(n) as u32,
                     y: y as u32,
-                };
-                push(neighbour, &mut out);
+                })
+            })
+    };
+    for &key in wanted {
+        for neighbour in ring(key) {
+            push(neighbour, &mut out);
+        }
+    }
+    // Zooming out: at each of the next levels up, a block as wide (in tiles) as the
+    // view is now, which is what that level shows once zoomed out to it.
+    if let Some(&centre) = wanted.first() {
+        let n = TileKey::tiles_per_side(centre.z) as i64;
+        let offset = |a: u32, b: u32| {
+            let d = (i64::from(a) - i64::from(b)).abs();
+            d.min(n - d)
+        };
+        let half_x = wanted
+            .iter()
+            .map(|k| offset(k.x, centre.x))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let half_y = wanted
+            .iter()
+            .map(|k| (i64::from(k.y) - i64::from(centre.y)).abs())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let mut ancestor = centre;
+        for _ in 0..ZOOM_OUT_BLOCK_LEVELS {
+            let Some(parent) = ancestor.parent() else {
+                break;
+            };
+            ancestor = parent;
+            let n = TileKey::tiles_per_side(ancestor.z) as i64;
+            let mut block: Vec<(i64, TileKey)> = Vec::new();
+            for dy in -half_y.min(n / 2)..=half_y.min(n / 2) {
+                let y = i64::from(ancestor.y) + dy;
+                if !(0..n).contains(&y) {
+                    continue;
+                }
+                for dx in -half_x.min(n / 2)..=half_x.min(n / 2) {
+                    let x = (i64::from(ancestor.x) + dx).rem_euclid(n);
+                    let key = TileKey {
+                        z: ancestor.z,
+                        x: x as u32,
+                        y: y as u32,
+                    };
+                    block.push((dx * dx + dy * dy, key));
+                }
+            }
+            block.sort_by_key(|&(distance, key)| (distance, key));
+            for (_, key) in block {
+                push(key, &mut out);
             }
         }
     }
@@ -612,6 +667,26 @@ mod tests {
         assert!(around.contains(&TileKey { z: 3, x: 7, y: 7 }));
         let position = |key| around.iter().position(|k| *k == key).unwrap();
         assert!(position(centre.parent().unwrap()) < position(TileKey { x: 536, ..centre }));
+        // A view several tiles wide gets a block as wide at the next levels up.
+        let view: Vec<TileKey> = (0..5)
+            .map(|dx| TileKey {
+                x: 533 + dx,
+                ..centre
+            })
+            .collect();
+        let ahead = prefetch(&view);
+        let parent = TileKey {
+            z: 9,
+            ..centre.parent().unwrap()
+        };
+        assert!(ahead.contains(&TileKey {
+            x: parent.x + 3,
+            ..parent
+        }));
+        assert!(ahead.contains(&TileKey {
+            x: parent.x - 3,
+            ..parent
+        }));
         assert!(around.contains(&TileKey { x: 536, ..centre }));
         assert!(!around.contains(&centre));
         // Across the date line.

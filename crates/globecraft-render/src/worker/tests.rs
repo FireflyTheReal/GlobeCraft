@@ -70,6 +70,7 @@ fn request(longitude: f64, presentation: u64) -> RenderRequest {
             lod_scale: 1.0,
         },
         presentation,
+        compare: None,
         overlays: None,
         aircraft: None,
         live_layers: None,

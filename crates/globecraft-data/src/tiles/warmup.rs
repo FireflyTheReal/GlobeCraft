@@ -27,6 +27,14 @@ impl TileWarmup {
         Self { remaining }
     }
 
+    /// Speculative requests for these tiles, in order (for example the coarser imagery
+    /// a zoom out will show); the same bounded pumping as the startup overview.
+    pub fn of_keys(keys: Vec<TileKey>) -> Self {
+        Self {
+            remaining: keys.into(),
+        }
+    }
+
     /// Call after visible-tile admission while the overview is useful. Returns
     /// whether another pass is needed; does no I/O or waiting on the caller.
     /// Already cached/loading tiles and recent failures are skipped. A failed

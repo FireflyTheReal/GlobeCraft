@@ -13,6 +13,7 @@ use pixel::{Surface, sky, surface};
 pub use terrain::{MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg};
 mod tuning;
 pub mod worker;
+pub mod zoom_out;
 use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN, camera::Basis, math::v3_to_ll};
 use globecraft_core::{METERS_PER_KM, METERS_PER_LATITUDE_DEGREE};
 use globecraft_data::tiles::{

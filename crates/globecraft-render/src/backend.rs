@@ -284,6 +284,7 @@ mod native_fallback_tests {
             aircraft: None,
             live_layers: None,
             presentation: 0,
+            compare: None,
         };
         let fallback = renderer.render(&request, &cache, Vec::new());
         let expected = crate::render_view_into(

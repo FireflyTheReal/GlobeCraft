@@ -277,6 +277,7 @@ fn warm_gpu_frame_time() {
             aircraft: None,
             live_layers: None,
             presentation: 0,
+            compare: None,
         };
         let mut cpu_times = Vec::new();
         let mut gpu_times = Vec::new();
@@ -410,6 +411,7 @@ fn warm_gpu_frame_time() {
             aircraft: None,
             live_layers: None,
             presentation: 0,
+            compare: None,
         };
         let frame = gpu
             .render(&request, &cache, Vec::new())

@@ -263,6 +263,39 @@ impl App {
         {
             ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
         }
+        // The coarser imagery a zoom out will show, loaded once the view rests (see
+        // `globecraft_render::zoom_out`); a new view starts a new list.
+        if idle && self.renderer.is_idle() {
+            if self
+                .zoom_out_warmup
+                .as_ref()
+                .is_none_or(|(view, _)| *view != state)
+            {
+                let provider = self.effective_provider();
+                let mut releases = vec![if provider == Provider::Wayback {
+                    self.wayback_idx as u16
+                } else {
+                    0
+                }];
+                if let Some(compare) = self.active_compare() {
+                    releases.push(compare.index as u16);
+                }
+                let keys = globecraft_render::zoom_out::zoom_out_tiles(
+                    self.cam,
+                    h,
+                    render_aspect,
+                    provider,
+                    &releases,
+                );
+                self.zoom_out_warmup =
+                    Some((state, globecraft_data::tiles::TileWarmup::of_keys(keys)));
+            }
+            if let Some((_, warmup)) = &mut self.zoom_out_warmup
+                && warmup.pump(&self.cache)
+            {
+                ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
+            }
+        }
 
         // ── drawing
         ui.painter_at(viewport)
@@ -279,12 +312,11 @@ impl App {
             );
         }
         // The swipe compare: the compare release's frame, right of the split.
-        if let (Some(compare), Some(texture)) = (
+        if let (Some(compare), Some((texture, _))) = (
             self.active_compare(),
-            self.compare_renderer
+            self.compare_texture
                 .as_ref()
-                .filter(|renderer| renderer.release == Some(compare_release(self)))
-                .and_then(|renderer| renderer.texture.as_ref()),
+                .filter(|(_, shown)| *shown == compare_release(self)),
         ) {
             let x = rect.left() + rect.width() * compare.split;
             painter
