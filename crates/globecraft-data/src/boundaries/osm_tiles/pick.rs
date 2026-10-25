@@ -44,6 +44,15 @@ pub(super) fn wanted(lat: f64, lon: f64, altitude_km: f64) -> (u8, Vec<TileKey>)
     }
 }
 
+/// The highest camera altitude at `lat` whose tiles are of zoom `z` or deeper (the
+/// inverse of the zoom choice in [`wanted`], which rounds the ideal zoom).
+pub(super) fn max_altitude_km_for_zoom(lat: f64, z: u8) -> f64 {
+    let lat = lat.clamp(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT);
+    let ground_scale = lat.to_radians().cos().max(0.05);
+    EARTH_CIRCUMFERENCE_KM * ground_scale * TILES_ACROSS_VIEW
+        / (VIEW_WIDTH_PER_ALTITUDE * (f64::from(z) - 0.5).exp2())
+}
+
 fn around(zoom: u8, lat: f64, lon: f64, radius_deg: f64) -> Vec<TileKey> {
     let n = TileKey::tiles_per_side(zoom) as i64;
     let lon_radius = radius_deg / lat.to_radians().cos().max(0.05);
@@ -98,6 +107,15 @@ mod tests {
                 tiles.len()
             );
             assert_eq!(tiles[0], TileKey::at(zoom, 49.0, 8.4), "nearest first");
+        }
+    }
+
+    #[test]
+    fn the_altitude_of_a_zoom_matches_the_zoom_choice() {
+        for lat in [0.0, 47.5, 64.0] {
+            let top = max_altitude_km_for_zoom(lat, 11);
+            assert!(wanted(lat, 8.0, top * 0.99).0 >= 11, "{lat}");
+            assert!(wanted(lat, 8.0, top * 1.01).0 < 11, "{lat}");
         }
     }
 

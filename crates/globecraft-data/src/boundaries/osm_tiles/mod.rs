@@ -56,6 +56,9 @@ pub struct OsmBorderLines {
     pub municipal: Vec<Line>,
     /// The zoom level of the tiles wanted for the view.
     pub zoom: u8,
+    /// Below this altitude (at the view's latitude) the tiles hold municipal lines;
+    /// they and the village names fade in from here.
+    pub municipal_max_km: f64,
 }
 
 impl OsmBorderLines {
@@ -250,6 +253,7 @@ impl OsmTileStreamer {
         let job = Publication {
             contents,
             zoom,
+            municipal_max_km: pick::max_altitude_km_for_zoom(view.lat, MUNICIPAL_MIN_ZOOM),
             generation,
             latest: self.generation.clone(),
             clipped: self.clipped.clone(),
@@ -378,6 +382,7 @@ fn prefetch(wanted: &[TileKey]) -> Vec<TileKey> {
 struct Publication {
     contents: Vec<(TileKey, TileKey, Arc<TileContent>)>,
     zoom: u8,
+    municipal_max_km: f64,
     generation: u64,
     latest: Arc<AtomicU64>,
     clipped: ClippedCache,
@@ -432,6 +437,7 @@ impl Publication {
             municipal: gather(|c| &c.municipal),
             state_big: Vec::new(),
             zoom: self.zoom,
+            municipal_max_km: self.municipal_max_km,
         };
         let places: Vec<MapLabel> = contents
             .iter()

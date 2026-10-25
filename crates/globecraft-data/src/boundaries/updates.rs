@@ -65,7 +65,12 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
                     data.municipal_country_cells = staging.country_cells;
                 }
                 None => {
-                    data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+                    // With border tiles on, their municipal altitude stays.
+                    data.municipal_detail_max_km = if data.osm_borders.municipal_max_km > 0.0 {
+                        data.osm_borders.municipal_max_km
+                    } else {
+                        MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM
+                    };
                     data.municipal_major_cells = Arc::default();
                     data.world_cities_country = Vec::new();
                     data.municipal_country_cells = Arc::default();
@@ -88,10 +93,11 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
                 });
             lines.state = other;
             lines.state_big = big;
-            data.osm_borders = Arc::new(lines);
-            if data.municipal_detail_max_km <= 0.0 {
-                data.municipal_detail_max_km = MUNICIPAL_VISIBLE_MAX_ALTITUDE_KM;
+            // Municipal lines and village names follow the tiles' municipal zoom.
+            if lines.municipal_max_km > 0.0 {
+                data.municipal_detail_max_km = lines.municipal_max_km;
             }
+            data.osm_borders = Arc::new(lines);
         }
     }
     data.labels.extend(patch.labels);

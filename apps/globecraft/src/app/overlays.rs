@@ -28,14 +28,23 @@ pub(super) struct LayerArrivals {
 impl LayerArrivals {
     fn observe(&mut self, old: &BoundaryData, new: &BoundaryData, now: Instant) {
         let arrived = |old: bool, new: bool| old && !new;
-        if arrived(old.states.is_empty(), new.states.is_empty()) {
+        // Natural Earth's state lines or the border tiles' (OpenStreetMap) ones.
+        let states =
+            |data: &BoundaryData| data.states.is_empty() && data.osm_borders.state.is_empty();
+        let states_big = |data: &BoundaryData| {
+            data.states_big.is_empty() && data.osm_borders.state_big.is_empty()
+        };
+        if arrived(states(old), states(new)) {
             self.states = Some(now);
         }
-        if arrived(old.states_big.is_empty(), new.states_big.is_empty()) {
+        if arrived(states_big(old), states_big(new)) {
             self.states_big = Some(now);
         }
-        let municipal =
-            |data: &BoundaryData| data.cities.is_empty() && data.world_cities.is_empty();
+        let municipal = |data: &BoundaryData| {
+            data.cities.is_empty()
+                && data.world_cities.is_empty()
+                && data.osm_borders.municipal.is_empty()
+        };
         if arrived(municipal(old), municipal(new)) {
             self.municipal = Some(now);
         }

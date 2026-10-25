@@ -356,6 +356,11 @@ impl MapLabel {
                     LOCAL_LABEL_RANK => municipal_detail_max_km * MUNICIPAL_DETAIL_FADE_FULL_RATIO,
                     // OpenStreetMap places: towns, then villages, then hamlets.
                     places::PLACE_TOWN_RANK => PLACE_TOWN_MAX_ALTITUDE_KM,
+                    // Villages appear once the municipal lines have faded in.
+                    places::PLACE_VILLAGE_RANK if municipal_detail_max_km > 0.0 => {
+                        PLACE_VILLAGE_MAX_ALTITUDE_KM
+                            .min(municipal_detail_max_km * MUNICIPAL_DETAIL_FADE_FULL_RATIO)
+                    }
                     places::PLACE_VILLAGE_RANK => PLACE_VILLAGE_MAX_ALTITUDE_KM,
                     _ => PLACE_HAMLET_MAX_ALTITUDE_KM,
                 }
