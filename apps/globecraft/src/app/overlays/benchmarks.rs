@@ -90,6 +90,7 @@ fn overlay_projection_and_label_occupancy_time() {
         lon: 0.0,
         heading: 0.0,
         alt: 14_000.0,
+        tilt: 0.0,
     };
     let view = OverlayView {
         basis: cam.basis(16.0 / 9.0),

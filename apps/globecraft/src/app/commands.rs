@@ -12,6 +12,7 @@ use globecraft_core::{
     placemark::{PlaceItem, PlaceNode, Placemark},
     units::RulerUnit,
 };
+use globecraft_data::settings::screenshot::ScreenshotQuality;
 use globecraft_data::settings::{
     UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
 };
@@ -155,6 +156,9 @@ impl App {
                 if let Some(heading) = f64_param(p, "heading_deg")? {
                     self.cam.heading = globecraft_core::math::wrap_lon(heading);
                 }
+                if let Some(tilt) = f64_param(p, "tilt_deg")? {
+                    self.cam.set_tilt(tilt);
+                }
                 json!({"flying_to": {"lat": lat, "lon": lon, "altitude_km": alt}})
             }
             "camera.set" => {
@@ -176,6 +180,10 @@ impl App {
                 }
                 if let Some(heading) = f64_param(p, "heading_deg")? {
                     self.cam.heading = globecraft_core::math::wrap_lon(heading);
+                }
+                self.cam.clamp_tilt();
+                if let Some(tilt) = f64_param(p, "tilt_deg")? {
+                    self.cam.set_tilt(tilt);
                 }
                 self.touch();
                 self.camera_json()
@@ -208,6 +216,22 @@ impl App {
             }
             "camera.resetNorth" => {
                 self.cam.heading = 0.0;
+                self.touch();
+                self.camera_json()
+            }
+            "camera.tilt" => {
+                self.fly = None;
+                let tilt = match (f64_param(p, "tilt_deg")?, f64_param(p, "step")?) {
+                    (Some(tilt), _) => tilt,
+                    (None, Some(step)) => self.cam.tilt + step,
+                    (None, None) => return Err("give tilt_deg or step".into()),
+                };
+                self.cam.set_tilt(tilt);
+                self.touch();
+                self.camera_json()
+            }
+            "camera.topDown" => {
+                self.cam.tilt = 0.0;
                 self.touch();
                 self.camera_json()
             }
@@ -364,8 +388,20 @@ impl App {
                 if self.image.is_none() {
                     return Err("The globe has not finished drawing yet.".into());
                 }
-                self.save_screenshot();
-                json!({"folder": self.settings.screenshot_dir})
+                let quality = match str_param(p, "quality") {
+                    Some(code) => ScreenshotQuality::from_code(code)
+                        .ok_or("quality must be normal, plus, pro or pro_max")?,
+                    None => self.settings.screenshot_quality,
+                };
+                self.take_screenshot(quality)?;
+                json!({"folder": self.settings.screenshot_dir, "quality": quality.code()})
+            }
+            "file.screenshotQuality" => {
+                let quality = str_param(p, "quality")
+                    .and_then(ScreenshotQuality::from_code)
+                    .ok_or("quality must be normal, plus, pro or pro_max")?;
+                self.settings.screenshot_quality = quality;
+                json!({"quality": quality.code()})
             }
             // ── Layers
             "layer.basemap" => {
@@ -835,7 +871,8 @@ impl App {
 
     fn camera_json(&self) -> Value {
         json!({"lat": self.cam.lat, "lon": self.cam.lon, "altitude_km": self.cam.alt,
-            "heading_deg": self.cam.heading})
+            "heading_deg": self.cam.heading, "tilt_deg": self.cam.tilt,
+            "max_tilt_deg": self.cam.max_tilt()})
     }
 
     pub(in crate::app) fn ruler_json(&self) -> Value {

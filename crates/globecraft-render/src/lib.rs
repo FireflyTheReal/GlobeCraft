@@ -216,6 +216,7 @@ fn render_row<const ELLIPSOID: bool>(
     row: &mut [u8],
 ) {
     let cc = rays.camera_len_squared;
+    let camera_up = rays.camera_up();
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
         let first_x = pack * RAY_LANES;
@@ -241,7 +242,7 @@ fn render_row<const ELLIPSOID: bool>(
                     None => shade_surface(hit, cfg, cfg.rel, loc, 1.0),
                 }
             } else {
-                sky(&ray, cc, cfg)
+                sky(&ray, cc, camera_up, cfg)
             };
             let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
             pixel[0] = channels.x as u8;
@@ -430,6 +431,7 @@ pub mod planet;
 pub mod scale_bar;
 pub mod weather;
 
+pub mod still;
 pub mod view;
 
 pub mod live_layers;

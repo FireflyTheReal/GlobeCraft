@@ -154,6 +154,7 @@ mod tests {
                     lon: 0.0,
                     heading: 0.0,
                     alt: 10.0,
+                    tilt: 0.0,
                 }
                 .basis(1.0),
                 rect: egui::Rect::from_min_size(Pos2::ZERO, Vec2::splat(300.0)),

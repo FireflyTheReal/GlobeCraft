@@ -152,6 +152,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         lon: -50.0,
         heading: 25.0,
         alt: 14000.0,
+        tilt: 0.0,
     }
     .basis_for_model(FRAME_WIDTH_PX as f64 / FRAME_HEIGHT_PX as f64, model);
     let config = RenderCfg {
@@ -174,6 +175,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
                 lon,
                 heading: 25.0,
                 alt: 14_000.0,
+                tilt: 0.0,
             }
             .basis_for_model(FRAME_WIDTH_PX as f64 / FRAME_HEIGHT_PX as f64, model);
             black_box(render_frame(
@@ -257,6 +259,7 @@ fn warm_gpu_frame_time() {
             lon: -50.0,
             heading: 25.0,
             alt: 14000.0,
+            tilt: 0.0,
         };
         let request = crate::worker::RenderRequest {
             width: w,
@@ -391,6 +394,7 @@ fn warm_gpu_frame_time() {
             lon,
             heading: 25.0,
             alt: 14000.0,
+            tilt: 0.0,
         };
         let request = crate::worker::RenderRequest {
             width: 2000,

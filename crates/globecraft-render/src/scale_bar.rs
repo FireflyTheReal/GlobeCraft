@@ -145,6 +145,7 @@ mod tests {
                     lon: 179.9,
                     heading: 75.0,
                     alt: altitude,
+                    tilt: 0.0,
                 }
                 .basis_for_model(4.0 / 3.0, EarthModel::Wgs84);
                 let bar = cache.for_view(&basis, rect, altitude, units).unwrap();

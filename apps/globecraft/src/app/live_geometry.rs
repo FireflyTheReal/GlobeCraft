@@ -131,6 +131,7 @@ mod tests {
             lon: 0.0,
             heading: 0.0,
             alt: 1000.0,
+            tilt: 0.0,
         };
         let input = LiveInput {
             view: LiveView {

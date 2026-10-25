@@ -188,6 +188,7 @@ controls-help-toggle = Show controls help
 controls-help-text = • Drag (left): rotate the globe
     • Right-drag / Shift+drag / two-finger turn: rotate the view
     • Wheel / pinch or +/-: zoom
+    • Shift+scroll / Shift+drag up or down: tilt   • U: look straight down
     • Double-click: fly to the point
     • Arrow keys: move   • N: north up
     • Right-click: context menu
@@ -637,6 +638,10 @@ cmd-camera-zoom-out = Zoom Out
 cmd-camera-zoom-out-help = Move the camera away from the surface.
 cmd-camera-reset-north = North Up
 cmd-camera-reset-north-help = Turn the view so north points up (N).
+cmd-camera-tilt = Tilt
+cmd-camera-tilt-help = Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down).
+cmd-camera-top-down = Top-Down View
+cmd-camera-top-down-help = Look straight down again (U).
 cmd-camera-global-view = Global View
 cmd-camera-global-view-help = Fly out until the whole globe is in view.
 cmd-camera-auto-rotate = Auto-Rotate
@@ -675,6 +680,13 @@ cmd-edit-redo = Redo
 cmd-edit-redo-help = Redo the last undone ruler edit.
 cmd-file-screenshot = Screenshot
 cmd-file-screenshot-help = Save the globe without the interface as a PNG in the screenshot folder.
+cmd-file-screenshot-quality = Screenshot Quality
+cmd-file-screenshot-quality-help = Choose the screenshot quality: Normal (as on screen), Plus (every tile sharp), Pro (twice the size, one zoom level deeper) or Pro Max (four times the size, two levels deeper).
+screenshot-quality-normal = Normal
+screenshot-quality-plus = Plus
+screenshot-quality-pro = Pro
+screenshot-quality-pro-max = Pro Max
+screenshot-rendering-status = Making the { $quality } screenshot: { $tiles } tiles to load…
 cmd-layer-basemap = Basemap
 cmd-layer-basemap-help = Choose the imagery draped on the globe.
 cmd-layer-wayback-release = Imagery Date

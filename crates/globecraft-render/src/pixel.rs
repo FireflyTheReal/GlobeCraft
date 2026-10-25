@@ -155,7 +155,9 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         rim,
     }
 }
-pub(super) fn sky(ray: &rays::RaySample, cc: f64, cfg: &RenderCfg) -> Vec4 {
+/// The colour of a ray that misses the Earth. `camera_up` is the camera's direction
+/// from the Earth's centre (for day and night inside the atmosphere).
+pub(super) fn sky(ray: &rays::RaySample, cc: f64, camera_up: DVec3, cfg: &RenderCfg) -> Vec4 {
     let d = ray.direction;
     let bb = ray.camera_dot;
     let mut col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
@@ -171,7 +173,21 @@ pub(super) fn sky(ray: &rays::RaySample, cc: f64, cfg: &RenderCfg) -> Vec4 {
                 / STAR_BRIGHTNESS_DIVISOR;
         col = Vec4::new(br, br, br, 0.0);
     }
-    if cfg.atmo && bb < 0.0 {
+    let outer_sq = ATMOSPHERE_RADIUS_RATIO * ATMOSPHERE_RADIUS_RATIO;
+    if cfg.atmo && cc < outer_sq {
+        // Inside the atmosphere (a low, tilted camera): the sky is as bright as the
+        // air the ray crosses on its way out, most toward the horizon, less overhead,
+        // fading to space at the atmosphere's top; dark on the night side.
+        let path = -bb + (bb * bb - cc + outer_sq).max(0.0).sqrt();
+        let horizontal_path = (outer_sq - 1.0).sqrt();
+        let mut g = (path / horizontal_path).clamp(0.0, 1.0).sqrt() as f32;
+        if let Some(sun) = cfg.sun {
+            let day =
+                ((camera_up.dot(sun) + TWILIGHT_OFFSET) / TWILIGHT_WIDTH).clamp(0.0, 1.0) as f32;
+            g *= day * day * (3.0 - 2.0 * day);
+        }
+        col = col.lerp_monotonic(ATMOSPHERE_COLOR, g * ATMOSPHERE_BLEND);
+    } else if cfg.atmo && bb < 0.0 {
         let rho = (cc - bb * bb).max(0.0).sqrt();
         if (1.0..ATMOSPHERE_RADIUS_RATIO).contains(&rho) {
             let g = (1.0 - (rho - 1.0) / ATMOSPHERE_HEIGHT_RATIO).powi(2) as f32;
@@ -199,6 +215,7 @@ mod tests {
             lon: -60.0,
             heading: 25.0,
             alt: 120.0,
+            tilt: 0.0,
         }
         .basis_for_model(1.0, model);
         let mut bands = Vec::new();
@@ -266,6 +283,7 @@ mod tests {
                     lon: longitude,
                     heading: 25.0,
                     alt: 0.15,
+                    tilt: 0.0,
                 }
                 .basis_for_model(1.0, model);
                 let rays = RayCaster::new(1, 1, &basis);
@@ -311,6 +329,7 @@ mod tests {
                 lon,
                 heading: 0.0,
                 alt: altitude_km,
+                tilt: 0.0,
             }
             .basis_for_model(1.0, model);
             let rays = RayCaster::new(1, 1, &basis);

@@ -14,6 +14,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
                 lon: 0.0,
                 heading: 0.0,
                 alt: 14_000.0,
+                tilt: 0.0,
             }
             .basis(4.0 / 3.0),
             rect,
@@ -76,6 +77,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
         lon: 45.0,
         heading: 0.0,
         alt: 14_000.0,
+        tilt: 0.0,
     }
     .basis(4.0 / 3.0);
     let output = crate::app::test_ui::run(&ctx, raw, |ui| {
@@ -116,6 +118,7 @@ fn aircraft_mesh_repaint_cost() {
                 lon: 0.0,
                 heading: 25.0,
                 alt: 14_000.0,
+                tilt: 0.0,
             }
             .basis(4.0 / 3.0),
             rect,
@@ -179,6 +182,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                     lon: 0.0,
                     heading: 0.0,
                     alt: 300.0,
+                    tilt: 0.0,
                 }
                 .basis(4.0 / 3.0),
                 rect,

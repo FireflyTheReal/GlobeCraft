@@ -104,6 +104,7 @@ mod projection_tests {
             lon: 0.0,
             alt: 14_000.0,
             heading: 0.0,
+            tilt: 0.0,
         }
         .basis(1.0);
         let cloud = RgbaImage::from_pixel(4, 2, image::Rgba([123, 45, 67, 255]));

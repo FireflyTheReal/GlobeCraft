@@ -34,6 +34,7 @@ fn gpu_overview_matches_cpu() {
                     lon,
                     alt,
                     heading: 25.0,
+                    tilt: 0.0,
                 };
                 let request = RenderRequest {
                     width: w,
@@ -155,6 +156,7 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
         lon: -50.0,
         heading: 25.0,
         alt: 14000.0,
+        tilt: 0.0,
     };
     let mut request = RenderRequest {
         width: 2000,
@@ -206,6 +208,7 @@ fn motion_and_idle_frames_choose_the_same_level() {
         lon: 71.0,
         heading: 0.0,
         alt: 2000.0,
+        tilt: 0.0,
     };
     let request = |width: usize, height: usize, lod_scale: f32| RenderRequest {
         width,

@@ -10,6 +10,7 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
         lon: 0.0,
         heading: 0.0,
         alt: 1000.0,
+        tilt: 0.0,
     };
     let view = OverlayView {
         basis: cam.basis(4.0 / 3.0),
@@ -205,6 +206,7 @@ fn camera_viewport_altitude_density_layers_language_and_map_scale_invalidate() {
                         lon: 0.0,
                         heading: 30.0,
                         alt: 1000.0,
+                        tilt: 0.0,
                     }
                     .basis(4.0 / 3.0),
                     ..view
@@ -409,6 +411,7 @@ fn label_limit_remains_five_hundred() {
             lon: 0.0,
             heading: 0.0,
             alt: view.altitude_km,
+            tilt: 0.0,
         }
         .basis(1.0);
         data.labels = (0..625)

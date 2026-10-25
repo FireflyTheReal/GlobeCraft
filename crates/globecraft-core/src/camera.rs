@@ -17,10 +17,14 @@ const PROJECTION_NEAR_EARTH_RADII: f64 = MIN_CAMERA_ALTITUDE_KM / EARTH_RADIUS_K
 
 #[derive(Clone, Copy, Debug)]
 pub struct Cam {
+    /// The ground point at the centre of the view.
     pub lat: f64,
     pub lon: f64,
     pub heading: f64, // degrees: bearing the top of the screen points to
-    pub alt: f64,     // km above the surface
+    /// km from the ground point to the camera (its altitude when looking straight down).
+    pub alt: f64,
+    /// Degrees the view leans from straight down toward the horizon (0 = top-down).
+    pub tilt: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -45,15 +49,21 @@ impl Cam {
         let north = DVec3::new(-la.sin() * lo.cos(), -la.sin() * lo.sin(), la.cos());
         let h = self.heading.to_radians();
         let u = north * h.cos() + east * h.sin();
-        let f = n * -1.0;
+        // Tilt swings the camera back from the heading around the ground point it looks
+        // at; the top of the screen stays in the heading's vertical plane.
+        let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
+        let back = n * t.cos() - u * t.sin();
+        let f = -back;
+        let up = u * t.cos() + n * t.sin();
         // Geographic world axes are right-handed. View space is X-right/Y-up/-Z-forward.
-        let view_from_world = rh::view::look_to_mat3(f, u);
+        let view_from_world = rh::view::look_to_mat3(f, up);
+        let target = if model == EarthModel::PerfectSphere {
+            n
+        } else {
+            model.geometry().position(self.lat, self.lon)
+        };
         Basis {
-            c: if model == EarthModel::PerfectSphere {
-                n * (1.0 + self.alt / EARTH_RADIUS_KM)
-            } else {
-                model.geometry().position(self.lat, self.lon) + n * (self.alt / EARTH_RADIUS_KM)
-            },
+            c: target + back * (self.alt / EARTH_RADIUS_KM),
             model,
             center: (self.lat, self.lon),
             view_from_world,
@@ -70,12 +80,9 @@ impl Cam {
 }
 
 impl Basis {
+    /// The ground point at the centre of the view.
     pub fn geographic_center(&self) -> (f64, f64) {
-        if self.model == EarthModel::PerfectSphere {
-            v3_to_ll(self.c.normalize())
-        } else {
-            self.center
-        }
+        self.center
     }
     #[inline]
     pub fn surface_position(&self, lat: f64, lon: f64) -> DVec3 {
@@ -138,7 +145,33 @@ impl Basis {
     }
 }
 
+/// The steepest tilt, near the ground: the horizon stays in view.
+pub const MAX_TILT_DEG: f64 = 80.0;
+/// A tilted camera keeps at least this height above the ground point.
+const MIN_TILTED_HEIGHT_KM: f64 = 0.3;
+
 impl Cam {
+    /// The steepest tilt at this distance: `MAX_TILT_DEG`, less when the camera would
+    /// otherwise come closer to the ground than `MIN_TILTED_HEIGHT_KM`.
+    pub fn max_tilt(&self) -> f64 {
+        let height_ratio = (MIN_TILTED_HEIGHT_KM / self.alt.max(MIN_TILTED_HEIGHT_KM)).min(1.0);
+        height_ratio.acos().to_degrees().min(MAX_TILT_DEG)
+    }
+    /// Sets the tilt, kept between straight down and `max_tilt`.
+    pub fn set_tilt(&mut self, degrees: f64) {
+        if degrees.is_finite() {
+            self.tilt = degrees.clamp(0.0, self.max_tilt());
+        }
+    }
+    /// Keeps the tilt within `max_tilt` after the distance changed.
+    pub fn clamp_tilt(&mut self) {
+        self.tilt = self.tilt.clamp(0.0, self.max_tilt());
+    }
+    /// This camera with `clamp_tilt` applied.
+    pub fn with_tilt_clamped(mut self) -> Self {
+        self.clamp_tilt();
+        self
+    }
     fn deg_per_pt(&self, height_pts: f32) -> f64 {
         let mpp =
             self.alt * METERS_PER_KM * 2.0 * VERTICAL_FOV_HALF_TAN / height_pts.max(1.0) as f64;
@@ -234,6 +267,7 @@ impl Cam {
 
     pub fn zoom(&mut self, factor: f64) {
         self.alt = (self.alt * factor).clamp(MIN_CAMERA_ALTITUDE_KM, MAX_CAMERA_ALTITUDE_KM);
+        self.clamp_tilt();
     }
 
     /// Rigidly rotates the camera (centre and "up" direction) by the rotation that takes `from` to `to`.
@@ -279,6 +313,87 @@ mod tests {
     use emath::Vec2;
 
     #[test]
+    fn a_tilted_camera_looks_at_its_ground_point_from_behind_and_above() {
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            for (heading, tilt) in [(0.0, 45.0), (120.0, 70.0), (-30.0, 20.0)] {
+                let (cam, rect, aspect) = test_app_cam(Cam {
+                    lat: 46.5,
+                    lon: 8.0,
+                    heading,
+                    alt: 50.0,
+                    tilt,
+                });
+                let basis = cam.basis_for_model(aspect, model);
+                // The screen centre is still the ground point.
+                let centre = basis.pick(rect, rect.center()).unwrap();
+                assert!(model.distance_km(centre, (46.5, 8.0)) < 1e-6, "{model:?}");
+                // Looking toward the heading: points ahead are higher on screen and
+                // drawn smaller than points behind.
+                let ahead = crate::math::destination(46.5, 8.0, heading, 20.0);
+                let behind = crate::math::destination(46.5, 8.0, heading + 180.0, 20.0);
+                let up = basis
+                    .project(basis.surface_position(ahead.0, ahead.1), rect)
+                    .unwrap();
+                let down = basis
+                    .project(basis.surface_position(behind.0, behind.1), rect)
+                    .unwrap();
+                assert!(up.y < rect.center().y && down.y > rect.center().y);
+                assert!(rect.center().y - up.y < down.y - rect.center().y);
+                // Projection and picking agree off-centre too.
+                let spot = rect.center() + Vec2::new(150.0, -120.0);
+                let picked = basis.pick(rect, spot).unwrap();
+                let back = basis
+                    .project(basis.surface_position(picked.0, picked.1), rect)
+                    .unwrap();
+                assert!(back.distance(spot) < 0.01, "{model:?} {back:?}");
+                // The camera is about range × cos(tilt) above the ground.
+                let ground = basis.surface_position(46.5, 8.0).length();
+                let height_km = (basis.c.length() - ground) * EARTH_RADIUS_KM;
+                let expected = 50.0 * tilt.to_radians().cos();
+                assert!((height_km - expected).abs() < 2.0, "{height_km} {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn tilt_is_limited_near_the_ground_and_zooming_keeps_it() {
+        let mut cam = Cam {
+            lat: 10.0,
+            lon: 10.0,
+            heading: 0.0,
+            alt: 100.0,
+            tilt: 0.0,
+        };
+        cam.set_tilt(200.0);
+        assert_eq!(cam.tilt, MAX_TILT_DEG);
+        cam.set_tilt(-5.0);
+        assert_eq!(cam.tilt, 0.0);
+        cam.set_tilt(60.0);
+        cam.zoom(0.5);
+        assert_eq!(cam.tilt, 60.0);
+        // Very close in, the camera may not dip below the minimum height.
+        cam.alt = 0.4;
+        cam.set_tilt(80.0);
+        assert!(cam.alt * cam.tilt.to_radians().cos() >= MIN_TILTED_HEIGHT_KM - 1e-9);
+        let (rect, aspect) = (
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0)),
+            1.5,
+        );
+        let mut tilted = Cam {
+            alt: 80.0,
+            tilt: 55.0,
+            heading: 25.0,
+            ..cam
+        };
+        let cursor = rect.center() + Vec2::new(-200.0, 100.0);
+        let before = tilted.basis(aspect).pick(rect, cursor).unwrap();
+        tilted.zoom_at(0.7, Some(cursor), rect, aspect);
+        let after = tilted.basis(aspect).pick(rect, cursor).unwrap();
+        assert!(crate::math::haversine_km(before, after) < 1e-3);
+        assert_eq!((tilted.tilt, tilted.heading), (55.0, 25.0));
+    }
+
+    #[test]
     fn zooming_toward_the_cursor_keeps_north_from_any_altitude_and_spot() {
         let mut turned = Vec::new();
         for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
@@ -294,6 +409,7 @@ mod tests {
                         lon: 20.0,
                         heading: 0.0,
                         alt,
+                        tilt: 0.0,
                     });
                     let cursor = rect.center() + Vec2::new(dx, dy);
                     let Some(before) = cam.basis_for_model(aspect, model).pick(rect, cursor) else {
@@ -325,6 +441,7 @@ mod tests {
                     lon: 11.6,
                     heading,
                     alt: 900.0,
+                    tilt: 0.0,
                 });
                 let cursor = rect.center() + Vec2::new(-150.0, 90.0);
                 let before = cam
@@ -360,6 +477,7 @@ mod tests {
                 lon,
                 heading,
                 alt,
+                tilt: 0.0,
             });
             let model = EarthModel::Wgs84;
             let basis = cam.basis_for_model(aspect, model);
@@ -404,6 +522,7 @@ mod tests {
                 lon,
                 heading: hd,
                 alt,
+                tilt: 0.0,
             });
             for cursor in [
                 Pos2::new(300.0, 250.0),
@@ -441,6 +560,7 @@ mod bounds_tests {
             lon: 20.0,
             heading: 30.0,
             alt: 500.0,
+            tilt: 0.0,
         };
         let rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, 600.0));
         cam.zoom_at(1e10, None, rect, 4.0 / 3.0);
@@ -457,6 +577,7 @@ mod bounds_tests {
             lon: 179.0,
             heading: 0.0,
             alt: 1000.0,
+            tilt: 0.0,
         };
         cam.pan(-10000.0, 10000.0, 600.0);
         assert_eq!(cam.lat, 89.9);
@@ -472,6 +593,7 @@ mod bounds_tests {
             lon: -50.0,
             heading: 70.0,
             alt: 14000.0,
+            tilt: 0.0,
         };
         let point = cam.basis(4.0 / 3.0).pick(rect, rect.center()).unwrap();
         assert!(crate::math::haversine_km(point, (cam.lat, cam.lon)) < 1e-6);
@@ -501,6 +623,7 @@ mod projection_tests {
                     lon,
                     heading,
                     alt,
+                    tilt: 0.0,
                 }
                 .basis(aspect);
                 for fraction in [0.45, 0.5, 0.55] {
@@ -531,6 +654,7 @@ mod projection_tests {
                 lon: 0.0,
                 heading,
                 alt: 1000.0,
+                tilt: 0.0,
             }
             .basis(4.0 / 3.0);
             let center = basis.project(ll_to_v3(0.0, 0.0), rect).unwrap();
@@ -555,6 +679,7 @@ mod projection_tests {
                 lon: 170.0,
                 heading: 75.0,
                 alt,
+                tilt: 0.0,
             }
             .basis(4.0 / 3.0);
             let center = ll_to_v3(40.0, 170.0);
@@ -598,6 +723,7 @@ mod body_control_tests {
             lon: 170.0,
             alt: 14_000.0,
             heading: 45.0,
+            tilt: 0.0,
         };
         cam.orbit_body(-100.0, 500.0, 100.0);
         assert_eq!(cam.lon, -10.0);
@@ -611,6 +737,7 @@ mod body_control_tests {
             lon: 0.0,
             alt: 14_000.0,
             heading: 0.0,
+            tilt: 0.0,
         };
         for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
             cam.set_zoom_fraction(fraction);

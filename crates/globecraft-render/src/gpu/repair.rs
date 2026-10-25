@@ -53,7 +53,12 @@ pub(super) fn pixels(
                                 1.0,
                             )
                         } else {
-                            crate::sky(&ray, rays.camera_len_squared, &request.cfg)
+                            crate::sky(
+                                &ray,
+                                rays.camera_len_squared,
+                                rays.camera_up(),
+                                &request.cfg,
+                            )
                         };
                         let color = color.clamp(glam::Vec4::ZERO, glam::Vec4::ONE) * 255.0;
                         *pixel = [color.x as u8, color.y as u8, color.z as u8, 255];

@@ -52,6 +52,7 @@ fn request(longitude: f64, presentation: u64) -> RenderRequest {
         lon: longitude,
         heading: 25.0,
         alt: 14_000.0,
+        tilt: 0.0,
     };
     RenderRequest {
         width: 64,

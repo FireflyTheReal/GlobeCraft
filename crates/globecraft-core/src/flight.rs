@@ -26,12 +26,15 @@ impl Flight {
     }
     pub fn new_for_model(from: Cam, lat: f64, lon: f64, alt: f64, model: EarthModel) -> Self {
         let a = from;
-        let b = Cam {
+        // Flights keep the view's tilt, within what the destination allows.
+        let mut b = Cam {
             lat: lat.clamp(-MAX_CAMERA_LATITUDE_DEG, MAX_CAMERA_LATITUDE_DEG),
             lon: wrap_lon(lon),
             heading: 0.0,
             alt: alt.clamp(MIN_CAMERA_ALTITUDE_KM, MAX_CAMERA_ALTITUDE_KM),
+            tilt: from.tilt,
         };
+        b.clamp_tilt();
         let dist = model.distance_km((a.lat, a.lon), (b.lat, b.lon));
         let bump = if dist * FLY_ARC_ALTITUDE_RATIO > a.alt.max(b.alt) {
             (dist * FLY_ARC_ALTITUDE_RATIO)
@@ -78,7 +81,9 @@ impl Flight {
             lon,
             heading: a.heading + wrap_lon(b.heading - a.heading) * s,
             alt: (la + (lb - la) * s + (PI * t).sin() * self.bump).exp(),
+            tilt: a.tilt + (b.tilt - a.tilt) * s,
         }
+        .with_tilt_clamped()
     }
     pub fn is_finished(&self) -> bool {
         self.t >= 1.0
@@ -100,6 +105,7 @@ mod tests {
                 lon: start.1,
                 heading: 30.0,
                 alt: 500.0,
+                tilt: 0.0,
             };
             let mut flight = Flight::new_for_model(from, end.0, end.1, 400.0, model);
             let middle = flight.advance(flight.dur * 0.5);
@@ -117,6 +123,7 @@ mod tests {
             lon: 179.0,
             heading: 0.0,
             alt: 500.0,
+            tilt: 0.0,
         };
         let mut flight = Flight::new(from, 0.0, -179.0, 500.0);
         let halfway = flight.advance(flight.dur / 2.0);

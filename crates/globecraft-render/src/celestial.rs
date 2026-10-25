@@ -86,6 +86,7 @@ mod tests {
             lon: 0.0,
             alt: 0.15,
             heading: 0.0,
+            tilt: 0.0,
         };
         assert!(visibility(camera, DVec3::X, false) < 0.002);
         assert_eq!(visibility(camera, -DVec3::X, false), 1.0);

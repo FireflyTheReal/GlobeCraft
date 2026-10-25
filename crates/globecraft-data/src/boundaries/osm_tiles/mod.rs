@@ -92,6 +92,8 @@ pub struct OsmTileView {
     pub lat: f64,
     pub lon: f64,
     pub altitude_km: f64,
+    /// The camera's tilt: a tilted view reaches farther.
+    pub tilt_deg: f64,
     /// The disk cache's size limit (Settings → Cache).
     pub cache_limit_bytes: u64,
     /// Whether tiles may be downloaded ahead of need now. The app clears it while the
@@ -250,7 +252,7 @@ impl OsmTileStreamer {
             });
         }
         self.limit_bytes = view.cache_limit_bytes;
-        let (zoom, wanted) = pick::wanted(view.lat, view.lon, view.altitude_km);
+        let (zoom, wanted) = pick::wanted(view.lat, view.lon, view.altitude_km, view.tilt_deg);
         let Ok(mut store) = self.context.store.lock() else {
             return;
         };

@@ -15,6 +15,7 @@ fn aircraft_projection_cost() {
         lon: 0.0,
         heading: 25.0,
         alt: 14_000.0,
+        tilt: 0.0,
     }
     .basis(4.0 / 3.0);
     let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0));
@@ -44,6 +45,7 @@ fn aircraft_geometry_reuse_cost() {
             lon: 0.0,
             heading: 25.0,
             alt: 14_000.0,
+            tilt: 0.0,
         }
         .basis(4.0 / 3.0),
         rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0)),

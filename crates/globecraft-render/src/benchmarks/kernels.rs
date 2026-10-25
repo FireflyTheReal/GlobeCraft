@@ -23,6 +23,7 @@ fn views(model: EarthModel) -> Vec<RayCaster> {
                 lon,
                 alt,
                 heading: 25.0,
+                tilt: 0.0,
             }
             .basis_for_model(WIDTH_PX as f64 / HEIGHT_PX as f64, model),
         )
@@ -137,6 +138,7 @@ fn earth_model_raster_capture() {
                 lon,
                 alt,
                 heading: 25.0,
+                tilt: 0.0,
             }
             .basis_for_model(127.0 / 95.0, model);
             for (provider, cfg_provider) in Provider::ALL.into_iter().enumerate() {

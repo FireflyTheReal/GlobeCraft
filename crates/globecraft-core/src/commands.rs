@@ -120,7 +120,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "fly",
         Home,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.15..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"}},"required":["lat","lon"]}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.15..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"},"tilt_deg":{"type":"number","description":"View tilt from straight down, 0..80; default keeps the current tilt"}},"required":["lat","lon"]}"#
     ),
     command!(
         "camera.set",
@@ -128,7 +128,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "goto_xy",
         Home,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"}}}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"},"tilt_deg":{"type":"number","description":"0 (straight down) .. 80"}}}"#
     ),
     command!(
         "search.place",
@@ -158,6 +158,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.resetNorth",
         "camera-reset-north",
         "north",
+        Home,
+        View,
+        NO_PARAMS
+    ),
+    command!(
+        "camera.tilt",
+        "camera-tilt",
+        "terrain",
+        Home,
+        View,
+        r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..80 (less close to the ground)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
+    ),
+    command!(
+        "camera.topDown",
+        "camera-top-down",
+        "globe_view",
         Home,
         View,
         NO_PARAMS
@@ -300,7 +316,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera",
         Home,
         Files,
-        NO_PARAMS
+        r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"],"description":"normal: as on screen; plus: every tile sharp; pro: twice the size, one zoom level deeper; pro_max: four times the size, two levels deeper. Default: the chosen quality"}}}"#
+    ),
+    command!(
+        "file.screenshotQuality",
+        "file-screenshot-quality",
+        "camera",
+        Home,
+        Files,
+        r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"]}},"required":["quality"]}"#
     ),
     // Layers.
     command!(

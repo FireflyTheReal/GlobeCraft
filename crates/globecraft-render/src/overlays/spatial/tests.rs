@@ -26,6 +26,7 @@ fn conservative_bounds_keep_visible_interiors_across_poles_dateline_and_horizon(
                             lon: longitude,
                             alt: altitude,
                             heading,
+                            tilt: 0.0,
                         }
                         .basis_for_model(4.0 / 3.0, model);
                         let rect =
@@ -82,6 +83,7 @@ fn hidden_and_offscreen_lines_are_rejected_without_reordering_survivors() {
         lon: 0.0,
         alt: 500.0,
         heading: 0.0,
+        tilt: 0.0,
     }
     .basis(1.0);
     let rect = Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(600.0, 600.0));
@@ -147,6 +149,7 @@ fn static_boundary_index_time() {
             lon: lon as f64 - 180.0,
             alt: 500.0,
             heading: 0.0,
+            tilt: 0.0,
         }
         .basis(4.0 / 3.0);
         let center = basis.c.normalize();
@@ -213,6 +216,7 @@ fn reused_bounds_give_the_same_visibility_as_a_fresh_index() {
             lon: lon as f64 - 180.0,
             alt: 3_000.0,
             heading: 0.0,
+            tilt: 0.0,
         }
         .basis(4.0 / 3.0);
         assert_eq!(reused.visible(&basis, rect), fresh.visible(&basis, rect));

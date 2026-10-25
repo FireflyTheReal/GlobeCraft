@@ -188,6 +188,7 @@ controls-help-toggle = Mostrar ajuda de controles
 controls-help-text = • Arrastar (esq.): girar o globo
     • Botão direito/Shift+arrastar/giro com dois dedos: girar a vista
     • Roda/pinça ou +/-: zoom
+    • Shift+rolagem / Shift+arrastar para cima ou baixo: inclinar   • U: olhar para baixo
     • Duplo clique: voar até o ponto
     • Setas: mover   • N: norte para cima
     • Botão direito (clique): menu de contexto
@@ -637,6 +638,10 @@ cmd-camera-zoom-out = Afastar
 cmd-camera-zoom-out-help = Afasta a câmera da superfície.
 cmd-camera-reset-north = Norte para cima
 cmd-camera-reset-north-help = Gira a visão para o norte ficar para cima (N).
+cmd-camera-tilt = Inclinar
+cmd-camera-tilt-help = Inclina a vista em direção ao horizonte, ou de volta (Shift+rolagem, Shift+arrastar ou botão direito para cima e para baixo, Shift+Cima/Baixo).
+cmd-camera-top-down = Vista de cima
+cmd-camera-top-down-help = Volta a olhar diretamente para baixo (U).
 cmd-camera-global-view = Visão global
 cmd-camera-global-view-help = Afasta até o globo inteiro ficar visível.
 cmd-camera-auto-rotate = Rotação automática
@@ -675,6 +680,13 @@ cmd-edit-redo = Refazer
 cmd-edit-redo-help = Refaz a última edição desfeita da régua.
 cmd-file-screenshot = Captura
 cmd-file-screenshot-help = Salva o globo sem a interface como PNG na pasta de capturas.
+cmd-file-screenshot-quality = Qualidade da captura
+cmd-file-screenshot-quality-help = Escolhe a qualidade da captura: Normal (como na tela), Plus (todos os tiles nítidos), Pro (o dobro do tamanho, um nível de zoom a mais) ou Pro Max (quatro vezes o tamanho, dois níveis a mais).
+screenshot-quality-normal = Normal
+screenshot-quality-plus = Plus
+screenshot-quality-pro = Pro
+screenshot-quality-pro-max = Pro Max
+screenshot-rendering-status = Fazendo a captura { $quality }: { $tiles } tiles a carregar…
 cmd-layer-basemap = Mapa base
 cmd-layer-basemap-help = Escolhe as imagens aplicadas ao globo.
 cmd-layer-wayback-release = Data das imagens

@@ -8,6 +8,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         lon: 0.0,
         heading: 0.0,
         alt: 100.0,
+        tilt: 0.0,
     };
     LiveInput {
         view: LiveView {
@@ -146,6 +147,7 @@ fn orbital_updates_reuse_roads_and_project_only_current_valid_subpoints() {
         lon,
         alt: 1000.0,
         heading: 0.0,
+        tilt: 0.0,
     }
     .basis_for_model(1.0, EarthModel::Wgs84);
     request.satellites = Some(

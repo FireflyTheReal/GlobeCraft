@@ -6,6 +6,7 @@ mod coordinates;
 pub mod layers;
 pub mod map_style;
 pub mod navigation;
+pub mod screenshot;
 pub mod sidebar;
 pub mod sky;
 pub mod workspace;
@@ -69,6 +70,7 @@ pub struct Settings {
     #[serde(serialize_with = "coordinates::serialize")]
     pub coordinate_display: globecraft_core::coordinates::CoordinateDisplay,
     pub screenshot_dir: String,
+    pub screenshot_quality: screenshot::ScreenshotQuality,
     pub kml_dir: String,
     pub ui_scale: f32,  // text size of buttons/panels
     pub map_scale: f32, // text size of map labels
@@ -112,6 +114,7 @@ impl Default for Settings {
             assistant: assistant::AssistantPreferences::default(),
             coordinate_display: globecraft_core::coordinates::CoordinateDisplay::default(),
             screenshot_dir: default_out_dir("Pictures"),
+            screenshot_quality: screenshot::ScreenshotQuality::default(),
             kml_dir: default_out_dir("Documents"),
             ui_scale: 1.0,
             map_scale: 1.0,
@@ -148,6 +151,8 @@ struct SettingsInput {
     coordinate_display: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "crate::json_fields::string")]
     screenshot_dir: Option<String>,
+    #[serde(default, deserialize_with = "crate::json_fields::string")]
+    screenshot_quality: Option<String>,
     #[serde(default, deserialize_with = "crate::json_fields::string")]
     kml_dir: Option<String>,
     #[serde(default, deserialize_with = "crate::json_fields::number")]
@@ -205,6 +210,13 @@ impl Settings {
         }
         if let Some(path) = input.screenshot_dir.filter(|s| !s.is_empty()) {
             self.screenshot_dir = path;
+        }
+        if let Some(quality) = input
+            .screenshot_quality
+            .as_deref()
+            .and_then(screenshot::ScreenshotQuality::from_code)
+        {
+            self.screenshot_quality = quality;
         }
         if let Some(path) = input.kml_dir.filter(|s| !s.is_empty()) {
             self.kml_dir = path;
@@ -484,6 +496,7 @@ mod tests {
             assistant: assistant::AssistantPreferences::default(),
             coordinate_display: globecraft_core::coordinates::CoordinateDisplay::default(),
             screenshot_dir: "pictures".into(),
+            screenshot_quality: screenshot::ScreenshotQuality::Pro,
             kml_dir: "documents".into(),
             ui_scale: 1.0,
             map_scale: 1.0,

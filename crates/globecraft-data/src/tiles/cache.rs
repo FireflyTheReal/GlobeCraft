@@ -98,6 +98,9 @@ pub struct TileCache {
     inflight: AtomicUsize,
     /// Benchmarks only: every tile comes from `{base}/{provider}/{z}/{x}/{y}/{release}`.
     fixture_source: Option<Arc<str>>,
+    /// Requests a background still render (a high-quality screenshot) still needs: a new
+    /// view's priorities do not retire them.
+    reserved: Mutex<HashSet<TileKey, KeyBuild>>,
 }
 
 impl TileCache {
@@ -144,6 +147,7 @@ impl TileCache {
             generation: AtomicU64::new(0),
             inflight: AtomicUsize::new(0),
             fixture_source: None,
+            reserved: Mutex::new(HashSet::default()),
         }
     }
     pub fn new(
@@ -281,6 +285,17 @@ impl TileCache {
     }
     /// Put the latest view first; retire old queued work while keeping active
     /// downloads and the small satellite overview queue. Keys arrive coarse-first.
+    /// Keeps `keys` queued whatever view is prioritized next, until `release_reserved`.
+    pub fn reserve(&self, keys: &[TileKey]) {
+        if let Ok(mut reserved) = self.reserved.lock() {
+            reserved.extend(keys.iter().copied());
+        }
+    }
+    pub fn release_reserved(&self) {
+        if let Ok(mut reserved) = self.reserved.lock() {
+            reserved.clear();
+        }
+    }
     pub fn prioritize_view(&self, keys: &[TileKey]) {
         #[cfg(feature = "profiling")]
         let _profile = crate::profiling::Span::new("tiles.admission");
@@ -292,10 +307,12 @@ impl TileCache {
             #[cfg(feature = "profiling")]
             crate::profiling::Span::elapsed("tiles.admission_lock", waiting, Default::default());
             let mut queue = self.queue.lock().unwrap();
+            let reserved = self.reserved.lock().map(|r| r.clone()).unwrap_or_default();
             queue.retain(|key| {
                 let (provider, zoom, _, _, _) = unkey(*key);
-                let keep =
-                    wanted.contains(key) || (provider == super::Provider::Satellite && zoom <= 4);
+                let keep = wanted.contains(key)
+                    || reserved.contains(key)
+                    || (provider == super::Provider::Satellite && zoom <= 4);
                 if !keep && matches!(requests.remove(key), Some(RequestState::Loading(..))) {
                     self.inflight.fetch_sub(1, Ordering::Relaxed);
                 }

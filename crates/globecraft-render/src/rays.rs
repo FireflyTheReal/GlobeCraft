@@ -33,6 +33,10 @@ impl RayCaster {
     pub(super) fn model_geometry(&self) -> SurfaceGeometry {
         self.geometry
     }
+    /// The camera's direction from the Earth's centre.
+    pub(super) fn camera_up(&self) -> DVec3 {
+        self.camera.normalize_or_zero()
+    }
     pub(super) fn uses_unit_sphere(&self) -> bool {
         // Keep this exhaustive: a new surface family needs an explicit kernel
         // decision rather than falling through to the ellipsoid equations.
@@ -215,6 +219,7 @@ mod tests {
                 lon,
                 heading,
                 alt,
+                tilt: 0.0,
             }
             .basis_for_model(65.0 / 49.0, EarthModel::Wgs84);
             let caster = RayCaster::new(65, 49, &basis);
@@ -267,6 +272,7 @@ mod tests {
                         lon,
                         heading,
                         alt,
+                        tilt: 0.0,
                     }
                     .basis(width as f64 / height as f64);
                     let caster = RayCaster::new(width, height, &basis);

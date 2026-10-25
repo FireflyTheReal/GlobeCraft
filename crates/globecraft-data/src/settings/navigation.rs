@@ -52,6 +52,7 @@ impl StartupView {
             lon: self.longitude,
             alt: self.altitude_km,
             heading: self.heading_deg,
+            tilt: 0.0,
         }
     }
     pub fn from_camera(camera: Cam) -> Self {

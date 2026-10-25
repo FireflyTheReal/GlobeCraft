@@ -16,6 +16,7 @@ fn raster_matches_regression_fixtures() {
         lon: -50.0,
         heading: 25.0,
         alt: 14000.0,
+        tilt: 0.0,
     }
     .basis(w as f64 / h as f64);
     let config = |grid, atmo, sun| RenderCfg {
@@ -120,6 +121,7 @@ fn batch_references() -> [BatchReference; 6] {
                 lon: -50.0,
                 heading: 25.0,
                 alt: 14_000.0,
+                tilt: 0.0,
             },
         },
         BatchReference {
@@ -132,6 +134,7 @@ fn batch_references() -> [BatchReference; 6] {
                 lon: 179.9,
                 heading: -130.0,
                 alt: 1_000.0,
+                tilt: 0.0,
             },
         },
         BatchReference {
@@ -144,6 +147,7 @@ fn batch_references() -> [BatchReference; 6] {
                 lon: 179.9,
                 heading: 70.0,
                 alt: 500.0,
+                tilt: 0.0,
             },
         },
         BatchReference {
@@ -156,6 +160,7 @@ fn batch_references() -> [BatchReference; 6] {
                 lon: -180.0,
                 heading: 180.0,
                 alt: 30_000.0,
+                tilt: 0.0,
             },
         },
         BatchReference {
@@ -168,6 +173,7 @@ fn batch_references() -> [BatchReference; 6] {
                 lon: -50.0,
                 heading: 25.0,
                 alt: 14_000.0,
+                tilt: 0.0,
             },
         },
         BatchReference {
@@ -180,6 +186,7 @@ fn batch_references() -> [BatchReference; 6] {
                 lon: -179.9,
                 heading: -20.0,
                 alt: globecraft_core::MIN_CAMERA_ALTITUDE_KM,
+                tilt: 0.0,
             },
         },
     ]
@@ -320,6 +327,7 @@ fn celestial_backdrop_changes_only_sky_and_preserves_tile_priorities() {
         lon: -100.0,
         heading: 20.0,
         alt: 14_000.0,
+        tilt: 0.0,
     };
     let basis = cam.basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);

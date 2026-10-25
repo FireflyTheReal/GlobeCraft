@@ -25,6 +25,7 @@ fn input() -> ProjectionInput {
                 lon: 0.0,
                 heading: 0.0,
                 alt: 600.0,
+                tilt: 0.0,
             }
             .basis(4.0 / 3.0),
             rect: Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0)),
@@ -104,6 +105,7 @@ fn background_projection_coalesces_pending_views_and_uses_the_latest_displayed_c
             lon: 0.0,
             heading: f64::from(heading),
             alt: 600.0,
+            tilt: 0.0,
         }
         .basis(4.0 / 3.0);
         worker.submit(request.clone());

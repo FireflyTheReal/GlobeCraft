@@ -263,6 +263,7 @@ mod native_fallback_tests {
             lon: -50.0,
             heading: 25.0,
             alt: 14000.0,
+            tilt: 0.0,
         };
         let request = RenderRequest {
             width: 65,

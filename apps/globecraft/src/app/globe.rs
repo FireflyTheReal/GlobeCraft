@@ -13,6 +13,12 @@ use std::time::{Duration, Instant};
 mod ruler_input;
 
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
+/// Right-drag or Shift+drag up and down tilts the view.
+const DRAG_TILT_DEG_PER_POINT: f64 = 0.25;
+/// Shift+scroll (a laptop's two-finger scroll) tilts the view.
+const SCROLL_TILT_DEG_PER_POINT: f64 = 0.15;
+/// Shift+Up and Shift+Down tilt the view.
+const KEY_TILT_DEG_PER_SECOND: f64 = 40.0;
 const SCROLL_ZOOM_RATE_PER_POINT: f64 = 0.0025;
 const POINT_FLY_ALTITUDE_RATIO: f64 = 0.35;
 const MIN_POINT_FLY_ALTITUDE_KM: f64 = 0.3;
@@ -50,16 +56,32 @@ impl App {
                 || (resp.dragged_by(PointerButton::Primary) && shift))
         {
             let drag = ui.input(|i| i.pointer.delta());
+            let sensitivity = self.settings.navigation.rotation_sensitivity;
             self.cam.heading = wrap_lon(
-                self.cam.heading
-                    - drag.x as f64
-                        * DRAG_HEADING_DEG_PER_POINT
-                        * self.settings.navigation.rotation_sensitivity,
+                self.cam.heading - drag.x as f64 * DRAG_HEADING_DEG_PER_POINT * sensitivity,
             );
+            // Up and down tilt: dragging up leans the view toward the horizon.
+            if self.explorer.active == globecraft_core::body::Body::Earth {
+                self.cam.set_tilt(
+                    self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
+                );
+            }
             interacting = true;
         }
         if resp.hovered() {
-            let sc = ui.input(|i| i.smooth_scroll_delta.y) as f64;
+            let scroll = ui.input(|i| i.smooth_scroll_delta);
+            // Shift+scroll tilts (the system may turn it into a sideways scroll).
+            let tilt_scroll = shift && self.explorer.active == globecraft_core::body::Body::Earth;
+            let sc = if tilt_scroll { 0.0 } else { scroll.y as f64 };
+            if tilt_scroll {
+                let amount = if scroll.y != 0.0 { scroll.y } else { scroll.x } as f64;
+                if amount != 0.0 {
+                    self.fly = None;
+                    self.cam
+                        .set_tilt(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
+                    interacting = true;
+                }
+            }
             let zd = ui.input(|i| i.zoom_delta()) as f64;
             let cur = resp.hover_pos();
             if sc != 0.0 {
@@ -106,7 +128,25 @@ impl App {
             let dt = super::frame_timing::animation_delta_secs(ui);
             let sp = PAN_SPEED_POINTS_PER_SECOND * dt;
             let (mut dx, mut dy) = (0.0, 0.0);
+            // Shift+Up/Down tilt instead of moving.
+            let tilt_keys = ui.input(|i| i.modifiers.shift)
+                && self.explorer.active == globecraft_core::body::Body::Earth;
+            if tilt_keys {
+                let tilt = ui.input(|i| {
+                    f64::from(u8::from(i.key_down(Key::ArrowUp)))
+                        - f64::from(u8::from(i.key_down(Key::ArrowDown)))
+                });
+                if tilt != 0.0 {
+                    self.fly = None;
+                    self.cam
+                        .set_tilt(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
+                    interacting = true;
+                }
+            }
             ui.input(|i| {
+                if tilt_keys {
+                    return;
+                }
                 if i.key_down(Key::ArrowLeft) {
                     dx += sp;
                 }
@@ -129,13 +169,18 @@ impl App {
                 }
                 interacting = true;
             }
-            let (zin, zout, north) = ui.input(|i| {
+            let (zin, zout, north, top_down) = ui.input(|i| {
                 (
                     i.key_down(Key::Plus) || i.key_down(Key::Equals) || i.key_down(Key::PageUp),
                     i.key_down(Key::Minus) || i.key_down(Key::PageDown),
                     i.key_pressed(Key::N),
+                    i.key_pressed(Key::U),
                 )
             });
+            if top_down {
+                self.cam.tilt = 0.0;
+                interacting = true;
+            }
             if zin {
                 self.zoom((-1.2 * dt).exp());
                 interacting = true;

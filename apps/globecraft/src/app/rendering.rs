@@ -209,16 +209,15 @@ pub(super) struct RenderSize {
 }
 
 impl App {
-    pub(super) fn request_render(
+    /// What a frame of the current view shows (basemap, lighting, terrain, layers), for
+    /// a raster of `width`×`height` sampled at `lod_scale` of the displayed density.
+    pub(super) fn frame_config(
         &mut self,
-        size: RenderSize,
-        aspect: f64,
-        presentation: u64,
-        rect: egui::Rect,
-        pixels_per_point: f32,
-    ) {
-        let basis = self.cam.basis_for_model(aspect, self.active_earth_model());
-        let grid_step = globecraft_render::grid_step(self.cam.alt, size.width, size.height);
+        width: usize,
+        height: usize,
+        lod_scale: f32,
+    ) -> RenderCfg {
+        let grid_step = globecraft_render::grid_step(self.cam.alt, width, height);
         let sun = if self.layer(MapLayer::Sunlight) {
             let (la, lo) = subsolar(now_unix());
             Some(ll_to_v3(la, lo))
@@ -251,7 +250,7 @@ impl App {
         } else {
             None
         };
-        let cfg = RenderCfg {
+        RenderCfg {
             sky,
             provider: prov,
             terrain: (self.layer(MapLayer::Terrain)
@@ -265,8 +264,21 @@ impl App {
             grid_step,
             atmo: self.layer(MapLayer::Atmosphere),
             sun,
-            lod_scale: size.lod_scale,
-        };
+            lod_scale,
+        }
+    }
+
+    pub(super) fn request_render(
+        &mut self,
+        size: RenderSize,
+        aspect: f64,
+        presentation: u64,
+        rect: egui::Rect,
+        pixels_per_point: f32,
+    ) {
+        let basis = self.cam.basis_for_model(aspect, self.active_earth_model());
+        let cfg = self.frame_config(size.width, size.height, size.lod_scale);
+        let grid_step = cfg.grid_step;
         // While the camera moves the compare side renders at a lower resolution, so it
         // costs a quarter of the main frame; at rest it is full size.
         let compare =
@@ -433,6 +445,7 @@ mod tests {
             lon: 30.0,
             heading: 0.0,
             alt: 14000.0,
+            tilt: 0.0,
         };
         let requested = Cam { lon: 90.0, ..shown };
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));

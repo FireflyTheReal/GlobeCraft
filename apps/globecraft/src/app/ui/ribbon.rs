@@ -308,6 +308,7 @@ impl App {
         });
         group(ui, lang.text("ribbon-group-capture"), |ui| {
             big(ui, self, "file.screenshot", Value::Null);
+            col(ui, |ui| self.screenshot_quality_menu(ui));
         });
         group(ui, lang.text("ribbon-group-assistant"), |ui| {
             big(ui, self, "ui.pane.assistant", Value::Null);
@@ -872,3 +873,31 @@ fn scroll_buttons<R>(
 
 /// The year list of the Wayback date drop-down scrolls beyond this height.
 const WAYBACK_MENU_MAX_HEIGHT_POINTS: f32 = 360.0;
+
+impl App {
+    /// The screenshot quality drop-down beside the capture button.
+    fn screenshot_quality_menu(&mut self, ui: &mut Ui) {
+        use globecraft_data::settings::screenshot::ScreenshotQuality;
+        let current = self.settings.screenshot_quality;
+        let mut chosen = None;
+        ui.add_space(4.0);
+        let label =
+            egui::RichText::new(format!("{} ⏷", self.screenshot_quality_label(current))).size(11.5);
+        ui.menu_button(label, |ui| {
+            for quality in ScreenshotQuality::ALL {
+                if ui
+                    .selectable_label(quality == current, self.screenshot_quality_label(quality))
+                    .clicked()
+                {
+                    chosen = Some(quality);
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(self.lang.text("cmd-file-screenshot-quality-help"));
+        if let Some(quality) = chosen {
+            self.run_reporting("file.screenshotQuality", json!({"quality": quality.code()}));
+        }
+    }
+}

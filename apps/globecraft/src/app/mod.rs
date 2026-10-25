@@ -44,6 +44,7 @@ mod rendering;
 mod roads;
 mod ruler_history;
 mod search;
+mod still_shot;
 mod traffic;
 mod ui;
 mod update_restart;
@@ -177,6 +178,8 @@ pub(crate) struct App {
     ring_drag: bool,
     /// A navigator cardinal button turns the view to this heading, easing in.
     nav_snap_heading: Option<f64>,
+    /// A high-quality screenshot rendering in the background.
+    still_shot: Option<still_shot::StillShot>,
     /// When the download totals were last written to the run log, and what they were.
     download_log: (Instant, u64),
 }
@@ -359,6 +362,7 @@ impl App {
             kml_drop_rect: Rect::NOTHING,
             ring_drag: false,
             nav_snap_heading: None,
+            still_shot: None,
             download_log: (Instant::now(), 0),
             runtime,
         };
@@ -563,6 +567,7 @@ impl eframe::App for App {
                 lat: self.cam.lat,
                 lon: self.cam.lon,
                 altitude_km: self.cam.alt,
+                tilt_deg: self.cam.tilt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
                 load_ahead: self.renderer.is_idle() && !self.renderer.waits_for_tiles(),
             });
@@ -570,6 +575,7 @@ impl eframe::App for App {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }
         self.log_downloads();
+        self.poll_still_shot();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::Tokens::get(ui).canvas))
             .show(ui, |ui| {

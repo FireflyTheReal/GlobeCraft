@@ -92,6 +92,21 @@ fn interface_screenshots() {
     let _ = app.run("ui.commandSearch", Value::Null);
     settle(&mut h, 1.0);
     save(&mut h, &dir, "05-command-search-dark");
+
+    // A tilted view toward the horizon, then a steeper one closer in.
+    h.key_press(egui::Key::Escape);
+    settle(&mut h, 0.3);
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 46.5, "lon": 8.0, "altitude_km": 900.0, "heading_deg": 20.0, "tilt_deg": 55.0}),
+    );
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "06-tilted-dark");
+    let _ = h
+        .state_mut()
+        .run("camera.set", json!({"altitude_km": 60.0, "tilt_deg": 75.0}));
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "07-tilted-close-dark");
 }
 
 /// Answers OpenAI-compatible chat requests in order with `replies`, one connection each.
@@ -246,6 +261,65 @@ fn interface_frame_time() {
         measure(&mut h, "ribbon collapsed");
         h.state_mut().settings.sidebar.open = false;
         measure(&mut h, "ribbon collapsed, no left pane");
+    }
+}
+
+/// A fast scroll zoom over the globe (in and back out), as a user flicks the wheel:
+/// reports the slowest UI passes with the altitude they happened at. Offline, so tiles
+/// do not arrive; it shows the interface's own cost during a fast zoom.
+#[test]
+#[ignore = "manual: fast-zoom UI passes; run alone with --release --ignored --nocapture"]
+fn fast_zoom_ui_passes() {
+    let mut settings = globecraft_data::settings::Settings::default();
+    settings.appearance.theme = globecraft_data::settings::appearance::ThemePreference::Dark;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(eframe::egui::vec2(1480.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_eframe(move |cc| {
+            super::App::new(
+                cc,
+                settings,
+                std::sync::Arc::new(super::RestartRequest::default()),
+            )
+        });
+    for _ in 0..120 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let centre = eframe::egui::pos2(900.0, 500.0);
+    let wheel = |notches: f32| eframe::egui::Event::MouseWheel {
+        unit: eframe::egui::MouseWheelUnit::Line,
+        delta: eframe::egui::vec2(0.0, notches),
+        phase: eframe::egui::TouchPhase::Move,
+        modifiers: eframe::egui::Modifiers::NONE,
+    };
+    let mut passes = Vec::new();
+    for (steps, notches) in [(90, 2.0_f32), (90, -2.0)] {
+        for _ in 0..steps {
+            h.event(eframe::egui::Event::PointerMoved(centre));
+            h.event(wheel(notches));
+            let (wall, cpu) = (std::time::Instant::now(), thread_cpu_ns());
+            h.step();
+            let ms = wall.elapsed().as_secs_f64() * 1000.0;
+            let cpu_ms = (thread_cpu_ns() - cpu) as f64 / 1e6;
+            passes.push((ms, cpu_ms, h.state().cam.alt));
+            // About 60 frames a second, with the workers running alongside.
+            std::thread::sleep(std::time::Duration::from_millis(12));
+        }
+    }
+    let mut by_time = passes.clone();
+    by_time.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut walls: Vec<f64> = passes.iter().map(|p| p.0).collect();
+    walls.sort_by(f64::total_cmp);
+    println!(
+        "fast zoom: {} UI passes, median {:.2} ms, p95 {:.2} ms, max {:.2} ms",
+        walls.len(),
+        walls[walls.len() / 2],
+        walls[walls.len() * 95 / 100],
+        walls[walls.len() - 1]
+    );
+    for (ms, cpu_ms, alt) in by_time.iter().take(12) {
+        println!("  {ms:7.2} ms wall, {cpu_ms:7.2} ms UI-thread CPU at {alt:9.1} km");
     }
 }
 

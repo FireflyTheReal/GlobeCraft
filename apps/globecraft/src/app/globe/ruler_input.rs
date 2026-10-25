@@ -155,6 +155,7 @@ mod tests {
             lon: 0.0,
             heading: 0.0,
             alt: 14000.0,
+            tilt: 0.0,
         }
         .basis(1.0);
         let mut points = Ruler::default();
@@ -208,6 +209,7 @@ mod tests {
             lon: 0.0,
             heading: 0.0,
             alt: 14000.0,
+            tilt: 0.0,
         }
         .basis(1.0);
         let mut points = Ruler::default();
