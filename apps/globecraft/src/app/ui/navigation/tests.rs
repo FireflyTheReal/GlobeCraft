@@ -100,3 +100,14 @@ fn the_mini_globe_centres_the_camera_and_turns_with_the_heading() {
         "{east:?}"
     );
 }
+
+#[test]
+fn the_mini_globe_drags_finer_close_in_and_slower_far_out() {
+    let close = globe_drag_deg_per_radius(5.0, 1.6);
+    let mid = globe_drag_deg_per_radius(1_000.0, 1.6);
+    let far = globe_drag_deg_per_radius(30_000.0, 1.6);
+    assert!(close < 0.05, "{close}");
+    assert!(close < mid && mid <= far, "{close} {mid} {far}");
+    // Far out it is well below the old radian (57°) per radius.
+    assert!(far <= MAX_GLOBE_DRAG_DEG_PER_RADIUS);
+}

@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 pub mod aircraft;
 pub mod boundaries;
+pub mod download_stats;
 mod error;
 mod http;
 pub mod kml;

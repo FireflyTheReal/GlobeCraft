@@ -37,6 +37,8 @@ const MAX_DISK_INFLIGHT: usize = 8;
 /// Decoded tiles kept in memory, counted in vertices (16 bytes each as lines).
 const MAX_STORED_POINTS: usize = 3_000_000;
 const FAILED_RETRY: Duration = Duration::from_secs(60);
+/// How long the view's zoom level must hold before its tiles are downloaded.
+const ZOOM_SETTLE: Duration = Duration::from_millis(350);
 /// Levels above the view's loaded as a block as wide as the view (a zoom out of 8×);
 /// above those, the view's ancestors and the world overview.
 const ZOOM_OUT_BLOCK_LEVELS: usize = 3;
@@ -172,6 +174,9 @@ pub(super) struct OsmTileStreamer {
     /// What was published last: each shown tile and the tile it came from.
     published: Vec<(TileKey, TileKey)>,
     published_revision: u64,
+    /// The zoom level the view wanted last, and since when: downloads wait until it
+    /// holds for `ZOOM_SETTLE`.
+    zoom_since: Option<(u8, Instant)>,
     /// The latest publication; older ones still being built are dropped.
     generation: Arc<AtomicU64>,
     /// Ancestors cut to a missing tile, shared with the publication jobs.
@@ -197,6 +202,7 @@ impl OsmTileStreamer {
             },
             published: Vec::new(),
             published_revision: 0,
+            zoom_since: None,
             generation: Arc::default(),
             clipped: Arc::default(),
             limit_bytes: 0,
@@ -253,13 +259,28 @@ impl OsmTileStreamer {
         let Some(template) = store.template.clone() else {
             return;
         };
+        // While a zoom passes through levels, their tiles would be downloaded and dropped
+        // a moment later: only the disk is read until the level holds. The coarser
+        // tiles already loaded stand in meanwhile.
+        if self.zoom_since.is_none_or(|(z, _)| z != zoom) {
+            self.zoom_since = Some((zoom, now));
+            // Wake the app when the level has held, in case nothing else repaints.
+            let repaint = self.context.repaint.clone();
+            self.runtime.spawn(async move {
+                tokio::time::sleep(ZOOM_SETTLE).await;
+                repaint();
+            });
+        }
+        let settled = self
+            .zoom_since
+            .is_some_and(|(_, since)| now.duration_since(since) >= ZOOM_SETTLE);
         let ready = self.request_tiles(
             &mut store,
             &wanted,
             &template,
             now,
             true,
-            MAX_NETWORK_INFLIGHT,
+            if settled { MAX_NETWORK_INFLIGHT } else { 0 },
         );
         let ahead = prefetch(&wanted);
         if ready {
@@ -295,7 +316,7 @@ impl OsmTileStreamer {
         let job = Publication {
             contents,
             zoom,
-            municipal_max_km: pick::max_altitude_km_for_zoom(view.lat, MUNICIPAL_MIN_ZOOM),
+            municipal_max_km: pick::max_altitude_km_for_municipal(view.lat),
             generation,
             latest: self.generation.clone(),
             clipped: self.clipped.clone(),

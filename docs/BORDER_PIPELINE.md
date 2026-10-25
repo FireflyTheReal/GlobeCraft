@@ -24,8 +24,13 @@ levels: there is no coarse-to-detailed handover.
 
 ## 2. Which tiles (`osm_tiles/pick.rs`, `osm_tiles/mod.rs`)
 
-- The level follows the altitude, about four tiles across the view, at most zoom 12
-  (deeper tiles add only buildings and roads) and at most 96 tiles.
+- The level follows the altitude, about two tiles across the view (each OpenMapTiles
+  tile carries every layer, often 100–500 KB, so this takes a quarter of the downloads
+  of four across), at least zoom 11 where four across would reach it so municipal
+  lines start at the same altitude, at most zoom 12 (deeper tiles add only buildings
+  and roads) and at most 96 tiles.
+- Tiles of a new level are only read from disk until the level has held for 350 ms:
+  a zoom passing through levels downloads nothing it would drop a moment later.
 - A tile that is still missing is drawn from its nearest loaded ancestor, cut to its
   area, so the view never empties.
 - Loaded ahead: every ancestor of the view, a ring of one tile around it, a block as

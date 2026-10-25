@@ -555,6 +555,7 @@ settings-cache-disk-label = Meta de disco codificado
 settings-cache-restart-help = Novos limites valem após reiniciar. A remoção da memória é uma meta aproximada; quadros e outras alocações usam memória adicional. O disco inclui arquivos de imagens gerenciados e sobrecarga SQLite.
 settings-cache-borders-label = Cache de blocos de fronteiras no disco
 settings-cache-borders-usage = Fronteiras e nomes do OpenStreetMap: { $size } em uso. Vale na hora; os blocos usados há mais tempo saem primeiro.
+settings-cache-downloads = Baixado nesta sessão: imagens { $imagery } ({ $imagery_tiles } tiles), limites e nomes { $borders } ({ $border_tiles } tiles).
 settings-cache-resident-label = Cache decodificado atual: { $size }
 settings-cache-confirm = Limpar imagens baixadas do mapa? Configurações e documentos geográficos serão mantidos.
 settings-confirm-action = Confirmar

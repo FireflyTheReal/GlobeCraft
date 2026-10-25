@@ -436,7 +436,13 @@ async fn fetch_tile(
     .await
     {
         Ok(bytes) if is_placeholder(&bytes) => return Err(TileFailure::Unavailable),
-        Ok(bytes) => bytes,
+        Ok(bytes) => {
+            crate::download_stats::record(
+                crate::download_stats::DownloadKind::Imagery,
+                bytes.len(),
+            );
+            bytes
+        }
         Err(crate::Error::Http(error))
             if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
         {

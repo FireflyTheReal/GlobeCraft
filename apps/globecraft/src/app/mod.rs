@@ -177,6 +177,8 @@ pub(crate) struct App {
     ring_drag: bool,
     /// A navigator cardinal button turns the view to this heading, easing in.
     nav_snap_heading: Option<f64>,
+    /// When the download totals were last written to the run log, and what they were.
+    download_log: (Instant, u64),
 }
 
 impl App {
@@ -357,6 +359,7 @@ impl App {
             kml_drop_rect: Rect::NOTHING,
             ring_drag: false,
             nav_snap_heading: None,
+            download_log: (Instant::now(), 0),
             runtime,
         };
         app.restore_kml_session();
@@ -566,6 +569,7 @@ impl eframe::App for App {
         if self.boundary_loader.is_loading() {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }
+        self.log_downloads();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::Tokens::get(ui).canvas))
             .show(ui, |ui| {

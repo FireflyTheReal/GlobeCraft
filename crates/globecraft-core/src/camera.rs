@@ -187,16 +187,46 @@ impl Cam {
         let before = cursor.and_then(|c| self.basis_for_model(aspect, model).pick(rect, c));
         self.zoom(factor);
         if let (Some(p0), Some(cursor)) = (before, cursor) {
-            const MAX_ANCHOR_ITERATIONS: usize = 12;
-            const ANCHOR_TOLERANCE_KM: f64 = 1e-8;
+            self.anchor_keeping_heading(p0, |cam| {
+                cam.basis_for_model(aspect, model).pick(rect, cursor)
+            });
+        }
+    }
+
+    /// Moves the camera so `pick` (the point under the cursor) returns `target` again,
+    /// keeping the heading: zooming toward a point never turns north away (user,
+    /// 2026-10-25). Each step turns the camera rigidly, then restores the heading;
+    /// the next step corrects what that moved.
+    fn anchor_keeping_heading(
+        &mut self,
+        target: (f64, f64),
+        pick: impl Fn(&Self) -> Option<(f64, f64)>,
+    ) {
+        const MAX_ANCHOR_ITERATIONS: usize = 16;
+        const ANCHOR_TOLERANCE_KM: f64 = 1e-8;
+        /// Beyond this the fixed heading cannot hold the point (at the pole, where
+        /// north turns around the camera): the camera turns rigidly instead.
+        const HEADING_ANCHOR_MAX_ERROR_KM: f64 = 1e-7;
+        let start = *self;
+        let off = |cam: &Self| pick(cam).map(|p| crate::math::haversine_km(p, target));
+        for keep_heading in [true, false] {
+            if !keep_heading {
+                *self = start;
+            }
             for _ in 0..MAX_ANCHOR_ITERATIONS {
-                let Some(p1) = self.basis_for_model(aspect, model).pick(rect, cursor) else {
+                let Some(p1) = pick(self) else {
                     break;
                 };
-                if model.distance_km(p0, p1) <= ANCHOR_TOLERANCE_KM {
+                if crate::math::haversine_km(p1, target) <= ANCHOR_TOLERANCE_KM {
                     break;
                 }
-                self.rotate(ll_to_v3(p1.0, p1.1), ll_to_v3(p0.0, p0.1));
+                self.rotate(ll_to_v3(p1.0, p1.1), ll_to_v3(target.0, target.1));
+                if keep_heading {
+                    self.heading = start.heading;
+                }
+            }
+            if off(self).is_none_or(|km| km <= HEADING_ANCHOR_MAX_ERROR_KM) {
+                return;
             }
         }
     }
@@ -235,10 +265,8 @@ impl Cam {
     pub fn zoom_at(&mut self, factor: f64, cursor: Option<Pos2>, rect: Rect, aspect: f64) {
         let before = cursor.and_then(|c| self.basis(aspect).pick(rect, c));
         self.zoom(factor);
-        if let (Some(p0), Some(c)) = (before, cursor)
-            && let Some(p1) = self.basis(aspect).pick(rect, c)
-        {
-            self.rotate(ll_to_v3(p1.0, p1.1), ll_to_v3(p0.0, p0.1));
+        if let (Some(p0), Some(c)) = (before, cursor) {
+            self.anchor_keeping_heading(p0, |cam| cam.basis(aspect).pick(rect, c));
         }
     }
 }
@@ -248,6 +276,37 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    #[test]
+    fn zooming_toward_the_cursor_keeps_north_where_it_was() {
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            for heading in [0.0, 35.0, -120.0] {
+                let (mut cam, rect, aspect) = test_app_cam(Cam {
+                    lat: 48.1,
+                    lon: 11.6,
+                    heading,
+                    alt: 900.0,
+                });
+                let cursor = rect.center() + Vec2::new(-150.0, 90.0);
+                let before = cam
+                    .basis_for_model(aspect, model)
+                    .pick(rect, cursor)
+                    .unwrap();
+                for factor in [0.6, 0.6, 0.6, 1.5] {
+                    cam.zoom_at_for_model(factor, Some(cursor), rect, aspect, model);
+                    let after = cam
+                        .basis_for_model(aspect, model)
+                        .pick(rect, cursor)
+                        .unwrap();
+                    assert!(
+                        model.distance_km(before, after) < 1e-6,
+                        "{model:?} {heading}"
+                    );
+                    assert!((cam.heading - heading).abs() < 1e-9, "{model:?} {heading}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn wgs84_geodetic_picking_projection_and_zoom_agree() {

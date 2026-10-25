@@ -160,6 +160,34 @@ impl App {
     }
 }
 
+/// How often the session's download totals go to the run log (stderr), when they changed.
+const DOWNLOAD_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+impl App {
+    /// Writes where the bandwidth went to the run log, at most once a minute and only
+    /// after new downloads: a bounded diagnostic, not a timing log.
+    pub(super) fn log_downloads(&mut self) {
+        use globecraft_data::download_stats::{DownloadKind, totals};
+        let (last, logged_bytes) = self.download_log;
+        if last.elapsed() < DOWNLOAD_LOG_INTERVAL {
+            return;
+        }
+        let imagery = totals(DownloadKind::Imagery);
+        let borders = totals(DownloadKind::BorderTiles);
+        let bytes = imagery.bytes + borders.bytes;
+        self.download_log = (Instant::now(), bytes);
+        if bytes != logged_bytes {
+            eprintln!(
+                "Downloaded this session: imagery {} in {} tiles, border tiles {} in {} tiles",
+                cache_size_text(imagery.bytes),
+                imagery.responses,
+                cache_size_text(borders.bytes),
+                borders.responses
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

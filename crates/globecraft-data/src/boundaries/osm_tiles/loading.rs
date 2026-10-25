@@ -162,7 +162,13 @@ async fn fetch_tile(key: TileKey, template: &str) -> Result<Filtered, crate::Err
         .replace("{y}", &key.y.to_string());
     let client = crate::http::client(crate::http::Policy::Boundary)?;
     let bytes = match crate::http::body(client.get(&url), MAX_TILE_BYTES).await {
-        Ok(bytes) => bytes,
+        Ok(bytes) => {
+            crate::download_stats::record(
+                crate::download_stats::DownloadKind::BorderTiles,
+                bytes.len(),
+            );
+            bytes
+        }
         // Tiles of empty ocean may simply not exist.
         Err(crate::Error::Http(error))
             if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>

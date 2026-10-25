@@ -291,6 +291,23 @@ impl App {
                 )],
             ),
         );
+        {
+            use globecraft_data::download_stats::{DownloadKind, totals};
+            let (imagery, borders) = (
+                totals(DownloadKind::Imagery),
+                totals(DownloadKind::BorderTiles),
+            );
+            let size = crate::app::cache::cache_size_text;
+            ui.weak(lg.format(
+                "settings-cache-downloads",
+                &[
+                    ("imagery", size(imagery.bytes).into()),
+                    ("imagery_tiles", imagery.responses.to_string().into()),
+                    ("borders", size(borders.bytes).into()),
+                    ("border_tiles", borders.responses.to_string().into()),
+                ],
+            ));
+        }
         ui.label(lg.format(
             "settings-cache-resident-label",
             &[(

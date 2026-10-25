@@ -39,12 +39,28 @@ const WHEEL_ZOOM_PER_POINT: f64 = 0.1 / 50.0;
 /// Heading snaps ease in: the remaining turn shrinks to this fraction each second.
 const SNAP_REMAINING_PER_SECOND: f64 = 0.0001;
 const SNAP_DONE_DEG: f64 = 0.05;
+/// Mini-globe drag: one globe radius moves the camera this share of the view's reach.
+const GLOBE_DRAG_REACH_RATIO: f64 = 0.75;
+/// The old fixed speed was a radian (57°) per radius; far out the drag now tops out here.
+const MAX_GLOBE_DRAG_DEG_PER_RADIUS: f64 = 25.0;
 const GRATICULE_STEP_DEG: usize = 30;
 const GRATICULE_SAMPLES: usize = 48;
 const GRID_OPACITY: f32 = 0.45;
 const EQUATOR_OPACITY: f32 = 0.7;
 const VIEW_FILL_OPACITY: f32 = 0.16;
 const ZOOM_LEVEL_OPACITY: f32 = 0.55;
+
+/// How far one mini-globe radius of drag moves the camera, in degrees of arc: about
+/// the angle the view reaches from its centre, so the drag feels the same at every
+/// altitude and gets fine close in (user, 2026-10-25: it moved too quickly), and at
+/// most `MAX_GLOBE_DRAG_DEG_PER_RADIUS` far out.
+fn globe_drag_deg_per_radius(altitude_km: f64, aspect: f64) -> f64 {
+    let reach = view_cap_fraction(altitude_km, aspect)
+        .clamp(0.0, 1.0)
+        .asin()
+        .to_degrees();
+    (reach * GLOBE_DRAG_REACH_RATIO).min(MAX_GLOBE_DRAG_DEG_PER_RADIUS)
+}
 
 /// The cardinal letters: heading that turns them up, label, tooltip.
 const CARDINALS: [(f64, &str, &str); 4] = [
@@ -124,10 +140,12 @@ impl App {
                 }
                 self.cam.heading = wrap_lon(self.cam.heading - f64::from(d.to_degrees()));
             } else {
-                // Grab the mini globe's surface: the camera moves the other way, one
-                // globe radius of drag turning the Earth by a radian.
+                // Grab the mini globe's surface: the camera moves the other way, by
+                // about the view's reach per globe radius of drag.
                 let (north, east) = screen_axes(self.cam.heading);
-                let deg_per_point = f64::from(57.295_78 / r_globe.max(1.0));
+                let aspect = f64::from(rect.width() / rect.height().max(1.0));
+                let deg_per_point =
+                    globe_drag_deg_per_radius(self.cam.alt, aspect) / f64::from(r_globe.max(1.0));
                 let moved = -delta;
                 let coslat = self.cam.lat.to_radians().cos().max(0.05);
                 self.cam.lat = (self.cam.lat + f64::from(moved.dot(north)) * deg_per_point).clamp(
