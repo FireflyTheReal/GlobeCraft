@@ -7,7 +7,7 @@ const PROVIDER_SHIFT: u32 = 59;
 const ZOOM_SHIFT: u32 = 54;
 const RELEASE_SHIFT: u32 = 38;
 const X_SHIFT: u32 = 19;
-const PROVIDER_MASK: u64 = 7;
+const PROVIDER_MASK: u64 = 31;
 const ZOOM_MASK: u64 = 31;
 const COORDINATE_MASK: u64 = 0x7FFFF;
 const RELEASE_MASK: u64 = 0xFFFF;
@@ -15,123 +15,96 @@ const RELEASE_MASK: u64 = 0xFFFF;
 
 // ───────────────────────────── Tiles ─────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Provider {
-    Satellite,
-    Wayback,
-    Streets,
-    Topo,
-    /// Mapterhorn Terrarium WebP elevation, for the native globe only.
-    TerrainDem,
-}
+/// A tile source, by its id (see `source::TileSource` and `sources.json`). The named
+/// constants are the built-in sources the code refers to directly.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Provider(u8);
+
+#[allow(non_upper_case_globals)]
 impl Provider {
-    pub const ALL: [Provider; 4] = [
-        Provider::Satellite,
-        Provider::Wayback,
-        Provider::Streets,
-        Provider::Topo,
-    ];
-    /// All cached providers, including the non-imagery elevation source.
-    pub const CACHE_ALL: [Provider; 5] = [
-        Provider::Satellite,
-        Provider::Wayback,
-        Provider::Streets,
-        Provider::Topo,
-        Provider::TerrainDem,
-    ];
-    /// Stable basemap identifier for settings and commands.
-    pub fn code(self) -> &'static str {
-        match self {
-            Provider::Satellite => "satellite",
-            Provider::Wayback => "wayback",
-            Provider::Streets => "streets",
-            Provider::Topo => "topo",
-            Provider::TerrainDem => "terrain_dem",
-        }
+    pub const Satellite: Provider = Provider(0);
+    pub const Streets: Provider = Provider(1);
+    pub const Topo: Provider = Provider(2);
+    pub const Wayback: Provider = Provider(3);
+    /// Mapterhorn Terrarium WebP elevation, for the native globe only.
+    pub const TerrainDem: Provider = Provider(4);
+    /// NASA Black Marble night lights, drawn on the night side.
+    pub const NightLights: Provider = Provider(5);
+}
+
+impl Provider {
+    /// The source's description.
+    pub fn source(self) -> &'static TileSource {
+        source::REGISTRY.by_id[usize::from(self.0)]
+            .as_ref()
+            .expect("tile keys only name registered sources")
     }
-    /// The basemap with this code; elevation tiles are not a basemap.
+    /// Every registered source, in listing order.
+    pub fn all() -> impl Iterator<Item = Provider> {
+        source::REGISTRY.order.iter().map(|&id| Provider(id))
+    }
+    /// The sources offered as basemaps, in listing order.
+    pub fn basemaps() -> impl Iterator<Item = Provider> {
+        Self::all().filter(|provider| provider.source().basemap)
+    }
+    /// Stable identifier for settings and commands.
+    pub fn code(self) -> &'static str {
+        &self.source().code
+    }
+    /// The basemap with this code; elevation tiles and overlays are not a basemap.
     pub fn from_code(code: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|provider| provider.code() == code)
+        Self::basemaps().find(|provider| provider.code() == code)
+    }
+    /// Any source with this code.
+    pub fn from_any_code(code: &str) -> Option<Self> {
+        Self::all().find(|provider| provider.code() == code)
     }
     pub fn id(self) -> u64 {
-        match self {
-            Provider::Satellite => 0,
-            Provider::Streets => 1,
-            Provider::Topo => 2,
-            Provider::Wayback => 3,
-            Provider::TerrainDem => 4,
-        }
+        u64::from(self.0)
     }
     fn from_id(i: u64) -> Provider {
-        match i {
-            0 => Provider::Satellite,
-            1 => Provider::Streets,
-            3 => Provider::Wayback,
-            4 => Provider::TerrainDem,
-            _ => Provider::Topo,
+        let id = (i as usize).min(source::MAX_SOURCES - 1) as u8;
+        if source::REGISTRY.by_id[usize::from(id)].is_some() {
+            Provider(id)
+        } else {
+            Provider::Topo
         }
     }
     /// Imagery providers get smooth blending between zoom levels.
     pub fn is_imagery(self) -> bool {
-        matches!(self, Provider::Satellite | Provider::Wayback)
+        self.source().kind == SourceKind::Imagery
     }
     pub fn name(self, lg: Lang) -> &'static str {
-        match self {
-            Provider::Satellite => lg.text("provider-satellite-label"),
-            Provider::Wayback => lg.text("provider-wayback-label"),
-            Provider::Streets => lg.text("provider-streets-label"),
-            Provider::Topo => lg.text("provider-topography-label"),
-            Provider::TerrainDem => "Mapterhorn DEM",
-        }
+        let source = self.source();
+        source
+            .name_key
+            .as_deref()
+            .map_or(source.name.as_str(), |key| lg.text(key))
     }
     fn dir(self) -> &'static str {
-        match self {
-            Provider::Satellite => "esri_sat",
-            Provider::Wayback => "wayback",
-            Provider::Streets => "osm",
-            Provider::Topo => "opentopo",
-            Provider::TerrainDem => "mapterhorn_dem",
-        }
+        &self.source().cache_dir
     }
     pub fn max_zoom(self) -> u8 {
-        match self {
-            // Esri World Imagery serves distinct tiles past z17 (probed: z18
-            // 4.6 KB, z19 7.1 KB, z20 9.3 KB at one location); higher levels
-            // only engage when the camera is close enough to want them.
-            Provider::Satellite => 20,
-            // Wayback releases and OpenTopoMap actually stop at z17; OSM at 19.
-            Provider::Wayback | Provider::Topo => 17,
-            Provider::Streets => 19,
-            Provider::TerrainDem => 17,
-        }
+        self.source().max_zoom
     }
     fn url(self, z: u8, x: u32, y: u32, rel: u16) -> String {
-        match self {
-            Provider::Wayback => wayback_tile_url(rel, z, x, y),
-            Provider::Satellite => format!(
-                // `blankTile=false`: missing tiles answer 404 instead of the
-                // "Map data not yet available" image, so coarser imagery stands in.
-                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false"
-            ),
-            Provider::Streets => format!("https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
-            Provider::Topo => format!("https://tile.opentopomap.org/{z}/{x}/{y}.png"),
-            Provider::TerrainDem => format!("https://tiles.mapterhorn.com/{z}/{x}/{y}.webp"),
+        let source = self.source();
+        match source.access {
+            Access::Wayback => wayback_tile_url(rel, z, x, y),
+            Access::Xyz { .. } => source.tile_url(z, x, y).unwrap_or_default(),
         }
     }
     pub fn attribution(self, lg: Lang) -> &'static str {
-        match self {
-            Provider::Satellite | Provider::Wayback => lg.text("provider-imagery-attribution"),
-            Provider::Streets => lg.text("provider-streets-attribution"),
-            Provider::Topo => "© OpenTopoMap (CC-BY-SA), © OpenStreetMap",
-            Provider::TerrainDem => "© Mapterhorn (mapterhorn.com/attribution)",
-        }
+        let source = self.source();
+        source
+            .attribution_key
+            .as_deref()
+            .map_or(source.attribution.as_str(), |key| lg.text(key))
     }
 }
 
 pub type TileKey = u64;
-// Key layout: y 19 bits | x 19 bits | release index 16 bits | zoom 5 bits | provider 3 bits.
+// Key layout: y 19 bits | x 19 bits | release index 16 bits | zoom 5 bits | source 5 bits.
 // `rel` is the index of the Wayback release (0 for every other provider).
 pub fn make_key(p: Provider, z: u8, x: u32, y: u32, rel: u16) -> TileKey {
     (p.id() << PROVIDER_SHIFT)
@@ -335,6 +308,8 @@ impl Tile {
 
 mod cache;
 mod disk;
+pub mod source;
+pub use source::{Access, Prefetch, SourceKind, TileSource};
 mod elevation;
 pub use cache::{CacheBudgets, DEFAULT_TILE_CACHE_BUDGET_BYTES, Lookup, MAX_INFLIGHT, TileCache};
 pub use elevation::Elevation;

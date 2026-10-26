@@ -107,6 +107,16 @@ through a `Host` trait. The desktop's `app/assistant.rs` sends requests with dat
 results on egui's thread and implements `Host` with `App::run`. Commands that touch files
 wait for approval; interface-only commands are refused. See [AI assistant](features/ASSISTANT.md).
 
+## Tile sources
+
+Every raster source (imagery, maps, elevation, night lights) is described as data in
+`crates/globecraft-data/src/tiles/sources.json`: a stable id (part of every tile key and of
+the disk cache, never reused), a code, its kind, whether it is a basemap, how tiles are
+addressed (an XYZ/WMTS-REST template, or Esri Wayback), the zoom range, tile size, cache
+folder, attribution and prefetch policy. `tiles::Provider` is a source id with the built-in
+sources as named constants; everything else asks `Provider::source()`. A new template source
+is a new entry in the file. Each source's first failed download goes to the run log.
+
 ## Terrain
 
 `globecraft-render::terrain` marches each view ray through the Mapterhorn Terrarium

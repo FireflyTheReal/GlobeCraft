@@ -43,7 +43,7 @@ impl GpuRenderer {
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
         // The overview shader samples one release; a swipe compare renders on the CPU.
-        if request.cfg.terrain.is_some() {
+        if request.cfg.terrain.is_some() || request.cfg.night_lights || !request.cfg.level_blend {
             return false;
         }
         use globecraft_core::{EARTH_RADIUS_KM, earth_model::SurfaceGeometry};

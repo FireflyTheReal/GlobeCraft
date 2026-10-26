@@ -20,6 +20,8 @@ pub(super) struct Surface {
     pub(super) grid: bool,
     pub(super) shade: f32,
     pub(super) night: f32,
+    /// How far into the night the pixel is: 0 by day, 1 past twilight (0 without sun).
+    pub(super) darkness: f32,
     pub(super) rim: f32,
 }
 pub(super) fn surface<const ELLIPSOID: bool>(
@@ -128,15 +130,16 @@ pub(super) fn surface<const ELLIPSOID: bool>(
     } else {
         false
     };
-    let (shade, night) = if let Some(sun) = cfg.sun {
+    let (shade, night, darkness) = if let Some(sun) = cfg.sun {
         let k = ((normal.dot(sun) + TWILIGHT_OFFSET) / TWILIGHT_WIDTH).clamp(0.0, 1.0) as f32;
         let k = k * k * (3.0 - 2.0 * k);
         (
             NIGHT_BRIGHTNESS + DAY_BRIGHTNESS_RANGE * k,
             NIGHT_BLUE_TINT * (1.0 - k),
+            1.0 - k,
         )
     } else {
-        (1.0, 0.0)
+        (1.0, 0.0, 0.0)
     };
     let rim = if cfg.atmo {
         (1.0 - cosinc as f32).powi(RIM_FALLOFF_POWER) * RIM_BLEND
@@ -152,6 +155,7 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         grid,
         shade,
         night,
+        darkness,
         rim,
     }
 }
@@ -232,6 +236,7 @@ mod tests {
                 lod_scale,
                 level_blend: true,
                 fixed_level: None,
+                night_lights: false,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -269,6 +274,7 @@ mod tests {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
+            night_lights: false,
         };
         for latitude in [
             -90.0_f64,
@@ -324,6 +330,7 @@ mod tests {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
+            night_lights: false,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

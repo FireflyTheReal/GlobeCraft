@@ -76,6 +76,9 @@ pub struct RenderCfg {
     /// within one of it, so a screenshot shows no seams between tile tiers (user,
     /// 2026-10-26). Pixels further off (a tilted view's far field) keep their own.
     pub fixed_level: Option<i32>,
+    /// City lights (NASA Black Marble): added on the night side when the sun is
+    /// shown, the whole surface otherwise.
+    pub night_lights: bool,
 }
 
 struct Local<'a, F> {
@@ -197,7 +200,13 @@ fn shade_surface(
             _ => natural,
         };
         let (col, _) = sample_chain(loc, cfg.provider, rel, level, &surface);
-        return finish_surface(col, surface, terrain_light);
+        return finish_surface(
+            col,
+            surface,
+            terrain_light,
+            night_lights(loc, cfg, &surface),
+            cfg.sun.is_some(),
+        );
     }
     let (mut col, _) = sample_chain(loc, cfg.provider, rel, surface.z0, &surface);
     let blend = if cfg.provider.is_imagery() {
@@ -218,7 +227,13 @@ fn shade_surface(
             col = col.lerp_monotonic(c2, blend);
         }
     }
-    finish_surface(col, surface, terrain_light)
+    finish_surface(
+        col,
+        surface,
+        terrain_light,
+        night_lights(loc, cfg, &surface),
+        cfg.sun.is_some(),
+    )
 }
 
 /// The single imagery level nearest a pixel's detail: its band, or the next one
@@ -260,14 +275,45 @@ pub fn dominant_level(w: usize, h: usize, basis: &Basis, cfg: &RenderCfg) -> Opt
 }
 
 /// Grid, lighting and rim over the imagery colour of a surface pixel.
-fn finish_surface(mut col: Vec4, surface: Surface, terrain_light: f32) -> Vec4 {
+fn finish_surface(
+    mut col: Vec4,
+    surface: Surface,
+    terrain_light: f32,
+    lights: Option<Vec4>,
+    sunlit: bool,
+) -> Vec4 {
+    // Without the sun the lights are the picture; with it they glow where it is dark.
+    if let (Some(lights), false) = (lights, sunlit) {
+        col = lights;
+    }
     if surface.grid {
         col = col.lerp_monotonic(GRID_COLOR, GRID_BLEND);
     }
     col = col * (surface.shade * terrain_light) + Vec4::new(0.0, 0.0, surface.night, 0.0);
+    if let (Some(lights), true) = (lights, sunlit) {
+        col += lights * surface.darkness;
+    }
     col = col.lerp_monotonic(RIM_COLOR, surface.rim);
     col
 }
+
+/// The night-lights colour under `surface`, when the layer is on and the pixel is
+/// dark enough to show it. Its tiles stop at zoom 8; closer views magnify them.
+fn night_lights(
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    cfg: &RenderCfg,
+    surface: &Surface,
+) -> Option<Vec4> {
+    if !cfg.night_lights || (cfg.sun.is_some() && surface.darkness < MIN_NIGHT_LIGHTS_DARKNESS) {
+        return None;
+    }
+    let level = natural_level(surface).min(i32::from(Provider::NightLights.max_zoom()));
+    let (col, found) = sample_chain(loc, Provider::NightLights, 0, level, surface);
+    (found >= 0).then_some(col)
+}
+
+/// Below this darkness (twilight's bright end) the lights are not sampled at all.
+const MIN_NIGHT_LIGHTS_DARKNESS: f32 = 0.01;
 
 fn render_row<const ELLIPSOID: bool>(
     y: usize,

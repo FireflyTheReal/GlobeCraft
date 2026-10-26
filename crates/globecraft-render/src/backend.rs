@@ -282,6 +282,7 @@ mod native_fallback_tests {
                 lod_scale: 1.0,
                 level_blend: true,
                 fixed_level: None,
+                night_lights: false,
             },
             overlays: None,
             aircraft: None,

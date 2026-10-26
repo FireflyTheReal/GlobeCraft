@@ -31,6 +31,7 @@ fn raster_matches_regression_fixtures() {
         lod_scale: 1.0,
         level_blend: true,
         fixed_level: None,
+        night_lights: false,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
     let scenarios = [
@@ -207,6 +208,7 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         lod_scale: 1.0,
         level_blend: true,
         fixed_level: None,
+        night_lights: false,
     }
 }
 
@@ -631,4 +633,48 @@ fn a_fixed_level_shows_one_tile_tier_across_the_picture() {
         reds == 0 || blues == 0,
         "{reds} red and {blues} blue pixels"
     );
+}
+
+#[test]
+fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
+    let (ground, lights) = (solid_tile([90, 110, 70]), solid_tile([250, 220, 120]));
+    let lookup = |key: TileKey| {
+        if unkey(key).0 == Provider::NightLights {
+            Lookup::Ready(lights.clone())
+        } else {
+            Lookup::Ready(ground.clone())
+        }
+    };
+    let (width, height) = (64, 48);
+    let cam = Cam {
+        lat: 48.0,
+        lon: 11.0,
+        heading: 0.0,
+        alt: 400.0,
+        tilt: 0.0,
+    };
+    let basis = cam.basis(width as f64 / height as f64);
+    let mut cfg = batch_reference_config(Provider::Satellite);
+    cfg.atmo = false;
+    cfg.sky = None;
+    // The sun on the far side: the whole view is night.
+    cfg.sun = Some(-ll_to_v3(cam.lat, cam.lon));
+    let brightness = |pixels: &[u8]| pixels.iter().map(|&c| u64::from(c)).sum::<u64>();
+    let (dark, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    cfg.night_lights = true;
+    let (lit, missing, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    assert!(missing.is_empty());
+    assert!(brightness(&lit) > brightness(&dark) * 2);
+    // By day the lights add nothing.
+    cfg.sun = Some(ll_to_v3(cam.lat, cam.lon));
+    let (day_lit, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    cfg.night_lights = false;
+    let (day, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    assert_eq!(day_lit, day);
+    // Without the sun the lights are the surface.
+    cfg.sun = None;
+    cfg.night_lights = true;
+    let (plain, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    let centre = (height / 2 * width + width / 2) * RGBA_CHANNELS;
+    assert!(plain[centre].abs_diff(250) <= 2 && plain[centre + 2].abs_diff(120) <= 2);
 }

@@ -73,7 +73,7 @@ fn hits(app: &App, query: &str) -> Vec<Hit> {
         }
     }
     // Basemaps and worlds.
-    for provider in globecraft_data::tiles::Provider::ALL {
+    for provider in globecraft_data::tiles::Provider::basemaps() {
         let label = provider.name(lang);
         if matches(&[label, provider.code()]) {
             out.push(Hit {

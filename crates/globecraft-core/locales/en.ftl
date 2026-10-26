@@ -129,6 +129,7 @@ boundaries-osm-loading-status = Loading OpenStreetMap borders…
 layers-atmosphere-toggle = Atmosphere and stars
 
 layers-sunlight-toggle = Real-time sunlight (day/night)
+layers-night-lights-toggle = City lights at night (NASA Black Marble)
 
 layers-auto-rotation-toggle = Auto-rotate
 
@@ -196,6 +197,7 @@ controls-help-text = • Drag (left): rotate the globe
 placemarks-fallback-name = Unnamed
 
 provider-satellite-label = Satellite (Esri World Imagery)
+provider-night-lights-label = Earth at Night (NASA Black Marble 2016)
 
 provider-wayback-label = Historical imagery (Esri Wayback)
 
@@ -844,6 +846,7 @@ ribbon-layer-grid = Grid
 ribbon-layer-grid-labels = Grid Labels
 ribbon-layer-atmosphere = Atmosphere
 ribbon-layer-sunlight = Sunlight
+ribbon-layer-night-lights = Night Lights
 ribbon-layer-stars = Stars
 ribbon-layer-cinematic = Cinematic Sky
 ribbon-layer-radar = Rain Radar

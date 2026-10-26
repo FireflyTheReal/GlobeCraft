@@ -46,6 +46,7 @@ fn earth_model_kernel_time() {
         lod_scale: 1.0,
         level_blend: true,
         fixed_level: None,
+        night_lights: false,
     };
     for model in EarthModel::ALL {
         let views = views(model);
@@ -143,7 +144,7 @@ fn earth_model_raster_capture() {
                 tilt: 0.0,
             }
             .basis_for_model(127.0 / 95.0, model);
-            for (provider, cfg_provider) in Provider::ALL.into_iter().enumerate() {
+            for (provider, cfg_provider) in Provider::basemaps().enumerate() {
                 let cfg = RenderCfg {
                     sky: None,
                     provider: cfg_provider,
@@ -156,6 +157,7 @@ fn earth_model_raster_capture() {
                     lod_scale: 1.0,
                     level_blend: true,
                     fixed_level: None,
+                    night_lights: false,
                 };
                 let (pixels, _) =
                     render_pixels(127, 95, &basis, &cfg, &|_| Lookup::Ready(tile.clone()));

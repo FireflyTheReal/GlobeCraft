@@ -22,6 +22,8 @@ pub enum MapLayer {
     Satellites,
     Roads,
     Traffic,
+    /// City lights at night (NASA Black Marble), on the night side with Sunlight.
+    NightLights,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -58,7 +60,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -77,6 +79,7 @@ impl MapLayer {
         Self::Satellites,
         Self::Roads,
         Self::Traffic,
+        Self::NightLights,
     ];
 
     /// Stable identifier used in settings files and assistant commands.
@@ -100,6 +103,7 @@ impl MapLayer {
             Self::Satellites => "satellites",
             Self::Roads => "roads",
             Self::Traffic => "traffic",
+            Self::NightLights => "night_lights",
         }
     }
 
@@ -128,6 +132,7 @@ impl MapLayer {
             Self::Satellites => "layers-satellites-toggle",
             Self::Roads => "layers-roads-toggle",
             Self::Traffic => "layers-traffic-toggle",
+            Self::NightLights => "layers-night-lights-toggle",
         }
     }
 
@@ -149,6 +154,7 @@ impl MapLayer {
             Self::Satellites => "satellite",
             Self::Roads => "road",
             Self::Traffic => "traffic",
+            Self::NightLights => "moon",
         }
     }
 
@@ -159,7 +165,11 @@ impl MapLayer {
             | Self::PlaceLabels
             | Self::MunicipalBorders => LayerGroup::Geography,
             Self::Terrain | Self::Grid | Self::GridLabels => LayerGroup::Globe,
-            Self::Atmosphere | Self::Sunlight | Self::Stars | Self::CinematicSky => LayerGroup::Sky,
+            Self::Atmosphere
+            | Self::Sunlight
+            | Self::NightLights
+            | Self::Stars
+            | Self::CinematicSky => LayerGroup::Sky,
             Self::Radar | Self::Clouds => LayerGroup::Weather,
             Self::Flights | Self::Vessels | Self::Satellites => LayerGroup::LiveObjects,
             Self::Roads | Self::Traffic => LayerGroup::Transport,

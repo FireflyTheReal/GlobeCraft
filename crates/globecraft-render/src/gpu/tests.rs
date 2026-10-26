@@ -21,7 +21,7 @@ fn gpu_overview_matches_cpu() {
         .unwrap();
     let tile = Arc::new(Tile::decode(bytes.get_ref()).unwrap());
     let (w, h) = (65, 49);
-    for provider in Provider::ALL {
+    for provider in Provider::basemaps() {
         for (lat, lon, alt) in [
             (-15.0, -50.0, 14000.0),
             (89.9, 179.9, 1000.0),
@@ -62,6 +62,7 @@ fn gpu_overview_matches_cpu() {
                         lod_scale: 1.0,
                         level_blend: true,
                         fixed_level: None,
+                        night_lights: false,
                     },
                     overlays: None,
                     aircraft: None,
@@ -177,6 +178,7 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
+            night_lights: false,
         },
         overlays: None,
         aircraft: None,
@@ -231,6 +233,7 @@ fn motion_and_idle_frames_choose_the_same_level() {
             lod_scale,
             level_blend: true,
             fixed_level: None,
+            night_lights: false,
         },
         overlays: None,
         aircraft: None,

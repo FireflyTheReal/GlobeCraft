@@ -27,7 +27,7 @@ impl Drop for Fixture {
 async fn clear_removes_all_provider_tiles_and_preserves_other_data() {
     let fixture = Fixture::new();
     let disk = fixture.disk();
-    for provider in Provider::ALL {
+    for provider in Provider::basemaps() {
         let path = fixture.0.join(provider.dir()).join("release/0/0/0.tile");
         disk.write(&path, b"cached imagery", disk.epoch())
             .await
@@ -43,7 +43,7 @@ async fn clear_removes_all_provider_tiles_and_preserves_other_data() {
         std::fs::write(fixture.0.join(filename), b"preserve me").unwrap();
     }
     disk.clear().await.unwrap();
-    for provider in Provider::ALL {
+    for provider in Provider::basemaps() {
         assert!(!fixture.0.join(provider.dir()).exists());
     }
     for filename in personal {

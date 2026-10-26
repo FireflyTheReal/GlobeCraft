@@ -20,6 +20,7 @@ the app shows the matching attribution on screen while a source is in use.
 | [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | Streets basemap, place details, road geometry (Overpass) | ODbL; [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) |
 | [OpenTopoMap](https://opentopomap.org/about) | Topographic basemap | CC BY-SA; data © OpenStreetMap contributors, SRTM |
 | [Mapterhorn](https://mapterhorn.com/) | 3D terrain elevation | See the Mapterhorn attribution page (Copernicus DEM and national elevation models) |
+| [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) | Night lights layer (VIIRS Black Marble 2016) | NASA imagery is not copyrighted; credit NASA Earth Observatory / GIBS |
 | [NASA SVS 4851](https://svs.gsfc.nasa.gov/4851/) — NASA/Goddard Space Flight Center Scientific Visualization Studio | Milky Way background (bundled, reduced) | NASA media guidelines; see [assets/sky/README.md](assets/sky/README.md) |
 | NASA/GSFC/Arizona State University, LRO Camera (LROC) | Moon colour map (bundled, 2k) | NASA media guidelines |
 

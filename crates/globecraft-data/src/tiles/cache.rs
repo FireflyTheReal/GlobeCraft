@@ -477,6 +477,21 @@ async fn decode(
     })
     .await
 }
+/// Writes a source's first failed download to the run log, so a wrong address in
+/// `sources.json` shows up without a debugger. Later failures stay quiet.
+fn report_first_failure(provider: super::Provider, url: &str, reason: &str) {
+    static REPORTED: std::sync::Mutex<u32> = std::sync::Mutex::new(0);
+    let bit = 1u32 << (provider.id() as u32);
+    if let Ok(mut reported) = REPORTED.lock()
+        && *reported & bit == 0
+    {
+        *reported |= bit;
+        eprintln!(
+            "Tile source {}: first failed download ({reason}): {url}",
+            provider.code()
+        );
+    }
+}
 async fn fetch_tile(
     k: TileKey,
     disk: &DiskCache,
@@ -515,7 +530,7 @@ async fn fetch_tile(
         return Err(crate::Error::from("empty tile URL").into());
     }
     let bytes = match crate::http::body(
-        crate::http::client(crate::http::Policy::Tile)?.get(url),
+        crate::http::client(crate::http::Policy::Tile)?.get(url.as_str()),
         MAX_TILE_RESPONSE_BYTES,
     )
     .await
@@ -535,9 +550,13 @@ async fn fetch_tile(
         Err(crate::Error::Http(error))
             if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
         {
+            report_first_failure(provider, &url, "not found");
             return Err(TileFailure::Unavailable);
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+            report_first_failure(provider, &url, &error.to_string());
+            return Err(error.into());
+        }
     };
     let (tile, bytes) = decode(bytes, provider).await?;
     Ok(FetchedTile {

@@ -568,6 +568,7 @@ impl App {
                 self.layer_small(ui, MapLayer::Stars);
             });
             col(ui, |ui| {
+                self.layer_small(ui, MapLayer::NightLights);
                 self.layer_small(ui, MapLayer::CinematicSky);
             });
         });
@@ -806,6 +807,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Satellites => "ribbon-layer-satellites",
         MapLayer::Roads => "ribbon-layer-roads",
         MapLayer::Traffic => "ribbon-layer-traffic",
+        MapLayer::NightLights => "ribbon-layer-night-lights",
     })
 }
 

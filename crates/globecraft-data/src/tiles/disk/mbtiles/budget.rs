@@ -19,8 +19,7 @@ struct Victim {
 }
 impl Budget {
     pub(super) fn scan(root: &Path) -> Result<Self, crate::Error> {
-        let mut pending: Vec<_> = super::super::Provider::CACHE_ALL
-            .iter()
+        let mut pending: Vec<_> = super::super::Provider::all()
             .map(|p| root.join(p.dir()))
             .collect();
         let mut files = HashMap::new();

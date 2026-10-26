@@ -195,13 +195,13 @@ impl App {
             );
         }
         if group_heading(ui, &t, "basemap", lang.text("sidebar-imagery-title")) {
-            for provider in Provider::ALL {
+            for provider in Provider::basemaps() {
                 let on = self.settings.layers.basemap == provider;
                 let icon = match provider {
                     Provider::Satellite => "basemap",
                     Provider::Wayback => "history",
                     Provider::Streets => "road",
-                    Provider::Topo | Provider::TerrainDem => "terrain",
+                    _ => "terrain",
                 };
                 if toc_row(
                     ui,

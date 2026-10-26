@@ -1,0 +1,106 @@
+{
+  "comment": "Tile sources as data (roadmap 1.2). `id` is part of every tile key and of the disk cache: never reuse or renumber one. `kind`: imagery (photographs, faded smoothly between levels), map (drawn maps with text), elevation (Terrarium heights), overlay (drawn over the basemap). `access.template` takes {z}, {x} and {y}. Strings ending in `_key` name a translated text.",
+  "sources": [
+    {
+      "id": 0,
+      "code": "satellite",
+      "name": "Satellite (Esri World Imagery)",
+      "name_key": "provider-satellite-label",
+      "kind": "imagery",
+      "basemap": true,
+      "access": {
+        "type": "xyz",
+        "template": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false"
+      },
+      "max_zoom": 20,
+      "cache_dir": "esri_sat",
+      "attribution": "Imagery © Esri, Maxar, Earthstar Geographics",
+      "attribution_key": "provider-imagery-attribution",
+      "prefetch": "allowed",
+      "notes": "blankTile=false: missing tiles answer 404 instead of the 'Map data not yet available' image, so coarser imagery stands in. Distinct tiles exist past z17 (probed z18-z20)."
+    },
+    {
+      "id": 3,
+      "code": "wayback",
+      "name": "Historical imagery (Esri Wayback)",
+      "name_key": "provider-wayback-label",
+      "kind": "imagery",
+      "basemap": true,
+      "access": {
+        "type": "wayback"
+      },
+      "max_zoom": 17,
+      "cache_dir": "wayback",
+      "attribution": "Imagery © Esri, Maxar, Earthstar Geographics",
+      "attribution_key": "provider-imagery-attribution",
+      "prefetch": "allowed"
+    },
+    {
+      "id": 1,
+      "code": "streets",
+      "name": "Streets (OpenStreetMap)",
+      "name_key": "provider-streets-label",
+      "kind": "map",
+      "basemap": true,
+      "access": {
+        "type": "xyz",
+        "template": "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+      },
+      "max_zoom": 19,
+      "cache_dir": "osm",
+      "attribution": "© OpenStreetMap contributors",
+      "attribution_key": "provider-streets-attribution",
+      "prefetch": "on_demand",
+      "notes": "The OpenStreetMap tile usage policy forbids bulk prefetching."
+    },
+    {
+      "id": 2,
+      "code": "topo",
+      "name": "Terrain/Topography (OpenTopoMap)",
+      "name_key": "provider-topography-label",
+      "kind": "map",
+      "basemap": true,
+      "access": {
+        "type": "xyz",
+        "template": "https://tile.opentopomap.org/{z}/{x}/{y}.png"
+      },
+      "max_zoom": 17,
+      "cache_dir": "opentopo",
+      "attribution": "© OpenTopoMap (CC-BY-SA), © OpenStreetMap",
+      "prefetch": "on_demand"
+    },
+    {
+      "id": 4,
+      "code": "terrain_dem",
+      "name": "Mapterhorn DEM",
+      "kind": "elevation",
+      "basemap": false,
+      "access": {
+        "type": "xyz",
+        "template": "https://tiles.mapterhorn.com/{z}/{x}/{y}.webp"
+      },
+      "max_zoom": 17,
+      "tile_px": 512,
+      "cache_dir": "mapterhorn_dem",
+      "attribution": "© Mapterhorn (mapterhorn.com/attribution)",
+      "prefetch": "allowed"
+    },
+    {
+      "id": 5,
+      "code": "night_lights",
+      "name": "Earth at Night (NASA Black Marble 2016)",
+      "name_key": "provider-night-lights-label",
+      "kind": "overlay",
+      "basemap": false,
+      "access": {
+        "type": "xyz",
+        "template": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png"
+      },
+      "max_zoom": 8,
+      "cache_dir": "gibs_black_marble",
+      "attribution": "Night lights: NASA Earth Observatory / GIBS (VIIRS Black Marble 2016)",
+      "prefetch": "allowed",
+      "notes": "NASA GIBS, layer VIIRS_Black_Marble (Worldview: 'Earth at Night', 500 m, a 2012 and a 2016 composite), Web Mercator tile matrix GoogleMapsCompatible_Level8."
+    }
+  ]
+}

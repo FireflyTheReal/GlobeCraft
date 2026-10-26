@@ -228,6 +228,7 @@ mod tests {
             lod_scale: 1.0,
             level_blend: false,
             fixed_level: None,
+            night_lights: false,
         };
         (basis, cfg)
     }

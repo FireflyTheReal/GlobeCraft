@@ -217,6 +217,7 @@ impl App {
             terrain_exaggeration: self.settings.layers.terrain_exaggeration,
             ground_km: self.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
+            night_lights: self.layer(MapLayer::NightLights),
             sky: self.sky_ready(),
             cinematic_sky: self.settings.sky.cinematic,
         }
@@ -503,6 +504,10 @@ impl App {
                     ("date", r.date.as_str().into()),
                 ],
             );
+        }
+        if self.layer(MapLayer::NightLights) {
+            attribution.push_str(" · ");
+            attribution.push_str(Provider::NightLights.attribution(lg));
         }
         if self.uses_border_tiles() && self.boundary_loader.has_osm_tiles() {
             // OpenFreeMap's terms ask clients without MapLibre to show this credit.
