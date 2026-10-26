@@ -2,14 +2,14 @@ use crate::app::App;
 use eframe::egui;
 impl App {
     pub(in crate::app) fn sky_ready(&self) -> bool {
-        self.settings.sky.enabled
-            && self.sky.image.is_some()
-            && self.explorer.active == globecraft_core::body::Body::Earth
+        self.sky.image.is_some() && self.explorer.active == globecraft_core::body::Body::Earth
     }
     pub(super) fn settings_sky(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
-        ui.checkbox(&mut self.settings.sky.enabled, lang.text("sky-enabled"));
-        ui.checkbox(&mut self.settings.sky.cinematic, lang.text("sky-cinematic"));
+        ui.checkbox(
+            &mut self.settings.sky.cinematic,
+            lang.text("layers-stars-toggle"),
+        );
         ui.weak(lang.text("sky-help"));
         if self.sky.is_loading() {
             ui.label(lang.text("sky-loading"));

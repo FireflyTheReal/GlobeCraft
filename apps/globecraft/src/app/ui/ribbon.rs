@@ -569,7 +569,6 @@ impl App {
             });
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::NightLights);
-                self.layer_small(ui, MapLayer::CinematicSky);
             });
         });
         group(ui, lang.text("ribbon-group-panes"), |ui| {

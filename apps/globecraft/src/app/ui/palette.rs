@@ -53,7 +53,7 @@ fn hits(app: &App, query: &str) -> Vec<Hit> {
         }
     }
     // Every layer, by name.
-    for layer in MapLayer::ALL {
+    for layer in MapLayer::ALL.into_iter().filter(|layer| layer.listed()) {
         let label = lang.text(layer.label_key());
         if matches(&[label, layer.code()]) {
             let on = app.layer(layer);

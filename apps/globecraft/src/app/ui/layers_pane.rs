@@ -229,7 +229,10 @@ impl App {
             if !group_heading(ui, &t, &format!("{group:?}"), lang.text(group.label_key())) {
                 continue;
             }
-            for layer in MapLayer::ALL.into_iter().filter(|l| l.group() == group) {
+            for layer in MapLayer::ALL
+                .into_iter()
+                .filter(|l| l.group() == group && l.listed())
+            {
                 let parent_on = layer.parent().is_none_or(|p| self.layer(p));
                 let indent = if layer.parent().is_some() {
                     INDENT

@@ -123,7 +123,7 @@ impl MapLayer {
             Self::GridLabels => "layers-grid-numbers-toggle",
             Self::Atmosphere => "layers-atmosphere-toggle",
             Self::Sunlight => "layers-sunlight-toggle",
-            Self::Stars => "sky-enabled",
+            Self::Stars => "layers-stars-toggle",
             Self::CinematicSky => "sky-cinematic",
             Self::Radar => "layers-weather-toggle",
             Self::Clouds => "layers-clouds-toggle",
@@ -213,6 +213,12 @@ impl MapLayer {
             self,
             Self::CountryBorders | Self::StateBorders | Self::PlaceLabels | Self::Atmosphere
         )
+    }
+
+    /// Whether the layer has its own switch in the interface. Cinematic Sky became
+    /// part of Stars (2026-10-26); its code still works in commands.
+    pub fn listed(self) -> bool {
+        self != Self::CinematicSky
     }
 
     fn bit(self) -> u32 {
