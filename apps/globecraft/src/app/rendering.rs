@@ -65,6 +65,10 @@ impl Renderer {
                         profile.values.width = request.width;
                         profile.values.height = request.height;
                         profile.values.inflight = cache.inflight();
+                        // The view: altitude in metres and tilt in tenths of a degree, so a
+                        // capture shows where slow frames happened.
+                        profile.values.resident_bytes = (request.cam.alt * 1000.0) as usize;
+                        profile.values.count = (request.cam.tilt * 10.0) as usize;
                     }
                     let mut frame = backend.render(request, &cache, buffer);
                     if let Some(compare) = request.compare {
@@ -104,6 +108,8 @@ impl Renderer {
                     admission_cache.prioritize_view(&frame.required_tiles());
                 },
                 move |request, pixels| {
+                    #[cfg(feature = "profiling")]
+                    let _prepare = globecraft_data::profiling::Span::new("frame.prepare");
                     #[cfg(feature = "profiling")]
                     let conversion = globecraft_data::profiling::Span::new("frame.convert");
                     let image = egui::ColorImage::from_rgba_unmultiplied(
