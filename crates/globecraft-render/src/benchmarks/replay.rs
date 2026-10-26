@@ -17,6 +17,10 @@
 //! Run alone, in release:
 //! `cargo test -p globecraft-render --release replay -- --ignored --nocapture --test-threads=1`
 //! `GLOBECRAFT_REPLAY_LATENCY_MS` and `GLOBECRAFT_REPLAY_KBPS` change the link.
+//! `GLOBECRAFT_REPLAY_TERRAIN`, `GLOBECRAFT_REPLAY_ATMOSPHERE` and
+//! `GLOBECRAFT_REPLAY_WGS84` (any value) turn on relief (served from a fixture
+//! Terrarium tile), the atmosphere and the ellipsoid, as the app can draw them.
+//! The two tilted paths (2026-10-26) look toward the horizon down to street level.
 use super::*;
 use globecraft_core::camera::Cam;
 use std::collections::HashSet;
@@ -88,9 +92,29 @@ fn fixture_tile() -> Vec<u8> {
     out
 }
 
+/// A 512 px Terrarium elevation tile: rolling hills from 300 to 1,500 m.
+fn fixture_dem_tile() -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(512, 512, |x, y| {
+        let metres = 900.0 + 600.0 * (x as f64 / 40.0).sin() * (y as f64 / 55.0).cos();
+        let value = metres + 32_768.0;
+        image::Rgba([
+            (value / 256.0) as u8,
+            (value % 256.0) as u8,
+            ((value.fract()) * 256.0) as u8,
+            255,
+        ])
+    });
+    let mut out = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
 async fn serve(
     listener: tokio::net::TcpListener,
     body: Arc<Vec<u8>>,
+    dem: Arc<Vec<u8>>,
     link: Link,
     served: Arc<Served>,
 ) {
@@ -100,7 +124,8 @@ async fn serve(
         let Ok((mut socket, _)) = listener.accept().await else {
             return;
         };
-        let (body, served, link_free) = (body.clone(), served.clone(), link_free.clone());
+        let (imagery, dem, served, link_free) =
+            (body.clone(), dem.clone(), served.clone(), link_free.clone());
         tokio::spawn(async move {
             let mut pending = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -132,6 +157,11 @@ async fn serve(
                             .unwrap()
                             .push(make_key(provider, z, x, y, release));
                     }
+                    let body = if path.starts_with("/terrain_dem/") {
+                        &dem
+                    } else {
+                        &imagery
+                    };
                     tokio::time::sleep(link.latency).await;
                     let header = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
@@ -209,19 +239,28 @@ fn replay(
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let server = runtime
-        .handle()
-        .spawn(serve(listener, body.clone(), link, served.clone()));
+    let server = runtime.handle().spawn(serve(
+        listener,
+        body.clone(),
+        Arc::new(fixture_dem_tile()),
+        link,
+        served.clone(),
+    ));
     let cache = TileCache::with_fixture_source(|| {}, runtime.handle(), directory.clone(), &base);
     let viewport = emath::vec2(VIEWPORT_POINTS.0, VIEWPORT_POINTS.1);
+    let cam_alt = std::cell::Cell::new(f64::MAX);
     let config = |lod_scale| RenderCfg {
         sky: None,
         provider: Provider::Satellite,
-        terrain: None,
+        // GLOBECRAFT_REPLAY_TERRAIN=1 adds relief, as the app draws it below 150 km.
+        terrain: std::env::var("GLOBECRAFT_REPLAY_TERRAIN")
+            .is_ok()
+            .then(|| crate::TerrainCfg::new(1.0))
+            .filter(|_| cam_alt.get() <= crate::TERRAIN_MAX_ALTITUDE_KM),
         rel: 0,
         grid: false,
         grid_step: 10.0,
-        atmo: false,
+        atmo: std::env::var("GLOBECRAFT_REPLAY_ATMOSPHERE").is_ok(),
         sun: None,
         lod_scale,
         level_blend: true,
@@ -239,9 +278,17 @@ fn replay(
         let t = started.elapsed().as_secs_f64();
         let moving = t < duration_s;
         let cam = path(t.min(duration_s));
+        cam_alt.set(cam.alt);
         let (w, h) = view::raster_size(viewport, 1.0, !moving);
         let cfg = config(view::render_scale(viewport, 1.0, !moving));
-        let basis = cam.basis(w as f64 / h as f64);
+        let basis = if std::env::var("GLOBECRAFT_REPLAY_WGS84").is_ok() {
+            cam.basis_for_model(
+                w as f64 / h as f64,
+                globecraft_core::earth_model::EarthModel::Wgs84,
+            )
+        } else {
+            cam.basis(w as f64 / h as f64)
+        };
         let frame_started = Instant::now();
         let lookup = |key| {
             let found = cache.lookup(key);
@@ -399,6 +446,33 @@ fn streaming_replay() {
             "orbit",
             8.0,
             |t| cam(48.86, 2.35, 45.0 * t, 8.0),
+            link,
+            &body,
+            &runtime,
+        ),
+        // Tilted toward the horizon, down to street level over Zurich.
+        replay(
+            "tilted descent",
+            8.0,
+            |t| {
+                let s = smoothstep(t / 8.0);
+                Cam {
+                    tilt: 70.0,
+                    ..cam(47.37, 8.54, 30.0, 60.0 * (1.0_f64 / 60.0).powf(s))
+                }
+            },
+            link,
+            &body,
+            &runtime,
+        ),
+        // Turning while tilted close to the ground.
+        replay(
+            "tilted orbit close",
+            6.0,
+            |t| Cam {
+                tilt: 70.0,
+                ..cam(47.37, 8.54, 30.0 * t, 1.5)
+            },
             link,
             &body,
             &runtime,

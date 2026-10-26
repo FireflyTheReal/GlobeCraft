@@ -119,6 +119,50 @@ impl BorderKind {
     }
 }
 
+/// How far beyond the view a border segment is kept, in points: line caps and joins
+/// just outside the edge still draw.
+const SEGMENT_CLIP_MARGIN_POINTS: f32 = 64.0;
+
+/// The part of `[a, b]` inside `rect` (Liang–Barsky), or `None` when it misses it.
+/// A tilted camera projects lines passing beside or under it millions of points off
+/// screen; dashing those took forever and filled memory (the frozen close-up, user
+/// 2026-10-26), and drawing them costs the painter too.
+fn clip_segment([a, b]: [Pos2; 2], rect: Rect) -> Option<[Pos2; 2]> {
+    if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
+        return None;
+    }
+    // In f64: far endpoints are around 1e9, where f32 steps are larger than the view.
+    let (ax, ay) = (f64::from(a.x), f64::from(a.y));
+    let (dx, dy) = (f64::from(b.x) - ax, f64::from(b.y) - ay);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, ax - f64::from(rect.min.x)),
+        (dx, f64::from(rect.max.x) - ax),
+        (-dy, ay - f64::from(rect.min.y)),
+        (dy, f64::from(rect.max.y) - ay),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+    }
+    let at = |t: f64| Pos2::new((ax + dx * t) as f32, (ay + dy * t) as f32);
+    (t0 <= t1).then(|| {
+        // Endpoints inside stay exact.
+        let start = if t0 == 0.0 { a } else { at(t0) };
+        let end = if t1 == 1.0 { b } else { at(t1) };
+        [start, end]
+    })
+}
+
 /// Splits one projected segment into dash fragments, carrying the phase across
 /// joined segments of the same polyline. A discontinuity resets the phase so
 /// every line starts with a dash instead of a random gap.
@@ -179,17 +223,23 @@ pub fn project_borders(
     let mut dash_phase = 0.0_f32;
     let mut dash_last_end: Option<Pos2> = None;
     let dashes = view.dashes;
-    let mut emit_segment = |kind: BorderKind, segment: [Pos2; 2]| match dashes.of_kind(kind) {
-        Some((on, off)) => emit_dashed(
-            &mut emit,
-            kind,
-            segment,
-            on,
-            off,
-            &mut dash_phase,
-            &mut dash_last_end,
-        ),
-        None => emit(kind, segment),
+    let clip = rect.expand(SEGMENT_CLIP_MARGIN_POINTS);
+    let mut emit_segment = |kind: BorderKind, segment: [Pos2; 2]| {
+        let Some(segment) = clip_segment(segment, clip) else {
+            return;
+        };
+        match dashes.of_kind(kind) {
+            Some((on, off)) => emit_dashed(
+                &mut emit,
+                kind,
+                segment,
+                on,
+                off,
+                &mut dash_phase,
+                &mut dash_last_end,
+            ),
+            None => emit(kind, segment),
+        }
     };
     let mut draw_line = |line: &[(f64, f64)], kind: BorderKind, max_step_deg: f64| {
         {
@@ -680,5 +730,37 @@ mod tests {
         data.osm_borders = Arc::default();
         assert_eq!(draw(&data, true, true, true), vec![(3, "Country")]);
         assert_eq!(draw(&data, false, true, false), vec![(3, "StateBig")]);
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+
+    #[test]
+    fn segments_are_cut_to_the_view_and_far_ones_dash_quickly() {
+        let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0));
+        // Crossing the view from far outside: only the inside part stays.
+        let [a, b] = clip_segment([Pos2::new(-1.0e9, 300.0), Pos2::new(1.0e9, 300.0)], rect)
+            .expect("crosses the view");
+        assert_eq!((a.x, b.x), (0.0, 800.0));
+        assert!(clip_segment([Pos2::new(-50.0, -50.0), Pos2::new(-10.0, -60.0)], rect).is_none());
+        assert!(clip_segment([Pos2::new(f32::NAN, 0.0), Pos2::new(10.0, 10.0)], rect).is_none());
+        let inside = [Pos2::new(10.0, 10.0), Pos2::new(20.0, 30.0)];
+        assert_eq!(clip_segment(inside, rect), Some(inside));
+        // A billion-point dashed segment used to loop forever (f32 steps vanish); clipped,
+        // it makes a screen's worth of dashes.
+        let mut dashes = 0;
+        let (mut phase, mut last) = (0.0, None);
+        emit_dashed(
+            &mut |_, _| dashes += 1,
+            BorderKind::State,
+            [a, b],
+            6.0,
+            4.0,
+            &mut phase,
+            &mut last,
+        );
+        assert_eq!(dashes, 80);
     }
 }
