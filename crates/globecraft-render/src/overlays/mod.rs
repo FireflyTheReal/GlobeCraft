@@ -11,10 +11,12 @@ pub mod grid;
 mod labels;
 mod spatial;
 mod worker;
+use globecraft_data::tiles::TileCache;
 pub use labels::LabelIndex;
 pub use spatial::{BoundaryIndex, VisibleBoundaries};
 pub use worker::{
-    OverlayGeometry, OverlayInput, OverlayPreparer, OverlayView, OverlayWorker, PreparedLabel,
+    OverlayGeometry, OverlayGround, OverlayInput, OverlayPreparer, OverlayView, OverlayWorker,
+    PreparedLabel,
 };
 const SIMPLIFY_BORDER_ALTITUDE_KM: f64 = 1500.0;
 const MIN_BORDER_SEGMENT_POINTS: f32 = 1.4;
@@ -51,6 +53,64 @@ pub struct OverlayProjection<'a> {
     pub state_visible_max_km: f64,
     pub layers: OverlayLayers,
     pub dashes: BorderDashes,
+    /// Terrain heights under the overlays, when relief is drawn.
+    pub ground: Option<&'a dyn Ground>,
+}
+
+impl OverlayProjection<'_> {
+    /// Where `(lat, lon)` is drawn: on the surface, raised onto the relief.
+    pub fn surface(&self, lat: f64, lon: f64) -> glam::DVec3 {
+        let point = self.basis.surface_position(lat, lon);
+        match self.ground {
+            Some(ground) => {
+                point + globecraft_core::math::ll_to_v3(lat, lon) * ground.height(lat, lon)
+            }
+            None => point,
+        }
+    }
+}
+
+/// Terrain height (world units, exaggerated) at a coordinate.
+pub trait Ground {
+    fn height(&self, lat: f64, lon: f64) -> f64;
+}
+
+/// Terrain heights from the elevation tiles already loaded (overlays never request
+/// tiles: the frame that shows them does).
+pub struct GroundHeights<'a> {
+    cache: &'a TileCache,
+    zoom: u8,
+    to_world: f64,
+}
+
+impl<'a> GroundHeights<'a> {
+    pub fn new(
+        cache: Option<&'a TileCache>,
+        ground: Option<OverlayGround>,
+        altitude_km: f64,
+    ) -> Option<Self> {
+        let (cache, ground) = (cache?, ground?);
+        // A few elevation texels per screen pixel near the view centre is plenty for
+        // lines: one zoom finer than a tile across the view.
+        let zoom =
+            ((OVERLAY_GROUND_TILE_KM / altitude_km.max(0.05)).log2() + 1.0).clamp(0.0, 15.0) as u8;
+        Some(Self {
+            cache,
+            zoom,
+            to_world: f64::from(ground.exaggeration) / globecraft_core::EARTH_RADIUS_M,
+        })
+    }
+}
+
+/// The ground width of a tile that spans the view at a camera altitude of 1 km.
+const OVERLAY_GROUND_TILE_KM: f64 = 40_075.0;
+
+impl Ground for GroundHeights<'_> {
+    fn height(&self, lat: f64, lon: f64) -> f64 {
+        self.cache
+            .loaded_elevation_m(lat, lon, self.zoom)
+            .map_or(0.0, |metres| f64::from(metres) * self.to_world)
+    }
 }
 
 /// On/off dash lengths in points for each styled line type; `None` draws a solid line.
@@ -256,8 +316,8 @@ pub fn project_borders(
                     if dlon < -180.0 {
                         dlon += 360.0;
                     }
-                    let start = basis.project(basis.surface_position(lat1, lon1), rect);
-                    let end = basis.project(basis.surface_position(lat2, lon2), rect);
+                    let start = basis.project(view.surface(lat1, lon1), rect);
+                    let end = basis.project(view.surface(lat2, lon2), rect);
                     if let (Some(a), Some(b)) = (start, end) {
                         // Common case: both endpoints are visible, so no extra sampling needed.
                         // The anchor stays on the last emitted vertex: short steps accumulate
@@ -286,7 +346,7 @@ pub fn project_borders(
                         let t = i as f64 / steps as f64;
                         let lon = wrap_lon(lon1 + dlon * t);
                         let lat = lat1 + dlat * t;
-                        let cur = basis.project(basis.surface_position(lat, lon), rect);
+                        let cur = basis.project(view.surface(lat, lon), rect);
                         if let (Some(a), Some(b)) = (prev, cur) {
                             emit_segment(kind, [a, b]);
                         }
@@ -488,7 +548,7 @@ pub fn project_labels<'a>(
         if !enabled {
             continue;
         }
-        if let Some(pos) = basis.project(basis.surface_position(label.lat, label.lon), rect)
+        if let Some(pos) = basis.project(view.surface(label.lat, label.lon), rect)
             && rect.contains(pos)
         {
             let prio = match label.kind {
@@ -646,6 +706,7 @@ mod tests {
                 labels: true,
                 sun: None,
             },
+            ground: None,
         };
         let names: Vec<(&str, u8)> = project_labels(&view, &data)
             .iter()
@@ -693,6 +754,7 @@ mod tests {
                     labels: false,
                     sun: None,
                 },
+                ground: None,
             };
             // Which kinds draw the lines at each latitude, by hundredths of a degree.
             let mut kinds = std::collections::BTreeSet::<(i64, &str)>::new();

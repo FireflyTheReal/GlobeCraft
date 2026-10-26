@@ -6,6 +6,7 @@ use super::{
 use emath::{Pos2, Rect};
 use globecraft_core::camera::Basis;
 use globecraft_data::boundaries::BoundaryData;
+use globecraft_data::tiles::TileCache;
 use std::sync::{Arc, Condvar, Mutex};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -19,6 +20,16 @@ pub struct OverlayView {
     pub layers: OverlayLayers,
     /// Matches `OverlayProjection::dashes`.
     pub dashes: BorderDashes,
+    /// Lines and names sit on the relief (see `OverlayGround`).
+    pub ground: Option<OverlayGround>,
+}
+/// Relief under the overlays: lines and names are raised to the terrain height (times
+/// `exaggeration`) so they stay on the ridges and valleys they follow.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct OverlayGround {
+    pub exaggeration: f32,
+    /// The tile cache's generation: new elevation tiles move the lines again.
+    pub generation: u64,
 }
 pub struct PreparedLabel {
     pub position: Pos2,
@@ -45,8 +56,17 @@ pub struct OverlayInput {
 pub struct OverlayPreparer {
     indexed: Option<(Arc<BoundaryData>, BoundaryIndex)>,
     latest: Option<Arc<OverlayGeometry>>,
+    /// Where the terrain heights come from when a view asks for `ground`.
+    elevation: Option<Arc<TileCache>>,
 }
 impl OverlayPreparer {
+    /// A preparer that can raise overlays onto the relief from `cache`'s elevation tiles.
+    pub fn with_elevation(cache: Arc<TileCache>) -> Self {
+        Self {
+            elevation: Some(cache),
+            ..Self::default()
+        }
+    }
     pub fn prepare(&mut self, request: OverlayInput) -> Arc<OverlayGeometry> {
         #[cfg(feature = "profiling")]
         let _profile = globecraft_data::profiling::Span::new("overlay.prepare");
@@ -68,6 +88,12 @@ impl OverlayPreparer {
             }
         };
         let visible = index.visible(&request.view.basis, request.view.rect);
+        let ground = super::GroundHeights::new(
+            self.elevation.as_deref(),
+            request.view.ground,
+            request.view.altitude_km,
+        );
+        let ground_height = ground.as_ref().map(|ground| ground as &dyn super::Ground);
         let projection = OverlayProjection {
             basis: &request.view.basis,
             rect: request.view.rect,
@@ -75,6 +101,7 @@ impl OverlayPreparer {
             state_visible_max_km: request.view.state_visible_max_km,
             dashes: request.view.dashes,
             layers: request.view.layers,
+            ground: ground_height,
         };
         let mut borders = Vec::new();
         project_borders(
@@ -125,13 +152,14 @@ pub struct OverlayWorker<T = Arc<OverlayGeometry>> {
 
 impl OverlayWorker {
     pub fn new(repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
-        Self::with_finish(repaint, |geometry| geometry)
+        Self::with_finish(repaint, None, |geometry| geometry)
     }
 }
 
 impl<T: Send + 'static> OverlayWorker<T> {
     pub fn with_finish(
         repaint: impl Fn() + Send + 'static,
+        elevation: Option<Arc<TileCache>>,
         mut finish: impl FnMut(Arc<OverlayGeometry>) -> T + Send + 'static,
     ) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
@@ -146,7 +174,10 @@ impl<T: Send + 'static> OverlayWorker<T> {
         std::thread::Builder::new()
             .name("globecraft-overlays".into())
             .spawn(move || {
-                let mut preparer = OverlayPreparer::default();
+                let mut preparer = OverlayPreparer {
+                    elevation,
+                    ..OverlayPreparer::default()
+                };
                 loop {
                     let request = {
                         let mut state = worker.mailbox.lock().unwrap();
@@ -230,6 +261,7 @@ mod tests {
                 labels: false,
                 sun: None,
             },
+            ground: None,
         };
         let projection = OverlayProjection {
             basis: &view.basis,
@@ -238,6 +270,7 @@ mod tests {
             state_visible_max_km: view.state_visible_max_km,
             dashes: view.dashes,
             layers: view.layers,
+            ground: None,
         };
         let mut segments = Vec::new();
         project_borders(&projection, &data, None, |_, points| segments.push(points));
@@ -286,6 +319,7 @@ mod tests {
                 labels: true,
                 sun: None,
             },
+            ground: None,
         };
         let (tx, rx) = mpsc::channel();
         let ui_thread = std::thread::current().id();
@@ -306,6 +340,7 @@ mod tests {
             state_visible_max_km: view.state_visible_max_km,
             dashes: view.dashes,
             layers: view.layers,
+            ground: None,
         };
         let mut direct = Vec::new();
         project_borders(&projection, &data, None, |_, points| direct.push(points));
@@ -400,6 +435,7 @@ mod tests {
                 labels: true,
                 sun: None,
             },
+            ground: None,
         };
         worker.submit(view, data.clone());
         wakes.recv_timeout(Duration::from_secs(10)).unwrap();

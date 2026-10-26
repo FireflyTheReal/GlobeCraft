@@ -52,6 +52,8 @@ pub struct RasterView {
     pub atmosphere: bool,
     pub terrain: bool,
     pub terrain_exaggeration: f32,
+    /// The terrain height the camera looks at (km), part of the camera position.
+    pub ground_km: f64,
     pub sunlight: bool,
     pub sky: bool,
     pub cinematic_sky: bool,
@@ -90,7 +92,11 @@ impl RasterView {
                 self.cinematic_sky,
                 self.compare,
             ),
-            (self.aspect.to_bits(), self.model.code()),
+            (
+                self.aspect.to_bits(),
+                self.model.code(),
+                self.ground_km.to_bits(),
+            ),
         )
             .hash(&mut state);
         let mut presentation = std::collections::hash_map::DefaultHasher::new();
@@ -140,6 +146,7 @@ mod tests {
             atmosphere: false,
             terrain: false,
             terrain_exaggeration: 1.0,
+            ground_km: 0.0,
             sunlight: false,
             sky: false,
             cinematic_sky: false,
@@ -174,6 +181,7 @@ mod tests {
             atmosphere: true,
             terrain: false,
             terrain_exaggeration: 1.0,
+            ground_km: 0.0,
             sunlight: true,
             sky: false,
             cinematic_sky: false,
@@ -228,6 +236,7 @@ mod tests {
             cinematic_sky: false,
             terrain: false,
             terrain_exaggeration: 1.0,
+            ground_km: 0.0,
         };
         let flat = view.keys(120.0);
         view.terrain = true;

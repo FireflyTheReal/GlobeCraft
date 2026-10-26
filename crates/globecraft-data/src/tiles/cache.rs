@@ -1,4 +1,4 @@
-use super::{KeyBuild, Tile, TileKey, disk::DiskCache, unkey};
+use super::{KeyBuild, Tile, TileKey, disk::DiskCache, make_key, unkey};
 use crate::paths::cache_dir;
 use moka::{policy::EvictionPolicy, sync::Cache};
 use std::{
@@ -134,7 +134,7 @@ impl TileCache {
                 .name("globecraft-decoded-tiles")
                 .max_capacity(budget as u64)
                 .weigher(|_: &TileKey, tile: &Arc<Tile>| {
-                    u32::try_from(tile.px.len()).unwrap_or(u32::MAX)
+                    u32::try_from(tile.bytes()).unwrap_or(u32::MAX)
                 })
                 // LRU favors imagery revisited during map browsing.
                 .eviction_policy(EvictionPolicy::lru())
@@ -248,6 +248,39 @@ impl TileCache {
             Some(state) if state.is_pending() => Lookup::Pending,
             _ => Lookup::Absent,
         }
+    }
+    /// The ground height in metres at `(lat, lon)` from the finest loaded elevation
+    /// tile at or below `zoom`, requesting the `zoom` tile when it is missing. `None`
+    /// until any elevation covers the point.
+    pub fn elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
+        self.elevation_at(lat, lon, zoom, true)
+    }
+    /// `elevation_m` without requesting anything: overlays follow what the frames load.
+    pub fn loaded_elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
+        self.elevation_at(lat, lon, zoom, false)
+    }
+    fn elevation_at(&self, lat: f64, lon: f64, zoom: u8, request: bool) -> Option<f32> {
+        let lat = lat.clamp(-85.05, 85.05);
+        let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
+        let s = lat.to_radians().sin();
+        let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * std::f64::consts::PI);
+        for level in (0..=zoom.min(super::Provider::TerrainDem.max_zoom())).rev() {
+            let n = f64::from(1u32 << level);
+            let (tx, ty) = ((u * n).floor().min(n - 1.0), (v * n).floor().min(n - 1.0));
+            let key = make_key(super::Provider::TerrainDem, level, tx as u32, ty as u32, 0);
+            match self.lookup(key) {
+                Lookup::Ready(tile) => {
+                    let elevation = tile.elevation()?;
+                    let size = elevation.size() as f64;
+                    return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
+                }
+                Lookup::Absent if request && level == zoom => {
+                    self.request(key);
+                }
+                _ => {}
+            }
+        }
+        None
     }
     /// Whether the last download of `key` failed (a network error, not a missing tile).
     pub fn failed(&self, key: TileKey) -> bool {
@@ -382,7 +415,7 @@ impl TileCache {
     fn complete(&self, key: TileKey, result: Result<Tile, TileFailure>) {
         let unavailable = matches!(result, Err(TileFailure::Unavailable));
         let admitted = match result {
-            Ok(tile) if tile.px.len() <= self.budget => {
+            Ok(tile) if tile.bytes() <= self.budget => {
                 self.ready.insert(key, Arc::new(tile));
                 true
             }
@@ -430,9 +463,17 @@ struct FetchedTile {
     tile: Tile,
     persistence: Option<(std::path::PathBuf, Vec<u8>)>,
 }
-async fn decode(bytes: Vec<u8>) -> Result<(Tile, Vec<u8>), crate::Error> {
+async fn decode(
+    bytes: Vec<u8>,
+    provider: super::Provider,
+) -> Result<(Tile, Vec<u8>), crate::Error> {
     crate::cpu::run(crate::cpu::Service::Tiles, move || {
-        Tile::decode(&bytes).map(|tile| (tile, bytes))
+        if provider == super::Provider::TerrainDem {
+            Tile::decode_elevation(&bytes)
+        } else {
+            Tile::decode(&bytes)
+        }
+        .map(|tile| (tile, bytes))
     })
     .await
 }
@@ -450,7 +491,7 @@ async fn fetch_tile(
             return Err(TileFailure::Unavailable);
         }
         let read = bytes.len();
-        match decode(bytes).await {
+        match decode(bytes, provider).await {
             Ok((tile, _)) => {
                 crate::download_stats::record(
                     crate::download_stats::DownloadKind::ImageryFromDisk,
@@ -498,7 +539,7 @@ async fn fetch_tile(
         }
         Err(error) => return Err(error.into()),
     };
-    let (tile, bytes) = decode(bytes).await?;
+    let (tile, bytes) = decode(bytes, provider).await?;
     Ok(FetchedTile {
         tile,
         persistence: Some((path, bytes)),

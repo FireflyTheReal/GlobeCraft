@@ -180,6 +180,9 @@ pub(crate) struct App {
     nav_snap_heading: Option<f64>,
     /// A high-quality screenshot rendering in the background.
     still_shot: Option<still_shot::StillShot>,
+    /// The terrain height (km, exaggerated) the camera looks at, eased toward the
+    /// elevation tiles so a finer tile arriving does not jolt the view.
+    ground_km: f64,
     /// When the download totals were last written to the run log, and what they were.
     download_log: (Instant, u64),
 }
@@ -238,6 +241,7 @@ impl App {
             },
         );
         let renderer = rendering::Renderer::new(cache.clone(), cc.egui_ctx.clone());
+        let overlay_cache = overlays::OverlayCache::new(cc.egui_ctx.clone(), Some(cache.clone()));
         let (file_jobs, file_results) = globecraft_data::files::FileJobs::new(runtime.handle(), {
             let ctx = cc.egui_ctx.clone();
             move || ctx.request_repaint()
@@ -280,7 +284,7 @@ impl App {
             zoom_out_warmup: None,
             cache_controls: cache::CacheControls::default(),
             boundaries: Arc::new(BoundaryData::default()),
-            overlay_cache: overlays::OverlayCache::new(cc.egui_ctx.clone()),
+            overlay_cache,
             boundaries_rx: BoundaryUpdates::new(boundaries_rx, {
                 let ctx = cc.egui_ctx.clone();
                 move || ctx.request_repaint()
@@ -363,6 +367,7 @@ impl App {
             ring_drag: false,
             nav_snap_heading: None,
             still_shot: None,
+            ground_km: 0.0,
             download_log: (Instant::now(), 0),
             runtime,
         };
@@ -576,6 +581,7 @@ impl eframe::App for App {
         }
         self.log_downloads();
         self.poll_still_shot();
+        self.follow_ground(ui);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::Tokens::get(ui).canvas))
             .show(ui, |ui| {

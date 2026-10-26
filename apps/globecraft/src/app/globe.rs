@@ -197,7 +197,7 @@ impl App {
             self.touch();
         }
 
-        let basis = self.cam.basis_for_model(aspect, self.active_earth_model());
+        let basis = self.view_basis(aspect);
         // ── rendering
         let idle = self.last_interact.elapsed() > IDLE_RENDER_DELAY && !resp.dragged();
         let render_aspect = (viewport.width() / viewport.height()) as f64;
@@ -213,10 +213,9 @@ impl App {
             compare: self.active_compare().map(|compare| compare.index),
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
-            terrain: self.layer(MapLayer::Terrain)
-                && self.cam.alt <= globecraft_render::TERRAIN_MAX_ALTITUDE_KM
-                && self.explorer.active == globecraft_core::body::Body::Earth,
+            terrain: self.terrain_active(),
             terrain_exaggeration: self.settings.layers.terrain_exaggeration,
+            ground_km: self.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
             sky: self.sky_ready(),
             cinematic_sky: self.settings.sky.cinematic,

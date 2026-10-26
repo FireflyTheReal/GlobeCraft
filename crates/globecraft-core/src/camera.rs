@@ -43,6 +43,12 @@ impl Cam {
         self.basis_for_model(aspect, EarthModel::PerfectSphere)
     }
     pub fn basis_for_model(&self, aspect: f64, model: EarthModel) -> Basis {
+        self.basis_over_ground(aspect, model, 0.0)
+    }
+    /// The view looking at the ground point raised `ground_km` above the surface (the
+    /// terrain height there), from `alt` away: with relief the camera orbits the
+    /// mountain it looks at instead of a point inside it.
+    pub fn basis_over_ground(&self, aspect: f64, model: EarthModel, ground_km: f64) -> Basis {
         let n = ll_to_v3(self.lat, self.lon);
         let (la, lo) = (self.lat.to_radians(), self.lon.to_radians());
         let east = DVec3::new(-lo.sin(), lo.cos(), 0.0);
@@ -62,6 +68,7 @@ impl Cam {
         } else {
             model.geometry().position(self.lat, self.lon)
         };
+        let target = target + n * (ground_km / EARTH_RADIUS_KM);
         Basis {
             c: target + back * (self.alt / EARTH_RADIUS_KM),
             model,
@@ -218,16 +225,30 @@ impl Cam {
         aspect: f64,
         model: EarthModel,
     ) {
-        if model == EarthModel::PerfectSphere {
+        self.zoom_at_over_ground(factor, cursor, rect, aspect, model, 0.0);
+    }
+    /// `zoom_at_for_model` for a view raised `ground_km` (see `basis_over_ground`).
+    pub fn zoom_at_over_ground(
+        &mut self,
+        factor: f64,
+        cursor: Option<Pos2>,
+        rect: Rect,
+        aspect: f64,
+        model: EarthModel,
+        ground_km: f64,
+    ) {
+        if model == EarthModel::PerfectSphere && ground_km == 0.0 {
             self.zoom_at(factor, cursor, rect, aspect);
             return;
         }
-        let before = cursor.and_then(|c| self.basis_for_model(aspect, model).pick(rect, c));
+        let pick = |cam: &Self, cursor| {
+            cam.basis_over_ground(aspect, model, ground_km)
+                .pick(rect, cursor)
+        };
+        let before = cursor.and_then(|c| pick(self, c));
         self.zoom(factor);
         if let (Some(p0), Some(cursor)) = (before, cursor) {
-            self.anchor_keeping_heading(p0, |cam| {
-                cam.basis_for_model(aspect, model).pick(rect, cursor)
-            });
+            self.anchor_keeping_heading(p0, |cam| pick(cam, cursor));
         }
     }
 

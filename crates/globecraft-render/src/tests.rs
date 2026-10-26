@@ -96,6 +96,7 @@ fn local_tile_lookup_is_deduplicated_and_keeps_the_nearest_miss() {
     let mut loc = Local {
         lookup: &lookup,
         map: HashMap::default(),
+        dem: Vec::new(),
     };
     for dist in [100.0, 80.0, 40.0, 30.0, 50.0] {
         assert!(loc.tile_color(1, dist, 0.0, 0.0, 1.0).is_none());
@@ -443,4 +444,133 @@ fn without_level_blend_every_pixel_shows_one_level() {
         "the fixture view must cross a fade band"
     );
     assert_eq!(mixed(&single), 0);
+}
+
+/// Synthetic mountains around 30.3° N 79.8° E (heights in metres).
+fn probe_height(lat: f64, lon: f64) -> f32 {
+    let (x, y) = ((lon - 79.8) * 96.0, (lat - 30.3) * 111.0);
+    let h = 2500.0
+        + 2000.0 * (x / 7.0).sin() * (y / 9.0).cos()
+        + 1200.0 * ((x + y) / 3.3).sin()
+        + 400.0 * (x / 0.9).sin() * (y / 1.1).sin();
+    h.max(0.0) as f32
+}
+
+fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
+    let size = 512;
+    let n = f64::from(1u32 << z);
+    let heights = (0..size * size)
+        .map(|i| {
+            let (px, py) = ((i % size) as f64 + 0.5, (i / size) as f64 + 0.5);
+            let u = (f64::from(tx) + px / size as f64) / n;
+            let v = (f64::from(ty) + py / size as f64) / n;
+            let lon = u * 360.0 - 180.0;
+            let lat = (PI * (1.0 - 2.0 * v)).sinh().atan().to_degrees();
+            probe_height(lat, lon)
+        })
+        .collect();
+    Arc::new(Tile::from_elevation(
+        globecraft_data::tiles::Elevation::from_heights(size, heights),
+    ))
+}
+
+fn probe_image_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
+    let hue = [(200, 80, 60), (60, 160, 80), (70, 90, 200), (190, 170, 60)]
+        [((tx + ty + u32::from(z)) % 4) as usize];
+    let image = image::RgbaImage::from_fn(256, 256, |x, y| {
+        let line = x % 32 == 0 || y % 32 == 0;
+        let c = if line { (240, 240, 240) } else { hue };
+        image::Rgba([c.0, c.1, c.2, 255])
+    });
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    Arc::new(Tile::decode(&bytes).unwrap())
+}
+
+#[test]
+#[ignore = "manual: renders synthetic relief views to GLOBECRAFT_PROBE_DIR with timings"]
+fn terrain_views() {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    let dir = std::path::PathBuf::from(std::env::var("GLOBECRAFT_PROBE_DIR").unwrap());
+    let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = unkey(key);
+        if provider == Provider::Satellite && z > 14 {
+            return Lookup::Unavailable;
+        }
+        let mut tiles = tiles.lock().unwrap();
+        let tile = tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                probe_dem_tile(z, x, y)
+            } else {
+                probe_image_tile(z, x, y)
+            }
+        });
+        Lookup::Ready(tile.clone())
+    };
+    let (width, height) = (960, 600);
+    for (name, alt, tilt, heading) in [
+        ("top-16km", 16.0, 0.0, 0.0),
+        ("tilt-16km", 16.0, 70.0, 0.0),
+        ("tilt-52km", 52.0, 75.0, 0.0),
+        ("tilt-6km", 6.0, 72.0, 30.0),
+    ] {
+        if std::env::var("PROBE_VIEW").is_ok_and(|only| only != name) {
+            continue;
+        }
+        let basis = Cam {
+            lat: 30.3,
+            lon: 79.8,
+            heading,
+            alt,
+            tilt,
+        }
+        .basis_for_model(
+            width as f64 / height as f64,
+            globecraft_core::earth_model::EarthModel::Wgs84,
+        );
+        let mut cfg = batch_reference_config(Provider::Satellite);
+        cfg.sky = None;
+        cfg.atmo = true;
+        cfg.terrain = Some(crate::TerrainCfg::new(1.0));
+        // Warm the tile map, then time.
+        let _ = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        let started = std::time::Instant::now();
+        let (pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        let elapsed = started.elapsed();
+        // Counted on one thread, outside the timing.
+        crate::terrain::COUNTS.with(|c| c.set((0, 0)));
+        let (steps, lookups) = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap()
+            .install(|| {
+                crate::terrain::COUNTS.with(|c| c.set((0, 0)));
+                render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+                crate::terrain::COUNTS.with(|c| c.get())
+            });
+        let flat = RenderCfg {
+            terrain: None,
+            ..cfg.clone()
+        };
+        let started = std::time::Instant::now();
+        let _ = render_pixels_tracked(width, height, &basis, &flat, &lookup);
+        println!(
+            "{name}: {:.0} ms ({:.0} ms without relief), {:.1} steps, {:.2} look-ups per pixel",
+            elapsed.as_secs_f64() * 1e3,
+            started.elapsed().as_secs_f64() * 1e3,
+            steps as f64 / (width * height) as f64,
+            lookups as f64 / (width * height) as f64
+        );
+        image::RgbaImage::from_raw(width as u32, height as u32, pixels)
+            .unwrap()
+            .save(dir.join(format!("{name}.png")))
+            .unwrap();
+    }
 }

@@ -19,6 +19,7 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
         state_max_km: globecraft_data::settings::STATE_MAX_ALTITUDE_DEFAULT_KM,
         grid_step_deg: None,
         pixels_per_point: 1.0,
+        ground: None,
     };
     let style = OverlayStyle {
         layers: OverlayLayers {
@@ -77,7 +78,7 @@ fn grid_numbers_toggle_while_stationary_and_fit_without_overlapping() {
     headless(|painter| {
         let (mut view, mut style, data) = scene();
         let data = Arc::new(data);
-        let mut cache = OverlayCache::new(painter.ctx().clone());
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
         for lang in Lang::ALL {
             style.lang = lang;
             for scale in [0.6, 1.0, 3.0] {
@@ -106,7 +107,7 @@ fn boundary_merge_holds_the_previous_shapes_until_replacement_arrives() {
     headless(|painter| {
         let (view, style, data) = scene();
         let mut data = Arc::new(data);
-        let mut cache = OverlayCache::new(painter.ctx().clone());
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
         draw_ready(&mut cache, painter, view, &data, style);
         let before = cache.shapes.clone();
         Arc::make_mut(&mut data).countries = vec![Arc::new(vec![(0.0, 0.0), (2.0, 2.0)])];
@@ -134,7 +135,7 @@ fn a_moving_camera_never_paints_a_blank_frame_when_a_patch_arrives() {
     headless(|painter| {
         let (view, style, data) = scene();
         let old = Arc::new(data);
-        let mut cache = OverlayCache::new(painter.ctx().clone());
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
         draw_ready(&mut cache, painter, view, &old, style);
         // The camera moves; the frame coordinator delivers geometry for the new view,
         // projected from the dataset it was given (the old one).
@@ -150,6 +151,7 @@ fn a_moving_camera_never_paints_a_blank_frame_when_a_patch_arrives() {
             grid_step_deg: moved.grid_step_deg,
             layers: style.layers,
             dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
+            ground: None,
         };
         let mut preparer = globecraft_render::overlays::OverlayPreparer::default();
         let geometry = preparer.prepare(globecraft_render::overlays::OverlayInput {
@@ -178,7 +180,7 @@ fn unchanged_view_reuses_shapes_and_boundary_invalidation_rebuilds() {
     headless(|painter| {
         let (view, style, data) = scene();
         let mut data = Arc::new(data);
-        let mut cache = OverlayCache::new(painter.ctx().clone());
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
         draw_ready(&mut cache, painter, view, &data, style);
         let before = cache.shapes.clone();
         Arc::make_mut(&mut data).labels[0].en = "Replacement".into();
@@ -260,7 +262,7 @@ fn camera_viewport_altitude_density_layers_language_and_map_scale_invalidate() {
             ),
         ];
         for (next_view, next_style) in variants {
-            let mut cache = OverlayCache::new(painter.ctx().clone());
+            let mut cache = OverlayCache::new(painter.ctx().clone(), None);
             Arc::make_mut(&mut data).labels[0].en = "Before".into();
             Arc::make_mut(&mut data).labels[0].pt = "Antes".into();
             draw_ready(&mut cache, painter, view, &data, style);
@@ -479,6 +481,7 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
                     sun: None,
                 },
                 dashes: globecraft_render::overlays::BorderDashes::default(),
+                ground: None,
             },
             data: Arc::new(data),
             borders: segments.to_vec(),

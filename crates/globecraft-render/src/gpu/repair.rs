@@ -17,6 +17,7 @@ pub(super) fn pixels(
             let mut local = crate::Local {
                 lookup,
                 map: HashMap::default(),
+                dem: Vec::new(),
             };
             for (offset, row) in rows.chunks_mut(request.width * 4).enumerate() {
                 let y = batch * tuning::ROWS_PER_TILE_BATCH + offset;

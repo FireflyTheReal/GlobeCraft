@@ -99,6 +99,7 @@ fn overlay_projection_and_label_occupancy_time() {
         state_max_km: globecraft_data::settings::STATE_MAX_ALTITUDE_DEFAULT_KM,
         grid_step_deg: None,
         pixels_per_point: 1.0,
+        ground: None,
     };
     let style = OverlayStyle {
         layers: OverlayLayers {
@@ -114,7 +115,7 @@ fn overlay_projection_and_label_occupancy_time() {
         map_style: globecraft_data::settings::map_style::MapStyle::default(),
     };
     let ctx = egui::Context::default();
-    let mut cache = OverlayCache::new(ctx.clone());
+    let mut cache = OverlayCache::new(ctx.clone(), None);
     let data = Arc::new(data);
     let mut rebuild = Vec::new();
     let mut reuse = Vec::new();

@@ -109,11 +109,21 @@ wait for approval; interface-only commands are refused. See [AI assistant](featu
 
 ## Terrain
 
-`globecraft-render::terrain` moves each surface hit along its view ray to the Mapterhorn
-Terrarium height (one zoom coarser than imagery, at most z15) and shades it by the local
-slope. Elevation tiles share the imagery cache and batch-local lookups; missing tiles are
-requested with screen priority. Terrain is drawn below 150 km and only on the CPU path (the
-GPU renderer falls back). It is a 2.5D correction without occlusion.
+`globecraft-render::terrain` marches each view ray through the Mapterhorn Terrarium
+elevation (at most z15) until it meets the ground, so relief hides what lies behind it and
+reaches the horizon. Elevation tiles decode into heights plus a pyramid of block maxima
+(`globecraft_data::tiles::Elevation`); while a ray is above a block's maximum it jumps to
+the block's edge, and only the last texels before the ground are walked one by one. The
+elevation level follows the distance (about two pixels per texel), Mercator positions move
+linearly between exact measurements, and a hit is refined by secant steps and shaded by the
+local slope. Missing tiles are requested with screen priority and drawn at sea level until
+they arrive.
+
+The camera looks at the terrain height under the view centre (`Cam::basis_over_ground`,
+eased in `App::follow_ground`), a tilted camera is kept 150 m above the ground beneath it,
+and borders and names are raised onto the relief from the loaded tiles
+(`overlays::GroundHeights`). Terrain is drawn below 150 km and only on the CPU path (the GPU
+renderer falls back).
 
 ## Live layers and the hidden illustration
 

@@ -77,6 +77,9 @@ pub struct RenderCfg {
 struct Local<'a, F> {
     lookup: &'a F,
     map: HashMap<TileKey, LocalTile, KeyBuild>,
+    /// Elevation tiles the batch's rays use, held once so a ray refers to them by
+    /// index: cloning the shared tile handle per ray made threads contend.
+    dem: Vec<Arc<Tile>>,
 }
 enum LocalTile {
     Ready(Arc<Tile>),
@@ -231,6 +234,8 @@ fn render_row<const ELLIPSOID: bool>(
 ) {
     let cc = rays.camera_len_squared;
     let camera_up = rays.camera_up();
+    // The view angle per displayed pixel (see `pixel::surface`).
+    let pixel_angle = 2.0 * VERTICAL_FOV_HALF_TAN * cfg.lod_scale as f64 / h as f64;
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
         let first_x = pack * RAY_LANES;
@@ -240,23 +245,49 @@ fn render_row<const ELLIPSOID: bool>(
             let x = first_x + lane;
             let bb = ray.camera_dot;
             let disc = ray.discriminant;
-            let col = if disc >= 0.0 && bb < 0.0 {
-                let geometry = rays.model_geometry();
-                let hit = surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry);
-                // Relief moves the hit along its ray; the imagery is then sampled there.
-                match terrain::displace(&ray, (hit.u, hit.v), hit.z0, hit.dist, geometry, cfg, loc)
-                {
-                    Some((raised, light)) => shade_surface(
-                        surface::<ELLIPSOID>(x, y, w, h, &raised, cfg, geometry),
-                        cfg,
-                        cfg.rel,
+            let hits_surface = disc >= 0.0 && bb < 0.0;
+            let geometry = rays.model_geometry();
+            let col = match cfg.terrain {
+                // Relief: the ray is marched through the elevation model, which can
+                // also stand above the horizon where the ellipsoid is missed.
+                Some(relief) => {
+                    let offset = (x as f32 - w as f32 / 2.0, y as f32 - h as f32 / 2.0);
+                    let priority = offset.0 * offset.0 + offset.1 * offset.1;
+                    match terrain::march(
+                        &ray,
+                        hits_surface,
+                        rays.camera(),
+                        geometry,
+                        relief,
+                        pixel_angle,
+                        priority,
                         loc,
-                        light,
-                    ),
-                    None => shade_surface(hit, cfg, cfg.rel, loc, 1.0),
+                    ) {
+                        terrain::March::Hit(ground, light) => shade_surface(
+                            surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
+                            cfg,
+                            cfg.rel,
+                            loc,
+                            light,
+                        ),
+                        terrain::March::Floor => shade_surface(
+                            surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                            cfg,
+                            cfg.rel,
+                            loc,
+                            1.0,
+                        ),
+                        terrain::March::Miss => sky(&ray, cc, camera_up, cfg),
+                    }
                 }
-            } else {
-                sky(&ray, cc, camera_up, cfg)
+                None if hits_surface => shade_surface(
+                    surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                    cfg,
+                    cfg.rel,
+                    loc,
+                    1.0,
+                ),
+                None => sky(&ray, cc, camera_up, cfg),
             };
             let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
             pixel[0] = channels.x as u8;
@@ -409,6 +440,7 @@ fn render_pixels_into(
             let mut loc = Local {
                 lookup,
                 map: HashMap::default(),
+                dem: Vec::new(),
             };
             for (offset, row) in rows.chunks_mut(row_bytes).enumerate() {
                 if unit_sphere {

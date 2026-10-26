@@ -121,6 +121,7 @@ impl App {
                     None
                 },
                 pixels_per_point: painter.ctx().pixels_per_point(),
+                ground: self.overlay_ground(),
             },
             &self.boundaries,
             style,

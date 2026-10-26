@@ -287,7 +287,7 @@ and timeline (H) and the point-layer engine (I).
 
 | # | Item | Size | Notes |
 | --- | --- | --- | --- |
-| 8.1 | **Terrain occlusion**: true heightfield ray marching (today it is a 2.5D displacement with no occlusion), at least for close views | L | The next visible quality jump. Do it on the GPU path first |
+| 8.1 | **Terrain occlusion**: true heightfield ray marching (today it is a 2.5D displacement with no occlusion), at least for close views | L | The next visible quality jump. **Done on the CPU path 2026-10-26** (user video: the displacement smeared imagery on tilted views, had no occlusion and went flat toward the horizon). Each ray is marched through the Mapterhorn tiles with a pyramid of block maxima per tile (`tiles::Elevation`, built at decode), skipping open air block by block; the elevation level follows the distance, so relief reaches the horizon and stands against the sky. The camera looks at the terrain height (eased), a tilted camera stays 150 m above the ground beneath it, and borders and names are raised onto the relief (not hidden behind ridges yet). Still open: overlay occlusion by terrain, the ruler, placemarks and live objects on the relief, and the GPU path (meshes, 8.2) |
 | 8.2 | GPU renderer to beta: parity tests, device loss, macOS Metal profiling, then "auto" by default on Apple Silicon | XL | Experimental today; CPU stays the fallback. Unlocks wind particles, 3D clouds and smooth terrain |
 | 8.3 | Atmosphere v2: physically based scattering (Bruneton-style precomputed tables), with sunset colours following the real sun | M–L | Big wow factor for the cost |
 | 8.4 | Day/night: night lights (3.2), a terminator glow, city lights fading in at dusk | S after 3.2 | |
@@ -524,6 +524,6 @@ through the GPU path (14.1). Everything else is incremental.
 5. Section 2, Add Data: the dialog, forms, service library with the master table's presets, user layers, then the Browser panel.
 6. Adapters that are still missing (section 4: time, points, key manager), then the layers in section 5 as presets.
 7. In parallel when it fits: 10.1 CI and 10.2 `App` split.
-8. Afterwards: 8.1 terrain occlusion and 8.2 GPU beta; then wind, 3D buildings and the sky mode.
+8. Afterwards: 8.2 GPU beta (8.1 terrain ray marching done on the CPU 2026-10-26); then wind, 3D buildings and the sky mode.
 
 The previous v0.2.0 delivery plan is preserved in `docs/releases/v0.2.0.md`.

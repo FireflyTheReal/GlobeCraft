@@ -50,7 +50,7 @@ impl App {
         let scale = quality.render_scale();
         let (width, height) = (width * scale, height * scale);
         let aspect = width as f64 / height.max(1) as f64;
-        let basis = self.cam.basis_for_model(aspect, self.active_earth_model());
+        let basis = self.view_basis(aspect);
         let cfg = globecraft_render::RenderCfg {
             level_blend: quality.level_blend(),
             ..self.frame_config(width, height, 1.0)

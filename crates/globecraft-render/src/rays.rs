@@ -33,6 +33,10 @@ impl RayCaster {
     pub(super) fn model_geometry(&self) -> SurfaceGeometry {
         self.geometry
     }
+    /// The camera position.
+    pub(super) fn camera(&self) -> DVec3 {
+        self.camera
+    }
     /// The camera's direction from the Earth's centre.
     pub(super) fn camera_up(&self) -> DVec3 {
         self.camera.normalize_or_zero()

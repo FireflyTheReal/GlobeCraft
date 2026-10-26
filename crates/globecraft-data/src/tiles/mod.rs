@@ -175,8 +175,42 @@ pub struct Tile {
     w: usize,
     h: usize,
     px: Vec<u8>, // RGBA
+    /// Elevation tiles keep heights and block maxima instead of colour (`px` empty).
+    elevation: Option<Elevation>,
 }
 impl Tile {
+    /// Decodes a Terrarium elevation tile into heights and block maxima.
+    pub fn decode_elevation(bytes: &[u8]) -> Result<Self, crate::Error> {
+        let img = image::load_from_memory(bytes)
+            .map_err(crate::Error::from)?
+            .to_rgba8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let elevation = Elevation::from_terrarium(w, h, img.as_raw())
+            .ok_or("elevation tiles must be square with a power-of-two size")?;
+        Ok(Self {
+            w,
+            h,
+            px: Vec::new(),
+            elevation: Some(elevation),
+        })
+    }
+    /// An elevation tile from prepared heights (fixtures and benchmarks).
+    pub fn from_elevation(elevation: Elevation) -> Self {
+        Self {
+            w: elevation.size(),
+            h: elevation.size(),
+            px: Vec::new(),
+            elevation: Some(elevation),
+        }
+    }
+    /// Heights and block maxima, for elevation tiles.
+    pub fn elevation(&self) -> Option<&Elevation> {
+        self.elevation.as_ref()
+    }
+    /// Decoded memory held, for the cache budget.
+    pub fn bytes(&self) -> usize {
+        self.px.len() + self.elevation.as_ref().map_or(0, Elevation::bytes)
+    }
     /// Decodes the same PNG/JPEG tile bytes used by the disk and network loaders.
     pub fn decode(bytes: &[u8]) -> Result<Self, crate::Error> {
         let img = image::load_from_memory(bytes)
@@ -186,35 +220,13 @@ impl Tile {
             w: img.width() as usize,
             h: img.height() as usize,
             px: img.into_raw(),
+            elevation: None,
         })
     }
 
     /// Decoded RGBA layout for backend texture upload; storage remains tile-owned.
     pub fn rgba(&self) -> (usize, usize, &[u8]) {
         (self.w, self.h, &self.px)
-    }
-
-    /// Bilinear elevation in metres, decoded at each pixel *before* blending.
-    /// Mapterhorn uses Terrarium: (R * 256 + G + B / 256) - 32768.
-    pub fn sample_terrarium_m(&self, u: f64, v: f64) -> f64 {
-        let x = (u.clamp(0.0, 1.0) * self.w as f64 - 0.5).max(0.0);
-        let y = (v.clamp(0.0, 1.0) * self.h as f64 - 0.5).max(0.0);
-        let x0 = (x as usize).min(self.w - 1);
-        let y0 = (y as usize).min(self.h - 1);
-        let x1 = (x0 + 1).min(self.w - 1);
-        let y1 = (y0 + 1).min(self.h - 1);
-        let fx = (x - x0 as f64).min(1.0);
-        let fy = (y - y0 as f64).min(1.0);
-        let height = |xx: usize, yy: usize| {
-            let idx = (yy * self.w + xx) * 4;
-            let r = self.px[idx] as f64;
-            let g = self.px[idx + 1] as f64;
-            let b = self.px[idx + 2] as f64;
-            r * 256.0 + g + b / 256.0 - 32768.0
-        };
-        let top = height(x0, y0) * (1.0 - fx) + height(x1, y0) * fx;
-        let bottom = height(x0, y1) * (1.0 - fx) + height(x1, y1) * fx;
-        top * (1.0 - fy) + bottom * fy
     }
 
     /// RGB in SIMD lanes, with the unused fourth lane set to zero. A `stride`
@@ -323,28 +335,15 @@ impl Tile {
 
 mod cache;
 mod disk;
+mod elevation;
 pub use cache::{CacheBudgets, DEFAULT_TILE_CACHE_BUDGET_BYTES, Lookup, MAX_INFLIGHT, TileCache};
+pub use elevation::Elevation;
 mod warmup;
 pub use warmup::TileWarmup;
 
 #[cfg(test)]
 mod sampling_tests {
     use super::*;
-    #[test]
-    fn terrarium_elevation_decodes_before_bilinear_interpolation() {
-        // 0 metres = [128,0,0], 1000 metres = [131,232,0].
-        let tile = Tile {
-            w: 2,
-            h: 2,
-            px: vec![
-                128, 0, 0, 255, 131, 232, 0, 255, 128, 0, 0, 255, 131, 232, 0, 255,
-            ],
-        };
-        assert_eq!(tile.sample_terrarium_m(0.25, 0.5), 0.0);
-        assert_eq!(tile.sample_terrarium_m(0.75, 0.5), 1000.0);
-        assert_eq!(tile.sample_terrarium_m(0.50, 0.5), 500.0);
-    }
-
     #[test]
     fn simd_sampling_preserves_pixel_centers_bilinear_weights_and_unused_lane() {
         let tile = Tile {
@@ -353,6 +352,7 @@ mod sampling_tests {
             px: vec![
                 255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 128, 255, 255, 255, 64,
             ],
+            elevation: None,
         };
         assert_eq!(tile.sample(0.25, 0.25, 1.0), Vec4::new(1.0, 0.0, 0.0, 0.0));
         assert_eq!(tile.sample(0.75, 0.25, 1.0), Vec4::new(0.0, 1.0, 0.0, 0.0));
@@ -369,6 +369,7 @@ mod sampling_tests {
             px: vec![
                 0, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 10, 10, 10, 255,
             ],
+            elevation: None,
         };
         // Between texel 1 (red) and texel 2 (blue), level weights/lane zero.
         assert_eq!(tile.sample(0.5, 0.5, 1.0), Vec4::new(0.5, 0.0, 0.5, 0.0));
@@ -384,6 +385,7 @@ mod sampling_tests {
             px: vec![
                 0, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 10, 10, 10, 255,
             ],
+            elevation: None,
         };
         assert_eq!(tile.sample(0.5, 0.5, 2.0), Vec4::new(0.5, 0.0, 0.5, 0.0));
     }
@@ -402,7 +404,12 @@ mod sampling_tests {
                 }
             })
             .collect();
-        let tile = Tile { w: 16, h: 1, px };
+        let tile = Tile {
+            w: 16,
+            h: 1,
+            px,
+            elevation: None,
+        };
         let bilinear = tile.sample(0.53, 0.5, 1.0);
         let area = tile.sample(0.53, 0.5, 4.0);
         assert!(

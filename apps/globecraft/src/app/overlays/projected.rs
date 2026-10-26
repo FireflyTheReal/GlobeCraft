@@ -33,6 +33,7 @@ pub(super) fn build(
         state_visible_max_km: view.state_max_km,
         layers: style.layers,
         dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
+        ground: None,
     };
     let mut borders = Vec::new();
     globecraft_render::overlays::project_borders(&projection, boundaries, None, |kind, points| {

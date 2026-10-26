@@ -44,7 +44,8 @@ impl Renderer {
         let mut backend = globecraft_render::backend::FrameRenderer::new(
             globecraft_render::backend::BackendPreference::from_environment(),
         );
-        let mut overlay_preparer = globecraft_render::overlays::OverlayPreparer::default();
+        let mut overlay_preparer =
+            globecraft_render::overlays::OverlayPreparer::with_elevation(cache.clone());
         // The last published overlay, reused while the geometry is (tile-only frames).
         let mut last_overlay: Option<super::overlays::PreparedOverlay> = None;
         let overlay_ctx = ctx.clone();
@@ -259,12 +260,9 @@ impl App {
         RenderCfg {
             sky,
             provider: prov,
-            terrain: (self.layer(MapLayer::Terrain)
-                && self.cam.alt <= globecraft_render::TERRAIN_MAX_ALTITUDE_KM
-                && self.explorer.active == globecraft_core::body::Body::Earth)
-                .then(|| {
-                    globecraft_render::TerrainCfg::new(self.settings.layers.terrain_exaggeration)
-                }),
+            terrain: self.terrain_active().then(|| {
+                globecraft_render::TerrainCfg::new(self.settings.layers.terrain_exaggeration)
+            }),
             rel,
             grid: self.layer(MapLayer::Grid),
             grid_step,
@@ -283,7 +281,7 @@ impl App {
         rect: egui::Rect,
         pixels_per_point: f32,
     ) {
-        let basis = self.cam.basis_for_model(aspect, self.active_earth_model());
+        let basis = self.view_basis(aspect);
         let cfg = self.frame_config(size.width, size.height, size.lod_scale);
         let grid_step = cfg.grid_step;
         // While the camera moves the compare side renders at a lower resolution, so it
@@ -326,6 +324,7 @@ impl App {
                     grid_step_deg: self.layer(MapLayer::GridLabels).then_some(grid_step),
                     layers: self.overlay_layers(),
                     dashes: globecraft_render::overlays::BorderDashes::of(&self.settings.map_style),
+                    ground: self.overlay_ground(),
                 },
                 data: self.boundaries.clone(),
             }),

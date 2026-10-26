@@ -50,6 +50,8 @@ pub(super) struct OverlayView {
     pub state_max_km: f64,
     pub grid_step_deg: Option<f64>,
     pub pixels_per_point: f32,
+    /// Relief under the lines and names, when terrain is drawn.
+    pub ground: Option<globecraft_render::overlays::OverlayGround>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -90,7 +92,10 @@ impl OverlayCache {
     pub(super) fn is_ready(&self, view: OverlayView, style: OverlayStyle) -> bool {
         self.key == Some(DrawKey { view, style })
     }
-    pub(in crate::app) fn new(ctx: egui::Context) -> Self {
+    pub(in crate::app) fn new(
+        ctx: egui::Context,
+        elevation: Option<Arc<globecraft_data::tiles::TileCache>>,
+    ) -> Self {
         Self {
             key: None,
             stale: None,
@@ -104,6 +109,7 @@ impl OverlayCache {
                     let ctx = ctx.clone();
                     move || ctx.request_repaint()
                 },
+                elevation,
                 move |geometry| PreparedOverlay::new(geometry, &ctx),
             )
             .expect("start overlay preparation"),
@@ -149,6 +155,7 @@ impl OverlayCache {
                 grid_step_deg: view.grid_step_deg,
                 layers: style.layers,
                 dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
+                ground: view.ground,
             };
             if let Some(completed) = self.worker.take_completed()
                 && completed.geometry.view == geometry_view
