@@ -49,6 +49,18 @@ pub(crate) fn record(kind: DownloadKind, bytes: usize) {
     counter.responses.fetch_add(1, Ordering::Relaxed);
 }
 
+static CANCELLED: AtomicU64 = AtomicU64::new(0);
+
+/// A download stopped because its tile left the view before it arrived.
+pub(crate) fn record_cancelled() {
+    CANCELLED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Downloads stopped this session because their tiles left the view.
+pub fn cancelled() -> u64 {
+    CANCELLED.load(Ordering::Relaxed)
+}
+
 /// Bytes and responses of one kind so far this session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DownloadTotals {

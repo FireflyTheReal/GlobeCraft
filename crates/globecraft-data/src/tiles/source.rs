@@ -64,6 +64,13 @@ pub struct TileSource {
     #[serde(default)]
     pub attribution_key: Option<String>,
     pub prefetch: Prefetch,
+    /// Downloads from this source at once.
+    #[serde(default = "default_max_parallel")]
+    pub max_parallel: u8,
+}
+
+fn default_max_parallel() -> u8 {
+    4
 }
 
 fn default_tile_px() -> u16 {
@@ -132,6 +139,7 @@ mod tests {
         for source in sources {
             assert!(source.max_zoom >= source.min_zoom && source.max_zoom <= 24);
             assert!(source.tile_px.is_power_of_two());
+            assert!(source.max_parallel >= 1);
             if let Access::Xyz { template } = &source.access {
                 assert!(template.starts_with("https://"), "{}", source.code);
                 for part in ["{z}", "{x}", "{y}"] {
@@ -160,6 +168,7 @@ mod tests {
             attribution: String::new(),
             attribution_key: None,
             prefetch: Prefetch::Allowed,
+            max_parallel: 4,
         };
         assert_eq!(
             source.tile_url(3, 5, 2).as_deref(),

@@ -87,6 +87,46 @@ pub(crate) async fn body(
     }
     Ok(bytes)
 }
+/// A response body, or how long the server asked us to wait (429 Too Many Requests or
+/// 503 Service Unavailable, with `Retry-After` in seconds when given).
+pub(crate) enum Fetched {
+    Body(Vec<u8>),
+    RetryAfter(Duration),
+}
+/// Waited when a server throttles without saying for how long.
+const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
+/// The longest wait honoured; tiles are retried after it whatever the server says.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(120);
+
+/// `body`, but a throttling answer comes back as `Fetched::RetryAfter` instead of an error.
+pub(crate) async fn body_or_retry_after(
+    request: reqwest::RequestBuilder,
+    limit: u64,
+) -> Result<Fetched, crate::Error> {
+    let mut response = request.send().await?;
+    let status = response.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+    {
+        let wait = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .map_or(DEFAULT_RETRY_AFTER, Duration::from_secs);
+        return Ok(Fetched::RetryAfter(wait.min(MAX_RETRY_AFTER)));
+    }
+    response = response.error_for_status()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        let remaining = (limit as usize).saturating_sub(bytes.len());
+        bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        if bytes.len() as u64 >= limit {
+            break;
+        }
+    }
+    Ok(Fetched::Body(bytes))
+}
 pub(crate) async fn parse_json(bytes: Vec<u8>) -> Result<serde_json::Value, crate::Error> {
     tokio::task::spawn_blocking(move || serde_json::from_slice(&bytes))
         .await?
@@ -122,6 +162,29 @@ mod tests {
         assert!(matches!(
             body(client.get(url), 100).await,
             Err(crate::Error::Http(_))
+        ));
+        job.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn throttling_answers_say_how_long_to_wait() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let (url, job) = server(vec![("429 Too Many Requests\r\nRetry-After: 7", "")]).await;
+        assert!(matches!(
+            body_or_retry_after(client.get(url), 100).await,
+            Ok(Fetched::RetryAfter(wait)) if wait == Duration::from_secs(7)
+        ));
+        job.await.unwrap();
+        let (url, job) = server(vec![("503 Service Unavailable", "")]).await;
+        assert!(matches!(
+            body_or_retry_after(client.get(url), 100).await,
+            Ok(Fetched::RetryAfter(wait)) if wait == DEFAULT_RETRY_AFTER
+        ));
+        job.await.unwrap();
+        let (url, job) = server(vec![("200 OK", "tile")]).await;
+        assert!(matches!(
+            body_or_retry_after(client.get(url), 100).await,
+            Ok(Fetched::Body(bytes)) if bytes == b"tile"
         ));
         job.await.unwrap();
     }

@@ -279,32 +279,82 @@ async fn clearing_preserves_memory_and_the_original_epoch_of_queued_requests() {
 }
 
 #[test]
-fn new_view_retires_queued_work_preserving_active_downloads_and_overview() {
+fn new_view_retires_queued_work_and_stops_downloads_it_left_keeping_the_overview() {
     let (cache, _tickets) = test_cache(4096);
-    let active = make_key(Provider::Satellite, 10, 1, 1, 0);
+    let left = make_key(Provider::Satellite, 10, 1, 1, 0);
     let stale = make_key(Provider::Satellite, 10, 2, 1, 0);
     let overview = make_key(Provider::Satellite, 2, 0, 0, 0);
     let visible = make_key(Provider::Satellite, 10, 3, 1, 0);
-    assert!(cache.request(active));
-    assert_eq!(cache.next_job().unwrap().0, active);
+    assert!(cache.request(left));
+    let running = cache.next_job().unwrap();
+    assert_eq!(running.key, left);
     assert!(cache.request(stale));
     assert!(cache.request(overview));
     assert!(cache.request(visible));
     cache.prioritize_view(&[visible]);
-    assert_eq!(cache.inflight(), 3);
+    // The running download of a tile the view left is told to stop.
+    assert_eq!(cache.inflight(), 2);
     assert!(matches!(cache.lookup(stale), Lookup::Absent));
-    assert!(matches!(cache.lookup(active), Lookup::Pending));
-    assert_eq!(cache.next_job().unwrap().0, visible);
-    assert_eq!(cache.next_job().unwrap().0, overview);
+    assert!(matches!(cache.lookup(left), Lookup::Absent));
+    assert!(cache.downloading.lock().unwrap().is_empty());
+    let stopped = running.cancel.notified();
+    tokio::pin!(stopped);
+    assert!(futures_ready(stopped.as_mut()));
+    assert_eq!(cache.next_job().unwrap().key, visible);
+    assert_eq!(cache.next_job().unwrap().key, overview);
     assert!(cache.next_job().is_none());
-    for key in [active, visible, overview] {
+    for key in [visible, overview] {
         cache.complete(key, Ok(tiny_tile(42)));
     }
     assert_eq!(cache.inflight(), 0);
     assert!(
-        cache.request(stale),
-        "retired work can be requested again without a failure delay"
+        cache.request(stale) && cache.request(left),
+        "retired and stopped work can be requested again without a failure delay"
     );
+}
+
+/// Whether a future completes at its first poll.
+fn futures_ready<F: std::future::Future>(future: std::pin::Pin<&mut F>) -> bool {
+    let waker = std::task::Waker::noop();
+    let mut context = std::task::Context::from_waker(waker);
+    future.poll(&mut context).is_ready()
+}
+
+#[test]
+fn each_source_downloads_at_most_its_parallel_limit() {
+    let (cache, _tickets) = test_cache(4096);
+    let limit = usize::from(Provider::Streets.source().max_parallel);
+    let streets: Vec<_> = (0..=limit as u32)
+        .map(|x| make_key(Provider::Streets, 12, x, 0, 0))
+        .collect();
+    let imagery = make_key(Provider::Satellite, 12, 0, 0, 0);
+    for &key in &streets {
+        assert!(cache.request(key));
+    }
+    assert!(cache.request(imagery));
+    let jobs: Vec<_> = (0..limit).map(|_| cache.next_job().unwrap()).collect();
+    assert!(jobs.iter().all(|job| unkey(job.key).0 == Provider::Streets));
+    // The next streets tile waits; the imagery behind it does not.
+    assert_eq!(cache.next_job().unwrap().key, imagery);
+    assert!(cache.next_job().is_none());
+    cache.downloading.lock().unwrap().remove(&jobs[0].key);
+    cache.complete(jobs[0].key, Ok(tiny_tile(1)));
+    assert_eq!(cache.next_job().unwrap().key, streets[limit]);
+}
+
+#[test]
+fn a_throttled_source_pauses_and_its_tile_waits_at_the_front() {
+    let (cache, _tickets) = test_cache(4096);
+    let first = make_key(Provider::Topo, 9, 0, 0, 0);
+    let second = make_key(Provider::Topo, 9, 1, 0, 0);
+    assert!(cache.request(first) && cache.request(second));
+    let job = cache.next_job().unwrap();
+    cache.downloading.lock().unwrap().remove(&job.key);
+    cache.throttle(job.key, Duration::from_millis(200));
+    assert!(matches!(cache.lookup(first), Lookup::Pending));
+    assert!(cache.next_job().is_none(), "the source is pausing");
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(cache.next_job().unwrap().key, first);
 }
 
 #[test]
@@ -326,7 +376,7 @@ fn retired_wake_tickets_stay_bounded_and_duplicate_priorities_do_not_duplicate_j
         count += 1;
     }
     assert!(count <= MAX_INFLIGHT);
-    assert_eq!(cache.next_job().unwrap().0, visible);
+    assert_eq!(cache.next_job().unwrap().key, visible);
     assert!(cache.next_job().is_none());
 }
 #[test]

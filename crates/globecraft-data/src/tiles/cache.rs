@@ -10,7 +10,11 @@ use std::{
     },
     time::{Duration, Instant},
 };
-const TILE_WORKER_COUNT: usize = 6;
+/// Download tasks; each source's own `max_parallel` limits how many serve it at once.
+const TILE_WORKER_COUNT: usize = 16;
+/// Idle download tasks look at the queue this often even without a wake-up (a source's
+/// throttling pause ending, a slot freed for a waiting source).
+const WORKER_RECHECK: Duration = Duration::from_millis(250);
 const FAILED_TILE_RETRY_DELAY: Duration = Duration::from_secs(15);
 /// Best-effort decoded-pixel target; Moka may temporarily exceed it during eviction.
 pub const DEFAULT_TILE_CACHE_BUDGET_BYTES: usize = 256 * 1024 * 1024;
@@ -42,6 +46,9 @@ pub(super) enum TileFailure {
     Unavailable,
     /// A network, disk or decoding error: retried after `FAILED_TILE_RETRY_DELAY`.
     Error,
+    /// The server asked to slow down (429 or 503): its source pauses this long and the
+    /// tile waits in the queue.
+    Throttled(Duration),
 }
 impl<E: Into<crate::Error>> From<E> for TileFailure {
     fn from(_: E) -> Self {
@@ -101,6 +108,19 @@ pub struct TileCache {
     /// Requests a background still render (a high-quality screenshot) still needs: a new
     /// view's priorities do not retire them.
     reserved: Mutex<HashSet<TileKey, KeyBuild>>,
+    /// Downloads running now, with the signal that stops one whose tile left the view.
+    /// Lock after `requests` and `queue`.
+    downloading: Mutex<HashMap<TileKey, Arc<tokio::sync::Notify>, KeyBuild>>,
+    /// Sources pausing after a throttling answer, until when (by source id).
+    throttled: Mutex<HashMap<u64, Instant>>,
+}
+
+/// A download a task takes from the queue.
+struct Job {
+    key: TileKey,
+    epoch: u64,
+    ahead: bool,
+    cancel: Arc<tokio::sync::Notify>,
 }
 
 impl TileCache {
@@ -148,6 +168,8 @@ impl TileCache {
             inflight: AtomicUsize::new(0),
             fixture_source: None,
             reserved: Mutex::new(HashSet::default()),
+            downloading: Mutex::new(HashMap::default()),
+            throttled: Mutex::new(HashMap::new()),
         }
     }
     pub fn new(
@@ -275,7 +297,9 @@ impl TileCache {
                     return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
                 }
                 Lookup::Absent if request && level == zoom => {
-                    self.request(key);
+                    // Admitted like a load ahead of need: the view's own admission
+                    // (which may not sample this tile) must not stop it.
+                    self.request_under_limit(key, MAX_INFLIGHT - 1);
                 }
                 _ => {}
             }
@@ -363,6 +387,23 @@ impl TileCache {
                 }
                 keep
             });
+            // Downloads of tiles the view left stop, freeing their slots: during a fast
+            // zoom the levels passed through are not loaded to the end (roadmap 1.3).
+            // Loads ahead of need and reserved tiles continue.
+            self.downloading.lock().unwrap().retain(|key, cancel| {
+                let (provider, zoom, _, _, _) = unkey(*key);
+                let keep = wanted.contains(key)
+                    || reserved.contains(key)
+                    || (provider == super::Provider::Satellite && zoom <= 4)
+                    || matches!(requests.get(key), Some(RequestState::Loading(_, true)));
+                if !keep {
+                    if matches!(requests.remove(key), Some(RequestState::Loading(..))) {
+                        self.inflight.fetch_sub(1, Ordering::Relaxed);
+                    }
+                    cancel.notify_one();
+                }
+                keep
+            });
             // A tile the view now wants is no longer loaded ahead.
             for key in keys {
                 if let Some(RequestState::Loading(_, ahead)) = requests.get_mut(key) {
@@ -403,13 +444,63 @@ impl TileCache {
             .min()
     }
 
-    fn next_job(&self) -> Option<(TileKey, u64, bool)> {
+    /// The first queued tile whose source has a free download slot and is not pausing.
+    fn next_job(&self) -> Option<Job> {
         let requests = self.requests.lock().unwrap();
-        let key = self.queue.lock().unwrap().pop_front()?;
-        let Some(&RequestState::Loading(epoch, ahead)) = requests.get(&key) else {
-            return None;
-        };
-        Some((key, epoch, ahead))
+        let mut queue = self.queue.lock().unwrap();
+        let mut downloading = self.downloading.lock().unwrap();
+        let throttled = self.throttled.lock().unwrap();
+        let now = Instant::now();
+        let mut active: HashMap<u64, usize> = HashMap::new();
+        for key in downloading.keys() {
+            *active.entry(unkey(*key).0.id()).or_default() += 1;
+        }
+        let mut index = 0;
+        while index < queue.len() {
+            let key = queue[index];
+            let Some(&RequestState::Loading(epoch, ahead)) = requests.get(&key) else {
+                // Retired or already finished: drop the stale entry.
+                queue.remove(index);
+                continue;
+            };
+            if downloading.contains_key(&key) {
+                queue.remove(index);
+                continue;
+            }
+            let provider = unkey(key).0;
+            let busy = active.get(&provider.id()).copied().unwrap_or(0)
+                >= usize::from(provider.source().max_parallel)
+                || throttled
+                    .get(&provider.id())
+                    .is_some_and(|until| *until > now);
+            if busy {
+                index += 1;
+                continue;
+            }
+            queue.remove(index);
+            let cancel = Arc::new(tokio::sync::Notify::new());
+            downloading.insert(key, cancel.clone());
+            return Some(Job {
+                key,
+                epoch,
+                ahead,
+                cancel,
+            });
+        }
+        None
+    }
+
+    /// A throttled download goes back to the front of the queue and its source pauses.
+    fn throttle(&self, key: TileKey, wait: Duration) {
+        let requests = self.requests.lock().unwrap();
+        if matches!(requests.get(&key), Some(RequestState::Loading(..))) {
+            self.queue.lock().unwrap().push_front(key);
+        }
+        let provider = unkey(key).0;
+        let until = Instant::now() + wait;
+        let mut throttled = self.throttled.lock().unwrap();
+        let entry = throttled.entry(provider.id()).or_insert(until);
+        *entry = (*entry).max(until);
     }
 
     fn complete(&self, key: TileKey, result: Result<Tile, TileFailure>) {
@@ -529,14 +620,20 @@ async fn fetch_tile(
     if url.is_empty() {
         return Err(crate::Error::from("empty tile URL").into());
     }
-    let bytes = match crate::http::body(
+    let bytes = match crate::http::body_or_retry_after(
         crate::http::client(crate::http::Policy::Tile)?.get(url.as_str()),
         MAX_TILE_RESPONSE_BYTES,
     )
     .await
     {
-        Ok(bytes) if is_placeholder(&bytes) => return Err(TileFailure::Unavailable),
-        Ok(bytes) => {
+        Ok(crate::http::Fetched::RetryAfter(wait)) => {
+            report_first_failure(provider, &url, "throttled by the server");
+            return Err(TileFailure::Throttled(wait));
+        }
+        Ok(crate::http::Fetched::Body(bytes)) if is_placeholder(&bytes) => {
+            return Err(TileFailure::Unavailable);
+        }
+        Ok(crate::http::Fetched::Body(bytes)) => {
             crate::download_stats::record(
                 if ahead {
                     crate::download_stats::DownloadKind::ImageryAhead
@@ -570,29 +667,52 @@ async fn worker(
     repaint: Arc<dyn Fn() + Send + Sync>,
 ) {
     loop {
-        let Some(_ticket) = rx.lock().await.recv().await else {
-            return;
-        };
-        let Some(cache) = cache.upgrade() else {
-            return;
-        };
-        let Some((key, epoch, ahead)) = cache.next_job() else {
-            continue;
-        };
-        match fetch_tile(key, &cache.disk, cache.fixture_source.as_deref(), ahead).await {
-            Ok(FetchedTile { tile, persistence }) => {
-                // Publish before optional SQLite persistence, so writes/eviction do
-                // not delay imagery readiness. Persistence keeps its original epoch.
-                cache.complete(key, Ok(tile));
-                repaint();
-                if let Some((path, bytes)) = persistence {
-                    let _ = cache.disk.write_owned(&path, bytes, epoch).await;
-                }
+        {
+            let Some(cache) = cache.upgrade() else {
+                return;
+            };
+            // Wake-up tickets only say that work exists: take jobs while any source
+            // has a free slot.
+            while let Some(job) = cache.next_job() {
+                download(&cache, job, &repaint).await;
             }
-            Err(error) => {
-                cache.complete(key, Err(error));
-                repaint();
+        }
+        let ticket =
+            tokio::time::timeout(WORKER_RECHECK, async { rx.lock().await.recv().await }).await;
+        if matches!(ticket, Ok(None)) {
+            return;
+        }
+    }
+}
+
+async fn download(cache: &TileCache, job: Job, repaint: &Arc<dyn Fn() + Send + Sync>) {
+    let fetch = fetch_tile(
+        job.key,
+        &cache.disk,
+        cache.fixture_source.as_deref(),
+        job.ahead,
+    );
+    let outcome = tokio::select! {
+        result = fetch => Some(result),
+        () = job.cancel.notified() => None,
+    };
+    cache.downloading.lock().unwrap().remove(&job.key);
+    match outcome {
+        // The tile left the view; its request was already retired.
+        None => crate::download_stats::record_cancelled(),
+        Some(Err(TileFailure::Throttled(wait))) => cache.throttle(job.key, wait),
+        Some(Ok(FetchedTile { tile, persistence })) => {
+            // Publish before optional SQLite persistence, so writes/eviction do
+            // not delay imagery readiness. Persistence keeps its original epoch.
+            cache.complete(job.key, Ok(tile));
+            repaint();
+            if let Some((path, bytes)) = persistence {
+                let _ = cache.disk.write_owned(&path, bytes, job.epoch).await;
             }
+        }
+        Some(Err(error)) => {
+            cache.complete(job.key, Err(error));
+            repaint();
         }
     }
 }

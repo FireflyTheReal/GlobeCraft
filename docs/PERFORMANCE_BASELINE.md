@@ -435,3 +435,39 @@ Reading: once the camera stops the view is complete at once and sharp within 1.4
 even on the slow link; the cost shows while moving (holes of 1.5–5 % on the slow
 link, mostly at the leading edge of a pan or fly) and in wasted downloads during a
 zoom (levels passed through before their tiles arrive).
+
+### Scheduling and cancellation (2026-10-26, roadmap 1.3)
+
+Downloads of tiles the view has left now stop (their slots go to the new view), each
+source has its own download limit (`max_parallel` in `sources.json`: Esri 6 as before,
+OpenStreetMap and OpenTopoMap 2), and a 429/503 answer pauses that source for its
+`Retry-After`. Same benchmark, now with the two tilted paths. "Tiles" and "wasted" count
+requests the server received, including ones stopped part-way; "MB" counts completed
+bodies.
+
+Link 60 ms, 4 MB/s:
+
+| Path | Holes while moving | Sharp after stop | Tiles | MB | Wasted |
+| --- | --- | --- | --- | --- | --- |
+| zoom into a city | 0.51 % | 0.02 s | 389 | 8.13 | 60 (15 %) |
+| fly across | 1.49 % | 0.55 s | 339 | 7.13 | 43 (13 %) |
+| drag-pan | 1.85 % | 0.25 s | 250 | 5.62 | 13 (5 %) |
+| orbit | 1.54 % | 0.01 s | 114 | 2.28 | 20 (18 %) |
+| tilted descent | 1.26 % | 0.22 s | 418 | 8.40 | 42 (10 %) |
+| tilted orbit close | 1.89 % | 0.20 s | 251 | 5.37 | 24 (10 %) |
+
+Link 150 ms, 1 MB/s:
+
+| Path | Holes while moving | Sharp after stop | Tiles | MB | Wasted |
+| --- | --- | --- | --- | --- | --- |
+| zoom into a city | 1.47 % | 0.15 s | 259 | 4.67 | 69 (27 %) |
+| fly across | 3.57 % | 1.23 s | 234 | 4.63 | 41 (18 %) |
+| drag-pan | 4.69 % | 0.68 s | 198 | 4.13 | 31 (16 %) |
+| orbit | 3.55 % | 0.03 s | 118 | 2.23 | 19 (16 %) |
+| tilted descent | 3.11 % | 0.29 s | 266 | 4.85 | 33 (12 %) |
+| tilted orbit close | 4.55 % | 0.78 s | 206 | 4.13 | 31 (15 %) |
+
+Reading: on the slow link a zoom now transfers 13 % less (5.35 → 4.67 MB) and is sharp
+twice as fast (0.29 → 0.15 s); fly across 8 % less and sharp at 1.23 s instead of
+1.36 s. On the fast link the change is within a few percent. Raising Esri to 8 parallel
+downloads only added bytes on the shared link, so it stays at 6.

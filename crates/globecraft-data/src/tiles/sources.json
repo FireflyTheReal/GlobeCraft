@@ -1,5 +1,5 @@
 {
-  "comment": "Tile sources as data (roadmap 1.2). `id` is part of every tile key and of the disk cache: never reuse or renumber one. `kind`: imagery (photographs, faded smoothly between levels), map (drawn maps with text), elevation (Terrarium heights), overlay (drawn over the basemap). `access.template` takes {z}, {x} and {y}. Strings ending in `_key` name a translated text.",
+  "comment": "Tile sources as data (roadmap 1.2). `id` is part of every tile key and of the disk cache: never reuse or renumber one. `kind`: imagery (photographs, faded smoothly between levels), map (drawn maps with text), elevation (Terrarium heights), overlay (drawn over the basemap). `access.template` takes {z}, {x} and {y}. Strings ending in `_key` name a translated text. `max_parallel` caps downloads from the source at once (the OpenStreetMap tile policy asks for at most two).",
   "sources": [
     {
       "id": 0,
@@ -17,6 +17,7 @@
       "attribution": "Imagery © Esri, Maxar, Earthstar Geographics",
       "attribution_key": "provider-imagery-attribution",
       "prefetch": "allowed",
+      "max_parallel": 6,
       "notes": "blankTile=false: missing tiles answer 404 instead of the 'Map data not yet available' image, so coarser imagery stands in. Distinct tiles exist past z17 (probed z18-z20)."
     },
     {
@@ -33,7 +34,8 @@
       "cache_dir": "wayback",
       "attribution": "Imagery © Esri, Maxar, Earthstar Geographics",
       "attribution_key": "provider-imagery-attribution",
-      "prefetch": "allowed"
+      "prefetch": "allowed",
+      "max_parallel": 6
     },
     {
       "id": 1,
@@ -51,6 +53,7 @@
       "attribution": "© OpenStreetMap contributors",
       "attribution_key": "provider-streets-attribution",
       "prefetch": "on_demand",
+      "max_parallel": 2,
       "notes": "The OpenStreetMap tile usage policy forbids bulk prefetching."
     },
     {
@@ -67,7 +70,8 @@
       "max_zoom": 17,
       "cache_dir": "opentopo",
       "attribution": "© OpenTopoMap (CC-BY-SA), © OpenStreetMap",
-      "prefetch": "on_demand"
+      "prefetch": "on_demand",
+      "max_parallel": 2
     },
     {
       "id": 4,
@@ -83,7 +87,8 @@
       "tile_px": 512,
       "cache_dir": "mapterhorn_dem",
       "attribution": "© Mapterhorn (mapterhorn.com/attribution)",
-      "prefetch": "allowed"
+      "prefetch": "allowed",
+      "max_parallel": 6
     },
     {
       "id": 5,
@@ -100,6 +105,7 @@
       "cache_dir": "gibs_black_marble",
       "attribution": "Night lights: NASA Earth Observatory / GIBS (VIIRS Black Marble 2016)",
       "prefetch": "allowed",
+      "max_parallel": 4,
       "notes": "NASA GIBS, layer VIIRS_Black_Marble (Worldview: 'Earth at Night', 500 m, a 2012 and a 2016 composite), Web Mercator tile matrix GoogleMapsCompatible_Level8."
     }
   ]
