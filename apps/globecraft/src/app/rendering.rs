@@ -270,6 +270,7 @@ impl App {
             sun,
             lod_scale,
             level_blend: true,
+            fixed_level: None,
         }
     }
 

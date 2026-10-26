@@ -264,6 +264,7 @@ fn replay(
         sun: None,
         lod_scale,
         level_blend: true,
+        fixed_level: None,
     };
     let hole = hole_rgba(&config(1.0));
     let used = Mutex::new(HashSet::<TileKey>::new());

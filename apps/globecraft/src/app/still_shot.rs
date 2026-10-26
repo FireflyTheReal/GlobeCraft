@@ -51,10 +51,15 @@ impl App {
         let (width, height) = (width * scale, height * scale);
         let aspect = width as f64 / height.max(1) as f64;
         let basis = self.view_basis(aspect);
-        let cfg = globecraft_render::RenderCfg {
+        let mut cfg = globecraft_render::RenderCfg {
             level_blend: quality.level_blend(),
             ..self.frame_config(width, height, 1.0)
         };
+        // One tile tier for the whole picture (the one most of it would use), so no
+        // seams between levels show (user, 2026-10-26).
+        if !cfg.level_blend {
+            cfg.fixed_level = globecraft_render::dominant_level(width, height, &basis, &cfg);
+        }
         let path = PathBuf::from(&self.settings.screenshot_dir).join(format!(
             "globecraft_{}_{}.png",
             now_unix() as u64,

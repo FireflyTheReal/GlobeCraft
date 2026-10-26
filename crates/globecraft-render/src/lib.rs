@@ -72,6 +72,10 @@ pub struct RenderCfg {
     /// sharper screenshots (Plus, Pro, Pro Max): each pixel then shows one level, the
     /// nearer one, so the picture depends only on which tiles were downloaded.
     pub level_blend: bool,
+    /// Without the level fade: one imagery level for every pixel whose own level is
+    /// within one of it, so a screenshot shows no seams between tile tiers (user,
+    /// 2026-10-26). Pixels further off (a tilted view's far field) keep their own.
+    pub fixed_level: Option<i32>,
 }
 
 struct Local<'a, F> {
@@ -187,7 +191,11 @@ fn shade_surface(
     terrain_light: f32,
 ) -> Vec4 {
     if !cfg.level_blend {
-        let level = surface.z0 + i32::from(surface.frac >= 0.5);
+        let natural = natural_level(&surface);
+        let level = match cfg.fixed_level {
+            Some(fixed) if (natural - fixed).abs() <= 1 => fixed,
+            _ => natural,
+        };
         let (col, _) = sample_chain(loc, cfg.provider, rel, level, &surface);
         return finish_surface(col, surface, terrain_light);
     }
@@ -211,6 +219,44 @@ fn shade_surface(
         }
     }
     finish_surface(col, surface, terrain_light)
+}
+
+/// The single imagery level nearest a pixel's detail: its band, or the next one
+/// past the middle of the band.
+fn natural_level(surface: &Surface) -> i32 {
+    surface.z0 + i32::from(surface.frac >= 0.5)
+}
+
+/// The imagery level most of the picture would use (`RenderCfg::fixed_level`), from
+/// a sparse grid of the view's surface pixels. `None` when no pixel shows the ground.
+pub fn dominant_level(w: usize, h: usize, basis: &Basis, cfg: &RenderCfg) -> Option<i32> {
+    const SAMPLES_PER_SIDE: usize = 64;
+    let rays = RayCaster::new(w, h, basis);
+    let geometry = rays.model_geometry();
+    let step = (w.max(h) / SAMPLES_PER_SIDE).max(1);
+    let mut counts: HashMap<i32, usize> = HashMap::new();
+    for y in (0..h).step_by(step) {
+        for x in (0..w).step_by(step) {
+            let ray = if rays.uses_unit_sphere() {
+                rays.cast_model::<false>(x, y)[0]
+            } else {
+                rays.cast_model::<true>(x, y)[0]
+            };
+            if ray.discriminant < 0.0 || ray.camera_dot >= 0.0 {
+                continue;
+            }
+            let surface = if rays.uses_unit_sphere() {
+                surface::<false>(x, y, w, h, &ray, cfg, geometry)
+            } else {
+                surface::<true>(x, y, w, h, &ray, cfg, geometry)
+            };
+            *counts.entry(natural_level(&surface)).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|&(level, count)| (count, level))
+        .map(|(level, _)| level)
 }
 
 /// Grid, lighting and rim over the imagery colour of a surface pixel.

@@ -30,6 +30,7 @@ fn raster_matches_regression_fixtures() {
         sun,
         lod_scale: 1.0,
         level_blend: true,
+        fixed_level: None,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
     let scenarios = [
@@ -205,6 +206,7 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         sun: Some(ll_to_v3(20.0, 45.0)),
         lod_scale: 1.0,
         level_blend: true,
+        fixed_level: None,
     }
 }
 
@@ -573,4 +575,60 @@ fn terrain_views() {
             .save(dir.join(format!("{name}.png")))
             .unwrap();
     }
+}
+
+#[test]
+fn a_fixed_level_shows_one_tile_tier_across_the_picture() {
+    // Even levels red, odd levels blue.
+    let (red, blue) = (solid_tile([255, 0, 0]), solid_tile([0, 0, 255]));
+    let lookup = |key: TileKey| {
+        if unkey(key).1.is_multiple_of(2) {
+            Lookup::Ready(red.clone())
+        } else {
+            Lookup::Ready(blue.clone())
+        }
+    };
+    let (width, height) = (120, 80);
+    let mut cfg = batch_reference_config(Provider::Satellite);
+    cfg.atmo = false;
+    cfg.sky = None;
+    cfg.sun = None;
+    cfg.level_blend = false;
+    let tiers = |pixels: &[u8]| {
+        let reds = pixels
+            .chunks(RGBA_CHANNELS)
+            .filter(|p| p[0] > 200 && p[2] < 50)
+            .count();
+        let blues = pixels
+            .chunks(RGBA_CHANNELS)
+            .filter(|p| p[2] > 200 && p[0] < 50)
+            .count();
+        (reds, blues)
+    };
+    // An altitude where the curved globe spans two levels from centre to edge.
+    let basis = [300.0, 600.0, 900.0, 1500.0, 2500.0, 4000.0]
+        .into_iter()
+        .map(|alt| {
+            Cam {
+                lat: 54.0,
+                lon: 8.0,
+                heading: 0.0,
+                alt,
+                tilt: 0.0,
+            }
+            .basis(width as f64 / height as f64)
+        })
+        .find(|basis| {
+            let (pixels, _, _) = render_pixels_tracked(width, height, basis, &cfg, &lookup);
+            let (reds, blues) = tiers(&pixels);
+            reds > 0 && blues > 0
+        })
+        .expect("a view spanning two tiers");
+    cfg.fixed_level = dominant_level(width, height, &basis, &cfg);
+    let (fixed, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    let (reds, blues) = tiers(&fixed);
+    assert!(
+        reds == 0 || blues == 0,
+        "{reds} red and {blues} blue pixels"
+    );
 }

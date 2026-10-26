@@ -227,6 +227,7 @@ mod tests {
             sun: None,
             lod_scale: 1.0,
             level_blend: false,
+            fixed_level: None,
         };
         (basis, cfg)
     }
