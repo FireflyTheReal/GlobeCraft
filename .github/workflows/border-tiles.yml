@@ -92,17 +92,30 @@ jobs:
           ls -l /work/planet.mbtiles
           df -h /work
 
-      - name: Keep borders, names and water to zoom 12
+      # The tiles of zoom 13-14 are most of the file; copy the rest out first, so
+      # tile-join reads a few GB instead of the whole planet.
+      - name: Copy zooms 0-12
+        working-directory: /work
+        run: |
+          sqlite3 planet.mbtiles \
+            "ATTACH 'low.mbtiles' AS low;
+             CREATE TABLE low.metadata AS SELECT * FROM metadata;
+             CREATE TABLE low.tiles AS SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles WHERE zoom_level <= 12;
+             CREATE UNIQUE INDEX low.tile_index ON tiles (zoom_level, tile_column, tile_row);"
+          rm planet.mbtiles
+          ls -l low.mbtiles
+
+      - name: Keep borders, names and the ocean
         working-directory: /work
         run: |
           attribution='<a href="https://openmaptiles.org/">&copy; OpenMapTiles</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>'
           ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
             --layer=boundary --layer=place -A "$attribution" \
-            -n "GlobeCraft borders and names" -o borders.mbtiles planet.mbtiles
+            -n "GlobeCraft borders and names" -o borders.mbtiles low.mbtiles
           ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
             --layer=water --feature-filter='{"water":["==","class","ocean"]}' -A "$attribution" \
-            -n "GlobeCraft ocean" -o water.mbtiles planet.mbtiles
-          rm planet.mbtiles
+            -n "GlobeCraft ocean" -o water.mbtiles low.mbtiles
+          rm low.mbtiles
 
       - name: Measure
         working-directory: /work
