@@ -96,7 +96,13 @@ jobs:
       # tile-join reads a few GB instead of the whole planet.
       - name: Copy zooms 0-12
         working-directory: /work
+        # Temporary files (SQLite's index sort, tile-join, the converter) are as large
+        # as the data: keep them off the small root disk.
+        env:
+          TMPDIR: /work/tmp
+          SQLITE_TMPDIR: /work/tmp
         run: |
+          mkdir -p "$TMPDIR"
           sqlite3 planet.mbtiles \
             "ATTACH 'low.mbtiles' AS low;
              CREATE TABLE low.metadata AS SELECT * FROM metadata;
@@ -107,6 +113,11 @@ jobs:
 
       - name: Keep borders, names and the ocean
         working-directory: /work
+        # Temporary files (SQLite's index sort, tile-join, the converter) are as large
+        # as the data: keep them off the small root disk.
+        env:
+          TMPDIR: /work/tmp
+          SQLITE_TMPDIR: /work/tmp
         run: |
           attribution='<a href="https://openmaptiles.org/">&copy; OpenMapTiles</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>'
           ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
@@ -139,9 +150,11 @@ jobs:
 
       - name: Convert to PMTiles
         working-directory: /work
-        # Its temporary file is as large as the archive: keep it off the small root disk.
+        # Temporary files (SQLite's index sort, tile-join, the converter) are as large
+        # as the data: keep them off the small root disk.
         env:
           TMPDIR: /work/tmp
+          SQLITE_TMPDIR: /work/tmp
         run: |
           mkdir -p "$TMPDIR"
           for set in borders water; do
