@@ -37,12 +37,15 @@ The tabs at the top hold everything else: **Layers** (borders, names, grid, terr
 
 ## What it can do
 
-- Satellite, street and topographic maps, historical imagery by date, and 3D terrain
+- Satellite, street and topographic maps, historical imagery by date (with a swipe
+  compare), and 3D terrain you can tilt to the horizon
 - Country, state and municipal borders with names, streamed in as you zoom
 - Live aircraft, ships, satellites, rain radar, clouds and traffic
 - Placemarks and KML/KMZ files, a distance ruler, coordinates in many formats
-- Real sunlight, atmosphere, stars, the Moon and your own planet images
-- Screenshots without the interface, game controllers, English and Brazilian Portuguese
+- Real sunlight, atmosphere, night lights, stars, the Milky Way, the Moon and your
+  own planet images
+- Screenshots without the interface (up to 8× the screen), game controllers, English
+  and Brazilian Portuguese
 
 ## Build it yourself
 

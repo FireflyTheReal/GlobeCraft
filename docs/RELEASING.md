@@ -14,7 +14,7 @@ separate from development checks. An initial run still compiles dependencies;
 compatible later runs can reuse them. Caching does not reuse previously published
 application binaries: every release still builds and packages its tagged source.
 
-| Platform | Release files (prefix `globecraft-0.2.0-`) |
+| Platform | Release files (prefix `globecraft-0.3.0-`) |
 | --- | --- |
 | Linux x86-64 | `linux-x64.tar.gz`, `linux-x64.deb`, `linux-x64.rpm`, `linux-x64.AppImage`, `linux-x64.AppImage.zsync`, `linux-x64.flatpak`, `linux-x64.snap` |
 | Linux ARM64 | `linux-arm64.tar.gz`, `linux-arm64.deb`, `linux-arm64.rpm`, `linux-arm64.AppImage`, `linux-arm64.AppImage.zsync`, `linux-arm64.flatpak`, `linux-arm64.snap` |
@@ -155,7 +155,7 @@ After merge, the Actions page also offers a manual **Release** run with the same
 preview-only behavior. Inspect and test these artifacts before creating a version tag.
 Actions artifact names also include the workspace version, so their downloadable
 wrapper ZIPs are versioned (for example,
-`globecraft-0.2.0-x86_64-pc-windows-msvc.zip`). The release package inside retains
+`globecraft-0.3.0-x86_64-pc-windows-msvc.zip`). The release package inside retains
 its friendly platform name from the table above.
 
 ## Publish a version
@@ -163,7 +163,7 @@ its friendly platform name from the table above.
 1. Set `workspace.package.version` in `Cargo.toml`, regenerate `Cargo.lock`,
    run the contributor checks, and merge those changes.
 2. From the reviewed commit, create and push the matching tag, for example
-   `git tag v0.2.0` followed by `git push upstream v0.2.0`.
+   `git tag v0.3.0` followed by `git push upstream v0.3.0`.
 3. The workflow requires the tag to equal `v` plus the workspace version.
    All six native builds, all package formats and asset checksums must
    succeed before publication.
@@ -227,12 +227,12 @@ The GitHub release page uses GitHub's native generated notes rather than the
 commit-grouped Actions changelog. This produces **What's Changed** entries with
 PR titles, authors and PR links, a **New Contributors** section when applicable,
 and a full comparison link when a previous comparison tag exists. The release title is
-`GlobeCraft v0.2.0`. Existing draft notes are preserved on a retry.
+`GlobeCraft v0.3.0`. Existing draft notes are preserved on a retry.
 
 Maintainers can preview the GitHub notes without creating a release:
 
 ```sh
-gh api --method POST repos/FireflyTheReal/GlobeCraft/releases/generate-notes -f tag_name=v0.2.0 -f target_commitish=main --jq .body
+gh api --method POST repos/FireflyTheReal/GlobeCraft/releases/generate-notes -f tag_name=v0.3.0 -f target_commitish=main --jq .body
 ```
 
 To preview locally, install git-cliff 2.14.2 and run:
@@ -247,9 +247,9 @@ python3 -m unittest discover -s scripts -p 'test_package_*.py'
 Python 3.12+ is required for the packaging helper. For a native Linux x86-64 build:
 
 ```sh
-python3 scripts/package_release.py validate --tag v0.2.0
+python3 scripts/package_release.py validate --tag v0.3.0
 cargo build -p globecraft --release --no-default-features --locked
-python3 scripts/package_release.py package --version 0.2.0 --target x86_64-unknown-linux-gnu --binary target/release/globecraft --output /tmp/globecraft-release
+python3 scripts/package_release.py package --version 0.3.0 --target x86_64-unknown-linux-gnu --binary target/release/globecraft --output /tmp/globecraft-release
 ```
 
 Use the target and executable name for your native platform. For explicit-target
@@ -273,7 +273,7 @@ python3 -m venv /tmp/globecraft-packaging
 /tmp/globecraft-packaging/bin/python -m pip install dmgbuild==1.6.7
 rustup target add aarch64-apple-darwin
 MACOSX_DEPLOYMENT_TARGET=11.0 cargo build -p globecraft --release --no-default-features --locked --target aarch64-apple-darwin
-/tmp/globecraft-packaging/bin/python scripts/package_release.py package --version 0.2.0 --target aarch64-apple-darwin --binary target/aarch64-apple-darwin/release/globecraft --output /tmp/globecraft-release
+/tmp/globecraft-packaging/bin/python scripts/package_release.py package --version 0.3.0 --target aarch64-apple-darwin --binary target/aarch64-apple-darwin/release/globecraft --output /tmp/globecraft-release
 ```
 
 ### Additional native formats
@@ -284,7 +284,7 @@ formats, install the pinned packaging tools, then run:
 ```sh
 cargo install cargo-packager --version 0.11.8 --locked
 cargo install cargo-generate-rpm --version 0.21.0 --locked
-python3 scripts/package_linux.py --version 0.2.0 --target x86_64-unknown-linux-gnu --binary target/release/globecraft --output /tmp/globecraft-release --formats deb rpm appimage
+python3 scripts/package_linux.py --version 0.3.0 --target x86_64-unknown-linux-gnu --binary target/release/globecraft --output /tmp/globecraft-release --formats deb rpm appimage
 ```
 
 Flatpak and Snap use the same helper with `--formats flatpak` or `--formats snap`,
@@ -312,8 +312,16 @@ are unchanged by the packaging tools.
 Before consolidating checksum sidecars, validate a complete downloaded artifact set:
 
 ```sh
-python3 scripts/package_release.py verify --version 0.2.0 --output /tmp/globecraft-release
+python3 scripts/package_release.py verify --version 0.3.0 --output /tmp/globecraft-release
 ```
+
+## v0.3.0 scope
+
+The first release from `FireflyTheReal/GlobeCraft`: ray-marched 3D terrain, tilt
+(with a navigator control), the Globe navigator, borders and names from
+OpenStreetMap vector tiles, Wayback compare, night lights, smarter tile loading
+and screenshot qualities. See [v0.3.0 notes](releases/v0.3.0.md) for details and
+known limits.
 
 ## v0.2.0 scope
 

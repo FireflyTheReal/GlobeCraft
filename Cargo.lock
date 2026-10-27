@@ -1991,7 +1991,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ab_glyph",
  "eframe",
@@ -2017,7 +2017,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-assistant"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "globecraft-core",
  "serde_json",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "emath",
  "fluent-bundle",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-data"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "flate2",
@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "emath",
