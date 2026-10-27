@@ -9,6 +9,14 @@ use serde_json::{Value, json};
 
 const MAX_HITS: usize = 40;
 const ROW_H: f32 = 30.0;
+/// Width of the search box: as wide as the window allows, within these bounds.
+const MIN_WIDTH_POINTS: f32 = 240.0;
+const MAX_WIDTH_POINTS: f32 = 640.0;
+/// The result list takes this share of the window's height, within these bounds
+/// (about ten rows at most; three were all the modal gave it before).
+const LIST_HEIGHT_SHARE: f32 = 0.5;
+const MIN_LIST_HEIGHT_POINTS: f32 = 180.0;
+const MAX_LIST_HEIGHT_POINTS: f32 = 320.0;
 
 #[derive(Default)]
 pub(in crate::app) struct CommandSearch {
@@ -116,8 +124,9 @@ impl App {
         let mut run: Option<(&'static str, Value)> = None;
         let mut ask: Option<String> = None;
         let screen = ctx.content_rect();
-        let width = (screen.width() - 48.0).clamp(240.0, 560.0);
-        let list_h = (screen.height() - 190.0).clamp(120.0, 380.0);
+        let width = (screen.width() - 48.0).clamp(MIN_WIDTH_POINTS, MAX_WIDTH_POINTS);
+        let list_h = (screen.height() * LIST_HEIGHT_SHARE)
+            .clamp(MIN_LIST_HEIGHT_POINTS, MAX_LIST_HEIGHT_POINTS);
         let found = hits(self, &state.query);
         state.selected = state.selected.min(found.len().saturating_sub(1));
         let (up, down, enter, escape) = ctx.input_mut(|i| {
@@ -163,7 +172,10 @@ impl App {
                 }
             });
             ui.separator();
+            // A minimum as well: inside the modal the list otherwise shrank to the few
+            // rows the modal's first layout gave it.
             egui::ScrollArea::vertical()
+                .min_scrolled_height(list_h)
                 .max_height(list_h)
                 .show(ui, |ui| {
                     if found.is_empty() {
