@@ -179,6 +179,8 @@ pub(crate) struct App {
 
     kml_drop_rect: Rect,
     ring_drag: bool,
+    /// The navigator's tilt thumb is being dragged.
+    tilt_drag: bool,
     /// A navigator cardinal button turns the view to this heading, easing in.
     nav_snap_heading: Option<f64>,
     /// A high-quality screenshot rendering in the background.
@@ -369,6 +371,7 @@ impl App {
             sugg_rx: None,
             kml_drop_rect: Rect::NOTHING,
             ring_drag: false,
+            tilt_drag: false,
             nav_snap_heading: None,
             still_shot: None,
             ground_km: 0.0,

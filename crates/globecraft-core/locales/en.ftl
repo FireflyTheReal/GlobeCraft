@@ -63,6 +63,7 @@ navigation-east-tooltip = East up
 navigation-south-tooltip = South up
 navigation-west-tooltip = West up
 navigation-ring-tooltip = Drag the ring to rotate the view
+navigation-tilt-tooltip = Tilt { $degrees }°: drag to tilt the view, double-click to look straight down
 navigation-globe-tooltip = Drag to turn the globe
 
 settings-title = Settings

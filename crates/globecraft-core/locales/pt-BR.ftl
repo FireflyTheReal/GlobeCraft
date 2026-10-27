@@ -63,6 +63,7 @@ navigation-east-tooltip = Leste para cima
 navigation-south-tooltip = Sul para cima
 navigation-west-tooltip = Oeste para cima
 navigation-ring-tooltip = Arraste o anel para girar a vista
+navigation-tilt-tooltip = Inclinação { $degrees }°: arraste para inclinar a vista, clique duas vezes para olhar direto para baixo
 navigation-globe-tooltip = Arraste para girar o globo
 
 settings-title = Configurações

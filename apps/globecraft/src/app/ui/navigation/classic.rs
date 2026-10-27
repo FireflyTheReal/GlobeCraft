@@ -107,7 +107,7 @@ impl App {
             base.with("ring"),
             Sense::drag(),
         );
-        if ring.drag_started() {
+        if ring.drag_started() && !self.tilt_drag {
             self.ring_drag = ring
                 .interact_pointer_pos()
                 .is_some_and(|p| (p - c1).length() >= r_disc - 1.0);
@@ -195,6 +195,9 @@ impl App {
                 _ => {}
             }
         }
+
+        // The tilt arc beside the ring.
+        active |= self.tilt_arc(ui, &painter, c1, r_ring, k, base);
 
         // ── move (pan) disc ──
         painter.circle_filled(c2, r_disc, fill);

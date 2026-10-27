@@ -41,6 +41,34 @@ fn save(h: &mut Harness<'static, App>, dir: &std::path::Path, name: &str) {
     println!("wrote {}", path.display());
 }
 
+/// Drags the navigator's tilt thumb from straight down to about 60° and checks the
+/// camera followed (the default window and controls scale place the ring here).
+fn drag_the_tilt_thumb(h: &mut Harness<'static, App>) {
+    let ring = egui::pos2(1423.3, 192.0);
+    let at = |degrees: f32| {
+        let angle = (32.0 + degrees).to_radians();
+        ring + egui::vec2(-angle.sin(), -angle.cos()) * 50.0
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.event(egui::Event::PointerMoved(at(0.0)));
+    h.step();
+    h.event(button(at(0.0), true));
+    h.step();
+    for degrees in [10.0, 25.0, 40.0, 55.0, 60.0] {
+        h.event(egui::Event::PointerMoved(at(degrees)));
+        h.step();
+    }
+    h.event(button(at(60.0), false));
+    settle(h, 2.0);
+    let tilt = h.state().cam.tilt;
+    assert!((tilt - 60.0).abs() < 3.0, "tilt after the drag: {tilt}");
+}
+
 #[test]
 #[ignore = "manual: renders the full interface offscreen; see the module documentation"]
 fn interface_screenshots() {
@@ -52,6 +80,9 @@ fn interface_screenshots() {
     let mut h = harness(ThemePreference::Light);
     settle(&mut h, 6.0);
     save(&mut h, &dir, "01-home-light");
+    drag_the_tilt_thumb(&mut h);
+    save(&mut h, &dir, "01-tilt-arc-light");
+    let _ = h.state_mut().run("camera.topDown", Value::Null);
     let _ = h
         .state_mut()
         .run("ui.navigatorStyle", json!({"style": "classic"}));

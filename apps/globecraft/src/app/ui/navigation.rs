@@ -15,6 +15,7 @@ use mini_globe::{MiniGlobe, nearest_heading, screen_axes, view_cap_fraction};
 
 mod classic;
 mod mini_globe;
+mod tilt;
 
 // Geometry in egui points before UI scaling, matching the classic navigator.
 const MIN_CONTROL_SCALE: f32 = 0.8;
@@ -76,6 +77,7 @@ impl App {
     pub(in crate::app) fn nav_controls(&mut self, ui: &mut egui::Ui, rect: Rect, dt: f64) -> bool {
         if self.settings.hide_navigation_controls {
             self.ring_drag = false;
+            self.tilt_drag = false;
             self.nav_snap_heading = None;
             return false;
         }
@@ -118,7 +120,7 @@ impl App {
             Sense::drag(),
         );
         let on_ring = |p: Pos2| (p - centre).length() >= r_globe;
-        if dial.drag_started() {
+        if dial.drag_started() && !self.tilt_drag {
             self.ring_drag = dial.interact_pointer_pos().is_some_and(on_ring);
             self.nav_snap_heading = None;
         }
@@ -197,6 +199,9 @@ impl App {
                 active = true;
             }
         }
+
+        // The tilt arc beside the ring.
+        active |= self.tilt_arc(ui, &painter, centre, r_ring, k, base);
 
         // ── zoom: the classic + and − buttons and slider ──
         let r_btn = ZOOM_BUTTON_RADIUS_POINTS * k;
