@@ -64,9 +64,8 @@ jobs:
           size=$(curl -fsSI "$url" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}')
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Planet $version: $((size / 1024 / 1024 / 1024)) GiB at $url"
           free=$(df --output=avail -B1 /work | tail -n 1)
-          echo "Free on /work: $((free / 1024 / 1024 / 1024)) GiB"
+          echo "::notice::Planet $version: $((size / 1024 / 1024 / 1024)) GiB; free on /work: $((free / 1024 / 1024 / 1024)) GiB"
           if [ "$size" -gt "$((free - 8 * 1024 * 1024 * 1024))" ]; then
             echo "::error::The planet file does not fit on /work"
             exit 1
