@@ -229,6 +229,7 @@ mod tests {
             level_blend: false,
             fixed_level: None,
             night_lights: false,
+            stars: true,
         };
         (basis, cfg)
     }

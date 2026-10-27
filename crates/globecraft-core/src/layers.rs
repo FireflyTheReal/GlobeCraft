@@ -14,6 +14,8 @@ pub enum MapLayer {
     Atmosphere,
     Sunlight,
     Stars,
+    /// NASA's Milky Way map behind the globe.
+    MilkyWay,
     CinematicSky,
     Radar,
     Clouds,
@@ -60,7 +62,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -71,6 +73,7 @@ impl MapLayer {
         Self::Atmosphere,
         Self::Sunlight,
         Self::Stars,
+        Self::MilkyWay,
         Self::CinematicSky,
         Self::Radar,
         Self::Clouds,
@@ -95,6 +98,7 @@ impl MapLayer {
             Self::Atmosphere => "atmosphere",
             Self::Sunlight => "sunlight",
             Self::Stars => "stars",
+            Self::MilkyWay => "milky_way",
             Self::CinematicSky => "cinematic_sky",
             Self::Radar => "radar",
             Self::Clouds => "clouds",
@@ -124,6 +128,7 @@ impl MapLayer {
             Self::Atmosphere => "layers-atmosphere-toggle",
             Self::Sunlight => "layers-sunlight-toggle",
             Self::Stars => "layers-stars-toggle",
+            Self::MilkyWay => "layers-milky-way-toggle",
             Self::CinematicSky => "sky-cinematic",
             Self::Radar => "layers-weather-toggle",
             Self::Clouds => "layers-clouds-toggle",
@@ -147,6 +152,7 @@ impl MapLayer {
             Self::Atmosphere => "atmosphere",
             Self::Sunlight => "sun",
             Self::Stars | Self::CinematicSky => "stars",
+            Self::MilkyWay => "planet",
             Self::Radar => "radar",
             Self::Clouds => "cloud",
             Self::Flights => "plane",
@@ -169,6 +175,7 @@ impl MapLayer {
             | Self::Sunlight
             | Self::NightLights
             | Self::Stars
+            | Self::MilkyWay
             | Self::CinematicSky => LayerGroup::Sky,
             Self::Radar | Self::Clouds => LayerGroup::Weather,
             Self::Flights | Self::Vessels | Self::Satellites => LayerGroup::LiveObjects,
@@ -180,7 +187,7 @@ impl MapLayer {
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::GridLabels => Some(Self::Grid),
-            Self::CinematicSky => Some(Self::Stars),
+            Self::CinematicSky => Some(Self::MilkyWay),
             _ => None,
         }
     }
@@ -215,8 +222,9 @@ impl MapLayer {
         )
     }
 
-    /// Whether the layer has its own switch in the interface. Cinematic Sky became
-    /// part of Stars (2026-10-26); its code still works in commands.
+    /// Whether the layer has its own switch in the interface. Cinematic Sky was
+    /// dropped (2026-10-26): the Milky Way shows whenever it is on. Its code still
+    /// works in commands.
     pub fn listed(self) -> bool {
         self != Self::CinematicSky
     }

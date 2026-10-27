@@ -47,6 +47,7 @@ fn earth_model_kernel_time() {
         level_blend: true,
         fixed_level: None,
         night_lights: false,
+        stars: true,
     };
     for model in EarthModel::ALL {
         let views = views(model);
@@ -158,6 +159,7 @@ fn earth_model_raster_capture() {
                     level_blend: true,
                     fixed_level: None,
                     night_lights: false,
+                    stars: true,
                 };
                 let (pixels, _) =
                     render_pixels(127, 95, &basis, &cfg, &|_| Lookup::Ready(tile.clone()));

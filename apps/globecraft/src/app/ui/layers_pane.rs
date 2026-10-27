@@ -455,7 +455,7 @@ impl App {
                 note(ui, t, &self.live_satellites.status(lang));
                 credit(ui, "CelesTrak", "https://celestrak.org/");
             }
-            MapLayer::Stars if self.sky.image.is_none() => {
+            MapLayer::MilkyWay if self.sky.image.is_none() => {
                 note(ui, t, lang.text("sky-loading"));
             }
             _ => {}

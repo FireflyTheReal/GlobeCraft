@@ -85,7 +85,7 @@ impl Category {
                 "settings-startup-view-label",
                 "settings-startup-help",
             ],
-            Self::Globe => &["layers-stars-toggle", "sky-help"],
+            Self::Globe => &["layers-stars-toggle", "layers-milky-way-toggle", "sky-help"],
             Self::Controllers => &[
                 "controllers-enabled",
                 "controllers-help",

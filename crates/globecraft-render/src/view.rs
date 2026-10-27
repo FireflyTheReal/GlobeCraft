@@ -36,6 +36,7 @@ pub fn render_scale(size_points: Vec2, pixels_per_point: f32, idle: bool) -> f32
     let (idle_width, _) = raster_size(size_points, pixels_per_point, true);
     width as f32 / idle_width as f32
 }
+#[derive(Clone)]
 pub struct RasterView {
     pub camera: Cam,
     pub model: globecraft_core::earth_model::EarthModel,
@@ -56,6 +57,7 @@ pub struct RasterView {
     pub ground_km: f64,
     pub sunlight: bool,
     pub night_lights: bool,
+    pub stars: bool,
     pub sky: bool,
     pub cinematic_sky: bool,
 }
@@ -98,6 +100,10 @@ impl RasterView {
                 self.model.code(),
                 self.ground_km.to_bits(),
                 self.night_lights,
+                // Sunlight changes the picture even when the sky already needs the
+                // clock (the Milky Way): without it a toggle drew nothing new.
+                self.sunlight,
+                self.stars,
             ),
         )
             .hash(&mut state);
@@ -153,9 +159,19 @@ mod tests {
             sky: false,
             cinematic_sky: false,
             night_lights: false,
+            stars: true,
         };
         let off = view.keys(120.0);
         assert_eq!(off.presentation, view.keys(180.0).presentation);
+        // Sunlight and stars redraw the frame, also while the Milky Way shows.
+        let mut sky_on = view.clone();
+        sky_on.sky = true;
+        let mut sunlit = sky_on.clone();
+        sunlit.sunlight = true;
+        assert_ne!(sky_on.keys(120.0).state, sunlit.keys(120.0).state);
+        let mut starless = sky_on.clone();
+        starless.stars = false;
+        assert_ne!(sky_on.keys(120.0).state, starless.keys(120.0).state);
         view.sky = true;
         assert_ne!(off.presentation, view.keys(120.0).presentation);
         assert_ne!(view.keys(120.0).presentation, view.keys(180.0).presentation);
@@ -189,6 +205,7 @@ mod tests {
             sky: false,
             cinematic_sky: false,
             night_lights: false,
+            stars: true,
         };
         let original = view.keys(120.0);
         view.model = globecraft_core::earth_model::EarthModel::Wgs84;
@@ -242,6 +259,7 @@ mod tests {
             terrain_exaggeration: 1.0,
             ground_km: 0.0,
             night_lights: false,
+            stars: true,
         };
         let flat = view.keys(120.0);
         view.terrain = true;

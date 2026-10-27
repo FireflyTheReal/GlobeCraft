@@ -569,6 +569,7 @@ impl App {
             });
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::NightLights);
+                self.layer_small(ui, MapLayer::MilkyWay);
             });
         });
         group(ui, lang.text("ribbon-group-panes"), |ui| {
@@ -798,6 +799,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Atmosphere => "ribbon-layer-atmosphere",
         MapLayer::Sunlight => "ribbon-layer-sunlight",
         MapLayer::Stars => "ribbon-layer-stars",
+        MapLayer::MilkyWay => "ribbon-layer-milky-way",
         MapLayer::CinematicSky => "ribbon-layer-cinematic",
         MapLayer::Radar => "ribbon-layer-radar",
         MapLayer::Clouds => "ribbon-layer-clouds",

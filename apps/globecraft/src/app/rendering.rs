@@ -246,7 +246,8 @@ impl App {
                 time,
                 self.cam,
                 ll_to_v3(latitude, longitude),
-                self.settings.sky.cinematic,
+                // Switched on, the Milky Way shows at any hour (user, 2026-10-27).
+                true,
             ) {
                 Ok(sky) => Some(sky),
                 Err(error) => {
@@ -273,6 +274,7 @@ impl App {
             fixed_level: None,
             night_lights: self.layer(MapLayer::NightLights)
                 && self.explorer.active == globecraft_core::body::Body::Earth,
+            stars: self.layer(MapLayer::Stars),
         }
     }
 

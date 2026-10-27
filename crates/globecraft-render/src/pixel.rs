@@ -171,11 +171,11 @@ pub(super) fn sky(ray: &rays::RaySample, cc: f64, camera_up: DVec3, cfg: &Render
         (d.z * STAR_GRID_RESOLUTION).floor() as i64,
     );
     let hs = hash3(cell.0, cell.1, cell.2);
-    if cfg.sky.is_none() && hs.is_multiple_of(STAR_OCCURRENCE_MODULUS) {
+    if cfg.stars && hs.is_multiple_of(STAR_OCCURRENCE_MODULUS) {
         let br = STAR_MIN_BRIGHTNESS
             + ((hs >> STAR_BRIGHTNESS_SHIFT) & STAR_BRIGHTNESS_MASK) as f32
                 / STAR_BRIGHTNESS_DIVISOR;
-        col = Vec4::new(br, br, br, 0.0);
+        col = col.max(Vec4::new(br, br, br, 0.0));
     }
     let outer_sq = ATMOSPHERE_RADIUS_RATIO * ATMOSPHERE_RADIUS_RATIO;
     if cfg.atmo && cc < outer_sq {
@@ -237,6 +237,7 @@ mod tests {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: false,
+                stars: true,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -275,6 +276,7 @@ mod tests {
             level_blend: true,
             fixed_level: None,
             night_lights: false,
+            stars: true,
         };
         for latitude in [
             -90.0_f64,
@@ -331,6 +333,7 @@ mod tests {
             level_blend: true,
             fixed_level: None,
             night_lights: false,
+            stars: true,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

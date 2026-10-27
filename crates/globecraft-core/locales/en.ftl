@@ -129,7 +129,8 @@ boundaries-osm-loading-status = Loading OpenStreetMap borders…
 layers-atmosphere-toggle = Atmosphere and stars
 
 layers-sunlight-toggle = Real-time sunlight (day/night)
-layers-stars-toggle = Stars by day too (keep the Milky Way visible)
+layers-stars-toggle = Stars
+layers-milky-way-toggle = Milky Way (NASA background)
 layers-night-lights-toggle = City lights at night (NASA Black Marble)
 
 layers-auto-rotation-toggle = Auto-rotate
@@ -605,7 +606,7 @@ controllers-buttons = Button actions
 controllers-monitor = Live normalized inputs
 
 sky-cinematic = Cinematic sky (visible during daylight)
-sky-help = NASA’s diffuse Milky Way map, prepared as a 4K SDR background, is always drawn behind the globe. Near the surface it fades in daylight as the real sky does; with Stars on it stays visible. No selectable star catalog or astronomical navigation.
+sky-help = The Milky Way is NASA’s diffuse map, prepared as a 4K SDR background; Stars draws point stars over it. No selectable star catalog or astronomical navigation.
 sky-loading = Preparing celestial background…
 sky-retry = Retry background loading
 sky-short-credit = Sky: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
@@ -848,6 +849,7 @@ ribbon-layer-atmosphere = Atmosphere
 ribbon-layer-sunlight = Sunlight
 ribbon-layer-night-lights = Night Lights
 ribbon-layer-stars = Stars
+ribbon-layer-milky-way = Milky Way
 ribbon-layer-cinematic = Cinematic Sky
 ribbon-layer-radar = Rain Radar
 ribbon-layer-clouds = Clouds

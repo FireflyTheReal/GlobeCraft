@@ -258,13 +258,14 @@ impl Settings {
         }
         Ok(())
     }
-    /// Whether a layer is shown. Grid labels keep their original settings field. The
-    /// Milky Way background is always drawn; Stars (and its former alias Cinematic Sky)
-    /// keeps it visible by day too (user, 2026-10-26), stored in `sky.cinematic`.
+    /// Whether a layer is shown. Sky layers and grid labels keep their settings fields
+    /// (`sky.stars`, `sky.enabled` for the Milky Way), so earlier files keep their choices.
     pub fn layer_visible(&self, layer: globecraft_core::layers::MapLayer) -> bool {
         use globecraft_core::layers::MapLayer;
         match layer {
-            MapLayer::Stars | MapLayer::CinematicSky => self.sky.cinematic,
+            MapLayer::Stars => self.sky.stars,
+            MapLayer::MilkyWay => self.sky.enabled,
+            MapLayer::CinematicSky => self.sky.cinematic,
             MapLayer::GridLabels => self.grid_numbers,
             _ => self.layers.visible.contains(layer),
         }
@@ -272,7 +273,9 @@ impl Settings {
     pub fn set_layer_visible(&mut self, layer: globecraft_core::layers::MapLayer, visible: bool) {
         use globecraft_core::layers::MapLayer;
         match layer {
-            MapLayer::Stars | MapLayer::CinematicSky => self.sky.cinematic = visible,
+            MapLayer::Stars => self.sky.stars = visible,
+            MapLayer::MilkyWay => self.sky.enabled = visible,
+            MapLayer::CinematicSky => self.sky.cinematic = visible,
             MapLayer::GridLabels => self.grid_numbers = visible,
             _ => self.layers.visible.set(layer, visible),
         }

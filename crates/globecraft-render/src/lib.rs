@@ -79,6 +79,8 @@ pub struct RenderCfg {
     /// City lights (NASA Black Marble): added on the night side when the sun is
     /// shown, the whole surface otherwise.
     pub night_lights: bool,
+    /// Point stars in the sky (over the Milky Way when it shows).
+    pub stars: bool,
 }
 
 struct Local<'a, F> {

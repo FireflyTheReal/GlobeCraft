@@ -32,6 +32,7 @@ fn raster_matches_regression_fixtures() {
         level_blend: true,
         fixed_level: None,
         night_lights: false,
+        stars: true,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
     let scenarios = [
@@ -209,6 +210,7 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         level_blend: true,
         fixed_level: None,
         night_lights: false,
+        stars: true,
     }
 }
 

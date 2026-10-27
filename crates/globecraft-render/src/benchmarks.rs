@@ -168,6 +168,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         level_blend: true,
         fixed_level: None,
         night_lights: false,
+        stars: true,
     };
     // Global overview warming must also cover parts of the globe that were
     // behind the camera at startup, including the dateline and poles.
@@ -282,6 +283,7 @@ fn warm_gpu_frame_time() {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: false,
+                stars: true,
             },
             overlays: None,
             aircraft: None,
@@ -420,6 +422,7 @@ fn warm_gpu_frame_time() {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: false,
+                stars: true,
             },
             overlays: None,
             aircraft: None,

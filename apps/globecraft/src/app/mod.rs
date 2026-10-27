@@ -418,12 +418,10 @@ impl eframe::App for App {
         let sky_wake = ctx.clone();
         self.sky.update(
             self.runtime.handle(),
-            // The Milky Way background is always drawn (Stars only decides whether it
-            // shows by day too); the stars stand in while it loads.
-            true,
+            self.settings.sky.enabled,
             move || sky_wake.request_repaint(),
         );
-        if self.sky.image.is_some() {
+        if self.settings.sky.enabled && self.sky.image.is_some() {
             ctx.request_repaint_after(SKY_CLOCK_REPAINT_INTERVAL);
         }
         self.updater.start_once();

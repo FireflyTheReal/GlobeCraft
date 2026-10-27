@@ -219,7 +219,8 @@ impl App {
             sunlight: self.layer(MapLayer::Sunlight),
             night_lights: self.layer(MapLayer::NightLights),
             sky: self.sky_ready(),
-            cinematic_sky: self.settings.sky.cinematic,
+            cinematic_sky: true,
+            stars: self.layer(MapLayer::Stars),
         }
         .keys(now_unix());
         let state = keys.state;

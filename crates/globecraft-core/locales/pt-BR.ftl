@@ -129,7 +129,8 @@ boundaries-osm-loading-status = Carregando limites do OpenStreetMap…
 layers-atmosphere-toggle = Atmosfera e estrelas
 
 layers-sunlight-toggle = Luz do sol em tempo real (dia/noite)
-layers-stars-toggle = Estrelas também de dia (manter a Via Láctea visível)
+layers-stars-toggle = Estrelas
+layers-milky-way-toggle = Via Láctea (fundo da NASA)
 layers-night-lights-toggle = Luzes das cidades à noite (NASA Black Marble)
 
 layers-auto-rotation-toggle = Girar automaticamente
@@ -605,7 +606,7 @@ controllers-buttons = Ações dos botões
 controllers-monitor = Entradas normalizadas ao vivo
 
 sky-cinematic = Céu cinematográfico (visível durante o dia)
-sky-help = O mapa difuso da Via Láctea da NASA, preparado como fundo SDR 4K, é sempre desenhado atrás do globo. Perto da superfície ele some com a luz do dia, como o céu real; com Estrelas ligado ele continua visível. Sem catálogo de estrelas selecionável nem navegação astronômica.
+sky-help = A Via Láctea é o mapa difuso da NASA, preparado como fundo SDR 4K; Estrelas desenha estrelas pontuais sobre ele. Sem catálogo de estrelas selecionável nem navegação astronômica.
 sky-loading = Preparando fundo celeste…
 sky-retry = Tentar carregar o fundo novamente
 sky-short-credit = Céu: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
@@ -848,6 +849,7 @@ ribbon-layer-atmosphere = Atmosfera
 ribbon-layer-sunlight = Luz solar
 ribbon-layer-night-lights = Luzes noturnas
 ribbon-layer-stars = Estrelas
+ribbon-layer-milky-way = Via Láctea
 ribbon-layer-cinematic = Céu cinematográfico
 ribbon-layer-radar = Radar de chuva
 ribbon-layer-clouds = Nuvens
