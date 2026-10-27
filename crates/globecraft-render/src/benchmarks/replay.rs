@@ -222,6 +222,9 @@ fn hole_rgba(cfg: &RenderCfg) -> [u8; 4] {
 fn replay(
     name: &'static str,
     duration_s: f64,
+    // A fly-to: its destination is known from the start and loaded ahead, as the app
+    // does (`zoom_out::arrival_tiles`).
+    flight: bool,
     path: impl Fn(f64) -> Cam,
     link: Link,
     body: &Arc<Vec<u8>>,
@@ -272,6 +275,17 @@ fn replay(
     let used = Mutex::new(HashSet::<TileKey>::new());
     let mut overview = globecraft_data::tiles::TileWarmup::startup_satellite();
     let mut zoom_out: Option<globecraft_data::tiles::TileWarmup> = None;
+    let mut arrival =
+        (flight && std::env::var("GLOBECRAFT_REPLAY_NO_ARRIVAL").is_err()).then(|| {
+            let (w, h) = view::raster_size(viewport, 1.0, true);
+            globecraft_data::tiles::TileWarmup::of_keys(crate::zoom_out::arrival_tiles(
+                path(duration_s),
+                h,
+                w as f64 / h as f64,
+                Provider::Satellite,
+                &[0],
+            ))
+        });
     let (mut motion_ms, mut motion_holes) = (Vec::new(), Vec::new());
     let (mut complete_after_s, mut sharp_after_s) = (None, None);
     let mut buffer = Vec::new();
@@ -326,6 +340,9 @@ fn replay(
             .count();
         let holes_pct = 100.0 * holes as f64 / (w * h) as f64;
         buffer = frame.pixels;
+        if let Some(arrival) = &mut arrival {
+            arrival.pump(&cache);
+        }
         if moving {
             motion_ms.push(frame_ms);
             motion_holes.push(holes_pct);
@@ -410,6 +427,7 @@ fn streaming_replay() {
         replay(
             "zoom into a city",
             8.0,
+            false,
             |t| {
                 let s = smoothstep(t / 8.0);
                 cam(48.14, 11.58, 0.0, 12_000.0 * (3.0_f64 / 12_000.0).powf(s))
@@ -422,6 +440,7 @@ fn streaming_replay() {
         replay(
             "fly across",
             8.0,
+            true,
             |t| {
                 let s = smoothstep(t / 8.0);
                 cam(
@@ -439,6 +458,7 @@ fn streaming_replay() {
         replay(
             "drag-pan",
             6.0,
+            false,
             |t| cam(-22.9, -43.4 + 0.2 * t, 0.0, 30.0),
             link,
             &body,
@@ -448,6 +468,7 @@ fn streaming_replay() {
         replay(
             "orbit",
             8.0,
+            false,
             |t| cam(48.86, 2.35, 45.0 * t, 8.0),
             link,
             &body,
@@ -457,6 +478,7 @@ fn streaming_replay() {
         replay(
             "tilted descent",
             8.0,
+            false,
             |t| {
                 let s = smoothstep(t / 8.0);
                 Cam {
@@ -472,6 +494,7 @@ fn streaming_replay() {
         replay(
             "tilted orbit close",
             6.0,
+            false,
             |t| Cam {
                 tilt: 70.0,
                 ..cam(47.37, 8.54, 30.0 * t, 1.5)

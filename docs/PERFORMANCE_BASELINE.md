@@ -471,3 +471,21 @@ Reading: on the slow link a zoom now transfers 13 % less (5.35 → 4.67 MB) and 
 twice as fast (0.29 → 0.15 s); fly across 8 % less and sharp at 1.23 s instead of
 1.36 s. On the fast link the change is within a few percent. Raising Esri to 8 parallel
 downloads only added bytes on the shared link, so it stays at 6.
+
+### Fly-to arrival prefetch (2026-10-27, roadmap 1.4)
+
+While a flight runs, the tiles its destination view needs at its own level are
+requested below the visible work (they are never stopped as off-view). Loading the
+coarser levels around the destination as well gained nothing measurable, so only the
+destination level is requested. Same benchmark, fly across path:
+
+| Link | Sharp after stop | Tiles | MB | Wasted |
+| --- | --- | --- | --- | --- |
+| 60 ms, 4 MB/s, before | 0.55 s | 339 | 7.13 | 43 (13 %) |
+| 60 ms, 4 MB/s, after | 0.26 s | 343 | 7.18 | 50 (15 %) |
+| 150 ms, 1 MB/s, before | 1.23 s | 234 | 4.63 | 41 (18 %) |
+| 150 ms, 1 MB/s, after | 1.01 s | 229 | 4.63 | 38 (17 %) |
+
+Repeated runs on the fast link gave 0.17–0.26 s after against 0.53–0.56 s without the
+prefetch (`GLOBECRAFT_REPLAY_NO_ARRIVAL=1`). Holes while moving are unchanged
+(1.54 % and 3.54 %); the other paths have no flight and are not affected.

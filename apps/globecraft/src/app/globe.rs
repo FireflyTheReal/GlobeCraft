@@ -320,6 +320,50 @@ impl App {
         {
             ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
         }
+        // A flight's destination imagery loads while it flies.
+        match &self.fly {
+            Some(flight) => {
+                let destination = flight.destination();
+                let listed_for = [
+                    destination.lat,
+                    destination.lon,
+                    destination.alt,
+                    destination.heading,
+                    destination.tilt,
+                ]
+                .map(f64::to_bits);
+                if self
+                    .arrival_warmup
+                    .as_ref()
+                    .is_none_or(|(listed, _)| *listed != listed_for)
+                {
+                    let provider = self.effective_provider();
+                    let mut releases = vec![if provider == Provider::Wayback {
+                        self.wayback_idx as u16
+                    } else {
+                        0
+                    }];
+                    if let Some(compare) = self.active_compare() {
+                        releases.push(compare.index as u16);
+                    }
+                    let keys = globecraft_render::zoom_out::arrival_tiles(
+                        destination,
+                        h,
+                        render_aspect,
+                        provider,
+                        &releases,
+                    );
+                    self.arrival_warmup = Some((
+                        listed_for,
+                        globecraft_data::tiles::TileWarmup::of_keys(keys),
+                    ));
+                }
+                if let Some((_, warmup)) = &mut self.arrival_warmup {
+                    warmup.pump(&self.cache);
+                }
+            }
+            None => self.arrival_warmup = None,
+        }
         // The coarser imagery a zoom out will show, loaded once the view rests (see
         // `globecraft_render::zoom_out`); a new view starts a new list.
         if idle && self.renderer.is_idle() {

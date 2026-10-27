@@ -94,6 +94,9 @@ pub(crate) struct App {
     tile_warmup: TileWarmup,
     /// Imagery loaded ahead of a zoom out, for the view (state key) it was made for.
     zoom_out_warmup: Option<(u64, TileWarmup)>,
+    /// The imagery a running flight lands on, loaded while it flies (roadmap 1.4),
+    /// with the destination it was listed for.
+    arrival_warmup: Option<([u64; 5], TileWarmup)>,
     boundaries: Arc<BoundaryData>,
     overlay_cache: overlays::OverlayCache,
     boundaries_rx: BoundaryUpdates,
@@ -282,6 +285,7 @@ impl App {
             scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache::default(),
             tile_warmup: TileWarmup::startup_satellite(),
             zoom_out_warmup: None,
+            arrival_warmup: None,
             cache_controls: cache::CacheControls::default(),
             boundaries: Arc::new(BoundaryData::default()),
             overlay_cache,

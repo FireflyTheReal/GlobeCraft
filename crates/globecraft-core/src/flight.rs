@@ -85,6 +85,10 @@ impl Flight {
         }
         .with_tilt_clamped()
     }
+    /// Where the flight ends.
+    pub fn destination(&self) -> Cam {
+        self.b
+    }
     pub fn is_finished(&self) -> bool {
         self.t >= 1.0
     }
