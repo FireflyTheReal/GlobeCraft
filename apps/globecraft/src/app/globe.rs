@@ -12,6 +12,9 @@ use globecraft_data::tiles::Provider;
 use std::time::{Duration, Instant};
 mod ruler_input;
 
+/// A new frame of the view on screen fades in over the old one for this long
+/// (roadmap 1.6: arriving tiles and the sharp frame after motion no longer pop in).
+const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
 const DRAG_TILT_DEG_PER_POINT: f64 = 0.25;
@@ -406,13 +409,24 @@ impl App {
         // Until a matching frame arrives, clip the previous view at its original
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
-        if let Some(tex) = &self.texture {
-            painter.image(
-                tex.id(),
-                rect,
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                Color32::WHITE,
-            );
+        let fade = self
+            .fade_started
+            .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
+            .filter(|&progress| progress < 1.0);
+        if fade.is_none() {
+            self.fade_started = None;
+        }
+        let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        if let (Some(progress), Some(from)) = (fade, &self.fade_from) {
+            painter.image(from.id(), rect, whole, Color32::WHITE);
+            ui.ctx().request_repaint();
+            if let Some(tex) = &self.texture {
+                // Eased, so the change starts and ends gently.
+                let alpha = progress * progress * (3.0 - 2.0 * progress);
+                painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
+            }
+        } else if let Some(tex) = &self.texture {
+            painter.image(tex.id(), rect, whole, Color32::WHITE);
         }
         // The swipe compare: the compare release's frame, right of the split.
         if let (Some(compare), Some((texture, _))) = (

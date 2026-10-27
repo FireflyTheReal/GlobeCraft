@@ -395,6 +395,20 @@ impl App {
             }
             None => self.compare_texture = None,
         }
+        // A new frame of the view on screen (tiles arrived, or the view came to
+        // rest) fades in over the picture it replaces instead of popping in (roadmap
+        // 1.6). The two textures swap roles, so the old picture costs no upload.
+        let same_view = self.texture.is_some()
+            && self
+                .renderer
+                .displayed
+                .is_some_and(|(cam, _)| same_camera(cam, frame.request.cam));
+        if same_view {
+            std::mem::swap(&mut self.texture, &mut self.fade_from);
+            self.fade_started = Some(std::time::Instant::now());
+        } else {
+            self.fade_started = None;
+        }
         match &mut self.texture {
             Some(t) if t.size() == [w, h] => {
                 t.set_partial([0, 0], img, egui::TextureOptions::LINEAR)
@@ -446,6 +460,14 @@ impl App {
         }
         self.renderer.displayed = Some((frame.request.cam, frame.request.basis));
     }
+}
+
+/// Two frames show the same view when their cameras match exactly.
+fn same_camera(a: Cam, b: Cam) -> bool {
+    [a.lat, a.lon, a.alt, a.heading, a.tilt]
+        .iter()
+        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt])
+        .all(|(x, y)| x.to_bits() == y.to_bits())
 }
 
 // Input must describe the same globe as the frame being presented.

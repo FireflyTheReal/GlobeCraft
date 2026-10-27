@@ -116,6 +116,10 @@ pub(crate) struct App {
     renderer: rendering::Renderer,
     scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache,
     texture: Option<egui::TextureHandle>,
+    /// The picture shown before the current one, while the current one fades in over
+    /// it (a new frame of the same view: tiles arrived, or the view came to rest).
+    fade_from: Option<egui::TextureHandle>,
+    fade_started: Option<Instant>,
     image: Option<(usize, usize, Arc<Vec<u8>>)>,
     last_state: u64,
     wake: render_wake::RenderWakeup,
@@ -313,6 +317,8 @@ impl App {
             live_geometry: live_geometry::LiveOverlay::new(cc.egui_ctx.clone()),
             world_shapes: live_layers::WorldShapes::default(),
             texture: None,
+            fade_from: None,
+            fade_started: None,
             image: None,
             last_state: 0,
             wake: render_wake::RenderWakeup::default(),
