@@ -57,7 +57,7 @@ This is a plan, not a list of shipped features. Every item has a size:
 | 0.6 | Replace the emoji glyphs still used as icons with the vector icon set, or drop them where an icon is already drawn | S–M | Affects "💾 Save", "📂 Open KML/KMZ…", the globe context menu, the Explorer worlds and "⏳" statuses. The localisation fixture pins the old strings, so update it deliberately **Done 2026-10-25:** context menu, Places (Save, Save as, Open, At center), the Explorer worlds and the folder Browse buttons draw vector icons (`icons::button`); loading notes show a spinner; the emoji are gone from both locale files. The fixture test strips a leading emoji from the original wording. The easter egg keeps its decorative symbols |
 | 0.7 | Add a command for the state-border altitude (`layer.stateAltitude`) so the assistant and Command Search can change it | S | The setting exists only as a pane control **Done 2026-10-25:** `layer.stateAltitude` (`km`, 0–8,000), enabled while the state layer is on |
 | 0.8 | First GlobeCraft release (0.3.0) notes with the "what changed" screenshots, from the new repository `FireflyTheReal/GlobeCraft` | S | `docs/releases/`. English only: the repository has no translated documents **Notes written 2026-10-27** (`docs/releases/v0.3.0.md`); version 0.3.0 |
-| 0.9 | Re-shoot the README screenshot (`assets/repository/globecraft-app.png`) with the GlobeCraft name on screen | S | The current image still shows the old title |
+| 0.9 | Re-shoot the README screenshot (`assets/repository/globecraft-app.png`) with the GlobeCraft name on screen | S | The current image still shows the old title **Done 2026-10-27** (Wayback imagery, country borders, the Layers ribbon) |
 
 **0.2 in detail.** Two changes are merged:
 

@@ -4,7 +4,7 @@
 imagery, borders and names, follow live aircraft, ships and weather, and measure
 distances. Free and open source, for Windows, macOS and Linux.
 
-![GlobeCraft showing the globe with borders, names and navigation controls](assets/repository/globecraft-app.png)
+![GlobeCraft showing Europe and the Middle East on the globe, with country borders, the Layers ribbon and the navigator](assets/repository/globecraft-app.png)
 
 ## Get it
 
