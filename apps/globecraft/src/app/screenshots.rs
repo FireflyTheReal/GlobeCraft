@@ -138,6 +138,9 @@ fn interface_screenshots() {
         .run("camera.set", json!({"altitude_km": 60.0, "tilt_deg": 75.0}));
     settle(&mut h, 2.0);
     save(&mut h, &dir, "07-tilted-close-dark");
+    let _ = h.state_mut().run("ui.tileDiagnostics", json!({"on": true}));
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "08-tile-diagnostics-dark");
 }
 
 /// Answers OpenAI-compatible chat requests in order with `replies`, one connection each.

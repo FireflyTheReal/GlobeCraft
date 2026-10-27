@@ -3,6 +3,7 @@
 use glam::{DVec3, Vec2, Vec4};
 pub mod backend;
 pub mod celestial;
+pub mod diagnostics;
 #[cfg(feature = "gpu")]
 mod gpu;
 pub mod overlays;

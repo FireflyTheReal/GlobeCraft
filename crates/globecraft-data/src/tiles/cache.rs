@@ -115,6 +115,18 @@ pub struct TileCache {
     throttled: Mutex<HashMap<u64, Instant>>,
 }
 
+/// One tile source's downloads (`TileCache::diagnostics`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceQueue {
+    pub provider: super::Provider,
+    /// Waiting for a download slot.
+    pub queued: usize,
+    /// Downloading now.
+    pub downloading: usize,
+    /// Pausing after the server asked to slow down.
+    pub paused: bool,
+}
+
 /// A download a task takes from the queue.
 struct Job {
     key: TileKey,
@@ -536,6 +548,42 @@ impl TileCache {
     }
     pub fn inflight(&self) -> usize {
         self.inflight.load(Ordering::Relaxed)
+    }
+    /// Queued and running downloads per tile source, and which sources pause after a
+    /// throttling answer: the streaming diagnostics overlay (roadmap 1.11). Takes the
+    /// queue locks briefly; only called while the overlay shows.
+    pub fn diagnostics(&self) -> Vec<SourceQueue> {
+        let mut sources: Vec<SourceQueue> = super::Provider::all()
+            .map(|provider| SourceQueue {
+                provider,
+                queued: 0,
+                downloading: 0,
+                paused: false,
+            })
+            .collect();
+        let mut count = |key: TileKey, field: fn(&mut SourceQueue) -> &mut usize| {
+            let provider = super::unkey(key).0;
+            if let Some(source) = sources.iter_mut().find(|s| s.provider == provider) {
+                *field(source) += 1;
+            }
+        };
+        for &key in self.queue.lock().unwrap().iter() {
+            count(key, |s| &mut s.queued);
+        }
+        for &key in self.downloading.lock().unwrap().keys() {
+            count(key, |s| &mut s.downloading);
+        }
+        let now = Instant::now();
+        for (&id, &until) in self.throttled.lock().unwrap().iter() {
+            if let Some(source) = sources
+                .iter_mut()
+                .find(|s| s.provider.id() == id)
+                .filter(|_| until > now)
+            {
+                source.paused = true;
+            }
+        }
+        sources
     }
     /// Remove this instance's downloaded tile files while preserving decoded
     /// tiles and other application data. Old jobs cannot write back afterward.

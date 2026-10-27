@@ -120,6 +120,9 @@ pub(crate) struct App {
     /// it (a new frame of the same view: tiles arrived, or the view came to rest).
     fade_from: Option<egui::TextureHandle>,
     fade_started: Option<Instant>,
+    /// The streaming diagnostics overlay shows (`ui.tileDiagnostics`; not saved).
+    tile_diagnostics: bool,
+    download_meter: ui::tile_diagnostics::DownloadMeter,
     image: Option<(usize, usize, Arc<Vec<u8>>)>,
     last_state: u64,
     wake: render_wake::RenderWakeup,
@@ -319,6 +322,8 @@ impl App {
             texture: None,
             fade_from: None,
             fade_started: None,
+            tile_diagnostics: false,
+            download_meter: Default::default(),
             image: None,
             last_state: 0,
             wake: render_wake::RenderWakeup::default(),

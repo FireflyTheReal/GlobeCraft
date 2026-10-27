@@ -517,6 +517,7 @@ impl App {
                 display_cam.alt,
                 live_geometry.as_deref(),
             );
+            self.draw_tile_diagnostics(&painter, &display_basis, rect);
         }
 
         // Google Earth style navigation controls (rotate / move / zoom)

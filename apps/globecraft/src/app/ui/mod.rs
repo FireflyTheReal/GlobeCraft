@@ -26,6 +26,7 @@ pub(in crate::app) mod settings;
 mod status;
 mod suggestions;
 pub(in crate::app) mod theme;
+pub(in crate::app) mod tile_diagnostics;
 mod updater;
 pub(in crate::app) mod widgets;
 mod windows;

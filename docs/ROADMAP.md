@@ -100,7 +100,7 @@ What the code does today, and why it is not yet the foundation we want:
 | 1.8 | **Smooth live objects**: time-stamped samples with dead reckoning between updates (aircraft heading and speed, vessel course and speed, satellites by SGP4) so positions move at frame rate; fade by sample age | M | Today aircraft and ships jump every refresh |
 | 1.9 | **Precision at close range**: camera-relative coordinates for overlays and picking, so lines and markers do not jitter when zoomed into a street | S–M | Needed before 3D buildings and street-level work |
 | 1.10 | **Elevation as a first-class tile source**: its own level of detail, shared by terrain, hill shading, cursor elevation, the ruler's elevation profile and picking | M | One DEM pipeline instead of terrain-only lookups |
-| 1.11 | **Streaming diagnostics overlay** (toggle): tile grid, level per tile, pending, failed and cached states, bytes per second and queue length per host | S–M | Makes tuning visible on the Mac, not only in benchmarks |
+| 1.11 | **Streaming diagnostics overlay** (toggle): tile grid, level per tile, pending, failed and cached states, bytes per second and queue length per host | S–M | Makes tuning visible on the Mac, not only in benchmarks **Done 2026-10-27:** command *Tile diagnostics* (`ui.tileDiagnostics`, Command Search): the imagery tiles the view wants, each at the level its pixels use (so a tilted far field shows coarser tiles), outlined in green (ready), amber (loading), grey (missing) or red (failed), labelled z/x/y when few; a panel with tiles by state, downloads running, queued/downloading per source (and a server's pause), and view/ahead/border download rates |
 
 **Exit criteria.** On the replay benchmark:
 

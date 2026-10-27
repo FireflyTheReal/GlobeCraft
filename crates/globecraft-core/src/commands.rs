@@ -466,6 +466,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         TOGGLE
     ),
     command!(
+        "ui.tileDiagnostics",
+        "ui-tile-diagnostics",
+        "stats",
+        View,
+        View,
+        TOGGLE
+    ),
+    command!(
         "ui.navigatorStyle",
         "ui-navigator-style",
         "nav_controls",

@@ -601,6 +601,11 @@ impl App {
                 self.settings.hide_navigation_controls = !shown;
                 json!({"shown": shown})
             }
+            "ui.tileDiagnostics" => {
+                let shown = toggled(p, self.tile_diagnostics);
+                self.tile_diagnostics = shown;
+                json!({"shown": shown})
+            }
             "ui.navigatorStyle" => {
                 let style = str_param(p, "style")
                     .and_then(globecraft_data::settings::navigation::NavigatorStyle::from_code)
@@ -838,6 +843,7 @@ impl App {
             "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
+            "ui.tileDiagnostics" => on(self.tile_diagnostics),
             "ui.navigatorStyle" => on(str_param(params, "style")
                 .is_some_and(|style| style == self.settings.navigation.navigator.code())),
             "ui.ribbon" => on(self.settings.workspace.ribbon_minimized),
