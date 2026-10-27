@@ -206,18 +206,37 @@ fn project_roads(input: &LiveInput) -> Vec<ProjectedRoad> {
         .iter()
         .enumerate()
         .map(|(source_index, road)| {
-            let mut segments = Vec::new();
-            let mut visible = Vec::with_capacity(road.points.len());
+            // Each piece is clipped to the view in f64 (roadmap 1.9): a road beside a
+            // tilted close-up camera projects millions of points off screen, where f32
+            // steps made the visible part jitter. Clipped pieces that still meet stay
+            // one polyline.
+            let clip = input
+                .view
+                .rect
+                .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
+            let mut segments: Vec<Vec<Pos2>> = Vec::new();
+            let mut visible: Vec<Pos2> = Vec::new();
+            let mut previous = None;
             for &(lat, lon) in &road.points {
-                if let Some(position) = input
+                let current = input
                     .view
                     .basis
-                    .project(input.view.basis.surface_position(lat, lon), input.view.rect)
-                {
-                    visible.push(position);
-                } else if !visible.is_empty() {
-                    segments.push(std::mem::take(&mut visible));
+                    .project_precise(input.view.basis.surface_position(lat, lon), input.view.rect);
+                let piece = previous
+                    .zip(current)
+                    .and_then(|(a, b)| crate::overlays::clip_segment([a, b], clip));
+                match piece {
+                    Some([a, b]) if visible.last() == Some(&a) => visible.push(b),
+                    Some([a, b]) => {
+                        if !visible.is_empty() {
+                            segments.push(std::mem::take(&mut visible));
+                        }
+                        visible.extend([a, b]);
+                    }
+                    None if !visible.is_empty() => segments.push(std::mem::take(&mut visible)),
+                    None => {}
                 }
+                previous = current;
             }
             if !visible.is_empty() {
                 segments.push(visible);

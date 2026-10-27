@@ -20,19 +20,23 @@ pub fn project_ruler(basis: &Basis, rect: Rect, points: &Ruler) -> Vec<RulerLeg>
                 .model
                 .path(pair[0], pair[1], ARC_SEGMENTS)
                 .into_iter()
-                .map(|point| basis.project(point, rect))
+                .map(|point| basis.project_precise(point, rect))
                 .collect();
+            // Clipped in f64: a leg passing beside a tilted close-up camera projects
+            // millions of points off screen (roadmap 1.9).
+            let clip = rect.expand(super::SEGMENT_CLIP_MARGIN_POINTS);
             let segments = projected
                 .array_windows::<2>()
                 .filter_map(|p| match (p[0], p[1]) {
-                    (Some(a), Some(b)) => Some([a, b]),
+                    (Some(a), Some(b)) => super::clip_segment([a, b], clip),
                     _ => None,
                 })
                 .collect();
             let label_position = basis
-                .project(basis.surface_position(pair[0].0, pair[0].1), rect)
-                .zip(basis.project(basis.surface_position(pair[1].0, pair[1].1), rect))
-                .map(|(a, b)| Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0));
+                .project_precise(basis.surface_position(pair[0].0, pair[0].1), rect)
+                .zip(basis.project_precise(basis.surface_position(pair[1].0, pair[1].1), rect))
+                .map(|(a, b)| (a + b) / 2.0)
+                .map(|mid| Pos2::new(mid.x as f32, mid.y as f32));
             RulerLeg {
                 segments,
                 label_position,

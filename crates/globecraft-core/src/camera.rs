@@ -112,6 +112,14 @@ impl Basis {
         (self.world_from_view * view_ray).normalize()
     }
     pub fn project(&self, p: DVec3, rect: Rect) -> Option<Pos2> {
+        self.project_precise(p, rect)
+            .map(|at| Pos2::new(at.x as f32, at.y as f32))
+    }
+    /// [`Self::project`] in f64 screen points. A tilted close-up projects points
+    /// beside or under the camera millions of points off screen, where f32 steps are
+    /// tens of points: lines clipped from such endpoints jittered as the camera moved
+    /// (roadmap 1.9). Clip in f64, then convert.
+    pub fn project_precise(&self, p: DVec3, rect: Rect) -> Option<DVec2> {
         let horizon_camera = if self.model == EarthModel::PerfectSphere {
             self.c
         } else {
@@ -127,9 +135,10 @@ impl Basis {
             return None;
         }
         let ndc = self.projection.project_point3(local);
-        Some(Pos2::new(
-            rect.center().x + ndc.x as f32 * rect.width() * 0.5,
-            rect.center().y - ndc.y as f32 * rect.height() * 0.5,
+        let centre = rect.center();
+        Some(DVec2::new(
+            f64::from(centre.x) + ndc.x * f64::from(rect.width()) * 0.5,
+            f64::from(centre.y) - ndc.y * f64::from(rect.height()) * 0.5,
         ))
     }
     pub fn pick(&self, rect: Rect, pos: Pos2) -> Option<(f64, f64)> {
@@ -352,6 +361,58 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    /// Roadmap 1.9: at the closest camera, a centimetre of camera motion moves the
+    /// ground on screen smoothly (no float steps), and picking a projected point
+    /// lands within a centimetre of it, on both Earth models.
+    #[test]
+    fn street_level_projection_and_picking_have_centimetre_precision() {
+        const CENTIMETRE_DEG: f64 = 1e-5 / 111.32;
+        let rect = Rect::from_min_size(emath::Pos2::ZERO, Vec2::new(1600.0, 1000.0));
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            for tilt in [0.0, 60.0] {
+                let base = Cam {
+                    lat: 47.3769,
+                    lon: 8.5417,
+                    heading: 30.0,
+                    alt: crate::MIN_CAMERA_ALTITUDE_KM,
+                    tilt,
+                };
+                let target = base
+                    .basis_for_model(1.6, model)
+                    .pick(rect, rect.center())
+                    .unwrap();
+                let target = crate::math::destination(target.0, target.1, 30.0, 0.02);
+                let screen = |step: f64| {
+                    let mut cam = base;
+                    cam.lon += step * CENTIMETRE_DEG;
+                    let basis = cam.basis_for_model(1.6, model);
+                    basis
+                        .project(basis.surface_position(target.0, target.1), rect)
+                        .unwrap()
+                };
+                // Equal camera steps give equal screen steps, to a hundredth of the step.
+                let steps: Vec<f32> = (0..10)
+                    .map(|i| screen(f64::from(i + 1)).x - screen(f64::from(i)).x)
+                    .collect();
+                let mean = steps.iter().sum::<f32>() / steps.len() as f32;
+                assert!(mean.abs() > 0.01, "{model:?} {tilt}: {mean}");
+                for step in &steps {
+                    assert!(
+                        (step - mean).abs() < mean.abs() * 0.01,
+                        "{model:?} {tilt}: {steps:?}"
+                    );
+                }
+                // Projecting and picking back returns the same ground point.
+                let basis = base.basis_for_model(1.6, model);
+                let at = basis
+                    .project(basis.surface_position(target.0, target.1), rect)
+                    .unwrap();
+                let picked = basis.pick(rect, at).unwrap();
+                assert!(model.distance_km(picked, target) < 1e-5, "{model:?} {tilt}");
+            }
+        }
+    }
 
     #[test]
     fn a_tilted_camera_looks_at_its_ground_point_from_behind_and_above() {
