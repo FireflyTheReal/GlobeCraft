@@ -18,6 +18,8 @@ struct PreparedFrame {
     /// The swipe compare's release of the same view, and that release.
     compare: Option<(egui::ColorImage, u16)>,
     overlays: Option<super::overlays::PreparedOverlay>,
+    /// The border set being exchanged out, projected for the same view.
+    fading_out: Option<super::overlays::PreparedOverlay>,
     aircraft: Option<Arc<globecraft_render::aircraft::AircraftGeometry>>,
     live_layers: Option<Arc<globecraft_render::live_layers::LiveGeometry>>,
 }
@@ -53,6 +55,11 @@ impl Renderer {
             globecraft_render::overlays::OverlayPreparer::with_elevation(cache.clone());
         // The last published overlay, reused while the geometry is (tile-only frames).
         let mut last_overlay: Option<super::overlays::PreparedOverlay> = None;
+        // A second preparer for the border set fading out, so the two sets do not
+        // evict each other's index.
+        let mut fading_preparer =
+            globecraft_render::overlays::OverlayPreparer::with_elevation(cache.clone());
+        let mut last_fading: Option<super::overlays::PreparedOverlay> = None;
         let overlay_ctx = ctx.clone();
         let mut live_preparer = globecraft_render::live_layers::LivePreparer::default();
         let mut aircraft_preparer = globecraft_render::aircraft::AircraftPreparer::default();
@@ -129,12 +136,27 @@ impl Renderer {
                             overlay_preparer.prepare(globecraft_render::overlays::OverlayInput {
                                 view: input.view,
                                 data: input.data.clone(),
+                                fading_out: None,
                             });
                         super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_overlay,
                             geometry,
                             &overlay_ctx,
                         )
+                    });
+                    let fading_out = request.overlays.as_ref().and_then(|input| {
+                        let data = input.fading_out.clone()?;
+                        let geometry =
+                            fading_preparer.prepare(globecraft_render::overlays::OverlayInput {
+                                view: input.view,
+                                data,
+                                fading_out: None,
+                            });
+                        Some(super::overlays::PreparedOverlay::reuse_or_new(
+                            &mut last_fading,
+                            geometry,
+                            &overlay_ctx,
+                        ))
                     });
                     let compare = request
                         .compare
@@ -148,6 +170,7 @@ impl Renderer {
                         image,
                         compare,
                         overlays: geometry,
+                        fading_out,
                         live_layers: request.live_layers.clone().map(|mut input| {
                             input.unix_secs = now_unix();
                             live_preparer.prepare(input)
@@ -345,6 +368,7 @@ impl App {
                     ground: self.overlay_ground(),
                 },
                 data: self.boundaries.clone(),
+                fading_out: self.layer_arrivals.fading_out(std::time::Instant::now()),
             }),
         });
     }
@@ -371,6 +395,7 @@ impl App {
             image: img,
             compare,
             overlays,
+            fading_out,
             aircraft,
             live_layers,
         } = frame.prepared;
@@ -387,6 +412,7 @@ impl App {
         if let Some(geometry) = overlays {
             self.overlay_cache.accept(geometry);
         }
+        self.overlay_cache.accept_fading_out(fading_out);
         match compare {
             Some((image, rel)) => {
                 let size = image.size;

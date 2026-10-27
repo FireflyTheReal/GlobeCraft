@@ -92,6 +92,7 @@ pub(super) struct BuiltOverlay {
 pub(super) fn build_prepared(
     painter: &egui::Painter,
     prepared: &PreparedOverlay,
+    fading_out: Option<&PreparedOverlay>,
     galleys: &mut LabelGalleys,
     style: OverlayStyle,
 ) -> BuiltOverlay {
@@ -103,6 +104,29 @@ pub(super) fn build_prepared(
         arrival: style.arrival,
     };
     let settings = MeshSettings::of(painter.ctx());
+    let (incoming, outgoing) = exchange_opacities(style.arrival.exchange);
+    let mut shapes = Vec::new();
+    // The outgoing set under the incoming one: shared lines stay solid throughout.
+    if let Some(old) = fading_out {
+        let old_policy = FadePolicy {
+            municipal_detail_max_km: old.geometry.data.municipal_detail_max_km,
+            ..policy
+        };
+        let retessellated;
+        let meshes = if old.borders.settings() == settings {
+            &*old.borders
+        } else {
+            retessellated = BorderMeshes::tessellate(&old.geometry, settings);
+            &retessellated
+        };
+        let mesh = meshes.tinted(
+            border_strokes(old_policy, &style.map_style)
+                .map(|stroke| with_opacity(stroke.color, outgoing)),
+        );
+        if !mesh.is_empty() {
+            shapes.push(Shape::mesh(mesh));
+        }
+    }
     let retessellated;
     let meshes = if prepared.borders.settings() == settings {
         &*prepared.borders
@@ -110,8 +134,10 @@ pub(super) fn build_prepared(
         retessellated = BorderMeshes::tessellate(geometry, settings);
         &retessellated
     };
-    let mesh = meshes.tinted(border_strokes(policy, &style.map_style).map(|stroke| stroke.color));
-    let mut shapes = Vec::new();
+    let incoming = if fading_out.is_some() { incoming } else { 1.0 };
+    let mesh = meshes.tinted(
+        border_strokes(policy, &style.map_style).map(|stroke| with_opacity(stroke.color, incoming)),
+    );
     if !mesh.is_empty() {
         shapes.push(Shape::mesh(mesh));
     }
@@ -163,6 +189,13 @@ fn faded_opacity(kind: BorderKind, policy: FadePolicy) -> f32 {
     };
     let arrival = smoothstep(f64::from(arrived) / f64::from(ARRIVAL_FADE_STEPS));
     layer_opacity(kind, policy) * arrival
+}
+
+/// Opacities of the incoming and outgoing border sets at exchange step `step`: the
+/// new set fades in over the first half, then the old one fades out.
+fn exchange_opacities(step: u8) -> (f32, f32) {
+    let t = f64::from(step) / f64::from(ARRIVAL_FADE_STEPS);
+    (smoothstep(2.0 * t), 1.0 - smoothstep(2.0 * t - 1.0))
 }
 
 fn smoothstep(t: f64) -> f32 {
@@ -389,6 +422,18 @@ fn build_labels<'a>(
 #[cfg(test)]
 mod fade_tests {
     use super::*;
+
+    #[test]
+    fn a_border_exchange_fades_the_new_set_in_before_the_old_one_out() {
+        assert_eq!(exchange_opacities(0), (0.0, 1.0));
+        assert_eq!(exchange_opacities(ARRIVAL_FADE_STEPS / 2), (1.0, 1.0));
+        assert_eq!(exchange_opacities(ARRIVAL_FADE_STEPS), (1.0, 0.0));
+        // Never both faint at once: a line both sets share stays solid.
+        for step in 0..=ARRIVAL_FADE_STEPS {
+            let (incoming, outgoing) = exchange_opacities(step);
+            assert!(incoming.max(outgoing) >= 1.0 - f32::EPSILON, "step {step}");
+        }
+    }
 
     #[test]
     fn border_kinds_index_their_own_stroke() {

@@ -50,6 +50,9 @@ impl OverlayGeometry {
 pub struct OverlayInput {
     pub view: OverlayView,
     pub data: Arc<BoundaryData>,
+    /// The border data shown before `data`, while its lines fade out and `data`'s fade
+    /// in (the frontend prepares it with a second preparer; `prepare` ignores it).
+    pub fading_out: Option<Arc<BoundaryData>>,
 }
 
 #[derive(Default)]
@@ -202,7 +205,11 @@ impl<T: Send + 'static> OverlayWorker<T> {
         Ok(Self { shared })
     }
     pub fn submit(&self, view: OverlayView, data: Arc<BoundaryData>) {
-        self.shared.mailbox.lock().unwrap().pending = Some(OverlayInput { view, data });
+        self.shared.mailbox.lock().unwrap().pending = Some(OverlayInput {
+            view,
+            data,
+            fading_out: None,
+        });
         self.shared.wake.notify_one();
     }
     pub fn take_completed(&self) -> Option<T> {
@@ -360,10 +367,12 @@ mod tests {
         let first = preparer.prepare(OverlayInput {
             view,
             data: data.clone(),
+            fading_out: None,
         });
         let same = preparer.prepare(OverlayInput {
             view,
             data: data.clone(),
+            fading_out: None,
         });
         assert!(
             Arc::ptr_eq(&first, &same),
@@ -379,6 +388,7 @@ mod tests {
         let next = preparer.prepare(OverlayInput {
             view: hidden,
             data: data.clone(),
+            fading_out: None,
         });
         assert!(!Arc::ptr_eq(&first, &next));
         assert!(next.labels.is_empty());

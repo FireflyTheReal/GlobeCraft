@@ -13,10 +13,14 @@ pub(super) use cache::OverlayCache;
 use cache::{ARRIVAL_FADE_STEPS, ArrivalFade, OverlayLayers, OverlayStyle, OverlayView};
 use globecraft_data::boundaries::BoundaryData;
 pub(super) use meshes::PreparedOverlay;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How long a streamed boundary layer takes to fade in once its data arrives.
 const ARRIVAL_FADE: Duration = Duration::from_millis(600);
+/// How long a new border set takes to replace the one before it (fade in, then the
+/// old set's leftover lines fade out).
+const EXCHANGE_FADE: Duration = Duration::from_millis(500);
 
 /// When each streamed boundary layer last went from empty to loaded.
 #[derive(Default)]
@@ -24,6 +28,10 @@ pub(super) struct LayerArrivals {
     states: Option<Instant>,
     states_big: Option<Instant>,
     municipal: Option<Instant>,
+    /// The border set shown before the current one, and when it was replaced: a new
+    /// tile level adds and drops lines (coarser OpenMapTiles levels leave out short
+    /// borders), which popped in and out without this exchange.
+    exchanged: Option<(Arc<BoundaryData>, Instant)>,
 }
 impl LayerArrivals {
     fn observe(&mut self, old: &BoundaryData, new: &BoundaryData, now: Instant) {
@@ -40,6 +48,24 @@ impl LayerArrivals {
         if arrived(municipal(old), municipal(new)) {
             self.municipal = Some(now);
         }
+        let lines = |data: &BoundaryData| {
+            let osm = &data.osm_borders;
+            !(osm.country.is_empty() && osm.state.is_empty() && osm.state_big.is_empty())
+        };
+        if lines(old) && !Arc::ptr_eq(&old.osm_borders, &new.osm_borders) {
+            self.exchanged = Some((Arc::new(old.clone()), now));
+        }
+    }
+    /// The border set fading out, while it does.
+    pub(super) fn fading_out(&mut self, now: Instant) -> Option<Arc<BoundaryData>> {
+        if self
+            .exchanged
+            .as_ref()
+            .is_some_and(|(_, at)| now.duration_since(*at) >= EXCHANGE_FADE)
+        {
+            self.exchanged = None;
+        }
+        self.exchanged.as_ref().map(|(data, _)| data.clone())
     }
     fn fade(&self, now: Instant) -> ArrivalFade {
         let step = |arrived: Option<Instant>| {
@@ -48,10 +74,18 @@ impl LayerArrivals {
                 (progress.min(1.0) * f32::from(ARRIVAL_FADE_STEPS)).round() as u8
             })
         };
+        let exchange = self
+            .exchanged
+            .as_ref()
+            .map_or(ARRIVAL_FADE_STEPS, |(_, at)| {
+                let progress = now.duration_since(*at).as_secs_f32() / EXCHANGE_FADE.as_secs_f32();
+                (progress.min(1.0) * f32::from(ARRIVAL_FADE_STEPS)).round() as u8
+            });
         ArrivalFade {
             states: step(self.states),
             states_big: step(self.states_big),
             municipal: step(self.municipal),
+            exchange,
         }
     }
 }

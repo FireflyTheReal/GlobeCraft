@@ -29,6 +29,10 @@ pub(super) struct ArrivalFade {
     pub states: u8,
     pub states_big: u8,
     pub municipal: u8,
+    /// Progress of the exchange of a new border set for the one before it: its lines
+    /// fade in over the old ones, then the old ones fade out (so lines both sets share
+    /// stay solid, and lines a new tile level adds or drops do not pop).
+    pub exchange: u8,
 }
 pub(super) const ARRIVAL_FADE_STEPS: u8 = 16;
 impl ArrivalFade {
@@ -36,6 +40,7 @@ impl ArrivalFade {
         states: ARRIVAL_FADE_STEPS,
         states_big: ARRIVAL_FADE_STEPS,
         municipal: ARRIVAL_FADE_STEPS,
+        exchange: ARRIVAL_FADE_STEPS,
     };
     pub(super) fn is_settled(self) -> bool {
         self == Self::SETTLED
@@ -68,6 +73,8 @@ pub(in crate::app) struct OverlayCache {
     /// the replacement geometry is ready.
     stale: Option<DrawKey>,
     geometry: Option<PreparedOverlay>,
+    /// The border set being exchanged out, prepared with the same frame as `geometry`.
+    fading_out: Option<PreparedOverlay>,
     requested: Option<(globecraft_render::overlays::OverlayView, usize)>,
     worker: OverlayWorker<PreparedOverlay>,
     galleys: LabelGalleys,
@@ -76,6 +83,14 @@ pub(in crate::app) struct OverlayCache {
 }
 
 impl OverlayCache {
+    /// The outgoing border set of the frame whose geometry `accept` received.
+    pub(in crate::app) fn accept_fading_out(&mut self, prepared: Option<PreparedOverlay>) {
+        if prepared.is_some() || self.fading_out.is_some() {
+            self.key = None;
+        }
+        self.fading_out = prepared;
+    }
+
     pub(in crate::app) fn accept(&mut self, prepared: PreparedOverlay) {
         let geometry = &prepared.geometry;
         if self
@@ -101,6 +116,7 @@ impl OverlayCache {
             stale: None,
             shapes: Vec::new(),
             geometry: None,
+            fading_out: None,
             requested: None,
             galleys: LabelGalleys::default(),
             labels_pending: false,
@@ -121,6 +137,7 @@ impl OverlayCache {
         self.stale = None;
         self.shapes = Vec::new();
         self.geometry = None;
+        self.fading_out = None;
         self.requested = None;
         self.galleys.clear();
     }
@@ -132,6 +149,10 @@ impl OverlayCache {
     pub(super) fn merge_boundaries(&mut self) {
         self.key = None;
         self.requested = None;
+        // At rest no frame brings the outgoing set: the geometry on screen is it.
+        if self.geometry.is_some() {
+            self.fading_out = self.geometry.clone();
+        }
     }
 
     pub(super) fn draw(
@@ -175,7 +196,18 @@ impl OverlayCache {
                 // lines, one patch old, and the replacement is requested below.
                 #[cfg(feature = "profiling")]
                 let _profile = globecraft_data::profiling::Span::new("ui.overlay_shapes");
-                let built = projected::build_prepared(painter, prepared, &mut self.galleys, style);
+                let outgoing = self
+                    .fading_out
+                    .as_ref()
+                    .filter(|_| style.arrival.exchange < ARRIVAL_FADE_STEPS)
+                    .filter(|old| old.geometry.view == geometry_view);
+                let built = projected::build_prepared(
+                    painter,
+                    prepared,
+                    outgoing,
+                    &mut self.galleys,
+                    style,
+                );
                 self.shapes = built.shapes;
                 if built.labels_pending {
                     // Rebuild next frame to lay out the names left over (cheap: the
