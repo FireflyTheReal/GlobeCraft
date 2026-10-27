@@ -9,6 +9,8 @@ use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use std::collections::HashMap;
 pub mod grid;
 mod labels;
+mod picking;
+pub use picking::pick_on_ground;
 mod spatial;
 mod worker;
 use globecraft_data::tiles::TileCache;
@@ -60,13 +62,23 @@ pub struct OverlayProjection<'a> {
 impl OverlayProjection<'_> {
     /// Where `(lat, lon)` is drawn: on the surface, raised onto the relief.
     pub fn surface(&self, lat: f64, lon: f64) -> glam::DVec3 {
-        let point = self.basis.surface_position(lat, lon);
-        match self.ground {
-            Some(ground) => {
-                point + globecraft_core::math::ll_to_v3(lat, lon) * ground.height(lat, lon)
-            }
-            None => point,
-        }
+        ground_position(self.basis, self.ground, lat, lon)
+    }
+}
+
+/// Where `(lat, lon)` is drawn: on the surface, raised onto `ground` when given.
+/// Overlays, the ruler, placemarks and picking all use this, so what is drawn on a
+/// mountain is also picked there.
+pub fn ground_position(
+    basis: &Basis,
+    ground: Option<&dyn Ground>,
+    lat: f64,
+    lon: f64,
+) -> glam::DVec3 {
+    let point = basis.surface_position(lat, lon);
+    match ground {
+        Some(ground) => point + globecraft_core::math::ll_to_v3(lat, lon) * ground.height(lat, lon),
+        None => point,
     }
 }
 
@@ -104,6 +116,15 @@ impl<'a> GroundHeights<'a> {
 
 /// The ground width of a tile that spans the view at a camera altitude of 1 km.
 const OVERLAY_GROUND_TILE_KM: f64 = 40_075.0;
+
+impl GroundHeights<'_> {
+    /// The highest the ground can be drawn, in world units: Everest, exaggerated.
+    pub fn max_height(&self) -> f64 {
+        MAX_GROUND_M * self.to_world
+    }
+}
+/// A little above Everest (8,849 m).
+const MAX_GROUND_M: f64 = 8_900.0;
 
 impl Ground for GroundHeights<'_> {
     fn height(&self, lat: f64, lon: f64) -> f64 {

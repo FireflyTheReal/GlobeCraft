@@ -141,10 +141,14 @@ impl Basis {
             f64::from(centre.y) - ndc.y * f64::from(rect.height()) * 0.5,
         ))
     }
-    pub fn pick(&self, rect: Rect, pos: Pos2) -> Option<(f64, f64)> {
+    /// The view ray through screen point `pos`: its unit direction from [`Self::c`].
+    pub fn ray(&self, rect: Rect, pos: Pos2) -> DVec3 {
         let nx = ((pos.x - rect.min.x) / rect.width()) as f64 * 2.0 - 1.0;
         let ny = 1.0 - ((pos.y - rect.min.y) / rect.height()) as f64 * 2.0;
-        let d = self.dir(nx, ny);
+        self.dir(nx, ny)
+    }
+    pub fn pick(&self, rect: Rect, pos: Pos2) -> Option<(f64, f64)> {
+        let d = self.ray(rect, pos);
         if self.model != EarthModel::PerfectSphere {
             let geometry = self.model.geometry();
             return geometry

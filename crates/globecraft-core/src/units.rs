@@ -11,6 +11,7 @@ pub use ruler::RulerUnit;
 /// International mile in kilometres; shared with altitude inputs in the UI.
 pub const KM_PER_MILE: f64 = 1.609_344;
 const FEET_PER_MILE: f64 = 5280.0;
+const METERS_PER_FOOT: f64 = 0.3048;
 // GlobeCraft's regional display policy includes mixed/traditional mile usage.
 // This deliberately extends CLDR's general length defaults (US/GB); it does not
 // describe statutory measurement systems. Users can override it in Settings.
@@ -58,6 +59,13 @@ impl DistanceUnits {
                     format!("{miles:.0} mi")
                 }
             }
+        }
+    }
+    /// A ground height: whole metres or feet.
+    pub fn elevation(self, metres: f64) -> String {
+        match self {
+            Self::Metric => format!("{metres:.0} m"),
+            Self::Imperial => format!("{:.0} ft", metres / METERS_PER_FOOT),
         }
     }
     /// Choose feet for short scale bars and miles for larger ones.

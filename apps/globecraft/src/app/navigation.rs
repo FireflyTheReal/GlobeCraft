@@ -79,6 +79,17 @@ impl App {
             })
     }
 
+    /// What the displayed frame's relief needs to raise points onto the ground: the
+    /// tile cache, the relief setting of that frame, and the camera altitude. `None`
+    /// setting while relief is off. Owned, so callers can still change the app.
+    pub(super) fn ground_source(&self) -> GroundSource {
+        GroundSource {
+            cache: self.cache.clone(),
+            ground: self.renderer.displayed_ground(self.overlay_ground()),
+            altitude_km: self.cam.alt,
+        }
+    }
+
     /// Whether relief is drawn for the current view.
     pub(super) fn terrain_active(&self) -> bool {
         self.layer(MapLayer::Terrain)
@@ -150,3 +161,38 @@ const GROUND_SETTLED_KM: f64 = 0.0005;
 const MIN_GROUND_CLEARANCE_KM: f64 = 0.15;
 /// Steepest tilt considered when backing away (cos 80°), so the step stays finite.
 const MIN_RISE_PER_KM: f64 = 0.17;
+
+/// See [`App::ground_source`].
+pub(super) struct GroundSource {
+    cache: std::sync::Arc<globecraft_data::tiles::TileCache>,
+    ground: Option<globecraft_render::overlays::OverlayGround>,
+    altitude_km: f64,
+}
+impl GroundSource {
+    pub(super) fn heights(&self) -> Option<globecraft_render::overlays::GroundHeights<'_>> {
+        globecraft_render::overlays::GroundHeights::new(
+            Some(&self.cache),
+            self.ground,
+            self.altitude_km,
+        )
+    }
+    /// The ground under screen point `pos`: on the relief when it is drawn (roadmap
+    /// 1.10), else on the surface.
+    pub(super) fn pick(
+        &self,
+        basis: &globecraft_core::camera::Basis,
+        rect: eframe::egui::Rect,
+        pos: eframe::egui::Pos2,
+    ) -> Option<(f64, f64)> {
+        match self.heights() {
+            Some(heights) => globecraft_render::overlays::pick_on_ground(
+                basis,
+                rect,
+                pos,
+                &heights,
+                heights.max_height(),
+            ),
+            None => basis.pick(rect, pos),
+        }
+    }
+}

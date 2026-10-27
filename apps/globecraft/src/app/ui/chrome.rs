@@ -235,6 +235,27 @@ impl App {
                         lang,
                     );
                     separator(ui, &t);
+                    // The ground height under the cursor while relief is drawn, from
+                    // the elevation tiles the view has loaded (roadmap 1.10); nothing is
+                    // requested for it. Padded so the readouts after it hold still.
+                    if self.terrain_active() {
+                        let metres = self.cursor.and_then(|(lat, lon)| {
+                            self.cache.loaded_elevation_m(
+                                lat,
+                                lon,
+                                globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
+                            )
+                        });
+                        let value = metres.map_or_else(
+                            || "—".to_owned(),
+                            |metres| self.distance_units().elevation(f64::from(metres)),
+                        );
+                        ui.monospace(lang.format(
+                            "statusbar-cursor-elevation",
+                            &[("distance", format!("{value:>8}").into())],
+                        ));
+                        separator(ui, &t);
+                    }
                     match self
                         .settings
                         .coordinate_display

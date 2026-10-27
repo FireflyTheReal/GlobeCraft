@@ -255,6 +255,7 @@ statusbar-tiles-loading = carregando { $count } tiles
 statusbar-camera-center = Centro: { $latitude }°, { $longitude }°
 
 statusbar-camera-altitude = Altitude da câmera: { $distance }
+statusbar-cursor-elevation = Elevação: { $distance }
 
 
 settings-uncap-fps-toggle = FPS sem limite (requer reiniciar)

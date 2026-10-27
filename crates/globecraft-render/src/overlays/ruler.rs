@@ -1,4 +1,5 @@
 //! Great-circle ruler geometry shared by frontends.
+use super::{Ground, ground_position};
 use emath::{Pos2, Rect};
 use globecraft_core::{
     camera::Basis,
@@ -11,7 +12,18 @@ pub struct RulerLeg {
     pub distance_km: f64,
     pub angle_degrees: f64,
 }
-pub fn project_ruler(basis: &Basis, rect: Rect, points: &Ruler) -> Vec<RulerLeg> {
+/// The ruler's legs on screen, raised onto `ground` when relief is drawn.
+pub fn project_ruler(
+    basis: &Basis,
+    rect: Rect,
+    points: &Ruler,
+    ground: Option<&dyn Ground>,
+) -> Vec<RulerLeg> {
+    let geometry = basis.model.geometry();
+    let raised = |point: glam::DVec3| {
+        let (lat, lon) = geometry.coordinates(point);
+        ground_position(basis, ground, lat, lon)
+    };
     points
         .paths()
         .flat_map(|path| path.array_windows::<2>())
@@ -20,7 +32,7 @@ pub fn project_ruler(basis: &Basis, rect: Rect, points: &Ruler) -> Vec<RulerLeg>
                 .model
                 .path(pair[0], pair[1], ARC_SEGMENTS)
                 .into_iter()
-                .map(|point| basis.project_precise(point, rect))
+                .map(|point| basis.project_precise(raised(point), rect))
                 .collect();
             // Clipped in f64: a leg passing beside a tilted close-up camera projects
             // millions of points off screen (roadmap 1.9).
@@ -32,9 +44,11 @@ pub fn project_ruler(basis: &Basis, rect: Rect, points: &Ruler) -> Vec<RulerLeg>
                     _ => None,
                 })
                 .collect();
-            let label_position = basis
-                .project_precise(basis.surface_position(pair[0].0, pair[0].1), rect)
-                .zip(basis.project_precise(basis.surface_position(pair[1].0, pair[1].1), rect))
+            let end = |(lat, lon): (f64, f64)| {
+                basis.project_precise(ground_position(basis, ground, lat, lon), rect)
+            };
+            let label_position = end(pair[0])
+                .zip(end(pair[1]))
                 .map(|(a, b)| (a + b) / 2.0)
                 .map(|mid| Pos2::new(mid.x as f32, mid.y as f32));
             RulerLeg {
@@ -54,6 +68,7 @@ pub fn point_at(
     points: &Ruler,
     pointer: Pos2,
     radius_points: f32,
+    ground: Option<&dyn Ground>,
 ) -> Option<RulerPointId> {
     points
         .paths()
@@ -65,7 +80,7 @@ pub fn point_at(
                 .map(move |(point, position)| (RulerPointId { path, point }, position))
         })
         .filter_map(|(index, point)| {
-            let screen = basis.project(basis.surface_position(point.0, point.1), rect)?;
+            let screen = basis.project(ground_position(basis, ground, point.0, point.1), rect)?;
             let distance = screen.distance_sq(pointer);
             (rect.contains(screen) && distance <= radius_points * radius_points)
                 .then_some((index, distance))
@@ -96,7 +111,7 @@ mod tests {
         ruler.add_point((0.0, 1.0), false);
         ruler.add_point((20.0, 20.0), true);
         ruler.add_point((20.0, 21.0), false);
-        let legs = project_ruler(&basis, rect, &ruler);
+        let legs = project_ruler(&basis, rect, &ruler, None);
         assert_eq!(legs.len(), 2);
         assert_eq!(
             legs.iter().map(|leg| leg.distance_km).sum::<f64>(),
@@ -106,7 +121,7 @@ mod tests {
             .project(basis.surface_position(20.0, 21.0), rect)
             .unwrap();
         assert_eq!(
-            point_at(&basis, rect, &ruler, handle, 10.0),
+            point_at(&basis, rect, &ruler, handle, 10.0, None),
             Some(RulerPointId { path: 1, point: 1 })
         );
     }
@@ -130,10 +145,13 @@ mod tests {
             .project(basis.surface_position(0.0, 2.0), rect)
             .unwrap();
         assert_eq!(
-            point_at(&basis, rect, &points, second, 10.0),
+            point_at(&basis, rect, &points, second, 10.0, None),
             Some(RulerPointId { path: 0, point: 1 })
         );
-        assert_eq!(point_at(&basis, rect, &points, Pos2::ZERO, 10.0), None);
+        assert_eq!(
+            point_at(&basis, rect, &points, Pos2::ZERO, 10.0, None),
+            None
+        );
         assert_eq!(
             point_at(
                 &basis,
@@ -144,12 +162,13 @@ mod tests {
                     hidden
                 },
                 rect.center(),
-                10.0
+                10.0,
+                None
             ),
             None
         );
         assert_eq!(
-            point_at(&basis, rect, &Ruler::default(), second, 10.0),
+            point_at(&basis, rect, &Ruler::default(), second, 10.0, None),
             None
         );
     }

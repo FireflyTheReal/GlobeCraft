@@ -161,10 +161,23 @@ impl App {
             style,
         );
         let ms = self.settings.map_scale;
+        // The ruler and placemarks sit on the relief, where they are picked.
+        let source = self.ground_source();
+        let heights = source.heights();
+        let ground = heights
+            .as_ref()
+            .map(|heights| heights as &dyn globecraft_render::overlays::Ground);
+        let on_ground = |lat: f64, lon: f64| {
+            globecraft_render::overlays::ground_position(basis, ground, lat, lon)
+        };
         // ruler
         let stroke = Stroke::new(2.5_f32, Color32::from_rgb(255, 80, 80));
-        for leg in globecraft_render::overlays::ruler::project_ruler(basis, rect, &self.ruler_paths)
-        {
+        for leg in globecraft_render::overlays::ruler::project_ruler(
+            basis,
+            rect,
+            &self.ruler_paths,
+            ground,
+        ) {
             for segment in leg.segments {
                 painter.line_segment(segment, stroke);
             }
@@ -192,14 +205,14 @@ impl App {
             }
         }
         for p in self.ruler_paths.points() {
-            if let Some(s) = basis.project(basis.surface_position(p.0, p.1), rect) {
+            if let Some(s) = basis.project(on_ground(p.0, p.1), rect) {
                 painter.circle_filled(s, 4.0, Color32::WHITE);
                 painter.circle_stroke(s, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(255, 80, 80)));
             }
         }
         // placemarks
         for pm in self.placemarks.markers(true) {
-            if let Some(s) = basis.project(basis.surface_position(pm.lat, pm.lon), rect)
+            if let Some(s) = basis.project(on_ground(pm.lat, pm.lon), rect)
                 && rect.contains(s)
             {
                 painter.circle_filled(s, 6.0, Color32::from_rgb(255, 200, 0));

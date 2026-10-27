@@ -234,17 +234,19 @@ impl App {
         let rect = self.renderer.displayed_rect().unwrap_or(viewport);
 
         let pick_basis = self.renderer.picking_basis(basis);
+        let ground = self.ground_source();
+        let pick = |p: egui::Pos2| ground.pick(&pick_basis, rect, p);
         self.cursor = resp
             .hover_pos()
             .filter(|p| rect.contains(*p))
-            .and_then(|p| pick_basis.pick(rect, p));
+            .and_then(pick);
 
         let start_ruler_path = self.ruler && ruler_input::starts_new_path(&resp);
         if !ruler_captured && !start_ruler_path && resp.double_clicked() {
             if let Some((la, lo)) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| pick_basis.pick(rect, p))
+                .and_then(pick)
             {
                 self.fly_to(
                     la,
@@ -258,7 +260,7 @@ impl App {
             && let Some(pt) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| pick_basis.pick(rect, p))
+                .and_then(pick)
         {
             self.ruler_paths.add_point(pt, start_ruler_path);
         }
@@ -266,7 +268,7 @@ impl App {
             self.menu_pick = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| pick_basis.pick(rect, p));
+                .and_then(pick);
         }
 
         // What this pass owes the frame pipeline: a render now, a scheduled

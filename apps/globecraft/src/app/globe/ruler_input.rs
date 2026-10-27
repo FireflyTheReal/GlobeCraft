@@ -21,6 +21,11 @@ impl App {
             return false;
         }
         let basis = self.renderer.picking_basis(self.view_basis(aspect));
+        let source = self.ground_source();
+        let heights = source.heights();
+        let ground = heights
+            .as_ref()
+            .map(|heights| heights as &dyn globecraft_render::overlays::Ground);
         let pointer = ui.input(|i| i.pointer.interact_pos());
         let hovered = pointer
             .filter(|p| response.hovered() && rect.contains(*p))
@@ -31,6 +36,7 @@ impl App {
                     &self.ruler_paths,
                     p,
                     POINT_HIT_RADIUS_POINTS,
+                    ground,
                 )
             });
         if hovered.is_some() || self.ruler_drag.is_some() {
@@ -54,7 +60,7 @@ impl App {
             return true;
         }
         if ui.input(|i| i.pointer.primary_pressed()) {
-            self.ruler_drag = pressed_handle(response, &basis, rect, &self.ruler_paths);
+            self.ruler_drag = pressed_handle(response, &basis, rect, &self.ruler_paths, ground);
             if self.ruler_drag.is_some() {
                 self.ruler_paths.begin_move();
                 self.fly = None;
@@ -68,7 +74,7 @@ impl App {
                         || response.drag_stopped_by(egui::PointerButton::Primary)
                 })
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| basis.pick(rect, p))
+                .and_then(|p| source.pick(&basis, rect, p))
             {
                 self.ruler_paths.move_point(index, point);
             }
@@ -107,6 +113,7 @@ fn pressed_handle(
     basis: &Basis,
     rect: Rect,
     points: &Ruler,
+    ground: Option<&dyn globecraft_render::overlays::Ground>,
 ) -> Option<RulerPointId> {
     // Use egui's input ownership so controls layered above the map keep clicks.
     if !(response.is_pointer_button_down_on()
@@ -138,6 +145,7 @@ fn pressed_handle(
         points,
         press,
         POINT_HIT_RADIUS_POINTS,
+        ground,
     )
 }
 #[cfg(test)]
@@ -182,7 +190,7 @@ mod tests {
                 |ui| {
                     egui::CentralPanel::default().show(ui, |ui| {
                         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-                        assert!(pressed_handle(&response, &basis, rect, &points).is_none());
+                        assert!(pressed_handle(&response, &basis, rect, &points, None).is_none());
                         if response.clicked() {
                             assert!(starts_new_path(&response));
                             points.add_point(
@@ -235,7 +243,7 @@ mod tests {
                 |ui| {
                     egui::CentralPanel::default().show(ui, |ui| {
                         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-                        selected = pressed_handle(&response, &basis, rect, &points);
+                        selected = pressed_handle(&response, &basis, rect, &points, None);
                     });
                 },
             );
