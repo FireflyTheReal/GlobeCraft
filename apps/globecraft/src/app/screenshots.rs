@@ -44,7 +44,7 @@ fn save(h: &mut Harness<'static, App>, dir: &std::path::Path, name: &str) {
 /// Drags the navigator's tilt thumb from straight down to about 60° and checks the
 /// camera followed (the default window and controls scale place the ring here).
 fn drag_the_tilt_thumb(h: &mut Harness<'static, App>) {
-    let ring = egui::pos2(1423.3, 192.0);
+    let ring = egui::pos2(1423.3, 202.0);
     let at = |degrees: f32| {
         let angle = (32.0 + degrees).to_radians();
         ring + egui::vec2(-angle.sin(), -angle.cos()) * 50.0

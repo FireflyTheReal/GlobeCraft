@@ -12,7 +12,9 @@ const MAX_CONTROL_SCALE: f32 = 1.8;
 const CONTROL_FILL_OPACITY: f32 = 0.94;
 const RING_OPACITY: f32 = 0.82;
 const CONTROL_RIGHT_MARGIN_POINTS: f32 = 56.0;
-const CONTROL_TOP_MARGIN_POINTS: f32 = 52.0;
+/// The ring's centre below the globe area's top: the tilt arc's thumb reaches 10 points
+/// higher than the ring, so this leaves it the ring's old clearance.
+const CONTROL_TOP_MARGIN_POINTS: f32 = 62.0;
 const ROTATION_RING_RADIUS_POINTS: f32 = 40.0;
 const CONTROL_DISC_RADIUS_POINTS: f32 = 27.0;
 const CONTROL_GAP_POINTS: f32 = 12.0;
@@ -265,8 +267,9 @@ impl App {
         }
 
         // ── zoom slider ──
-        let y0 = c2.y + r_disc + 16.0 * k;
+        // The zoom buttons sit as far below the move disc as it sits below the ring.
         let r_btn = 11.0 * k;
+        let y0 = c2.y + r_disc + CONTROL_GAP_POINTS * k + r_btn;
         let track_len = ZOOM_TRACK_LENGTH_POINTS * k;
         let (t_top, t_bot) = (y0 + r_btn + 8.0 * k, y0 + r_btn + 8.0 * k + track_len);
         let y_minus = t_bot + 8.0 * k + r_btn;

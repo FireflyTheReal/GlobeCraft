@@ -23,7 +23,9 @@ const MAX_CONTROL_SCALE: f32 = 1.8;
 const CONTROL_FILL_OPACITY: f32 = 0.94;
 const RING_OPACITY: f32 = 0.82;
 const CONTROL_RIGHT_MARGIN_POINTS: f32 = 56.0;
-const CONTROL_TOP_MARGIN_POINTS: f32 = 52.0;
+/// The ring's centre below the globe area's top: the tilt arc's thumb reaches 10 points
+/// higher than the ring, so this leaves it the ring's old clearance.
+const CONTROL_TOP_MARGIN_POINTS: f32 = 62.0;
 const ROTATION_RING_RADIUS_POINTS: f32 = 40.0;
 const GLOBE_RADIUS_POINTS: f32 = 27.0;
 /// Cardinal letters sit this far inside the ring's edge.
