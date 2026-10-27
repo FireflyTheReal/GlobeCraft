@@ -99,7 +99,11 @@ jobs:
         working-directory: /work
         shell: python3 {0}
         run: |
-          import sqlite3
+          import sqlite3, sys, traceback
+          def report(kind, exc_type, exc, tb):
+              message = " | ".join(traceback.format_exception(exc_type, exc, tb)).replace("\n", " ")
+              print(f"::error::{message[-900:]}")
+          sys.excepthook = lambda *e: report("error", *e)
           db = sqlite3.connect("planet.mbtiles")
           kind, sql = db.execute("SELECT type, sql FROM sqlite_master WHERE name = 'tiles'").fetchone()
           print(f"::notice::Planet tiles {kind}: {' '.join(sql.split())[:300]}")
