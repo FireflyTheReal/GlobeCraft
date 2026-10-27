@@ -100,6 +100,9 @@ pub struct OsmTileView {
     /// view's imagery is still loading: OpenMapTiles tiles carry every layer (roads,
     /// buildings…), so loading ahead would take the imagery's bandwidth.
     pub load_ahead: bool,
+    /// State lines show clearly at this altitude: tiles of at least zoom 5 then (the
+    /// coarser levels have state lines for some countries only).
+    pub states_visible: bool,
 }
 
 /// Ancestors cut to the missing tile they stand in for, by (shown tile, source tile).
@@ -252,7 +255,13 @@ impl OsmTileStreamer {
             });
         }
         self.limit_bytes = view.cache_limit_bytes;
-        let (zoom, wanted) = pick::wanted(view.lat, view.lon, view.altitude_km, view.tilt_deg);
+        let (zoom, wanted) = pick::wanted(
+            view.lat,
+            view.lon,
+            view.altitude_km,
+            view.tilt_deg,
+            view.states_visible,
+        );
         let Ok(mut store) = self.context.store.lock() else {
             return;
         };

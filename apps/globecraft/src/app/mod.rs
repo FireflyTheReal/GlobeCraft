@@ -28,6 +28,9 @@ mod controllers;
 mod explorer;
 mod files;
 mod flat_earth;
+/// State lines (which need border tiles of zoom 5 or finer) count as showing below this
+/// share of their threshold altitude, where their fade-in reaches about 6 %.
+const STATE_TILES_FROM_RATIO: f64 = 0.85;
 const SKY_CLOCK_REPAINT_INTERVAL: Duration = Duration::from_secs(30);
 mod fonts;
 mod frame_timing;
@@ -593,6 +596,13 @@ impl eframe::App for App {
                 tilt_deg: self.cam.tilt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
                 load_ahead: self.renderer.is_idle() && !self.renderer.waits_for_tiles(),
+                // From where the state lines' fade-in is past its first few percent.
+                states_visible: self.layer(MapLayer::StateBorders)
+                    && self.cam.alt
+                        < STATE_TILES_FROM_RATIO
+                            * self.settings.state_max_altitude_km.max(
+                                globecraft_data::boundaries::STATE_BIG_VISIBLE_MAX_ALTITUDE_KM,
+                            ),
             });
         if self.boundary_loader.is_loading() {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);

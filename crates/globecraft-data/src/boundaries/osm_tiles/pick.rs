@@ -30,9 +30,23 @@ const RADIUS_PER_ALTITUDE: f64 = 1.0;
 const TILTED_REACH_MAX_RAD: f64 = 1.45;
 /// More tiles than this go one level up instead.
 const MAX_TILES: usize = 96;
+/// OpenMapTiles draws its zoom 0–4 borders from Natural Earth, whose state lines at
+/// those scales cover only some countries (Germany, but not Romania or Bulgaria: 60 km
+/// against 8,400 km at zoom 5, measured 2026-10-27). While state lines show, tiles are
+/// at least this level.
+pub(super) const STATE_MIN_ZOOM: u8 = 5;
+/// The most tiles taken to stay at `STATE_MIN_ZOOM` (a view from 3,400 km needs about
+/// 130); a still wider view goes coarser after all.
+const MAX_STATE_TILES: usize = 160;
 
 /// The zoom level and the tiles around the view, nearest first.
-pub(super) fn wanted(lat: f64, lon: f64, altitude_km: f64, tilt_deg: f64) -> (u8, Vec<TileKey>) {
+pub(super) fn wanted(
+    lat: f64,
+    lon: f64,
+    altitude_km: f64,
+    tilt_deg: f64,
+    states_visible: bool,
+) -> (u8, Vec<TileKey>) {
     let altitude_km = altitude_km.max(0.05);
     let lat = lat.clamp(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT);
     // Mercator tiles shrink with cos(latitude) on the ground.
@@ -46,6 +60,8 @@ pub(super) fn wanted(lat: f64, lon: f64, altitude_km: f64, tilt_deg: f64) -> (u8
     if level(DETAIL_TILES_ACROSS_VIEW) >= super::MUNICIPAL_MIN_ZOOM {
         zoom = zoom.max(super::MUNICIPAL_MIN_ZOOM);
     }
+    let floor = if states_visible { STATE_MIN_ZOOM } else { 0 };
+    zoom = zoom.max(floor);
     // Never beyond the horizon.
     let horizon_deg = (EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude_km))
         .acos()
@@ -64,7 +80,12 @@ pub(super) fn wanted(lat: f64, lon: f64, altitude_km: f64, tilt_deg: f64) -> (u8
         ((altitude_km * RADIUS_PER_ALTITUDE).max(reach_km) / KM_PER_DEGREE).min(horizon_deg);
     loop {
         let tiles = around(zoom, lat, lon, radius_deg);
-        if tiles.len() <= MAX_TILES || zoom == 0 {
+        let limit = if zoom <= floor {
+            MAX_STATE_TILES
+        } else {
+            MAX_TILES
+        };
+        if tiles.len() <= limit || zoom == 0 {
             return (zoom, tiles);
         }
         zoom -= 1;
@@ -121,14 +142,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn state_lines_keep_tiles_at_zoom_five_or_finer() {
+        // Without state lines a view from 3,000 km uses coarser tiles.
+        assert!(wanted(51.0, 12.0, 3_000.0, 0.0, false).0 < STATE_MIN_ZOOM);
+        for altitude in [1_700.0, 3_000.0, 3_400.0] {
+            let (zoom, tiles) = wanted(51.0, 12.0, altitude, 0.0, true);
+            assert_eq!(zoom, STATE_MIN_ZOOM, "{altitude} km");
+            assert!(
+                tiles.len() <= MAX_STATE_TILES,
+                "{altitude} km: {}",
+                tiles.len()
+            );
+        }
+        // Closer, the usual levels.
+        assert!(wanted(51.0, 12.0, 400.0, 0.0, true).0 > STATE_MIN_ZOOM);
+    }
+
+    #[test]
     fn zoom_follows_altitude_and_the_tile_count_stays_bounded() {
-        let zoom_at = |alt| wanted(49.0, 8.4, alt, 0.0).0;
+        let zoom_at = |alt| wanted(49.0, 8.4, alt, 0.0, false).0;
         assert!((1..=2).contains(&zoom_at(20_000.0)));
         assert!((5..=7).contains(&zoom_at(400.0)), "{}", zoom_at(400.0));
         assert!((10..=11).contains(&zoom_at(40.0)), "{}", zoom_at(40.0));
         assert_eq!(zoom_at(0.5), MAX_ZOOM);
         for alt in [0.5, 5.0, 40.0, 400.0, 4_000.0, 40_000.0] {
-            let (zoom, tiles) = wanted(49.0, 8.4, alt, 0.0);
+            let (zoom, tiles) = wanted(49.0, 8.4, alt, 0.0, false);
             assert!(
                 !tiles.is_empty() && tiles.len() <= MAX_TILES,
                 "{alt} km: {}",
@@ -142,8 +180,8 @@ mod tests {
     fn municipal_lines_start_where_the_detail_level_reaches_them() {
         for lat in [0.0, 47.5, 64.0] {
             let top = max_altitude_km_for_municipal(lat);
-            assert!(wanted(lat, 8.0, top * 0.99, 0.0).0 >= super::super::MUNICIPAL_MIN_ZOOM);
-            assert!(wanted(lat, 8.0, top * 1.01, 0.0).0 < super::super::MUNICIPAL_MIN_ZOOM);
+            assert!(wanted(lat, 8.0, top * 0.99, 0.0, false).0 >= super::super::MUNICIPAL_MIN_ZOOM);
+            assert!(wanted(lat, 8.0, top * 1.01, 0.0, false).0 < super::super::MUNICIPAL_MIN_ZOOM);
         }
     }
 
@@ -151,22 +189,22 @@ mod tests {
     fn border_tiles_are_a_level_coarser_than_detail_above_the_municipal_range() {
         // 400 km: four across would be zoom 7 or so; two across is one level up and
         // a quarter of the tiles.
-        let (zoom, tiles) = wanted(49.0, 8.4, 400.0, 0.0);
+        let (zoom, tiles) = wanted(49.0, 8.4, 400.0, 0.0, false);
         assert!((5..=7).contains(&zoom), "{zoom}");
         assert!(tiles.len() <= 16, "{}", tiles.len());
     }
 
     #[test]
     fn a_tilted_view_wants_a_wider_area() {
-        let (flat_zoom, flat) = wanted(46.5, 8.0, 50.0, 0.0);
-        let (tilted_zoom, tilted) = wanted(46.5, 8.0, 50.0, 60.0);
+        let (flat_zoom, flat) = wanted(46.5, 8.0, 50.0, 0.0, false);
+        let (tilted_zoom, tilted) = wanted(46.5, 8.0, 50.0, 60.0, false);
         assert!(tilted_zoom < flat_zoom || tilted.len() > flat.len());
         assert!(tilted.len() <= MAX_TILES);
     }
 
     #[test]
     fn tiles_wrap_across_the_date_line() {
-        let (zoom, tiles) = wanted(-17.0, 179.9, 300.0, 0.0);
+        let (zoom, tiles) = wanted(-17.0, 179.9, 300.0, 0.0, false);
         let n = TileKey::tiles_per_side(zoom);
         assert!(tiles.iter().any(|t| t.x == 0) && tiles.iter().any(|t| t.x == n - 1));
     }
