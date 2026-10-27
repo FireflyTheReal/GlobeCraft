@@ -35,11 +35,18 @@ jobs:
     steps:
       # The planet file is bigger than either disk alone: join the root disk's free
       # space and the temporary disk into one volume.
+      - name: Remove preinstalled tools this job does not use
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/local/share/powershell /usr/share/swift \
+            /usr/local/lib/node_modules /usr/local/share/chromium /opt/microsoft /opt/google \
+            /usr/local/julia* /opt/az /usr/share/miniconda /usr/local/aws-cli || true
+          df -h /
+
       - name: Make room
         uses: easimon/maximize-build-space@v10
         with:
           build-mount-path: /work
-          root-reserve-mb: 6144
+          root-reserve-mb: 3072
           swap-size-mb: 1024
           remove-dotnet: 'true'
           remove-android: 'true'
@@ -66,7 +73,7 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           free=$(df --output=avail -B1 /work | tail -n 1)
           echo "::notice::Planet $version: $((size / 1024 / 1024 / 1024)) GiB; free on /work: $((free / 1024 / 1024 / 1024)) GiB"
-          if [ "$size" -gt "$((free - 8 * 1024 * 1024 * 1024))" ]; then
+          if [ "$size" -gt "$((free - 3 * 1024 * 1024 * 1024))" ]; then
             echo "::error::The planet file does not fit on /work"
             exit 1
           fi
