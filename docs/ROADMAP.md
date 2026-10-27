@@ -191,6 +191,22 @@ Implemented first slice (2026-10-22): municipal data now streams in *units* arou
 - per-source adapters instead of the 693-line `load.rs`;
 - per-tile refresh, then cross-fade.
 
+### 3.5 Own OpenStreetMap tile sets (2026-10-27)
+
+Borders and names come from PMTiles archives cut from OpenFreeMap's weekly planet
+(`.github/workflows/border-tiles.yml`, manifest `tiles-borders/borders.json`), read
+tile by tile with range requests (`globecraft-data/src/pmtiles.rs`); OpenFreeMap's full
+tiles stay the fallback. Measured on the Mac's cache: the kept layers are 0.4–1.5 KB
+per tile at zooms 8–12 against 100–500 KB for the full tile.
+
+The same workflow can cut further OpenMapTiles layers into their own archives, each
+fetched only while its layer is on (the loader concatenates archives per tile):
+`transportation` and `transportation_name` (roads, railways, ferries, lifts, paths),
+`waterway` and `water_name` (rivers, lake and sea names), `landcover` and `park`
+(forest, glaciers, protected areas), `landuse`, `mountain_peak` (peaks with heights),
+`aerodrome_label` and `aeroway` (airports, runways), `poi`, and `building` (zoom 13–14
+only, a base for 3D buildings, 8.6).
+
 ## 4. Shared enabling work (build once, unlock many)
 
 These come straight from the data-source triage. Each one turns a column of "moderate" rows

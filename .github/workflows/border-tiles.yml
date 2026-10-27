@@ -1,7 +1,7 @@
 name: Border tiles
 
 # Builds the borders-and-names tile set GlobeCraft streams: the OpenMapTiles
-# `boundary`, `place` and `water` layers to zoom 12, cut from OpenFreeMap's weekly
+# `boundary` and `place` layers and the ocean of the `water` layer to zoom 12, cut from OpenFreeMap's weekly
 # planet (Planetiler, OpenMapTiles schema), as PMTiles a client reads tile by tile.
 # A full OpenFreeMap tile carries every layer (100-500 KB); these keep only what the
 # globe draws. Manual only; publishing makes a pre-release that the app's updater
@@ -100,8 +100,8 @@ jobs:
             --layer=boundary --layer=place -A "$attribution" \
             -n "GlobeCraft borders and names" -o borders.mbtiles planet.mbtiles
           ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
-            --layer=water -A "$attribution" \
-            -n "GlobeCraft water" -o water.mbtiles planet.mbtiles
+            --layer=water --feature-filter='{"water":["==","class","ocean"]}' -A "$attribution" \
+            -n "GlobeCraft ocean" -o water.mbtiles planet.mbtiles
           rm planet.mbtiles
 
       - name: Measure
@@ -146,3 +146,14 @@ jobs:
             --prerelease --latest=false --title "Border tiles $version" \
             --notes "Borders, names and water for GlobeCraft, cut from the OpenFreeMap planet $version (OpenMapTiles schema, zoom 0-12). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles." \
             globecraft-*-"$version".pmtiles measure.txt
+          # The fixed manifest the app reads names the newest archives.
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          printf '{"version":"%s","archives":["%s/globecraft-borders-%s.pmtiles","%s/globecraft-water-%s.pmtiles"]}\n' \
+            "$version" "$base" "$version" "$base" "$version" > borders.json
+          cat borders.json
+          if ! gh release view tiles-borders --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create tiles-borders --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false --title "Border tiles (current)" \
+              --notes "borders.json names the border tile archives GlobeCraft reads. Data © OpenStreetMap contributors (ODbL), schema © OpenMapTiles."
+          fi
+          gh release upload tiles-borders --repo "$GITHUB_REPOSITORY" --clobber borders.json

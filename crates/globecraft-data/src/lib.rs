@@ -7,6 +7,7 @@ mod error;
 mod http;
 pub mod kml;
 mod paths;
+mod pmtiles;
 pub mod search;
 pub mod settings;
 pub mod tiles;
