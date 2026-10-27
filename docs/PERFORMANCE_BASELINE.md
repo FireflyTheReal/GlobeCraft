@@ -489,3 +489,32 @@ destination level is requested. Same benchmark, fly across path:
 Repeated runs on the fast link gave 0.17–0.26 s after against 0.53–0.56 s without the
 prefetch (`GLOBECRAFT_REPLAY_NO_ARRIVAL=1`). Holes while moving are unchanged
 (1.54 % and 3.54 %); the other paths have no flight and are not affected.
+
+### Faster 3D terrain (2026-10-27, roadmap 8.1)
+
+One cone per 8×8 pixel block walks the open air before the pixels (it skips a block of
+the elevation pyramid only when its whole footprint clears the block maximum), hill
+shading shares its samples, held elevation tiles are found by key, and motion frames
+over relief render at 0.28 of the window instead of 0.4.
+
+Synthetic relief (`terrain_views`, 960×600, two cores, best of five):
+
+| View | Steps per pixel before → after | Relief cost per frame before → after |
+| --- | --- | --- |
+| top-down 16 km | 12.8 → 7.6 | ~290 → ~220 ms |
+| tilted 70°, 16 km | 23.9 → 15.3 | ~700 → ~330 ms |
+| tilted 75°, 52 km | 16.8 → 12.3 | ~400 → ~280 ms |
+| tilted 72°, 6 km | 15.7 → 8.8 | ~480 → ~250 ms |
+
+Replay with relief (`GLOBECRAFT_REPLAY_TERRAIN=1`, fast link), motion frame median / p95:
+
+| Path | Before | After |
+| --- | --- | --- |
+| drag-pan | 59.2 / 74.3 ms | 29.6 / 37.8 ms |
+| orbit | 73.3 / 86.8 ms | 32.1 / 41.0 ms |
+| tilted descent | 29.5 / 105.4 ms | 24.0 / 46.5 ms |
+| tilted orbit close | 32.6 / 68.1 ms | 16.2 / 41.8 ms |
+
+Holes while moving and bytes are unchanged within noise. Pixels match the previous
+march except sub-pixel shifts of thin lines (different exact-measurement points).
+
