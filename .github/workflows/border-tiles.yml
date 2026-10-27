@@ -1,0 +1,142 @@
+name: Border tiles
+
+# Builds the borders-and-names tile set GlobeCraft streams: the OpenMapTiles
+# `boundary`, `place` and `water` layers to zoom 12, cut from OpenFreeMap's weekly
+# planet (Planetiler, OpenMapTiles schema), as PMTiles a client reads tile by tile.
+# A full OpenFreeMap tile carries every layer (100-500 KB); these keep only what the
+# globe draws. Manual only; publishing makes a pre-release that the app's updater
+# ignores. Data: (c) OpenStreetMap contributors (ODbL), (c) OpenMapTiles.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenFreeMap planet version, e.g. 20261025_080012_pt (empty: the newest)'
+        required: false
+        default: ''
+      publish:
+        description: 'Upload the files as a data pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: border-tiles
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      TIPPECANOE_REF: '2.79.0'
+      PMTILES_VERSION: '1.31.2'
+    steps:
+      # The planet file is bigger than either disk alone: join the root disk's free
+      # space and the temporary disk into one volume.
+      - name: Make room
+        uses: easimon/maximize-build-space@v10
+        with:
+          build-mount-path: /work
+          root-reserve-mb: 6144
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Pick the planet version
+        id: pick
+        run: |
+          sudo chown "$USER" /work
+          df -h / /work
+          curl -fsS https://btrfs.openfreemap.com/files.txt -o /work/files.txt
+          grep 'areas/planet/' /work/files.txt | tail -n 12
+          version='${{ inputs.version }}'
+          if [ -z "$version" ]; then
+            version=$(grep -oE 'areas/planet/[0-9]{8}_[0-9]{6}_pt/tiles\.mbtiles' /work/files.txt \
+              | sort | tail -n 1 | cut -d/ -f3)
+          fi
+          test -n "$version"
+          url="https://btrfs.openfreemap.com/areas/planet/$version/tiles.mbtiles"
+          size=$(curl -fsSI "$url" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Planet $version: $((size / 1024 / 1024 / 1024)) GiB at $url"
+          free=$(df --output=avail -B1 /work | tail -n 1)
+          echo "Free on /work: $((free / 1024 / 1024 / 1024)) GiB"
+          if [ "$size" -gt "$((free - 8 * 1024 * 1024 * 1024))" ]; then
+            echo "::error::The planet file does not fit on /work"
+            exit 1
+          fi
+
+      - name: Build tippecanoe and fetch pmtiles
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq build-essential libsqlite3-dev zlib1g-dev aria2 sqlite3 > /dev/null
+          git clone -q --depth 1 --branch "$TIPPECANOE_REF" https://github.com/felt/tippecanoe /work/tippecanoe
+          make -s -C /work/tippecanoe -j"$(nproc)" tile-join
+          curl -fsSL "https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VERSION}/go-pmtiles_${PMTILES_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /work pmtiles
+
+      - name: Download the planet
+        run: |
+          aria2c -q -x 8 -s 8 -k 64M --file-allocation=none -d /work -o planet.mbtiles '${{ steps.pick.outputs.url }}'
+          ls -l /work/planet.mbtiles
+          df -h /work
+
+      - name: Keep borders, names and water to zoom 12
+        working-directory: /work
+        run: |
+          attribution='<a href="https://openmaptiles.org/">&copy; OpenMapTiles</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>'
+          ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
+            --layer=boundary --layer=place -A "$attribution" \
+            -n "GlobeCraft borders and names" -o borders.mbtiles planet.mbtiles
+          ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
+            --layer=water -A "$attribution" \
+            -n "GlobeCraft water" -o water.mbtiles planet.mbtiles
+          rm planet.mbtiles
+
+      - name: Measure
+        working-directory: /work
+        run: |
+          for set in borders water; do
+            echo "## $set"
+            sqlite3 -header -column "$set.mbtiles" \
+              "SELECT zoom_level AS z, count(*) AS tiles, round(sum(length(tile_data))/1048576.0, 1) AS MiB,
+                      round(avg(length(tile_data))/1024.0, 2) AS avg_KiB, max(length(tile_data))/1024 AS max_KiB
+               FROM tiles GROUP BY zoom_level ORDER BY zoom_level;"
+          done | tee measure.txt
+          ls -l *.mbtiles
+
+      - name: Convert to PMTiles
+        working-directory: /work
+        run: |
+          for set in borders water; do
+            ./pmtiles convert "$set.mbtiles" "globecraft-$set-${{ steps.pick.outputs.version }}.pmtiles"
+          done
+          ls -l *.pmtiles | tee -a measure.txt
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat measure.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish a data pre-release
+        if: inputs.publish
+        working-directory: /work
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version='${{ steps.pick.outputs.version }}'
+          tag="tiles-borders-$version"
+          for file in globecraft-*-"$version".pmtiles; do
+            size=$(stat -c %s "$file")
+            if [ "$size" -ge 2147483648 ]; then
+              echo "::error::$file is $size bytes, over GitHub's 2 GiB asset limit"
+              exit 1
+            fi
+          done
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --prerelease --latest=false --title "Border tiles $version" \
+            --notes "Borders, names and water for GlobeCraft, cut from the OpenFreeMap planet $version (OpenMapTiles schema, zoom 0-12). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles." \
+            globecraft-*-"$version".pmtiles measure.txt
