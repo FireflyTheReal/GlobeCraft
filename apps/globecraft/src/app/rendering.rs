@@ -31,6 +31,11 @@ pub(super) struct Renderer {
     displayed: Option<(Cam, Basis)>,
     displayed_rect: Option<egui::Rect>,
     displayed_grid_step: Option<f64>,
+    /// The relief setting the displayed frame's overlays were projected with (`None`
+    /// before the first frame). Drawing must use it: the live one carries the tile
+    /// cache's generation, which moves with every arriving tile, so overlays prepared
+    /// with a frame never matched it while tiles streamed in and lines flickered.
+    displayed_ground: Option<Option<globecraft_render::overlays::OverlayGround>>,
     pub(super) displayed_sky: bool,
     pub(super) displayed_credits: String,
     waiting: Vec<globecraft_data::tiles::TileKey>,
@@ -158,6 +163,7 @@ impl Renderer {
             displayed: None,
             displayed_rect: None,
             displayed_grid_step: None,
+            displayed_ground: None,
             displayed_sky: false,
             displayed_credits: String::new(),
             waiting: Vec::new(),
@@ -194,6 +200,13 @@ impl Renderer {
     }
     pub(super) fn picking_basis(&self, fallback: Basis) -> Basis {
         displayed_basis(self.displayed, fallback)
+    }
+    /// The relief setting of the displayed frame's overlays, or `current` before one.
+    pub(super) fn displayed_ground(
+        &self,
+        current: Option<globecraft_render::overlays::OverlayGround>,
+    ) -> Option<globecraft_render::overlays::OverlayGround> {
+        self.displayed_ground.unwrap_or(current)
     }
     pub(super) fn displayed_grid_step(&self) -> Option<f64> {
         self.displayed_grid_step
@@ -430,6 +443,11 @@ impl App {
         // Recheck dependencies even if a tile finished before frame publication.
         self.wake.dependencies_may_have_changed();
         self.renderer.displayed_rect = frame.request.overlays.as_ref().map(|input| input.view.rect);
+        self.renderer.displayed_ground = frame
+            .request
+            .overlays
+            .as_ref()
+            .map(|input| input.view.ground);
         self.renderer.displayed_grid_step = frame
             .request
             .cfg
