@@ -201,7 +201,8 @@ impl App {
         // ── rendering
         let idle = self.last_interact.elapsed() > IDLE_RENDER_DELAY && !resp.dragged();
         let render_aspect = (viewport.width() / viewport.height()) as f64;
-        let (w, h) = globecraft_render::view::raster_size(viewport.size(), ppp, idle);
+        let relief = self.terrain_active();
+        let (w, h) = globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief);
         let keys = globecraft_render::view::RasterView {
             camera: self.cam,
             model: self.active_earth_model(),
@@ -213,7 +214,7 @@ impl App {
             compare: self.active_compare().map(|compare| compare.index),
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
-            terrain: self.terrain_active(),
+            terrain: relief,
             terrain_exaggeration: self.settings.layers.terrain_exaggeration,
             ground_km: self.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
@@ -285,7 +286,8 @@ impl App {
         );
         match outcome {
             WakeOutcome::Submit => {
-                let lod_scale = globecraft_render::view::render_scale(viewport.size(), ppp, idle);
+                let lod_scale =
+                    globecraft_render::view::render_scale(viewport.size(), ppp, idle, relief);
                 self.request_render(
                     RenderSize {
                         width: w,

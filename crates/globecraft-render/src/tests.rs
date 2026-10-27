@@ -100,6 +100,7 @@ fn local_tile_lookup_is_deduplicated_and_keeps_the_nearest_miss() {
         lookup: &lookup,
         map: HashMap::default(),
         dem: Vec::new(),
+        dem_index: HashMap::default(),
     };
     for dist in [100.0, 80.0, 40.0, 30.0, 50.0] {
         assert!(loc.tile_color(1, dist, 0.0, 0.0, 1.0).is_none());
@@ -498,6 +499,9 @@ fn probe_image_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     Arc::new(Tile::decode(&bytes).unwrap())
 }
 
+/// Timed renders per view in `terrain_views` (the fastest counts).
+const PROBE_RUNS: usize = 5;
+
 #[test]
 #[ignore = "manual: renders synthetic relief views to GLOBECRAFT_PROBE_DIR with timings"]
 fn terrain_views() {
@@ -545,11 +549,20 @@ fn terrain_views() {
         cfg.sky = None;
         cfg.atmo = true;
         cfg.terrain = Some(crate::TerrainCfg::new(1.0));
-        // Warm the tile map, then time.
-        let _ = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
-        let started = std::time::Instant::now();
-        let (pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
-        let elapsed = started.elapsed();
+        // Warm the tile map, then time: the fastest of a few runs, as the machine's
+        // other work only ever adds time.
+        let (mut pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        let fastest = |cfg: &RenderCfg, pixels: &mut Vec<u8>| {
+            (0..PROBE_RUNS)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    *pixels = render_pixels_tracked(width, height, &basis, cfg, &lookup).0;
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let elapsed = fastest(&cfg, &mut pixels);
         // Counted on one thread, outside the timing.
         crate::terrain::COUNTS.with(|c| c.set((0, 0)));
         let (steps, lookups) = rayon::ThreadPoolBuilder::new()
@@ -565,12 +578,11 @@ fn terrain_views() {
             terrain: None,
             ..cfg.clone()
         };
-        let started = std::time::Instant::now();
-        let _ = render_pixels_tracked(width, height, &basis, &flat, &lookup);
+        let flat_elapsed = fastest(&flat, &mut Vec::new());
         println!(
             "{name}: {:.0} ms ({:.0} ms without relief), {:.1} steps, {:.2} look-ups per pixel",
             elapsed.as_secs_f64() * 1e3,
-            started.elapsed().as_secs_f64() * 1e3,
+            flat_elapsed.as_secs_f64() * 1e3,
             steps as f64 / (width * height) as f64,
             lookups as f64 / (width * height) as f64
         );

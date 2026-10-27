@@ -41,6 +41,10 @@ impl RayCaster {
     pub(super) fn camera_up(&self) -> DVec3 {
         self.camera.normalize_or_zero()
     }
+    /// The raster's width and height in pixels.
+    pub(super) fn pixels(&self) -> (usize, usize) {
+        (self.width as usize, self.height as usize)
+    }
     pub(super) fn uses_unit_sphere(&self) -> bool {
         // Keep this exhaustive: a new surface family needs an explicit kernel
         // decision rather than falling through to the ellipsoid equations.
@@ -78,6 +82,17 @@ impl RayCaster {
         } else {
             self.cast_model::<true>(first_x, y)
         }
+    }
+    /// The unit view direction through pixel `(x, y)`'s centre.
+    pub(super) fn direction(&self, x: usize, y: usize) -> DVec3 {
+        let nx = (x as f64 + 0.5) / self.width * 2.0 - 1.0;
+        let ny = 1.0 - (y as f64 + 0.5) / self.height * 2.0;
+        let view = DVec3::new(
+            nx * self.aspect * VERTICAL_FOV_HALF_TAN,
+            ny * VERTICAL_FOV_HALF_TAN,
+            -1.0,
+        );
+        (self.rotation * view).normalize()
     }
     #[inline]
     pub(super) fn cast_model<const ELLIPSOID: bool>(

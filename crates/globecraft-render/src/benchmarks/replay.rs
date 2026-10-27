@@ -277,7 +277,7 @@ fn replay(
     let mut zoom_out: Option<globecraft_data::tiles::TileWarmup> = None;
     let mut arrival =
         (flight && std::env::var("GLOBECRAFT_REPLAY_NO_ARRIVAL").is_err()).then(|| {
-            let (w, h) = view::raster_size(viewport, 1.0, true);
+            let (w, h) = view::raster_size(viewport, 1.0, true, false);
             globecraft_data::tiles::TileWarmup::of_keys(crate::zoom_out::arrival_tiles(
                 path(duration_s),
                 h,
@@ -296,8 +296,10 @@ fn replay(
         let moving = t < duration_s;
         let cam = path(t.min(duration_s));
         cam_alt.set(cam.alt);
-        let (w, h) = view::raster_size(viewport, 1.0, !moving);
-        let cfg = config(view::render_scale(viewport, 1.0, !moving));
+        let terrain = std::env::var("GLOBECRAFT_REPLAY_TERRAIN").is_ok()
+            && cam.alt <= crate::TERRAIN_MAX_ALTITUDE_KM;
+        let (w, h) = view::raster_size(viewport, 1.0, !moving, terrain);
+        let cfg = config(view::render_scale(viewport, 1.0, !moving, terrain));
         let basis = if std::env::var("GLOBECRAFT_REPLAY_WGS84").is_ok() {
             cam.basis_for_model(
                 w as f64 / h as f64,

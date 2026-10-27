@@ -118,6 +118,28 @@ impl Elevation {
         let bottom = h(x0, y1) + (h(x1, y1) - h(x0, y1)) * fx;
         top + (bottom - top) * fy
     }
+    /// Height differences across `(x, y)` two texels apart, for shading: east minus
+    /// west and north minus south of bilinear heights (metres). The same as four
+    /// `height_m` calls inside the tile, with the cell shared.
+    pub fn slopes_m(&self, x: f64, y: f64) -> (f32, f32) {
+        let last = self.size as isize - 1;
+        let (x, y) = (x - 0.5, y - 0.5);
+        let (cell_x, cell_y) = (x.floor(), y.floor());
+        let (fx, fy) = ((x - cell_x) as f32, (y - cell_y) as f32);
+        let (x0, y0) = (cell_x as isize, cell_y as isize);
+        let at = |xx: isize, yy: isize| {
+            self.heights[yy.clamp(0, last) as usize * self.size + xx.clamp(0, last) as usize]
+        };
+        let bilinear = |cx: isize, cy: isize| {
+            let top = at(cx, cy) + (at(cx + 1, cy) - at(cx, cy)) * fx;
+            let bottom = at(cx, cy + 1) + (at(cx + 1, cy + 1) - at(cx, cy + 1)) * fx;
+            top + (bottom - top) * fy
+        };
+        (
+            bilinear(x0 + 1, y0) - bilinear(x0 - 1, y0),
+            bilinear(x0, y0 - 1) - bilinear(x0, y0 + 1),
+        )
+    }
     /// Memory held, for the cache budget.
     pub fn bytes(&self) -> usize {
         (self.heights.len() + self.maxima.iter().map(Vec::len).sum::<usize>())
@@ -128,6 +150,22 @@ impl Elevation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slopes_match_four_bilinear_samples_inside_the_tile() {
+        let size = 16;
+        let heights = (0..size * size)
+            .map(|i| ((i % size) as f32 * 7.0 + (i / size) as f32 * 3.0).sin() * 100.0)
+            .collect();
+        let tile = Elevation::from_heights(size, heights);
+        for (x, y) in [(3.2, 4.7), (8.5, 8.5), (5.9, 11.1)] {
+            let (east, north) = tile.slopes_m(x, y);
+            let want_east = tile.height_m(x + 1.0, y) - tile.height_m(x - 1.0, y);
+            let want_north = tile.height_m(x, y - 1.0) - tile.height_m(x, y + 1.0);
+            assert!((east - want_east).abs() < 1e-3, "{east} vs {want_east}");
+            assert!((north - want_north).abs() < 1e-3, "{north} vs {want_north}");
+        }
+    }
 
     #[test]
     fn block_maxima_bound_every_bilinear_sample_inside_the_block() {

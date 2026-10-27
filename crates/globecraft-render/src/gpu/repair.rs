@@ -18,6 +18,7 @@ pub(super) fn pixels(
                 lookup,
                 map: HashMap::default(),
                 dem: Vec::new(),
+                dem_index: HashMap::default(),
             };
             for (offset, row) in rows.chunks_mut(request.width * 4).enumerate() {
                 let y = batch * tuning::ROWS_PER_TILE_BATCH + offset;

@@ -19,6 +19,8 @@ use globecraft_data::tiles::{Elevation, Tile};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
+mod beam;
+
 /// Terrain is drawn below this camera altitude; above it relief is smaller than a pixel.
 pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 150.0;
 /// Accepted vertical exaggeration.
@@ -139,6 +141,15 @@ fn dem_tile(
         let tx = (u * n).floor().min(n - 1.0);
         let ty = (v * n).floor().min(n - 1.0);
         let key = make_key(Provider::TerrainDem, level as u8, tx as u32, ty as u32, 0);
+        if let Some(&index) = loc.dem_index.get(&key) {
+            return Some(DemTile {
+                index,
+                n,
+                tx,
+                ty,
+                size: loc.dem[index].elevation().map_or(0, Elevation::size) as f64,
+            });
+        }
         let tile = loc
             .map
             .entry(key)
@@ -151,13 +162,9 @@ fn dem_tile(
         match tile {
             LocalTile::Ready(tile) if tile.elevation().is_some() => {
                 let size = tile.elevation().map_or(0, Elevation::size) as f64;
-                let index = match loc.dem.iter().position(|held| Arc::ptr_eq(held, tile)) {
-                    Some(index) => index,
-                    None => {
-                        loc.dem.push(tile.clone());
-                        loc.dem.len() - 1
-                    }
-                };
+                loc.dem.push(tile.clone());
+                let index = loc.dem.len() - 1;
+                loc.dem_index.insert(key, index);
                 return Some(DemTile {
                     index,
                     n,
@@ -262,6 +269,24 @@ impl Anchor {
     }
 }
 
+/// The elevation zoom for distance `t` and the distance it holds until. Chosen once per
+/// band of a fixed geometric grid (bands `ZOOM_RECHECK_RATIO` long, at the band's
+/// start), so a march started part-way (`beam`) picks the same levels as one started
+/// at the camera.
+fn zoom_band(t: f64, pixel_angle: f64, latitude_cosine: f64) -> (i32, f64) {
+    let band = (t.max(MIN_BAND_START) / MIN_BAND_START)
+        .ln()
+        .div_euclid(ZOOM_RECHECK_RATIO.ln());
+    let start = MIN_BAND_START * ZOOM_RECHECK_RATIO.powf(band);
+    (
+        dem_zoom(start, pixel_angle, latitude_cosine, DEM_TILE_TEXELS),
+        start * ZOOM_RECHECK_RATIO,
+    )
+}
+
+/// The first band of `zoom_band` (world units, about 6 mm).
+const MIN_BAND_START: f64 = 1e-9;
+
 /// The elevation zoom for a point `t` away: texels of about `DEM_PIXELS_PER_TEXEL`
 /// pixels, given the angle per pixel `pixel_angle`.
 fn dem_zoom(t: f64, pixel_angle: f64, latitude_cosine: f64, tile_texels: f64) -> i32 {
@@ -273,12 +298,58 @@ fn dem_zoom(t: f64, pixel_angle: f64, latitude_cosine: f64, tile_texels: f64) ->
     (zoom.floor() as i32).clamp(0, DEM_MAX_ZOOM)
 }
 
+/// Where the rays of each block of pixels in rows `rows` may start their march: for
+/// every `BEAM_PX` columns, the distance below which no ray of the block meets the
+/// relief (see `beam`). Index with `x / BEAM_PX`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn beam_starts(
+    rays: &rays::RayCaster,
+    w: usize,
+    h: usize,
+    rows: std::ops::Range<usize>,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> Vec<f64> {
+    let (top, bottom) = (rows.start, rows.end.saturating_sub(1));
+    (0..w)
+        .step_by(beam::BEAM_PX)
+        .map(|left| {
+            let right = (left + beam::BEAM_PX).min(w) - 1;
+            let cone = beam::Cone::around([
+                rays.direction(left, top),
+                rays.direction(right, top),
+                rays.direction(left, bottom),
+                rays.direction(right, bottom),
+            ]);
+            let offset = (
+                (left + right) as f32 / 2.0 - w as f32 / 2.0,
+                (top + bottom) as f32 / 2.0 - h as f32 / 2.0,
+            );
+            beam::clear_distance(
+                cone,
+                rays.camera(),
+                rays.model_geometry(),
+                terrain,
+                pixel_angle,
+                offset.0 * offset.0 + offset.1 * offset.1,
+                loc,
+            )
+        })
+        .collect()
+}
+
+/// Columns per entry of `beam_starts`.
+pub(super) const BEAM_COLUMNS: usize = beam::BEAM_PX;
+
 /// Marches `ray` from the camera at `origin` through the relief. `hits_surface` says
 /// whether the ray meets the ellipsoid (at `ray.distance`); `pixel_angle` is the view
-/// angle per displayed pixel; `dist` the pixel's screen priority for tile requests.
+/// angle per displayed pixel; `dist` the pixel's screen priority for tile requests;
+/// `start` a distance the ray is known to stay above the relief until (`beam_starts`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn march(
     ray: &rays::RaySample,
+    start: f64,
     hits_surface: bool,
     origin: DVec3,
     geometry: SurfaceGeometry,
@@ -303,7 +374,7 @@ pub(super) fn march(
         leave
     };
     let q = geometry.inverse_axes_squared();
-    let mut t = enter;
+    let mut t = enter.max(start);
     // The last point known to be above the ground and its clearance, for the hit.
     let mut above: Option<(f64, f64)> = None;
     let mut current: Option<DemTile> = None;
@@ -324,8 +395,7 @@ pub(super) fn march(
             break;
         }
         if t > zoom_until {
-            zoom = dem_zoom(t, pixel_angle, anchor.latitude_cosine, DEM_TILE_TEXELS);
-            zoom_until = t * ZOOM_RECHECK_RATIO;
+            (zoom, zoom_until) = zoom_band(t, pixel_angle, anchor.latitude_cosine);
         }
         let mut uv = anchor.uv(t);
         // Keep the tile while it covers the point and the wanted zoom holds (it may be
@@ -477,21 +547,22 @@ fn hill_shade(
     to_world: f64,
 ) -> f32 {
     let (x, y) = tile.texel(uv);
-    let height = |x: f64, y: f64| f64::from(elevation.height_m(x, y));
-    let latitude_cosine = up.x.hypot(up.y).max(MIN_LATITUDE_COSINE);
+    let (east, north) = elevation.slopes_m(x, y);
+    let latitude_cosine = (up.x * up.x + up.y * up.y).sqrt().max(MIN_LATITUDE_COSINE);
     // One texel on the ground (Mercator is conformal: the same both ways).
     let run_m = 2.0 * PI * EARTH_RADIUS_M * latitude_cosine / (tile.n * elevation.size() as f64);
     let exaggeration = to_world * EARTH_RADIUS_M;
-    let slope_east = ((height(x + 1.0, y) - height(x - 1.0, y)) / (2.0 * run_m) * exaggeration)
-        .clamp(-MAX_SLOPE, MAX_SLOPE);
-    let slope_north = ((height(x, y - 1.0) - height(x, y + 1.0)) / (2.0 * run_m) * exaggeration)
-        .clamp(-MAX_SLOPE, MAX_SLOPE);
-    let east = DVec3::new(-up.y, up.x, 0.0).normalize_or_zero();
-    let north = up.cross(east).normalize_or_zero();
-    let relief_normal = (up - east * slope_east - north * slope_north).normalize_or_zero();
-    let light = (up * LIGHT_UP + north * LIGHT_NORTH - east * LIGHT_WEST).normalize();
-    let flat = up.dot(light);
-    let relief = relief_normal.dot(light).max(0.0);
+    let slope_east = (f64::from(east) / (2.0 * run_m) * exaggeration).clamp(-MAX_SLOPE, MAX_SLOPE);
+    let slope_north =
+        (f64::from(north) / (2.0 * run_m) * exaggeration).clamp(-MAX_SLOPE, MAX_SLOPE);
+    // In the local frame (east, north, up) the relief normal is (-east slope, -north
+    // slope, 1) and the light (-west, north, up): their cosine needs no vectors.
+    let light_length =
+        (LIGHT_UP * LIGHT_UP + LIGHT_NORTH * LIGHT_NORTH + LIGHT_WEST * LIGHT_WEST).sqrt();
+    let flat = LIGHT_UP / light_length;
+    let relief = ((LIGHT_UP + slope_east * LIGHT_WEST - slope_north * LIGHT_NORTH)
+        / ((1.0 + slope_east * slope_east + slope_north * slope_north).sqrt() * light_length))
+        .max(0.0);
     (SHADE_BASE + SHADE_GAIN * (relief - flat)).clamp(MIN_SHADE, MAX_SHADE) as f32
 }
 
@@ -618,6 +689,7 @@ mod march_tests {
                 lookup: &lookup,
                 map: HashMap::<_, _, KeyBuild>::default(),
                 dem: Vec::new(),
+                dem_index: HashMap::default(),
             };
             let up = globecraft_core::math::ll_to_v3(30.0, 80.0);
             let origin =
@@ -625,6 +697,7 @@ mod march_tests {
             let (ray, hits) = ray_from(origin, -up, geometry);
             let March::Hit(ground, _) = march(
                 &ray,
+                0.0,
                 hits,
                 origin,
                 geometry,
@@ -644,7 +717,7 @@ mod march_tests {
             let (ray, hits) = ray_from(origin, grazing, geometry);
             assert!(hits);
             assert!(matches!(
-                march(&ray, hits, origin, geometry, TerrainCfg::new(1.0), 1e-3, 0.0, &mut loc),
+                march(&ray, 0.0, hits, origin, geometry, TerrainCfg::new(1.0), 1e-3, 0.0, &mut loc),
                 March::Hit(ground, _) if ground.distance < ray.distance * 0.9
             ));
             // One that clears the plateau over the curve sees past it: sky.
@@ -653,6 +726,7 @@ mod march_tests {
             assert!(matches!(
                 march(
                     &ray,
+                    0.0,
                     hits,
                     origin,
                     geometry,
@@ -668,6 +742,7 @@ mod march_tests {
             assert!(matches!(
                 march(
                     &ray,
+                    0.0,
                     hits,
                     origin,
                     geometry,

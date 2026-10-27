@@ -5,15 +5,26 @@ use globecraft_data::tiles::Provider;
 use std::hash::{Hash, Hasher};
 const IDLE_RENDER_SCALE: f32 = 1.0;
 const ACTIVE_RENDER_SCALE: f32 = 0.4;
+/// While moving over 3D relief: marching the elevation model costs several times a
+/// flat frame, so motion frames are smaller (about half the pixels of
+/// `ACTIVE_RENDER_SCALE`); the full-resolution frame follows once the view rests.
+const ACTIVE_RELIEF_RENDER_SCALE: f32 = 0.28;
 const MIN_RENDER_WIDTH_PX: usize = 64;
 const MAX_RENDER_WIDTH_PX: usize = 2000;
 const MIN_RENDER_HEIGHT_PX: usize = 32;
 pub const SCENE_TIME_UPDATE_INTERVAL_SECS: f64 = 60.0;
-pub fn raster_size(size_points: Vec2, pixels_per_point: f32, idle: bool) -> (usize, usize) {
-    let scale = if idle {
-        IDLE_RENDER_SCALE
-    } else {
-        ACTIVE_RENDER_SCALE
+/// The raster for a viewport: full resolution at rest, smaller while moving (smaller
+/// still with `relief`, 3D terrain on screen).
+pub fn raster_size(
+    size_points: Vec2,
+    pixels_per_point: f32,
+    idle: bool,
+    relief: bool,
+) -> (usize, usize) {
+    let scale = match (idle, relief) {
+        (true, _) => IDLE_RENDER_SCALE,
+        (false, false) => ACTIVE_RENDER_SCALE,
+        (false, true) => ACTIVE_RELIEF_RENDER_SCALE,
     };
     let width = ((size_points.x * pixels_per_point * scale) as usize)
         .clamp(MIN_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX);
@@ -31,9 +42,9 @@ pub fn raster_size(size_points: Vec2, pixels_per_point: f32, idle: bool) -> (usi
 /// are capped at `MAX_RENDER_WIDTH_PX`, so on a large Retina window (3660 px) the
 /// idle raster is 2000 px while the motion raster (1464 px) is not capped. Using the
 /// nominal 0.4 there put motion frames almost a full level finer than idle frames.
-pub fn render_scale(size_points: Vec2, pixels_per_point: f32, idle: bool) -> f32 {
-    let (width, _) = raster_size(size_points, pixels_per_point, idle);
-    let (idle_width, _) = raster_size(size_points, pixels_per_point, true);
+pub fn render_scale(size_points: Vec2, pixels_per_point: f32, idle: bool, relief: bool) -> f32 {
+    let (width, _) = raster_size(size_points, pixels_per_point, idle, relief);
+    let (idle_width, _) = raster_size(size_points, pixels_per_point, true, relief);
     width as f32 / idle_width as f32
 }
 #[derive(Clone)]
@@ -278,32 +289,41 @@ mod tests {
             (Vec2::new(1830.0, 1100.0), 2.0),
             (Vec2::new(4000.0, 2000.0), 2.0),
         ] {
-            let density = |idle| {
-                let (_, height) = raster_size(size, ppp, idle);
-                render_scale(size, ppp, idle) / height as f32
-            };
-            let (idle, motion) = (density(true), density(false));
-            assert!(
-                ((motion / idle).log2()).abs() < 0.02,
-                "{size:?} at {ppp}x: levels differ by {}",
-                (motion / idle).log2()
-            );
+            for relief in [false, true] {
+                let density = |idle| {
+                    let (_, height) = raster_size(size, ppp, idle, relief);
+                    render_scale(size, ppp, idle, relief) / height as f32
+                };
+                let (idle, motion) = (density(true), density(false));
+                assert!(
+                    ((motion / idle).log2()).abs() < 0.02,
+                    "{size:?} at {ppp}x (relief {relief}): levels differ by {}",
+                    (motion / idle).log2()
+                );
+            }
         }
-        assert_eq!(render_scale(Vec2::new(1280.0, 800.0), 1.0, true), 1.0);
+        assert_eq!(
+            render_scale(Vec2::new(1280.0, 800.0), 1.0, true, false),
+            1.0
+        );
     }
 
     #[test]
     fn interaction_resolution_and_size_limits_are_preserved() {
         assert_eq!(
-            raster_size(Vec2::new(1280.0, 800.0), 1.0, true),
+            raster_size(Vec2::new(1280.0, 800.0), 1.0, true, false),
             (1280, 800)
         );
         assert_eq!(
-            raster_size(Vec2::new(1280.0, 800.0), 1.0, false),
+            raster_size(Vec2::new(1280.0, 800.0), 1.0, false, false),
             (512, 320)
         );
         assert_eq!(
-            raster_size(Vec2::new(4000.0, 2000.0), 2.0, true),
+            raster_size(Vec2::new(1280.0, 800.0), 1.0, false, true),
+            (358, 223)
+        );
+        assert_eq!(
+            raster_size(Vec2::new(4000.0, 2000.0), 2.0, true, true),
             (2000, 1000)
         );
     }

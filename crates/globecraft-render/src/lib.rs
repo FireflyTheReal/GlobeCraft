@@ -89,6 +89,8 @@ struct Local<'a, F> {
     /// Elevation tiles the batch's rays use, held once so a ray refers to them by
     /// index: cloning the shared tile handle per ray made threads contend.
     dem: Vec<Arc<Tile>>,
+    /// Where each held elevation tile is in `dem`.
+    dem_index: HashMap<TileKey, usize, KeyBuild>,
 }
 enum LocalTile {
     Ready(Arc<Tile>),
@@ -317,19 +319,25 @@ fn night_lights(
 /// Below this darkness (twilight's bright end) the lights are not sampled at all.
 const MIN_NIGHT_LIGHTS_DARKNESS: f32 = 0.01;
 
+/// The view angle per displayed pixel (see `pixel::surface`).
+fn pixel_angle(h: usize, cfg: &RenderCfg) -> f64 {
+    2.0 * VERTICAL_FOV_HALF_TAN * cfg.lod_scale as f64 / h as f64
+}
+
+/// Renders row `y`. `beams` holds where the relief march of each block of pixels may
+/// start (`terrain::beam_starts`; empty without relief).
 fn render_row<const ELLIPSOID: bool>(
     y: usize,
-    w: usize,
-    h: usize,
     rays: &RayCaster,
     cfg: &RenderCfg,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    beams: &[f64],
     row: &mut [u8],
 ) {
+    let (w, h) = rays.pixels();
     let cc = rays.camera_len_squared;
     let camera_up = rays.camera_up();
-    // The view angle per displayed pixel (see `pixel::surface`).
-    let pixel_angle = 2.0 * VERTICAL_FOV_HALF_TAN * cfg.lod_scale as f64 / h as f64;
+    let pixel_angle = pixel_angle(h, cfg);
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
         let first_x = pack * RAY_LANES;
@@ -349,6 +357,7 @@ fn render_row<const ELLIPSOID: bool>(
                     let priority = offset.0 * offset.0 + offset.1 * offset.1;
                     match terrain::march(
                         &ray,
+                        beams.get(x / terrain::BEAM_COLUMNS).copied().unwrap_or(0.0),
                         hits_surface,
                         rays.camera(),
                         geometry,
@@ -535,26 +544,40 @@ fn render_pixels_into(
                 lookup,
                 map: HashMap::default(),
                 dem: Vec::new(),
+                dem_index: HashMap::default(),
+            };
+            let batch_first = first_row + batch * ROWS_PER_TILE_BATCH;
+            let batch_rows = batch_first..batch_first + rows.len() / row_bytes;
+            // Relief: one cone per block of pixels clears the open air first.
+            let beams = match cfg.terrain {
+                Some(relief) => terrain::beam_starts(
+                    &rays,
+                    w,
+                    h,
+                    batch_rows,
+                    relief,
+                    pixel_angle(h, cfg),
+                    &mut loc,
+                ),
+                None => Vec::new(),
             };
             for (offset, row) in rows.chunks_mut(row_bytes).enumerate() {
                 if unit_sphere {
                     render_row::<false>(
                         first_row + batch * ROWS_PER_TILE_BATCH + offset,
-                        w,
-                        h,
                         &rays,
                         cfg,
                         &mut loc,
+                        &beams,
                         row,
                     );
                 } else {
                     render_row::<true>(
                         first_row + batch * ROWS_PER_TILE_BATCH + offset,
-                        w,
-                        h,
                         &rays,
                         cfg,
                         &mut loc,
+                        &beams,
                         row,
                     );
                 }
