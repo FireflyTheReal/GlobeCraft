@@ -127,18 +127,30 @@ jobs:
                       round(avg(length(tile_data))/1024.0, 2) AS avg_KiB, max(length(tile_data))/1024 AS max_KiB
                FROM tiles GROUP BY zoom_level ORDER BY zoom_level;"
           done | tee measure.txt
-          ls -l *.mbtiles
+          ls -l *.mbtiles | tee -a measure.txt
+          {
+            echo '```'
+            cat measure.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for set in borders water; do
+            echo "::notice::$set: $(sqlite3 "$set.mbtiles" "SELECT count(*) || ' tiles, ' || round(sum(length(tile_data))/1048576.0) || ' MiB, z12 avg ' || round(avg(CASE WHEN zoom_level = 12 THEN length(tile_data) END)/1024.0, 2) || ' KiB' FROM tiles")"
+          done
 
       - name: Convert to PMTiles
         working-directory: /work
+        # Its temporary file is as large as the archive: keep it off the small root disk.
+        env:
+          TMPDIR: /work/tmp
         run: |
+          mkdir -p "$TMPDIR"
           for set in borders water; do
             ./pmtiles convert "$set.mbtiles" "globecraft-$set-${{ steps.pick.outputs.version }}.pmtiles"
           done
           ls -l *.pmtiles | tee -a measure.txt
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cat measure.txt >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for file in *.pmtiles; do
+            echo "::notice::$file: $(( $(stat -c %s "$file") / 1048576 )) MiB"
+          done
 
       - name: Publish a data pre-release
         if: inputs.publish
