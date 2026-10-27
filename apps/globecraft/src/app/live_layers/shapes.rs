@@ -78,7 +78,10 @@ fn add_airplane_mesh(
             for point in polygon {
                 let dx = (point.x - SVG_CENTER_POINTS) * icon_size * scale;
                 let dy = (SVG_CENTER_POINTS - point.y) * icon_size * scale;
-                mesh.colored_vertex(flight.position + right * dx + forward * dy, color);
+                mesh.colored_vertex(
+                    flight.position + right * dx + forward * dy,
+                    color.gamma_multiply(flight.opacity),
+                );
             }
             for i in 1..polygon.len() - 1 {
                 mesh.indices
@@ -107,7 +110,11 @@ pub(super) fn build(painter: &egui::Painter, geometry: &AircraftGeometry) -> Vec
     let label_font = crate::app::fonts::map_font(painter.ctx(), LABEL_FONT_POINTS * ms);
     let mut labels = geometry.labels.iter().copied().peekable();
     for (index, flight) in geometry.flights.iter().enumerate() {
-        trails.push(Shape::line_segment(flight.trail, trail_stroke));
+        let stroke = Stroke::new(
+            trail_stroke.width,
+            trail_stroke.color.gamma_multiply(flight.opacity),
+        );
+        trails.push(Shape::line_segment(flight.trail, stroke));
         add_airplane_mesh(&mut planes, flight, ms, symbol);
         if labels.peek() == Some(&index) {
             labels.next();

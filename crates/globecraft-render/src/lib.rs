@@ -625,3 +625,4 @@ pub mod still;
 pub mod view;
 
 pub mod live_layers;
+pub mod motion;

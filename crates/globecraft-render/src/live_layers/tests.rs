@@ -98,12 +98,23 @@ fn preparer_reuses_components_and_invalidates_changes_to_view_data_and_time() {
         top_y: 1,
         loaded: std::time::Instant::now(),
     }));
+    // Without moving objects, time alone changes nothing.
+    let vessels = request.vessels.take();
     let mut preparer = LivePreparer::default();
     let first = preparer.prepare(request.clone());
     request.unix_secs += 1.0;
     assert!(Arc::ptr_eq(&first, &preparer.prepare(request.clone())));
     request.vessels = Some(Vec::<Vessel>::new().into());
     let second = preparer.prepare(request.clone());
+    // Vessels are dead-reckoned, so a new motion step moves them, and only them.
+    let mut moving = request.clone();
+    moving.vessels = vessels.clone();
+    let before = preparer.prepare(moving.clone());
+    moving.unix_secs += moving.view.vessel_step();
+    let after = preparer.prepare(moving);
+    assert!(!Arc::ptr_eq(&before.vessels, &after.vessels));
+    assert!(Arc::ptr_eq(&before.roads, &after.roads));
+    preparer.prepare(request.clone());
     assert!(!Arc::ptr_eq(&first, &second));
     assert!(Arc::ptr_eq(&first.roads, &second.roads));
     assert!(Arc::ptr_eq(
@@ -182,4 +193,29 @@ fn worker_publishes_before_waking_and_reuses_an_unchanged_request() {
     worker.submit(input);
     receive.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(Arc::ptr_eq(&first, &worker.take_completed().unwrap()));
+}
+#[test]
+fn vessels_sail_their_course_for_a_while_after_a_report() {
+    let ship = |speed_knots| Vessel {
+        mmsi: "1".into(),
+        name: String::new(),
+        lat: 0.0,
+        lon: 0.0,
+        course: 90.0,
+        speed_knots,
+        observed_unix: 0.0,
+    };
+    let km_east = |(lat, lon): (f64, f64)| {
+        assert!(lat.abs() < 1e-9);
+        lon.to_radians() * globecraft_core::EARTH_RADIUS_KM
+    };
+    // 10 knots for six minutes: one nautical mile.
+    let moved = km_east(super::dead_reckon(&ship(Some(10.0)), 360.0));
+    assert!((moved - 1.852).abs() < 0.01, "{moved}");
+    // The reckoning stops after ten minutes.
+    let capped = km_east(super::dead_reckon(&ship(Some(10.0)), 7200.0));
+    assert!((capped - 3.087).abs() < 0.01, "{capped}");
+    // Moored ships and missing speeds stay put.
+    assert_eq!(super::dead_reckon(&ship(Some(0.2)), 360.0), (0.0, 0.0));
+    assert_eq!(super::dead_reckon(&ship(None), 360.0), (0.0, 0.0));
 }

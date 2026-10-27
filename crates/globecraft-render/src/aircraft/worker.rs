@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod tests;
 use super::{ProjectedFlight, project_flights};
+use crate::motion;
 use emath::Rect;
 use globecraft_core::camera::Basis;
 use globecraft_data::aircraft::AircraftSnapshot;
@@ -20,6 +21,20 @@ pub struct ProjectionView {
     pub map_scale: f32,
     pub pixels_per_point: f32,
 }
+impl ProjectionView {
+    /// How often flights move in this view, in seconds (see [`crate::motion`]).
+    pub fn motion_step(&self) -> f64 {
+        motion::step_secs(
+            self.altitude_km,
+            self.rect.height(),
+            motion::AIRCRAFT_SPEED_KM_S,
+        )
+    }
+    /// The motion step `unix_secs` falls in for this view.
+    pub fn tick(&self, unix_secs: f64) -> i64 {
+        motion::tick(unix_secs, self.motion_step())
+    }
+}
 #[derive(Clone)]
 pub struct ProjectionInput {
     pub view: ProjectionView,
@@ -30,7 +45,7 @@ impl ProjectionInput {
     pub fn same_request(&self, other: &Self) -> bool {
         self.view == other.view
             && Arc::ptr_eq(&self.data, &other.data)
-            && self.unix_secs.floor() == other.unix_secs.floor()
+            && self.view.tick(self.unix_secs) == other.view.tick(other.unix_secs)
     }
 }
 
@@ -58,7 +73,7 @@ impl AircraftPreparer {
     pub fn prepare(&mut self, input: ProjectionInput) -> Arc<AircraftGeometry> {
         if let Some(geometry) = &self.latest
             && geometry.matches(input.view, &input.data)
-            && geometry.unix_secs.floor() == input.unix_secs.floor()
+            && input.view.tick(geometry.unix_secs) == input.view.tick(input.unix_secs)
         {
             return geometry.clone();
         }

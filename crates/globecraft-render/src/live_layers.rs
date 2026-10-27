@@ -1,5 +1,6 @@
 //! Geographic preparation for roads, AIS, predicted satellites and traffic.
 mod worker;
+use crate::motion;
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{roads::Road, satellites::Satellite, traffic::TrafficTiles, vessels::Vessel};
@@ -7,6 +8,17 @@ use std::sync::Arc;
 pub use worker::LiveWorker;
 
 const VESSEL_HEADING_PROBE_KM: f64 = 2.0;
+/// Dead reckoning moves a vessel along its course for at most this long after its
+/// last AIS report (reports come every few seconds to minutes; a ship that stops
+/// reporting is not sailed across the map).
+const VESSEL_EXTRAPOLATION_MAX_SECS: f64 = 600.0;
+/// Reports this old are drawn at the stale opacity.
+const VESSEL_STALE_SECS: f64 = 1800.0;
+/// Below this, AIS speed is mostly GPS jitter of a moored or anchored ship.
+const VESSEL_MIN_MOVING_KNOTS: f64 = 0.5;
+const VESSEL_MAX_SPEED_KNOTS: f64 = 60.0;
+const KM_PER_NAUTICAL_MILE: f64 = 1.852;
+const SECONDS_PER_HOUR: f64 = 3600.0;
 const VESSEL_ICON_POINTS: f32 = 8.0;
 const VESSEL_WIDTH_RATIO: f32 = 0.55;
 const VESSEL_REAR_RATIO: f32 = 0.8;
@@ -23,6 +35,24 @@ pub struct LiveView {
     pub pixels_per_point: f32,
     pub traffic_width_px: usize,
     pub traffic_height_px: usize,
+}
+impl LiveView {
+    /// How often vessels move in this view, in seconds (see [`crate::motion`]).
+    pub fn vessel_step(&self) -> f64 {
+        motion::step_secs(
+            self.altitude_km,
+            self.rect.height(),
+            motion::VESSEL_SPEED_KM_S,
+        )
+    }
+    /// How often satellites move in this view, in seconds.
+    pub fn satellite_step(&self) -> f64 {
+        motion::step_secs(
+            self.altitude_km,
+            self.rect.height(),
+            motion::SATELLITE_SPEED_KM_S,
+        )
+    }
 }
 #[derive(Clone)]
 pub struct LiveInput {
@@ -47,7 +77,16 @@ impl LiveInput {
             && same(&self.vessels, &other.vessels)
             && same(&self.satellites, &other.satellites)
             && same(&self.traffic, &other.traffic)
-            && (self.satellites.is_none() || self.unix_secs.floor() == other.unix_secs.floor())
+            && (self.vessels.is_none() || self.same_vessel_time(other))
+            && (self.satellites.is_none() || self.same_satellite_time(other))
+    }
+    fn same_vessel_time(&self, other: &Self) -> bool {
+        let step = self.view.vessel_step();
+        motion::tick(self.unix_secs, step) == motion::tick(other.unix_secs, step)
+    }
+    fn same_satellite_time(&self, other: &Self) -> bool {
+        let step = self.view.satellite_step();
+        motion::tick(self.unix_secs, step) == motion::tick(other.unix_secs, step)
     }
 }
 
@@ -60,6 +99,8 @@ pub struct ProjectedVessel {
     pub source_index: usize,
     pub position: Pos2,
     pub icon: [Pos2; 4],
+    /// Dimmed as the last AIS report ages.
+    pub opacity: f32,
 }
 pub struct ProjectedSatellite {
     pub source_index: usize,
@@ -120,13 +161,15 @@ impl LivePreparer {
             .map(|old| old.roads.clone())
             .unwrap_or_else(|| Arc::new(project_roads(&input)));
         let vessels = previous
-            .filter(|old| same(&old.input.vessels, &input.vessels))
+            .filter(|old| {
+                same(&old.input.vessels, &input.vessels) && old.input.same_vessel_time(&input)
+            })
             .map(|old| old.vessels.clone())
             .unwrap_or_else(|| Arc::new(project_vessels(&input)));
         let satellites = previous
             .filter(|old| {
                 same(&old.input.satellites, &input.satellites)
-                    && old.input.unix_secs.floor() == input.unix_secs.floor()
+                    && old.input.same_satellite_time(&input)
             })
             .map(|old| old.satellites.clone())
             .unwrap_or_else(|| Arc::new(project_satellites(&input)));
@@ -202,14 +245,16 @@ fn project_vessels(input: &LiveInput) -> Vec<ProjectedVessel> {
         .iter()
         .enumerate()
         .filter_map(|(source_index, ship)| {
+            let age = (input.unix_secs - ship.observed_unix).max(0.0);
+            let (lat, lon) = dead_reckon(ship, age);
             let at = view
                 .basis
-                .project(view.basis.surface_position(ship.lat, ship.lon), view.rect)?;
+                .project(view.basis.surface_position(lat, lon), view.rect)?;
             if !view.rect.contains(at) {
                 return None;
             }
             // Preserve the original 2 km course probe; project it onto the selected model.
-            let (lat, lon) = destination(ship.lat, ship.lon, ship.course, VESSEL_HEADING_PROBE_KM);
+            let (lat, lon) = destination(lat, lon, ship.course, VESSEL_HEADING_PROBE_KM);
             let forward = view
                 .basis
                 .project(view.basis.surface_position(lat, lon), view.rect)
@@ -219,6 +264,7 @@ fn project_vessels(input: &LiveInput) -> Vec<ProjectedVessel> {
                 .unwrap_or(Vec2::new(0.0, -VESSEL_ICON_POINTS * view.map_scale));
             let right = Vec2::new(-forward.y, forward.x) * VESSEL_WIDTH_RATIO;
             Some(ProjectedVessel {
+                opacity: motion::age_opacity(age, VESSEL_EXTRAPOLATION_MAX_SECS, VESSEL_STALE_SECS),
                 source_index,
                 position: at,
                 icon: [
@@ -230,6 +276,18 @@ fn project_vessels(input: &LiveInput) -> Vec<ProjectedVessel> {
             })
         })
         .collect()
+}
+/// Where `ship` is `age` seconds after its report, sailing its course at its speed.
+fn dead_reckon(ship: &Vessel, age: f64) -> (f64, f64) {
+    let knots = ship.speed_knots.unwrap_or(0.0);
+    if !(VESSEL_MIN_MOVING_KNOTS..=VESSEL_MAX_SPEED_KNOTS).contains(&knots)
+        || !ship.course.is_finite()
+    {
+        return (ship.lat, ship.lon);
+    }
+    let km =
+        knots * KM_PER_NAUTICAL_MILE / SECONDS_PER_HOUR * age.min(VESSEL_EXTRAPOLATION_MAX_SECS);
+    destination(ship.lat, ship.lon, ship.course, km)
 }
 fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
     let Some(satellites) = &input.satellites else {

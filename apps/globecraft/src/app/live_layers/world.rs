@@ -75,8 +75,11 @@ fn build_vessels(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape>
         let vessel = &vessels[projected.source_index];
         shapes.push(Shape::convex_polygon(
             projected.icon.to_vec(),
-            Color32::from_rgb(52, 224, 229),
-            Stroke::new(1.0 * scale, Color32::from_rgb(5, 60, 65)),
+            Color32::from_rgb(52, 224, 229).gamma_multiply(projected.opacity),
+            Stroke::new(
+                1.0 * scale,
+                Color32::from_rgb(5, 60, 65).gamma_multiply(projected.opacity),
+            ),
         ));
         if geometry.input.view.altitude_km < VESSEL_LABEL_ALTITUDE_KM && index < VESSEL_LABEL_LIMIT
         {

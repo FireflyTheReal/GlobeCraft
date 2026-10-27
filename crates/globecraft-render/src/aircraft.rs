@@ -15,6 +15,8 @@ const ICON_SIZE_POINTS: f32 = 7.0;
 const TRAIL_SIZE_POINTS: f32 = 12.0;
 const WING_WIDTH_RATIO: f32 = 0.4;
 const EXTRAPOLATION_MAX_SECS: f64 = 25.0;
+/// Flights whose last report is this old are drawn at the stale opacity.
+const STALE_SECS: f64 = 90.0;
 const EXTRAPOLATION_MAX_SPEED_KNOTS: f64 = 1200.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
 const SECONDS_PER_HOUR: f64 = 3600.0;
@@ -29,6 +31,8 @@ pub struct ProjectedFlight {
     pub position: Pos2,
     pub icon: [Pos2; 4],
     pub trail: [Pos2; 2],
+    /// Dimmed as the last report ages (see [`crate::motion::age_opacity`]).
+    pub opacity: f32,
 }
 
 pub fn project_flights(
@@ -75,6 +79,7 @@ pub fn project_flights(
             let wing = Vec2::new(-forward.y, forward.x) * WING_WIDTH_RATIO;
             let tail = Vec2::angled(heading) * (TRAIL_SIZE_POINTS * map_scale);
             Some(ProjectedFlight {
+                opacity: crate::motion::age_opacity(age, EXTRAPOLATION_MAX_SECS, STALE_SECS),
                 source_index,
                 position: screen,
                 icon: [

@@ -11,8 +11,11 @@ use globecraft_core::{camera::Basis, language::Lang, math::now_unix};
 use globecraft_render::aircraft::{
     AircraftGeometry, AircraftWorker, ProjectionInput, ProjectionView,
 };
+use globecraft_render::motion;
 use std::{sync::Arc, time::Duration};
 
+/// Repaint cadence while flights are on but not drawn yet (no view); drawn flights
+/// repaint at their motion step.
 pub(super) const FLIGHT_REPAINT_INTERVAL: Duration = Duration::from_secs(1);
 const HOVER_RADIUS_POINTS: f32 = 15.0;
 const HOVER_FONT_POINTS: f32 = 12.0;
@@ -49,7 +52,7 @@ impl AircraftOverlay {
             || self.geometry.as_ref().is_some_and(|old| {
                 old.matches(geometry.view, &geometry.data)
                     && old.is_recent(unix_secs)
-                    && old.unix_secs.floor() >= geometry.unix_secs.floor()
+                    && old.view.tick(old.unix_secs) >= geometry.view.tick(geometry.unix_secs)
             })
         {
             return;
@@ -66,8 +69,9 @@ impl AircraftOverlay {
         let current = self.geometry.as_ref().filter(|geometry| {
             geometry.matches(input.view, &input.data) && geometry.is_recent(input.unix_secs)
         });
-        let needs_refresh =
-            current.is_none_or(|geometry| geometry.unix_secs.floor() != input.unix_secs.floor());
+        let needs_refresh = current.is_none_or(|geometry| {
+            input.view.tick(geometry.unix_secs) != input.view.tick(input.unix_secs)
+        });
         if needs_refresh
             && self
                 .requested
@@ -121,20 +125,28 @@ impl App {
         if self.layer(MapLayer::Flights) {
             let input =
                 self.aircraft_input(*basis, rect, altitude_km, painter.ctx().pixels_per_point());
+            let step = input.view.motion_step();
             self.aircraft_overlay.draw(painter, input, self.lang);
-            painter.ctx().request_repaint_after(FLIGHT_REPAINT_INTERVAL);
+            painter
+                .ctx()
+                .request_repaint_after(motion::repaint_after(step));
         }
         if self.layer(MapLayer::Vessels)
             && let Some(geometry) = geometry
         {
             self.draw_vessel_overlay(painter, geometry);
+            painter
+                .ctx()
+                .request_repaint_after(motion::repaint_after(geometry.input.view.vessel_step()));
         }
         if self.layer(MapLayer::Satellites)
             && let Some(geometry) = geometry
         {
             self.draw_satellite_overlay(painter, geometry);
             // Orbit predictions need to move even without another network fetch.
-            painter.ctx().request_repaint_after(Duration::from_secs(1));
+            painter
+                .ctx()
+                .request_repaint_after(motion::repaint_after(geometry.input.view.satellite_step()));
         }
     }
 }
