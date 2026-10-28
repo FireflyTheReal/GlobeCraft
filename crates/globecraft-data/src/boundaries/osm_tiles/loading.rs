@@ -8,11 +8,12 @@ use crate::boundaries::{StatusLog, log_status};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// GlobeCraft's own borders-and-names tile set: a manifest naming PMTiles archives
+/// GlobeCraft's own borders-and-names tile set: the `map-data` release's manifest
+/// (one release for all map data) names PMTiles archives
 /// cut from the OpenFreeMap planet (only the layers drawn here, a few KB per tile
 /// instead of 100-500 KB; `.github/workflows/border-tiles.yml`).
 const MANIFEST_URL: &str =
-    "https://github.com/FireflyTheReal/GlobeCraft/releases/download/tiles-borders/borders.json";
+    "https://github.com/FireflyTheReal/GlobeCraft/releases/download/map-data/manifest.json";
 /// Templates naming PMTiles archives start with this, followed by the archives'
 /// addresses separated by spaces; each tile is the union of their layers.
 const PMTILES_PREFIX: &str = "pmtiles:";
@@ -93,7 +94,9 @@ async fn fetch_manifest() -> Result<String, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Boundary)?;
     let bytes = crate::http::body(client.get(MANIFEST_URL), MAX_MANIFEST_BYTES).await?;
     let json = crate::http::parse_json(bytes).await?;
-    manifest_template(&json).ok_or_else(|| "border tile manifest without archives".into())
+    // One manifest names every map data set; this layer reads the borders.
+    manifest_template(&json["borders"])
+        .ok_or_else(|| "border tile manifest without archives".into())
 }
 
 /// The tile source a manifest describes: `pmtiles:` followed by its sets separated

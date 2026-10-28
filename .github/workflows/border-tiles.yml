@@ -4,8 +4,8 @@ name: Border tiles
 # `boundary` and `place` layers and the ocean of the `water` layer to zoom 12, cut from OpenFreeMap's weekly
 # planet (Planetiler, OpenMapTiles schema), as PMTiles a client reads tile by tile.
 # A full OpenFreeMap tile carries every layer (100-500 KB); these keep only what the
-# globe draws. Manual only; publishing makes a pre-release that the app's updater
-# ignores. Data: (c) OpenStreetMap contributors (ODbL), (c) OpenMapTiles.
+# globe draws. Manual only; publishing replaces the border files in the one
+# `map-data` pre-release (the app's updater ignores pre-releases). Data: (c) OpenStreetMap contributors (ODbL), (c) OpenMapTiles.
 on:
   workflow_dispatch:
     inputs:
@@ -229,35 +229,58 @@ jobs:
               json.dump(sets, out)
           print(json.dumps(sets))
 
-      - name: Publish a data pre-release
+      - name: Publish into the map data release
         if: inputs.publish
         working-directory: /work
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pick.outputs.version }}
+        # All map data lives in ONE pre-release, `map-data` (the app's updater
+        # ignores pre-releases): its `manifest.json` names the current files of each
+        # set. A new build uploads its files under new names, then switches the
+        # manifest, then deletes the files of older builds except the one before
+        # (a running app may still read it until it reloads the manifest).
         run: |
-          version='${{ steps.pick.outputs.version }}'
-          tag="tiles-borders-$version"
-          for file in globecraft-*-"$version"*.pmtiles; do
+          set -euo pipefail
+          for file in globecraft-*-"$VERSION"*.pmtiles; do
             size=$(stat -c %s "$file")
             if [ "$size" -ge 2147483648 ]; then
               echo "::error::$file is $size bytes, over GitHub's 2 GiB asset limit"
               exit 1
             fi
           done
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --prerelease --latest=false --title "Border tiles $version" \
-            --notes "Borders, names and water for GlobeCraft, cut from the OpenFreeMap planet $version (OpenMapTiles schema, zoom 0-12). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles." \
-            globecraft-*-"$version"*.pmtiles measure.txt
-          # The fixed manifest the app reads names the newest archives.
-          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
-          python3 -c 'import json, sys
-          sets = json.load(open("parts.json"))
-          print(json.dumps({"version": sys.argv[1], "sets": [[f"{sys.argv[2]}/{p}" for p in parts] for parts in sets]}))' \
-            "$version" "$base" > borders.json
-          cat borders.json
-          if ! gh release view tiles-borders --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create tiles-borders --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --prerelease --latest=false --title "Border tiles (current)" \
-              --notes "borders.json names the border tile archives GlobeCraft reads. Data © OpenStreetMap contributors (ODbL), schema © OpenMapTiles."
+          release=map-data
+          if ! gh release view "$release" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$release" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false --title "Map data" \
+              --notes "Map data GlobeCraft streams: manifest.json names the current files. Borders, names and water cut from the OpenFreeMap planet (OpenMapTiles schema). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles."
           fi
-          gh release upload tiles-borders --repo "$GITHUB_REPOSITORY" --clobber borders.json
+          cp measure.txt "measure-borders-$VERSION.txt"
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber \
+            globecraft-*-"$VERSION"*.pmtiles "measure-borders-$VERSION.txt"
+          gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
+            --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$release"
+          python3 - "$base" <<'PY'
+          import json, os, sys
+          base, version = sys.argv[1], os.environ["VERSION"]
+          manifest = json.load(open("old-manifest.json"))
+          previous = manifest.get("borders", {}).get("version")
+          manifest["borders"] = {
+              "version": version,
+              "previous": previous if previous != version else manifest.get("borders", {}).get("previous"),
+              "sets": [[f"{base}/{part}" for part in parts] for parts in json.load(open("parts.json"))],
+          }
+          json.dump(manifest, open("manifest.json", "w"), indent=1)
+          PY
+          cat manifest.json
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
+          # Keep this build's files and the previous build's; delete the rest.
+          keep_previous=$(python3 -c 'import json; print(json.load(open("manifest.json"))["borders"]["previous"] or "")')
+          stale=$(gh release view "$release" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            grep -E '^(globecraft-(borders|water)-|measure-borders-)' |
+            grep -v -F -e "$VERSION" ${keep_previous:+-e "$keep_previous"} || true)
+          for old in $stale; do
+            echo "Deleting $old"
+            gh release delete-asset "$release" "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done
