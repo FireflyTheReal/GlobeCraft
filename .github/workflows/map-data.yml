@@ -1,20 +1,30 @@
-name: Border tiles
+name: Map data
 
-# Builds the borders-and-names tile set GlobeCraft streams: the OpenMapTiles
-# `boundary` and `place` layers and the ocean of the `water` layer to zoom 12, cut from OpenFreeMap's weekly
-# planet (Planetiler, OpenMapTiles schema), as PMTiles a client reads tile by tile.
-# A full OpenFreeMap tile carries every layer (100-500 KB); these keep only what the
-# globe draws. Manual only; publishing replaces the border files in the one
-# `map-data` pre-release (the app's updater ignores pre-releases). Data: (c) OpenStreetMap contributors (ODbL), (c) OpenMapTiles.
+# Builds the vector tile sets GlobeCraft streams, cut from OpenFreeMap's weekly planet
+# (Planetiler, OpenMapTiles schema) as PMTiles a client reads tile by tile. A full
+# OpenFreeMap tile carries every layer (100-500 KB); each set keeps only what one
+# GlobeCraft layer draws:
+#   borders    `boundary` and `place`, plus the ocean of `water` (a second set), z0-12
+#   transport  railways, trams and subways, ferries (`transportation`, with their
+#              names) and airports (`aeroway`, `aerodrome_label`), z0-14
+# Manual only. Publishing replaces that set's files in the one `map-data`
+# pre-release (the app's updater ignores pre-releases); its manifest.json names the
+# current files of every set. Data: (c) OpenStreetMap contributors (ODbL),
+# (c) OpenMapTiles.
 on:
   workflow_dispatch:
     inputs:
+      set:
+        description: 'Which tile set to build'
+        type: choice
+        options: [borders, transport]
+        default: borders
       version:
         description: 'OpenFreeMap planet version, e.g. 20261025_080012_pt (empty: the newest)'
         required: false
         default: ''
       publish:
-        description: 'Upload the files as a data pre-release'
+        description: 'Publish the files into the map-data release'
         type: boolean
         default: false
 
@@ -22,7 +32,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: border-tiles
+  group: map-data
   cancel-in-progress: false
 
 jobs:
@@ -78,6 +88,15 @@ jobs:
             exit 1
           fi
 
+      - name: Choose the set
+        id: set
+        run: |
+          case '${{ inputs.set }}' in
+            borders) echo "maxzoom=12" >> "$GITHUB_OUTPUT"; echo "names=borders water" >> "$GITHUB_OUTPUT" ;;
+            transport) echo "maxzoom=14" >> "$GITHUB_OUTPUT"; echo "names=transport" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::unknown set"; exit 1 ;;
+          esac
+
       - name: Build tippecanoe and fetch pmtiles
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq build-essential libsqlite3-dev zlib1g-dev aria2 sqlite3 > /dev/null
@@ -92,13 +111,77 @@ jobs:
           ls -l /work/planet.mbtiles
           df -h /work
 
-      # Zooms 13-14 are most of the planet: let tile-join see only zooms 0-12, by
-      # narrowing the planet's own `tiles` view in place (copying the rest out needed
-      # more room than the volume has left beside the planet).
-      - name: Show only zooms 0-12
+      # How big each OpenMapTiles layer is, by zoom, from a sample of planet tiles:
+      # the numbers that decide which further sets are worth building.
+      - name: Sample the planet's layer sizes
         working-directory: /work
         shell: python3 {0}
         run: |
+          import gzip, random, sqlite3
+          def varint(data, at):
+              value = shift = 0
+              while True:
+                  byte = data[at]; at += 1
+                  value |= (byte & 0x7F) << shift; shift += 7
+                  if byte < 0x80:
+                      return value, at
+          def layers(tile):
+              at, out = 0, {}
+              while at < len(tile):
+                  key, at = varint(tile, at)
+                  kind = key & 7
+                  if kind == 2:
+                      length, at = varint(tile, at)
+                      if key >> 3 == 3:
+                          body = tile[at:at + length]
+                          name_key, inner = varint(body, 0)
+                          name_length, inner = varint(body, inner)
+                          name = body[inner:inner + name_length].decode()
+                          out[name] = out.get(name, 0) + length
+                      at += length
+                  elif kind == 0:
+                      _, at = varint(tile, at)
+                  elif kind == 5:
+                      at += 4
+                  else:
+                      at += 8
+              return out
+          random.seed(1)
+          db = sqlite3.connect("planet.mbtiles")
+          lines = ["Share of each layer (uncompressed bytes) and estimated gzip MiB per zoom, from 400 random tiles per zoom:"]
+          for z in range(15):
+              n = 1 << z
+              totals, gzip_total, raw_total, samples = {}, 0, 0, 0
+              for _ in range(400):
+                  x, y = random.randrange(n), random.randrange(n)
+                  row = db.execute("SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?", (z, x, y)).fetchone()
+                  if not row:
+                      continue
+                  data = row[0]
+                  raw = gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data
+                  gzip_total += len(data); raw_total += len(raw); samples += 1
+                  for name, size in layers(raw).items():
+                      totals[name] = totals.get(name, 0) + size
+              if not samples:
+                  continue
+              estimate = gzip_total / samples * n * n / 1048576
+              shares = ", ".join(f"{name} {100 * size / raw_total:.0f}%" for name, size in sorted(totals.items(), key=lambda item: -item[1]))
+              lines.append(f"z{z}: ~{estimate:,.0f} MiB: {shares}")
+          print("\n".join(lines))
+          print("::notice::" + "%0A".join(lines))
+
+      # Zooms above the set's maximum are most of the planet: let tile-join see only
+      # the zooms the set keeps, by narrowing the planet's own `tiles` view in place
+      # (copying the rest out needed more room than the volume has left).
+      - name: Show only the set's zooms
+        if: steps.set.outputs.maxzoom != '14'
+        working-directory: /work
+        env:
+          MAXZOOM: ${{ steps.set.outputs.maxzoom }}
+        shell: python3 {0}
+        run: |
+          import os
+          MAXZOOM = int(os.environ["MAXZOOM"])
           import re, sqlite3, sys, traceback
           def report(kind, exc_type, exc, tb):
               message = " | ".join(traceback.format_exception(exc_type, exc, tb)).replace("\n", " ")
@@ -111,15 +194,15 @@ jobs:
               # The definition's own header, whatever whitespace follows its AS.
               body = re.match(r"(?is)\s*create\s+view\s+\S+\s+as\s+(.*)", sql).group(1)
               db.execute("DROP VIEW tiles")
-              db.execute(f"CREATE VIEW tiles AS SELECT * FROM ({body}) WHERE zoom_level <= 12")
+              db.execute(f"CREATE VIEW tiles AS SELECT * FROM ({body}) WHERE zoom_level <= {MAXZOOM}")
           else:
               db.execute("ALTER TABLE tiles RENAME TO tiles_all")
-              db.execute("CREATE VIEW tiles AS SELECT * FROM tiles_all WHERE zoom_level <= 12")
+              db.execute(f"CREATE VIEW tiles AS SELECT * FROM tiles_all WHERE zoom_level <= {MAXZOOM}")
           db.commit()
           count = db.execute("SELECT count(*) FROM tiles WHERE zoom_level = 4").fetchone()[0]
           print(f"::notice::Zoom 4 tiles through the narrowed view: {count}")
 
-      - name: Keep borders, names and the ocean
+      - name: Keep the set's layers
         working-directory: /work
         # Temporary files (SQLite's index sort, tile-join, the converter) are as large
         # as the data: keep them off the small root disk.
@@ -129,18 +212,32 @@ jobs:
         run: |
           mkdir -p "$TMPDIR"
           attribution='<a href="https://openmaptiles.org/">&copy; OpenMapTiles</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>'
-          ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
-            --layer=boundary --layer=place -A "$attribution" \
-            -n "GlobeCraft borders and names" -o borders.mbtiles planet.mbtiles
-          ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
-            --layer=water --feature-filter='{"water":["==","class","ocean"]}' -A "$attribution" \
-            -n "GlobeCraft ocean" -o water.mbtiles planet.mbtiles
+          case '${{ inputs.set }}' in
+            borders)
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
+                --layer=boundary --layer=place -A "$attribution" \
+                -n "GlobeCraft borders and names" -o borders.mbtiles planet.mbtiles
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
+                --layer=water --feature-filter='{"water":["==","class","ocean"]}' -A "$attribution" \
+                -n "GlobeCraft ocean" -o water.mbtiles planet.mbtiles
+              ;;
+            transport)
+              # Rail (incl. narrow gauge, preserved, funicular), transit (subway, light
+              # rail, monorail, tram) and ferries with their names; every airport
+              # feature (runways, taxiways, aprons, areas) and airport label.
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
+                --layer=transportation --layer=transportation_name --layer=aeroway --layer=aerodrome_label \
+                --feature-filter='{"transportation":["in","class","rail","transit","ferry"],"transportation_name":["in","class","rail","transit","ferry"]}' \
+                -A "$attribution" -n "GlobeCraft railways, ferries and airports" \
+                -o transport.mbtiles planet.mbtiles
+              ;;
+          esac
           rm planet.mbtiles
 
       - name: Measure
         working-directory: /work
         run: |
-          for set in borders water; do
+          for set in ${{ steps.set.outputs.names }}; do
             echo "## $set"
             sqlite3 -header -column "$set.mbtiles" \
               "SELECT zoom_level AS z, count(*) AS tiles, round(sum(length(tile_data))/1048576.0, 1) AS MiB,
@@ -153,9 +250,9 @@ jobs:
             cat measure.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          for set in borders water; do
+          for set in ${{ steps.set.outputs.names }}; do
             echo "::notice::$set by zoom (z tiles MiB): $(sqlite3 "$set.mbtiles" "SELECT group_concat(zoom_level || ' ' || n || ' ' || mib, ', ') FROM (SELECT zoom_level, count(*) AS n, round(sum(length(tile_data))/1048576.0) AS mib FROM tiles GROUP BY zoom_level ORDER BY zoom_level)")"
-            echo "::notice::$set: $(sqlite3 "$set.mbtiles" "SELECT count(*) || ' tiles, ' || round(sum(length(tile_data))/1048576.0) || ' MiB, z12 avg ' || round(avg(CASE WHEN zoom_level = 12 THEN length(tile_data) END)/1024.0, 2) || ' KiB' FROM tiles")"
+            echo "::notice::$set: $(sqlite3 "$set.mbtiles" "SELECT count(*) || ' tiles, ' || round(sum(length(tile_data))/1048576.0) || ' MiB, z${{ steps.set.outputs.maxzoom }} avg ' || round(avg(CASE WHEN zoom_level = ${{ steps.set.outputs.maxzoom }} THEN length(tile_data) END)/1024.0, 2) || ' KiB' FROM tiles")"
           done
 
       - name: Convert to PMTiles
@@ -167,7 +264,7 @@ jobs:
           SQLITE_TMPDIR: /work/tmp
         run: |
           mkdir -p "$TMPDIR"
-          for set in borders water; do
+          for set in ${{ steps.set.outputs.names }}; do
             ./pmtiles convert "$set.mbtiles" "globecraft-$set-${{ steps.pick.outputs.version }}.pmtiles"
           done
           ls -l *.pmtiles | tee -a measure.txt
@@ -179,6 +276,8 @@ jobs:
         working-directory: /work
         env:
           VERSION: ${{ steps.pick.outputs.version }}
+          NAMES: ${{ steps.set.outputs.names }}
+          MAXZOOM: ${{ steps.set.outputs.maxzoom }}
           TMPDIR: /work/tmp
         # Release assets must stay under 2 GiB: an archive over the limit is cut into
         # parts, first by peeling off its top zoom, then into longitude halves. The app
@@ -190,9 +289,9 @@ jobs:
           SOUTH, NORTH = -85.0511287798, 85.0511287798
           version = os.environ["VERSION"]
           sets = []
-          for name in ["borders", "water"]:
+          for name in os.environ["NAMES"].split():
               whole = f"globecraft-{name}-{version}.pmtiles"
-              queue, parts = [(0, 12, -180.0, 180.0, whole)], []
+              queue, parts = [(0, int(os.environ["MAXZOOM"]), -180.0, 180.0, whole)], []
               while queue:
                   low, high, west, east, path = queue.pop(0)
                   if os.path.getsize(path) < LIMIT:
@@ -235,50 +334,57 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.pick.outputs.version }}
+          KEY: ${{ inputs.set }}
+          NAMES: ${{ steps.set.outputs.names }}
         # All map data lives in ONE pre-release, `map-data` (the app's updater
         # ignores pre-releases): its `manifest.json` names the current files of each
-        # set. A new build uploads its files under new names, then switches the
-        # manifest, then deletes the files of older builds except the one before
-        # (a running app may still read it until it reloads the manifest).
+        # set. A new build uploads its files under new names, then switches its entry
+        # in the manifest, then deletes that set's files of older builds except the
+        # one before (a running app may still read it until it reloads the manifest).
         run: |
           set -euo pipefail
-          for file in globecraft-*-"$VERSION"*.pmtiles; do
-            size=$(stat -c %s "$file")
-            if [ "$size" -ge 2147483648 ]; then
-              echo "::error::$file is $size bytes, over GitHub's 2 GiB asset limit"
-              exit 1
-            fi
+          files=()
+          for name in $NAMES; do
+            for file in globecraft-"$name"-"$VERSION"*.pmtiles; do
+              size=$(stat -c %s "$file")
+              if [ "$size" -ge 2147483648 ]; then
+                echo "::error::$file is $size bytes, over GitHub's 2 GiB asset limit"
+                exit 1
+              fi
+              files+=("$file")
+            done
           done
           release=map-data
           if ! gh release view "$release" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$release" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --prerelease --latest=false --title "Map data" \
-              --notes "Map data GlobeCraft streams: manifest.json names the current files. Borders, names and water cut from the OpenFreeMap planet (OpenMapTiles schema). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles."
+              --notes "Map data GlobeCraft streams: manifest.json names the current files of each set. Cut from the OpenFreeMap planet (OpenMapTiles schema). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles."
           fi
-          cp measure.txt "measure-borders-$VERSION.txt"
+          cp measure.txt "measure-$KEY-$VERSION.txt"
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber \
-            globecraft-*-"$VERSION"*.pmtiles "measure-borders-$VERSION.txt"
+            "${files[@]}" "measure-$KEY-$VERSION.txt"
           gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
             --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$release"
           python3 - "$base" <<'PY'
           import json, os, sys
-          base, version = sys.argv[1], os.environ["VERSION"]
+          base, version, key = sys.argv[1], os.environ["VERSION"], os.environ["KEY"]
           manifest = json.load(open("old-manifest.json"))
-          previous = manifest.get("borders", {}).get("version")
-          manifest["borders"] = {
+          old = manifest.get(key, {})
+          manifest[key] = {
               "version": version,
-              "previous": previous if previous != version else manifest.get("borders", {}).get("previous"),
+              "previous": old.get("version") if old.get("version") != version else old.get("previous"),
               "sets": [[f"{base}/{part}" for part in parts] for parts in json.load(open("parts.json"))],
           }
           json.dump(manifest, open("manifest.json", "w"), indent=1)
           PY
           cat manifest.json
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
-          # Keep this build's files and the previous build's; delete the rest.
-          keep_previous=$(python3 -c 'import json; print(json.load(open("manifest.json"))["borders"]["previous"] or "")')
+          # Keep this build's files and the previous build's; delete the set's others.
+          keep_previous=$(python3 -c 'import json, os; print(json.load(open("manifest.json"))[os.environ["KEY"]]["previous"] or "")')
+          prefixes=$(echo $NAMES | tr ' ' '|')
           stale=$(gh release view "$release" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
-            grep -E '^(globecraft-(borders|water)-|measure-borders-)' |
+            grep -E "^(globecraft-($prefixes)-|measure-$KEY-)" |
             grep -v -F -e "$VERSION" ${keep_previous:+-e "$keep_previous"} || true)
           for old in $stale; do
             echo "Deleting $old"

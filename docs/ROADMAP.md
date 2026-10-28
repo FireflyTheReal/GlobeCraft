@@ -194,7 +194,7 @@ Implemented first slice (2026-10-22): municipal data now streams in *units* arou
 ### 3.5 Own OpenStreetMap tile sets (2026-10-27)
 
 Borders and names come from PMTiles archives cut from OpenFreeMap's weekly planet
-(`.github/workflows/border-tiles.yml`, manifest `map-data/manifest.json`), read
+(`.github/workflows/map-data.yml`, manifest `map-data/manifest.json`), read
 tile by tile with range requests (`globecraft-data/src/pmtiles.rs`); OpenFreeMap's full
 tiles stay the fallback. Measured on the Mac's cache: the kept layers are 0.4–1.5 KB
 per tile at zooms 8–12 against 100–500 KB for the full tile.

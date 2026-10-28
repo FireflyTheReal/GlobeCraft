@@ -11,7 +11,7 @@ use std::time::Instant;
 /// GlobeCraft's own borders-and-names tile set: the `map-data` release's manifest
 /// (one release for all map data) names PMTiles archives
 /// cut from the OpenFreeMap planet (only the layers drawn here, a few KB per tile
-/// instead of 100-500 KB; `.github/workflows/border-tiles.yml`).
+/// instead of 100-500 KB; `.github/workflows/map-data.yml`).
 const MANIFEST_URL: &str =
     "https://github.com/FireflyTheReal/GlobeCraft/releases/download/map-data/manifest.json";
 /// Templates naming PMTiles archives start with this, followed by the archives'
