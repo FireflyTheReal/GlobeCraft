@@ -96,6 +96,7 @@ impl App {
         self.aircraft_overlay.invalidate_text();
         self.world_shapes = super::live_layers::WorldShapes::default();
         self.roads.invalidate_text();
+        self.transport_shapes.invalidate();
     }
     pub(super) fn overlay_layers(&self) -> globecraft_render::overlays::OverlayLayers {
         OverlayLayers {

@@ -13,11 +13,11 @@
 //! Tiles come from a small disk cache first (`store`, in the compact format of
 //! `compact`), and from the network only when missing or from an older tile set.
 mod compact;
-mod content;
+pub(crate) mod content;
 mod join;
 mod loading;
-mod mvt;
-mod pick;
+use crate::mvt;
+pub(crate) mod pick;
 mod store;
 
 use super::{Layer, Line, MapLabel, Patch, StatusLog};

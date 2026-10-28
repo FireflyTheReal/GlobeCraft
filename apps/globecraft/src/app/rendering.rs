@@ -354,7 +354,8 @@ impl App {
             live_layers: (self.layer(MapLayer::Roads)
                 || self.layer(MapLayer::Traffic)
                 || self.layer(MapLayer::Vessels)
-                || self.layer(MapLayer::Satellites))
+                || self.layer(MapLayer::Satellites)
+                || self.transport_shown())
             .then(|| self.live_layer_input(basis, rect, self.cam, pixels_per_point)),
             overlays: Some(globecraft_render::overlays::OverlayInput {
                 view: globecraft_render::overlays::OverlayView {

@@ -107,6 +107,8 @@ pub(crate) struct App {
     auto_rotate: bool,
     tomtom_key: String,
     live_vessels: globecraft_data::vessels::LiveVessels,
+    transport_tiles: globecraft_data::transport::TransportTiles,
+    transport_shapes: live_layers::TransportShapes,
     live_satellites: globecraft_data::satellites::LiveSatellites,
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
@@ -311,6 +313,8 @@ impl App {
             auto_rotate: false,
             tomtom_key: std::env::var("GLOBECRAFT_TOMTOM_KEY").unwrap_or_default(),
             live_vessels: globecraft_data::vessels::LiveVessels::default(),
+            transport_tiles: globecraft_data::transport::TransportTiles::default(),
+            transport_shapes: live_layers::TransportShapes::default(),
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
@@ -474,6 +478,18 @@ impl eframe::App for App {
             &self.runtime,
             earth && self.layer(MapLayer::Satellites),
             move || satellite_wake.request_repaint(),
+        );
+        let transport_wake = ctx.clone();
+        self.transport_tiles.update(
+            &self.runtime,
+            globecraft_data::transport::TransportQuery {
+                enabled: earth && self.transport_shown(),
+                latitude: self.cam.lat,
+                longitude: self.cam.lon,
+                altitude_km: self.cam.alt,
+                tilt_deg: self.cam.tilt,
+            },
+            move || transport_wake.request_repaint(),
         );
         let road_wake = ctx.clone();
         self.roads.service.update(

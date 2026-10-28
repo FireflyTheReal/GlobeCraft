@@ -388,6 +388,35 @@ impl App {
                 note(ui, t, lang.text("layers-terrain-help"));
                 credit(ui, "© Mapterhorn", "https://mapterhorn.com/attribution");
             }
+            MapLayer::Railways | MapLayer::Ferries | MapLayer::Airports => {
+                let status = if self.cam.alt > globecraft_data::transport::MAX_ALTITUDE_KM {
+                    Some(
+                        lang.format(
+                            "transport-zoom-help",
+                            &[(
+                                "altitude",
+                                self.distance_units()
+                                    .altitude(globecraft_data::transport::MAX_ALTITUDE_KM)
+                                    .into(),
+                            )],
+                        ),
+                    )
+                } else if let Some(error) = self.transport_tiles.error() {
+                    Some(lang.format("transport-error-status", &[("error", error.into())]))
+                } else if self.transport_tiles.loading() {
+                    Some(lang.text("transport-loading-status").into())
+                } else {
+                    None
+                };
+                if let Some(status) = status {
+                    note(ui, t, &status);
+                }
+                credit(
+                    ui,
+                    "© OpenStreetMap contributors (ODbL), © OpenMapTiles",
+                    "https://www.openstreetmap.org/copyright",
+                );
+            }
             MapLayer::Roads => {
                 note(
                     ui,

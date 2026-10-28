@@ -8,27 +8,27 @@ use std::sync::Arc;
 
 /// A tile of the Web Mercator pyramid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct TileKey {
-    pub(super) z: u8,
-    pub(super) x: u32,
-    pub(super) y: u32,
+pub(crate) struct TileKey {
+    pub(crate) z: u8,
+    pub(crate) x: u32,
+    pub(crate) y: u32,
 }
 
 /// Latitude/longitude bounds of a tile.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct TileBounds {
-    pub(super) south: f64,
-    pub(super) north: f64,
-    pub(super) west: f64,
-    pub(super) east: f64,
+pub(crate) struct TileBounds {
+    pub(crate) south: f64,
+    pub(crate) north: f64,
+    pub(crate) west: f64,
+    pub(crate) east: f64,
 }
 
 impl TileKey {
-    pub(super) fn tiles_per_side(z: u8) -> u32 {
+    pub(crate) fn tiles_per_side(z: u8) -> u32 {
         1 << z
     }
     /// The tile at `z` holding a point.
-    pub(super) fn at(z: u8, lat: f64, lon: f64) -> Self {
+    pub(crate) fn at(z: u8, lat: f64, lon: f64) -> Self {
         let n = f64::from(Self::tiles_per_side(z));
         let lat = lat.clamp(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT).to_radians();
         let x = ((lon + 180.0) / 360.0 * n).floor();
@@ -41,7 +41,7 @@ impl TileKey {
         }
     }
     /// The point of the tile at fractional tile coordinates (0..1 across, 0..1 down).
-    fn point(self, across: f64, down: f64) -> (f64, f64) {
+    pub(crate) fn point(self, across: f64, down: f64) -> (f64, f64) {
         let n = f64::from(Self::tiles_per_side(self.z));
         let lon = (f64::from(self.x) + across) / n * 360.0 - 180.0;
         let lat = (PI * (1.0 - 2.0 * (f64::from(self.y) + down) / n))
@@ -50,7 +50,7 @@ impl TileKey {
             .to_degrees();
         (lat, lon)
     }
-    pub(super) fn bounds(self) -> TileBounds {
+    pub(crate) fn bounds(self) -> TileBounds {
         let (north, west) = self.point(0.0, 0.0);
         let (south, east) = self.point(1.0, 1.0);
         TileBounds {
@@ -60,7 +60,7 @@ impl TileKey {
             east,
         }
     }
-    pub(super) fn parent(self) -> Option<Self> {
+    pub(crate) fn parent(self) -> Option<Self> {
         (self.z > 0).then(|| Self {
             z: self.z - 1,
             x: self.x / 2,
@@ -204,7 +204,7 @@ impl TileContent {
 /// The parts of a polyline inside the bounds (Liang–Barsky per segment). Tiles
 /// carry a small buffer beyond their edge; cutting every tile at its exact edge
 /// leaves no stretch drawn twice by two neighbours.
-pub(super) fn clip(line: &[(f64, f64)], b: TileBounds) -> Vec<Vec<(f64, f64)>> {
+pub(crate) fn clip(line: &[(f64, f64)], b: TileBounds) -> Vec<Vec<(f64, f64)>> {
     let mut parts: Vec<Vec<(f64, f64)>> = Vec::new();
     let mut current: Vec<(f64, f64)> = Vec::new();
     for pair in line.windows(2) {

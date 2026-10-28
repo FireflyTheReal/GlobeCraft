@@ -5,19 +5,14 @@ use super::content::{TileContent, TileKey};
 use super::store::DiskStore;
 use super::{Entry, Store};
 use crate::boundaries::{StatusLog, log_status};
+pub(super) use crate::map_data::gunzip_if_needed;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// GlobeCraft's own borders-and-names tile set: the `map-data` release's manifest
-/// (one release for all map data) names PMTiles archives
+/// GlobeCraft's own borders-and-names tile set (`crate::map_data`): PMTiles archives
 /// cut from the OpenFreeMap planet (only the layers drawn here, a few KB per tile
 /// instead of 100-500 KB; `.github/workflows/map-data.yml`).
-const MANIFEST_URL: &str =
-    "https://github.com/FireflyTheReal/GlobeCraft/releases/download/map-data/manifest.json";
-/// Templates naming PMTiles archives start with this, followed by the archives'
-/// addresses separated by spaces; each tile is the union of their layers.
-const PMTILES_PREFIX: &str = "pmtiles:";
-const MAX_MANIFEST_BYTES: u64 = 20_000;
+use crate::map_data::PMTILES_PREFIX;
 const MAX_TILE_BYTES: u64 = 4_000_000;
 
 /// What a background load needs.
@@ -89,44 +84,9 @@ async fn fetch_template() -> Result<String, crate::Error> {
     fetch_manifest().await
 }
 
-/// The archives GlobeCraft's manifest names, as a `pmtiles:` template.
+/// The border sets' archives, as a `pmtiles:` template.
 async fn fetch_manifest() -> Result<String, crate::Error> {
-    let client = crate::http::client(crate::http::Policy::Boundary)?;
-    let bytes = crate::http::body(client.get(MANIFEST_URL), MAX_MANIFEST_BYTES).await?;
-    let json = crate::http::parse_json(bytes).await?;
-    // One manifest names every map data set; this layer reads the borders.
-    manifest_template(&json["borders"])
-        .ok_or_else(|| "border tile manifest without archives".into())
-}
-
-/// The tile source a manifest describes: `pmtiles:` followed by its sets separated
-/// by spaces, each set's parts separated by `|`. A set holds some of the layers
-/// (borders and names, water); its parts split it under GitHub's 2 GiB asset limit
-/// (by zoom and longitude) and are tried in order. `"archives"` lists sets of one part.
-fn manifest_template(json: &serde_json::Value) -> Option<String> {
-    let urls = |list: &serde_json::Value| -> Option<Vec<String>> {
-        let urls: Vec<String> = list
-            .as_array()?
-            .iter()
-            .map(|url| url.as_str().map(str::to_owned))
-            .collect::<Option<_>>()?;
-        let valid = !urls.is_empty()
-            && urls
-                .iter()
-                .all(|url| url.starts_with("https://") && !url.contains(' ') && !url.contains('|'));
-        valid.then_some(urls)
-    };
-    let sets: Vec<Vec<String>> = match json.get("sets") {
-        Some(sets) => sets.as_array()?.iter().map(urls).collect::<Option<_>>()?,
-        None => urls(json.get("archives")?)?
-            .into_iter()
-            .map(|url| vec![url])
-            .collect(),
-    };
-    (!sets.is_empty()).then(|| {
-        let sets: Vec<String> = sets.iter().map(|parts| parts.join("|")).collect();
-        format!("{PMTILES_PREFIX}{}", sets.join(" "))
-    })
+    crate::map_data::template("borders").await
 }
 
 /// A tile from the disk cache. A miss (or a damaged row) leaves it to the network.
@@ -238,22 +198,7 @@ async fn fetch_tile(key: TileKey, template: &str) -> Result<Filtered, crate::Err
 /// vector tile's layers are a repeated field, so the decompressed tiles simply
 /// concatenate. An archive without the tile adds nothing (open sea).
 async fn fetch_archived_tile(key: TileKey, archives: &str) -> Result<Filtered, crate::Error> {
-    // The sets (borders and names, water) are read at the same time: one after the
-    // other doubled the wait for every tile.
-    let mut reads = tokio::task::JoinSet::new();
-    for (index, set) in archives.split(' ').enumerate() {
-        let set = set.to_owned();
-        reads.spawn(async move { (index, set_tile(key, &set).await) });
-    }
-    let mut found = Vec::new();
-    while let Some(read) = reads.join_next().await {
-        let (index, bytes) = read.map_err(|error| crate::Error::from(error.to_string()))?;
-        if let Some(bytes) = bytes? {
-            found.push((index, bytes));
-        }
-    }
-    found.sort_by_key(|(index, _)| *index);
-    let joined: Vec<Vec<u8>> = found.into_iter().map(|(_, bytes)| bytes).collect();
+    let joined = crate::map_data::tile_parts(key.z, key.x, key.y, archives).await?;
     crate::cpu::run(crate::cpu::Service::Features, move || {
         let mut tile = Vec::new();
         for bytes in joined {
@@ -269,77 +214,9 @@ async fn fetch_archived_tile(key: TileKey, archives: &str) -> Result<Filtered, c
     .await
 }
 
-/// Tile `key` from one set: its parts are disjoint but for tiles on a band's edge,
-/// which are the same in both, so the first part holding the tile gives it.
-async fn set_tile(key: TileKey, set: &str) -> Result<Option<Vec<u8>>, crate::Error> {
-    for url in set.split('|') {
-        if let Some(bytes) = archive(url).await?.tile(key.z, key.x, key.y).await? {
-            return Ok(Some(bytes));
-        }
-    }
-    Ok(None)
-}
-
-/// The archive at `url`, opened once per session (its header and root directory).
-async fn archive(url: &str) -> Result<Arc<crate::pmtiles::Archive>, crate::Error> {
-    static OPEN: std::sync::OnceLock<
-        tokio::sync::Mutex<std::collections::HashMap<String, Arc<crate::pmtiles::Archive>>>,
-    > = std::sync::OnceLock::new();
-    let mut open = OPEN.get_or_init(Default::default).lock().await;
-    if let Some(archive) = open.get(url) {
-        return Ok(archive.clone());
-    }
-    let archive =
-        Arc::new(crate::pmtiles::Archive::open(url, crate::http::Policy::Boundary).await?);
-    open.insert(url.to_owned(), archive.clone());
-    Ok(archive)
-}
-
-/// Tiles are often stored gzip-compressed; servers that pass them on without a
-/// `Content-Encoding` header leave the decompression to the client.
-pub(super) fn gunzip_if_needed(bytes: Vec<u8>) -> Result<Vec<u8>, crate::Error> {
-    if !bytes.starts_with(&[0x1f, 0x8b]) {
-        return Ok(bytes);
-    }
-    let mut out = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
-    Ok(out)
-}
-
-#[cfg(test)]
-mod manifest_tests {
-    use super::manifest_template;
-
-    #[test]
-    fn manifests_name_sets_of_archive_parts() {
-        let split = serde_json::json!({
-            "version": "1",
-            "sets": [["https://a/b0.pmtiles", "https://a/b1.pmtiles"], ["https://a/w.pmtiles"]],
-        });
-        assert_eq!(
-            manifest_template(&split).as_deref(),
-            Some("pmtiles:https://a/b0.pmtiles|https://a/b1.pmtiles https://a/w.pmtiles")
-        );
-        let plain = serde_json::json!({"archives": ["https://a/b.pmtiles", "https://a/w.pmtiles"]});
-        assert_eq!(
-            manifest_template(&plain).as_deref(),
-            Some("pmtiles:https://a/b.pmtiles https://a/w.pmtiles")
-        );
-        for bad in [
-            serde_json::json!({}),
-            serde_json::json!({"sets": []}),
-            serde_json::json!({"sets": [[]]}),
-            serde_json::json!({"sets": [["http://a/b.pmtiles"]]}),
-            serde_json::json!({"archives": ["https://a/b|c.pmtiles"]}),
-        ] {
-            assert_eq!(manifest_template(&bad), None, "{bad}");
-        }
-    }
-}
-
 #[cfg(test)]
 mod live_tests {
-    use super::{TileKey, fetch_archived_tile, fetch_manifest};
+    use super::{PMTILES_PREFIX, TileKey, fetch_archived_tile, fetch_manifest};
 
     fn key(z: u8, lat: f64, lon: f64) -> TileKey {
         let n = f64::from(1u32 << z);
@@ -355,10 +232,7 @@ mod live_tests {
     #[ignore = "network: reads GlobeCraft's published border tile archives"]
     async fn published_border_parts_serve_border_tiles() {
         let template = fetch_manifest().await.unwrap();
-        let archives = template
-            .strip_prefix(super::PMTILES_PREFIX)
-            .unwrap()
-            .to_owned();
+        let archives = template.strip_prefix(PMTILES_PREFIX).unwrap().to_owned();
         // Germany–Austria near Salzburg (east of 0°) and Kansas–Missouri (west):
         // zoom 5 and 10 from the low part, 11 from its own, 12 from either half.
         for (z, lat, lon) in [
@@ -389,7 +263,9 @@ mod live_tests {
 #[cfg(test)]
 mod source_benchmark {
     use super::super::pick::wanted;
-    use super::{Filtered, TileKey, fetch_archived_tile, fetch_manifest, gunzip_if_needed};
+    use super::{
+        Filtered, PMTILES_PREFIX, TileKey, fetch_archived_tile, fetch_manifest, gunzip_if_needed,
+    };
     use std::sync::Arc;
     use std::time::Instant;
 
@@ -493,7 +369,7 @@ mod source_benchmark {
         let with_openfreemap =
             std::env::var("GLOBECRAFT_BORDER_BENCH_OPENFREEMAP").as_deref() != Ok("0");
         let template = fetch_manifest().await.unwrap();
-        let archives: Arc<str> = template.strip_prefix(super::PMTILES_PREFIX).unwrap().into();
+        let archives: Arc<str> = template.strip_prefix(PMTILES_PREFIX).unwrap().into();
         let openfreemap = if with_openfreemap {
             Some(openfreemap_template().await)
         } else {

@@ -489,6 +489,7 @@ impl App {
                 || self.layer(MapLayer::Traffic)
                 || self.layer(MapLayer::Vessels)
                 || self.layer(MapLayer::Satellites)
+                || self.transport_shown()
             {
                 let input = self.live_layer_input(
                     display_basis,
@@ -511,7 +512,23 @@ impl App {
             {
                 self.traffic.draw(&painter, geometry);
             }
+            if let Some(geometry) = &live_geometry {
+                painter.extend(
+                    self.transport_shapes
+                        .lines(&painter, geometry)
+                        .iter()
+                        .cloned(),
+                );
+            }
             self.draw_overlays(&painter, &display_basis, rect, display_cam.alt);
+            if let Some(geometry) = &live_geometry {
+                painter.extend(
+                    self.transport_shapes
+                        .airports(&painter, geometry)
+                        .iter()
+                        .cloned(),
+                );
+            }
             self.draw_live_layers(
                 &painter,
                 &display_basis,
@@ -573,7 +590,9 @@ impl App {
             attribution.push_str(" · ");
             attribution.push_str(Provider::NightLights.attribution(lg));
         }
-        if self.uses_border_tiles() && self.boundary_loader.has_osm_tiles() {
+        let transport_drawn =
+            self.transport_shown() && self.cam.alt <= globecraft_data::transport::MAX_ALTITUDE_KM;
+        if (self.uses_border_tiles() && self.boundary_loader.has_osm_tiles()) || transport_drawn {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             attribution = lg.format(
                 "osm-tiles-combined-credit",

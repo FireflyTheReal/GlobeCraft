@@ -171,6 +171,8 @@ mod tests {
             vessels: Some(vec![ship; 100].into()),
             satellites: None,
             traffic: None,
+            transport: None,
+            transport_layers: Default::default(),
             unix_secs: 1_700_000_000.0,
         };
         let geometry = LivePreparer::default().prepare(input);

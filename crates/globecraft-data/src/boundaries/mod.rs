@@ -8,7 +8,7 @@ use globecraft_core::language::Lang;
 use std::sync::{Arc, Mutex};
 mod geojson;
 mod load;
-mod osm_tiles;
+pub(crate) mod osm_tiles;
 mod sources;
 mod updates;
 pub use geojson::dedupe_city_labels;

@@ -49,6 +49,8 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         ),
         satellites: None,
         traffic: None,
+        transport: None,
+        transport_layers: Default::default(),
         unix_secs: 1_700_000_000.0,
     }
 }
@@ -218,4 +220,65 @@ fn vessels_sail_their_course_for_a_while_after_a_report() {
     // Moored ships and missing speeds stay put.
     assert_eq!(super::dead_reckon(&ship(Some(0.2)), 360.0), (0.0, 0.0));
     assert_eq!(super::dead_reckon(&ship(None), 360.0), (0.0, 0.0));
+}
+
+#[test]
+fn transport_lines_and_airports_follow_their_layers() {
+    use globecraft_data::transport::{
+        Airport, LineKind, TransportLine, TransportSnapshot, TransportTile,
+    };
+    let mut request = input(EarthModel::Wgs84);
+    request.view.altitude_km = 30.0;
+    let line = |kind| TransportLine {
+        kind,
+        tunnel: false,
+        points: vec![(0.0, -0.5), (0.0, 0.5)],
+    };
+    request.transport = Some(Arc::new(TransportSnapshot {
+        tiles: vec![Arc::new(TransportTile {
+            lines: vec![
+                line(LineKind::Rail),
+                line(LineKind::Ferry),
+                line(LineKind::Runway),
+            ],
+            airports: vec![Airport {
+                lat: 0.1,
+                lon: 0.1,
+                name: "Equator International".into(),
+                iata: Some("EQI".into()),
+                icao: None,
+                class: "international".into(),
+            }],
+        })],
+        zoom: 12,
+    }));
+    let kinds = |layers| {
+        let mut request = request.clone();
+        request.transport_layers = layers;
+        let geometry = LivePreparer::default().prepare(request);
+        let kinds: Vec<_> = geometry
+            .transport
+            .lines
+            .iter()
+            .map(|line| line.kind)
+            .collect();
+        (kinds, geometry.transport.airports.len())
+    };
+    let all = TransportLayers {
+        railways: true,
+        ferries: true,
+        airports: true,
+    };
+    assert_eq!(
+        kinds(all),
+        (vec![LineKind::Ferry, LineKind::Runway, LineKind::Rail], 1)
+    );
+    assert_eq!(
+        kinds(TransportLayers {
+            railways: true,
+            ..Default::default()
+        }),
+        (vec![LineKind::Rail], 0)
+    );
+    assert_eq!(kinds(TransportLayers::default()), (vec![], 0));
 }

@@ -26,6 +26,12 @@ pub enum MapLayer {
     Traffic,
     /// City lights at night (NASA Black Marble), on the night side with Sunlight.
     NightLights,
+    /// Railways, subways and trams (GlobeCraft's transport tiles, OpenStreetMap).
+    Railways,
+    /// Ferry routes.
+    Ferries,
+    /// Airports: names and codes, runways and taxiways close up.
+    Airports,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -62,7 +68,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 23] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -83,6 +89,9 @@ impl MapLayer {
         Self::Roads,
         Self::Traffic,
         Self::NightLights,
+        Self::Railways,
+        Self::Ferries,
+        Self::Airports,
     ];
 
     /// Stable identifier used in settings files and assistant commands.
@@ -108,6 +117,9 @@ impl MapLayer {
             Self::Roads => "roads",
             Self::Traffic => "traffic",
             Self::NightLights => "night_lights",
+            Self::Railways => "railways",
+            Self::Ferries => "ferries",
+            Self::Airports => "airports",
         }
     }
 
@@ -138,6 +150,9 @@ impl MapLayer {
             Self::Roads => "layers-roads-toggle",
             Self::Traffic => "layers-traffic-toggle",
             Self::NightLights => "layers-night-lights-toggle",
+            Self::Railways => "layers-railways-toggle",
+            Self::Ferries => "layers-ferries-toggle",
+            Self::Airports => "layers-airports-toggle",
         }
     }
 
@@ -161,6 +176,9 @@ impl MapLayer {
             Self::Roads => "road",
             Self::Traffic => "traffic",
             Self::NightLights => "moon",
+            Self::Railways => "railway",
+            Self::Ferries => "ferry",
+            Self::Airports => "airport",
         }
     }
 
@@ -179,7 +197,9 @@ impl MapLayer {
             | Self::CinematicSky => LayerGroup::Sky,
             Self::Radar | Self::Clouds => LayerGroup::Weather,
             Self::Flights | Self::Vessels | Self::Satellites => LayerGroup::LiveObjects,
-            Self::Roads | Self::Traffic => LayerGroup::Transport,
+            Self::Roads | Self::Traffic | Self::Railways | Self::Ferries | Self::Airports => {
+                LayerGroup::Transport
+            }
         }
     }
 

@@ -513,6 +513,9 @@ impl App {
             self.layer_big(ui, MapLayer::Satellites);
         });
         group(ui, lang.text("sidebar-transport-title"), |ui| {
+            self.layer_big(ui, MapLayer::Railways);
+            self.layer_big(ui, MapLayer::Ferries);
+            self.layer_big(ui, MapLayer::Airports);
             self.layer_big(ui, MapLayer::Roads);
             self.layer_big(ui, MapLayer::Traffic);
             col(ui, |ui| {
@@ -809,6 +812,9 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Roads => "ribbon-layer-roads",
         MapLayer::Traffic => "ribbon-layer-traffic",
         MapLayer::NightLights => "ribbon-layer-night-lights",
+        MapLayer::Railways => "ribbon-layer-railways",
+        MapLayer::Ferries => "ribbon-layer-ferries",
+        MapLayer::Airports => "ribbon-layer-airports",
     })
 }
 

@@ -6,6 +6,8 @@ pub mod download_stats;
 mod error;
 mod http;
 pub mod kml;
+mod map_data;
+mod mvt;
 mod paths;
 mod pmtiles;
 pub mod search;
@@ -30,6 +32,7 @@ pub mod planet;
 pub mod roads;
 pub mod satellites;
 pub mod traffic;
+pub mod transport;
 pub mod updater;
 pub mod vessels;
 

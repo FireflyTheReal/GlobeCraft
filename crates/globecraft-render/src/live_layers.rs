@@ -1,10 +1,14 @@
 //! Geographic preparation for roads, AIS, predicted satellites and traffic.
+mod transport;
 mod worker;
 use crate::motion;
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{roads::Road, satellites::Satellite, traffic::TrafficTiles, vessels::Vessel};
 use std::sync::Arc;
+pub use transport::{
+    ProjectedAirport, ProjectedTransport, ProjectedTransportLine, TransportLayers,
+};
 pub use worker::LiveWorker;
 
 const VESSEL_HEADING_PROBE_KM: f64 = 2.0;
@@ -61,6 +65,9 @@ pub struct LiveInput {
     pub vessels: Option<Arc<[Vessel]>>,
     pub satellites: Option<Arc<[Satellite]>>,
     pub traffic: Option<Arc<TrafficTiles>>,
+    /// Railways, ferries and airports, and which of them are on.
+    pub transport: Option<Arc<globecraft_data::transport::TransportSnapshot>>,
+    pub transport_layers: TransportLayers,
     pub unix_secs: f64,
 }
 fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
@@ -76,6 +83,7 @@ impl LiveInput {
     /// and satellites on every step).
     pub fn same_source(&self, other: &Self) -> bool {
         self.view == other.view
+            && self.same_transport(other)
             && same(&self.roads, &other.roads)
             && same(&self.vessels, &other.vessels)
             && same(&self.satellites, &other.satellites)
@@ -83,12 +91,16 @@ impl LiveInput {
     }
     pub fn same_request(&self, other: &Self) -> bool {
         self.view == other.view
+            && self.same_transport(other)
             && same(&self.roads, &other.roads)
             && same(&self.vessels, &other.vessels)
             && same(&self.satellites, &other.satellites)
             && same(&self.traffic, &other.traffic)
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
+    }
+    fn same_transport(&self, other: &Self) -> bool {
+        same(&self.transport, &other.transport) && self.transport_layers == other.transport_layers
     }
     fn same_vessel_time(&self, other: &Self) -> bool {
         let step = self.view.vessel_step();
@@ -122,6 +134,7 @@ pub struct LiveGeometry {
     pub vessels: Arc<Vec<ProjectedVessel>>,
     pub satellites: Arc<Vec<ProjectedSatellite>>,
     pub traffic: Option<Arc<Vec<u8>>>,
+    pub transport: Arc<ProjectedTransport>,
 }
 impl LiveGeometry {
     pub fn nearest_road(&self, mouse: Pos2, radius: f32) -> Option<(usize, Pos2)> {
@@ -197,12 +210,17 @@ impl LivePreparer {
                     ))
                 })
             };
+        let transport = previous
+            .filter(|old| old.input.same_transport(&input))
+            .map(|old| old.transport.clone())
+            .unwrap_or_else(|| Arc::new(transport::project(&input)));
         let geometry = Arc::new(LiveGeometry {
             input,
             roads,
             vessels,
             satellites,
             traffic,
+            transport,
         });
         self.latest = Some(geometry.clone());
         geometry

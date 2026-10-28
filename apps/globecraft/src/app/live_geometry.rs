@@ -61,6 +61,18 @@ impl LiveOverlay {
     }
 }
 impl App {
+    pub(super) fn transport_layers(&self) -> globecraft_render::live_layers::TransportLayers {
+        use globecraft_core::layers::MapLayer;
+        globecraft_render::live_layers::TransportLayers {
+            railways: self.layer(MapLayer::Railways),
+            ferries: self.layer(MapLayer::Ferries),
+            airports: self.layer(MapLayer::Airports),
+        }
+    }
+    pub(super) fn transport_shown(&self) -> bool {
+        let layers = self.transport_layers();
+        layers.railways || layers.ferries || layers.airports
+    }
     pub(super) fn live_layer_input(
         &self,
         basis: Basis,
@@ -102,6 +114,8 @@ impl App {
                 .layer(globecraft_core::layers::MapLayer::Traffic)
                 .then(|| self.traffic.service.shared_tiles())
                 .flatten(),
+            transport: self.transport_tiles.shared_snapshot(),
+            transport_layers: self.transport_layers(),
             unix_secs: now_unix(),
         }
     }
@@ -156,6 +170,8 @@ mod tests {
             vessels: None,
             satellites: None,
             traffic: None,
+            transport: None,
+            transport_layers: Default::default(),
             unix_secs: 1_700_000_000.0,
         };
         let geometry =

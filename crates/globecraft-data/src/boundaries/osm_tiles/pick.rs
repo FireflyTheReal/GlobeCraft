@@ -62,22 +62,7 @@ pub(super) fn wanted(
     }
     let floor = if states_visible { STATE_MIN_ZOOM } else { 0 };
     zoom = zoom.max(floor);
-    // Never beyond the horizon.
-    let horizon_deg = (EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude_km))
-        .acos()
-        .to_degrees();
-    // A tilted view reaches out toward its top edge, up to the horizon: the area grows
-    // and, past `MAX_TILES`, the level coarsens.
-    let reach_km = if tilt_deg > 0.0 {
-        // From straight ahead to the view's top edge: half the vertical field of view.
-        let half_view = globecraft_core::VERTICAL_FOV_HALF_TAN.atan();
-        let top_edge = (tilt_deg.to_radians() + half_view).min(TILTED_REACH_MAX_RAD);
-        altitude_km * tilt_deg.to_radians().cos() * top_edge.tan()
-    } else {
-        0.0
-    };
-    let radius_deg =
-        ((altitude_km * RADIUS_PER_ALTITUDE).max(reach_km) / KM_PER_DEGREE).min(horizon_deg);
+    let radius_deg = view_radius_deg(altitude_km, tilt_deg);
     loop {
         let tiles = around(zoom, lat, lon, radius_deg);
         let limit = if zoom <= floor {
@@ -92,6 +77,37 @@ pub(super) fn wanted(
     }
 }
 
+/// The ideal zoom for `tiles_across` tiles across the view at `altitude_km` and
+/// `lat` (fractional; callers round and clamp).
+pub(crate) fn ideal_zoom(lat: f64, altitude_km: f64, tiles_across: f64) -> f64 {
+    let lat = lat.clamp(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT);
+    let ground_scale = lat.to_radians().cos().max(0.05);
+    let tile_km_wanted = altitude_km.max(0.05) * VIEW_WIDTH_PER_ALTITUDE / tiles_across;
+    (EARTH_CIRCUMFERENCE_KM * ground_scale / tile_km_wanted).log2()
+}
+
+/// The ground radius (degrees) around the view centre the view can see: about the
+/// altitude straight down, farther toward the top edge of a tilted view, never
+/// beyond the horizon.
+pub(crate) fn view_radius_deg(altitude_km: f64, tilt_deg: f64) -> f64 {
+    let altitude_km = altitude_km.max(0.05);
+    // Never beyond the horizon.
+    let horizon_deg = (EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude_km))
+        .acos()
+        .to_degrees();
+    // A tilted view reaches out toward its top edge, up to the horizon: the area grows
+    // and, past `MAX_TILES`, the level coarsens.
+    let reach_km = if tilt_deg > 0.0 {
+        // From straight ahead to the view's top edge: half the vertical field of view.
+        let half_view = globecraft_core::VERTICAL_FOV_HALF_TAN.atan();
+        let top_edge = (tilt_deg.to_radians() + half_view).min(TILTED_REACH_MAX_RAD);
+        altitude_km * tilt_deg.to_radians().cos() * top_edge.tan()
+    } else {
+        0.0
+    };
+    ((altitude_km * RADIUS_PER_ALTITUDE).max(reach_km) / KM_PER_DEGREE).min(horizon_deg)
+}
+
 /// The highest camera altitude at `lat` whose tiles hold municipal lines (the
 /// inverse of the detail choice in [`wanted`], which rounds the ideal zoom).
 pub(super) fn max_altitude_km_for_municipal(lat: f64) -> f64 {
@@ -102,7 +118,8 @@ pub(super) fn max_altitude_km_for_municipal(lat: f64) -> f64 {
         / (VIEW_WIDTH_PER_ALTITUDE * (f64::from(z) - 0.5).exp2())
 }
 
-fn around(zoom: u8, lat: f64, lon: f64, radius_deg: f64) -> Vec<TileKey> {
+/// The tiles of `zoom` within `radius_deg` of the view centre, nearest first.
+pub(crate) fn around(zoom: u8, lat: f64, lon: f64, radius_deg: f64) -> Vec<TileKey> {
     let n = TileKey::tiles_per_side(zoom) as i64;
     let lon_radius = radius_deg / lat.to_radians().cos().max(0.05);
     let north = (lat + radius_deg).min(MAX_MERCATOR_LAT);

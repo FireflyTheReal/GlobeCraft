@@ -7,21 +7,21 @@ const DEFAULT_EXTENT: u32 = 4096;
 
 /// A tag value of a feature.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Value {
+pub(crate) enum Value {
     Text(String),
     Number(f64),
     Bool(bool),
 }
 
 impl Value {
-    pub(super) fn as_number(&self) -> Option<f64> {
+    pub(crate) fn as_number(&self) -> Option<f64> {
         match self {
             Self::Number(n) => Some(*n),
             Self::Bool(b) => Some(f64::from(u8::from(*b))),
             Self::Text(_) => None,
         }
     }
-    pub(super) fn as_text(&self) -> Option<&str> {
+    pub(crate) fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(text) => Some(text),
             _ => None,
@@ -31,7 +31,7 @@ impl Value {
 
 /// Geometry kinds of the specification.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum GeomType {
+pub(crate) enum GeomType {
     Unknown,
     Point,
     Line,
@@ -39,26 +39,26 @@ pub(super) enum GeomType {
 }
 
 #[derive(Debug)]
-pub(super) struct Feature {
+pub(crate) struct Feature {
     /// Pairs of indices into the layer's `keys` and `values`.
     tags: Vec<(u32, u32)>,
-    pub(super) kind: GeomType,
+    pub(crate) kind: GeomType,
     /// Points or line parts, in tile units.
-    pub(super) parts: Vec<Vec<(f64, f64)>>,
+    pub(crate) parts: Vec<Vec<(f64, f64)>>,
 }
 
 #[derive(Debug)]
-pub(super) struct Layer {
-    pub(super) name: String,
-    pub(super) extent: u32,
+pub(crate) struct Layer {
+    pub(crate) name: String,
+    pub(crate) extent: u32,
     keys: Vec<String>,
     values: Vec<Value>,
-    pub(super) features: Vec<Feature>,
+    pub(crate) features: Vec<Feature>,
 }
 
 impl Layer {
     /// The value of a feature's tag `key`.
-    pub(super) fn tag<'a>(&'a self, feature: &Feature, key: &str) -> Option<&'a Value> {
+    pub(crate) fn tag<'a>(&'a self, feature: &Feature, key: &str) -> Option<&'a Value> {
         feature.tags.iter().find_map(|&(k, v)| {
             (self.keys.get(k as usize).map(String::as_str) == Some(key))
                 .then(|| self.values.get(v as usize))
@@ -68,19 +68,19 @@ impl Layer {
 }
 
 /// Protobuf wire reader (also reads the varints of the compact cache format).
-pub(super) struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
-    pub(super) fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, pos: 0 }
     }
-    pub(super) fn done(&self) -> bool {
+    pub(crate) fn done(&self) -> bool {
         self.pos >= self.bytes.len()
     }
-    pub(super) fn varint(&mut self) -> Option<u64> {
+    pub(crate) fn varint(&mut self) -> Option<u64> {
         let mut value = 0_u64;
         for shift in (0..64).step_by(7) {
             let byte = *self.bytes.get(self.pos)?;
@@ -92,13 +92,13 @@ impl<'a> Reader<'a> {
         }
         None
     }
-    pub(super) fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+    pub(crate) fn take(&mut self, len: usize) -> Option<&'a [u8]> {
         let end = self.pos.checked_add(len)?;
         let slice = self.bytes.get(self.pos..end)?;
         self.pos = end;
         Some(slice)
     }
-    pub(super) fn bytes(&mut self) -> Option<&'a [u8]> {
+    pub(crate) fn bytes(&mut self) -> Option<&'a [u8]> {
         let len = usize::try_from(self.varint()?).ok()?;
         self.take(len)
     }
@@ -136,7 +136,7 @@ fn zigzag(value: u32) -> i64 {
 }
 
 /// The layers of a tile whose names `wanted` accepts; `None` if the tile is malformed.
-pub(super) fn decode(bytes: &[u8], wanted: impl Fn(&str) -> bool) -> Option<Vec<Layer>> {
+pub(crate) fn decode(bytes: &[u8], wanted: impl Fn(&str) -> bool) -> Option<Vec<Layer>> {
     let mut reader = Reader::new(bytes);
     let mut layers = Vec::new();
     while !reader.done() {
@@ -283,7 +283,7 @@ fn decode_geometry(commands: &[u32], kind: GeomType) -> Option<Vec<Vec<(f64, f64
 }
 
 #[cfg(test)]
-pub(super) mod encode {
+pub(crate) mod encode {
     //! A tiny encoder for tests, so the decoder is checked against the specification's
     //! wire format rather than against itself.
     fn varint(mut value: u64, out: &mut Vec<u8>) {
