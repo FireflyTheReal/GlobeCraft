@@ -7,8 +7,12 @@ name: Map data
 #   borders    `boundary` and `place`, plus the ocean of `water` (a second set), z0-12
 #   transport  railways, trams and subways, ferries (`transportation`, with their
 #              names) and airports (`aeroway`, `aerodrome_label`), z0-14
-#   roads      roads (`transportation` motorway to service, with
-#              `transportation_name` for their names), z0-12
+#   roads      roads (`transportation` motorway to service and roadworks, with
+#              `transportation_name` for their names), z0-12; roads13 and roads14
+#              are the same for zoom 13 and zoom 14 alone (each a run of its own)
+#   poi        points of interest (`poi`), peaks (`mountain_peak`), rivers and
+#              canals (`waterway`), water names (`water_name`) and parks (`park`),
+#              z0-14
 # Manual only. Publishing replaces that set's files in the one `map-data`
 # pre-release (the app's updater ignores pre-releases); its manifest.json names the
 # current files of every set. Data: (c) OpenStreetMap contributors (ODbL),
@@ -19,7 +23,7 @@ on:
       set:
         description: 'Which tile set to build'
         type: choice
-        options: [borders, transport, roads]
+        options: [borders, transport, roads, roads13, roads14, poi]
         default: borders
       version:
         description: 'OpenFreeMap planet version, e.g. 20261025_080012_pt (empty: the newest)'
@@ -33,8 +37,10 @@ on:
 permissions:
   contents: write
 
+# One run per set at a time; different sets build side by side (the publish step
+# merges each set into the shared manifest and checks it stayed there).
 concurrency:
-  group: map-data
+  group: map-data-${{ inputs.set }}
   cancel-in-progress: false
 
 jobs:
@@ -94,11 +100,18 @@ jobs:
         id: set
         run: |
           case '${{ inputs.set }}' in
-            borders) echo "maxzoom=12" >> "$GITHUB_OUTPUT"; echo "names=borders water" >> "$GITHUB_OUTPUT" ;;
-            transport) echo "maxzoom=14" >> "$GITHUB_OUTPUT"; echo "names=transport" >> "$GITHUB_OUTPUT" ;;
-            roads) echo "maxzoom=12" >> "$GITHUB_OUTPUT"; echo "names=roads" >> "$GITHUB_OUTPUT" ;;
+            borders) zooms="0 12"; names="borders water" ;;
+            transport) zooms="0 14"; names="transport" ;;
+            roads) zooms="0 12"; names="roads" ;;
+            roads13) zooms="13 13"; names="roads13" ;;
+            roads14) zooms="14 14"; names="roads14" ;;
+            poi) zooms="0 14"; names="poi" ;;
             *) echo "::error::unknown set"; exit 1 ;;
           esac
+          read -r minzoom maxzoom <<< "$zooms"
+          echo "minzoom=$minzoom" >> "$GITHUB_OUTPUT"
+          echo "maxzoom=$maxzoom" >> "$GITHUB_OUTPUT"
+          echo "names=$names" >> "$GITHUB_OUTPUT"
 
       - name: Build tippecanoe and fetch pmtiles
         run: |
@@ -177,14 +190,15 @@ jobs:
       # the zooms the set keeps, by narrowing the planet's own `tiles` view in place
       # (copying the rest out needed more room than the volume has left).
       - name: Show only the set's zooms
-        if: steps.set.outputs.maxzoom != '14'
+        if: steps.set.outputs.maxzoom != '14' || steps.set.outputs.minzoom != '0'
         working-directory: /work
         env:
+          MINZOOM: ${{ steps.set.outputs.minzoom }}
           MAXZOOM: ${{ steps.set.outputs.maxzoom }}
         shell: python3 {0}
         run: |
           import os
-          MAXZOOM = int(os.environ["MAXZOOM"])
+          MINZOOM, MAXZOOM = int(os.environ["MINZOOM"]), int(os.environ["MAXZOOM"])
           import re, sqlite3, sys, traceback
           def report(kind, exc_type, exc, tb):
               message = " | ".join(traceback.format_exception(exc_type, exc, tb)).replace("\n", " ")
@@ -197,13 +211,13 @@ jobs:
               # The definition's own header, whatever whitespace follows its AS.
               body = re.match(r"(?is)\s*create\s+view\s+\S+\s+as\s+(.*)", sql).group(1)
               db.execute("DROP VIEW tiles")
-              db.execute(f"CREATE VIEW tiles AS SELECT * FROM ({body}) WHERE zoom_level <= {MAXZOOM}")
+              db.execute(f"CREATE VIEW tiles AS SELECT * FROM ({body}) WHERE zoom_level BETWEEN {MINZOOM} AND {MAXZOOM}")
           else:
               db.execute("ALTER TABLE tiles RENAME TO tiles_all")
-              db.execute(f"CREATE VIEW tiles AS SELECT * FROM tiles_all WHERE zoom_level <= {MAXZOOM}")
+              db.execute(f"CREATE VIEW tiles AS SELECT * FROM tiles_all WHERE zoom_level BETWEEN {MINZOOM} AND {MAXZOOM}")
           db.commit()
-          count = db.execute("SELECT count(*) FROM tiles WHERE zoom_level = 4").fetchone()[0]
-          print(f"::notice::Zoom 4 tiles through the narrowed view: {count}")
+          count = db.execute("SELECT count(*) FROM tiles WHERE zoom_level = ?", (MINZOOM,)).fetchone()[0]
+          print(f"::notice::Zoom {MINZOOM} tiles through the narrowed view: {count}")
 
       - name: Keep the set's layers
         working-directory: /work
@@ -234,15 +248,26 @@ jobs:
                 -A "$attribution" -n "GlobeCraft railways, ferries and airports" \
                 -o transport.mbtiles planet.mbtiles
               ;;
-            roads)
-              # Roads from motorways to service roads (rail, ferries and paths are
-              # elsewhere or left out), and the named lines for their names.
+            roads|roads13|roads14)
+              # Roads from motorways to service roads and their roadworks (rail,
+              # ferries and paths are elsewhere or left out), and the named lines
+              # for their names.
               classes='"motorway","trunk","primary","secondary","tertiary","minor","service","busway","raceway"'
-              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
+              classes="$classes"',"motorway_construction","trunk_construction","primary_construction","secondary_construction","tertiary_construction","minor_construction","service_construction"'
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
                 --layer=transportation --layer=transportation_name \
                 --feature-filter="{\"transportation\":[\"in\",\"class\",$classes],\"transportation_name\":[\"in\",\"class\",$classes]}" \
                 -A "$attribution" -n "GlobeCraft roads" \
-                -o roads.mbtiles planet.mbtiles
+                -o "${{ inputs.set }}.mbtiles" planet.mbtiles
+              ;;
+            poi)
+              # Points of interest, peaks, rivers and canals (not streams and
+              # ditches), names of seas, lakes and bays, and parks.
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
+                --layer=poi --layer=mountain_peak --layer=waterway --layer=water_name --layer=park \
+                --feature-filter='{"waterway":["in","class","river","canal"]}' \
+                -A "$attribution" -n "GlobeCraft places of interest" \
+                -o poi.mbtiles planet.mbtiles
               ;;
           esac
           rm planet.mbtiles
@@ -290,6 +315,7 @@ jobs:
         env:
           VERSION: ${{ steps.pick.outputs.version }}
           NAMES: ${{ steps.set.outputs.names }}
+          MINZOOM: ${{ steps.set.outputs.minzoom }}
           MAXZOOM: ${{ steps.set.outputs.maxzoom }}
           TMPDIR: /work/tmp
         # Release assets must stay under 2 GiB: an archive over the limit is cut into
@@ -304,7 +330,7 @@ jobs:
           sets = []
           for name in os.environ["NAMES"].split():
               whole = f"globecraft-{name}-{version}.pmtiles"
-              queue, parts = [(0, int(os.environ["MAXZOOM"]), -180.0, 180.0, whole)], []
+              queue, parts = [(int(os.environ["MINZOOM"]), int(os.environ["MAXZOOM"]), -180.0, 180.0, whole)], []
               while queue:
                   low, high, west, east, path = queue.pop(0)
                   if os.path.getsize(path) < LIMIT:
@@ -376,10 +402,8 @@ jobs:
           cp measure.txt "measure-$KEY-$VERSION.txt"
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber \
             "${files[@]}" "measure-$KEY-$VERSION.txt"
-          gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
-            --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$release"
-          python3 - "$base" <<'PY'
+          cat > merge.py <<'PY'
           import json, os, sys
           base, version, key = sys.argv[1], os.environ["VERSION"], os.environ["KEY"]
           manifest = json.load(open("old-manifest.json"))
@@ -391,8 +415,23 @@ jobs:
           }
           json.dump(manifest, open("manifest.json", "w"), indent=1)
           PY
-          cat manifest.json
-          gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
+          # Other sets may publish at the same time: merge into the newest manifest,
+          # then check this set's entry survived, else merge again.
+          for attempt in 1 2 3 4 5; do
+            rm -f old-manifest.json
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
+              --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
+            python3 merge.py "$base"
+            gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
+            sleep $((RANDOM % 20 + 10))
+            rm -f check.json
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --output check.json
+            if python3 -c 'import json, os, sys; m = json.load(open("check.json")); sys.exit(m.get(os.environ["KEY"], {}).get("sets") != json.load(open("manifest.json"))[os.environ["KEY"]]["sets"])'; then
+              break
+            fi
+            echo "The manifest changed underneath; merging again ($attempt)"
+          done
+          cat check.json
           # Keep this build's files and the previous build's; delete the set's others.
           keep_previous=$(python3 -c 'import json, os; print(json.load(open("manifest.json"))[os.environ["KEY"]]["previous"] or "")')
           prefixes=$(echo $NAMES | tr ' ' '|')
