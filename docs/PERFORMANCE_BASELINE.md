@@ -574,3 +574,35 @@ bytes. Every tile has the same border lines and places from both sources (the
 same planet build), and no tile has lines on OpenFreeMap but none on GitHub.
 Requests exceed tiles because each tile is read from two sets (borders and
 names, water) at the same time.
+
+## Transport tiles and the planet's layer sizes, 2026-10-28
+
+The `transport` set (`map-data.yml`, run 40644730631, 2.9 h) keeps OpenMapTiles
+`transportation` features of class rail, transit and ferry, `aeroway` and
+`aerodrome_label`, zoom 0–14: 2,483,583 tiles, 623 MiB, one 626 MiB PMTiles file.
+
+| Zoom | 8 | 9 | 10 | 11 | 12 | 13 | 14 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Tiles | 6,003 | 15,864 | 71,756 | 157,663 | 316,307 | 620,887 | 1,293,418 |
+| MiB | 4 | 9 | 39 | 57 | 89 | 137 | 287 |
+
+Zooms 4–7 hold only ferries (under 1 MiB together). What the tiles hold, read
+with the app's decoder around Munich and Dover: ferries from zoom 5, railways and
+airport names from zoom 8, runways and taxiways from zoom 10, trams, subways and
+sidings only at zoom 14 (zoom 13 adds nothing zoom 14 lacks, so the app skips it).
+
+The same run sampled 400 random planet tiles per zoom (area-weighted, so oceans
+dominate and the shares are rough). Estimated gzip size of the whole planet per
+zoom and the largest layers (shares of uncompressed bytes):
+
+| Zoom | Planet | Largest layers |
+| --- | ---: | --- |
+| 10 | ~2.2 GiB | place 30 %, water 27 %, landcover 22 % |
+| 11 | ~8.0 GiB | place 33 %, landcover 29 %, water 11 %, transportation 7 % |
+| 12 | ~13.4 GiB | transportation 29 %, place 19 %, water 17 %, landcover 10 %, transportation_name 5 % |
+| 13 | ~25.9 GiB | water 22 %, transportation 22 %, waterway 12 %, place 12 %, transportation_name 7 % |
+| 14 | ~85 GiB | housenumber 19 %, transportation_name 19 %, transportation 15 %, water 12 % |
+
+Roads with names (`transportation` + `transportation_name`) would come to roughly
+4–5 GiB at zoom 12, 7–8 GiB at zoom 13 and about 25–30 GiB at zoom 14, so 35–45
+GiB to zoom 14 (20+ files) against about 5 GiB to zoom 12 (three files).

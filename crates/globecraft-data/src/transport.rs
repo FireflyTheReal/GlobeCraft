@@ -10,11 +10,20 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Above this the layers are hidden: railways and airports are lost in the imagery.
+/// Above this the layers are hidden (ferries show up to here).
 pub const MAX_ALTITUDE_KM: f64 = 3_000.0;
-/// The coarsest and finest levels of the set.
+/// The coarsest and finest levels of the set. Measured on the published tiles
+/// (2026-10-28): ferries from zoom 5, railways and airport names from zoom 8, runways
+/// from zoom 10; trams, subways and sidings only at zoom 14, and zoom 13 holds
+/// nothing zoom 14 lacks.
 const MIN_ZOOM: u8 = 5;
 const MAX_ZOOM: u8 = 14;
+/// Railways and airports exist from this level: while they are on, views up to
+/// `DETAIL_FLOOR_MAX_ALTITUDE_KM` take tiles at least this fine.
+const DETAIL_FLOOR_ZOOM: u8 = 8;
+pub const DETAIL_FLOOR_MAX_ALTITUDE_KM: f64 = 1_000.0;
+/// The most tiles taken to stay at that floor (zoom 8 tiles average under 1 KiB).
+const MAX_FLOOR_TILES: usize = 200;
 /// Tiles across the view (finer than borders: rail lines are drawn at every level).
 const TILES_ACROSS_VIEW: f64 = 3.0;
 /// More tiles than this go one level up instead.
@@ -104,6 +113,8 @@ pub struct TransportSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TransportQuery {
     pub enabled: bool,
+    /// Railways or airports are on (they need zoom 8 tiles; ferries do not).
+    pub rail_or_airports: bool,
     pub latitude: f64,
     pub longitude: f64,
     pub altitude_km: f64,
@@ -163,11 +174,17 @@ impl TransportTiles {
             self.built = None;
             return;
         }
+        let floor = if query.rail_or_airports && query.altitude_km <= DETAIL_FLOOR_MAX_ALTITUDE_KM {
+            DETAIL_FLOOR_ZOOM
+        } else {
+            MIN_ZOOM
+        };
         let (zoom, wanted) = wanted(
             query.latitude,
             query.longitude,
             query.altitude_km,
             query.tilt_deg,
+            floor,
         );
         let now = Instant::now();
         let Ok(mut shared) = self.shared.lock() else {
@@ -269,17 +286,26 @@ impl TransportTiles {
 }
 
 /// The zoom level and the tiles around the view, nearest first.
-fn wanted(lat: f64, lon: f64, altitude_km: f64, tilt_deg: f64) -> (u8, Vec<TileKey>) {
+fn wanted(lat: f64, lon: f64, altitude_km: f64, tilt_deg: f64, floor: u8) -> (u8, Vec<TileKey>) {
     let mut zoom = ideal_zoom(lat, altitude_km, TILES_ACROSS_VIEW)
         .round()
-        .clamp(f64::from(MIN_ZOOM), f64::from(MAX_ZOOM)) as u8;
+        .clamp(f64::from(floor), f64::from(MAX_ZOOM)) as u8;
+    // Zoom 13 holds nothing zoom 14 lacks, and only zoom 14 has trams and subways.
+    if zoom == MAX_ZOOM - 1 {
+        zoom = MAX_ZOOM;
+    }
     let radius = view_radius_deg(altitude_km, tilt_deg);
     loop {
         let tiles = around(zoom, lat, lon, radius);
-        if tiles.len() <= MAX_TILES || zoom == MIN_ZOOM {
-            return (zoom, tiles.into_iter().take(MAX_TILES * 2).collect());
+        let limit = if zoom <= floor {
+            MAX_FLOOR_TILES
+        } else {
+            MAX_TILES
+        };
+        if tiles.len() <= limit || zoom <= MIN_ZOOM {
+            return (zoom, tiles.into_iter().take(MAX_FLOOR_TILES).collect());
         }
-        zoom -= 1;
+        zoom -= if zoom == MAX_ZOOM { 2 } else { 1 };
     }
 }
 
@@ -532,12 +558,63 @@ mod tests {
 
     #[test]
     fn closer_views_want_finer_tiles_up_to_zoom_fourteen() {
-        let (far, _) = wanted(48.1, 11.6, 2_500.0, 0.0);
-        let (near, tiles) = wanted(48.1, 11.6, 0.5, 0.0);
+        let (far, _) = wanted(48.1, 11.6, 2_500.0, 0.0, MIN_ZOOM);
+        let (near, tiles) = wanted(48.1, 11.6, 0.5, 0.0, MIN_ZOOM);
         assert!((MIN_ZOOM..8).contains(&far), "{far}");
         assert_eq!(near, MAX_ZOOM);
-        assert!(!tiles.is_empty() && tiles.len() <= MAX_TILES * 2);
-        let (_, tilted) = wanted(48.1, 11.6, 20.0, 70.0);
+        assert!(!tiles.is_empty() && tiles.len() <= MAX_TILES);
+        let (_, tilted) = wanted(48.1, 11.6, 20.0, 70.0, MIN_ZOOM);
         assert!(tilted.len() <= MAX_TILES);
+        // Railways from 600 km: zoom 8 tiles, where the rail lines start.
+        let (floor, tiles) = wanted(48.1, 11.6, 600.0, 0.0, DETAIL_FLOOR_ZOOM);
+        assert_eq!(floor, DETAIL_FLOOR_ZOOM);
+        assert!(tiles.len() <= MAX_FLOOR_TILES);
+        // Never zoom 13.
+        for altitude in [1.0, 2.0, 3.0, 5.0, 8.0] {
+            assert_ne!(
+                wanted(48.1, 11.6, altitude, 0.0, MIN_ZOOM).0,
+                13,
+                "{altitude}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    /// The published transport archive, read as the app reads it, and what each level
+    /// holds around Munich (rail, S-Bahn/U-Bahn, tram, airport MUC) and the Strait of
+    /// Dover (ferries).
+    #[tokio::test]
+    #[ignore = "network: reads GlobeCraft's published transport tiles"]
+    async fn published_transport_tiles_hold_rail_ferries_and_airports() {
+        let template = crate::map_data::template("transport").await.unwrap();
+        let mut found = HashMap::new();
+        for (place, lat, lon) in [("Munich", 48.14, 11.56), ("Dover", 51.05, 1.6)] {
+            for z in 5..=14 {
+                let key = TileKey::at(z, lat, lon);
+                let tile = fetch(key, &template).await.unwrap();
+                let mut kinds: HashMap<LineKind, usize> = HashMap::new();
+                for line in &tile.lines {
+                    *kinds.entry(line.kind).or_default() += 1;
+                }
+                let mut kinds: Vec<_> = kinds.into_iter().collect();
+                kinds.sort_by_key(|(kind, _)| format!("{kind:?}"));
+                let airports: Vec<_> = tile
+                    .airports
+                    .iter()
+                    .map(|airport| format!("{} {:?} {}", airport.name, airport.iata, airport.class))
+                    .collect();
+                println!("{place} z{z}: {kinds:?} airports {airports:?}");
+                for (kind, count) in kinds {
+                    *found.entry((place, kind)).or_insert(0) += count;
+                }
+            }
+        }
+        assert!(found.contains_key(&("Munich", LineKind::Rail)));
+        assert!(found.contains_key(&("Munich", LineKind::Subway)));
+        assert!(found.contains_key(&("Dover", LineKind::Ferry)));
     }
 }

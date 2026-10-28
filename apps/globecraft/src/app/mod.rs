@@ -484,6 +484,7 @@ impl eframe::App for App {
             &self.runtime,
             globecraft_data::transport::TransportQuery {
                 enabled: earth && self.transport_shown(),
+                rail_or_airports: self.layer(MapLayer::Railways) || self.layer(MapLayer::Airports),
                 latitude: self.cam.lat,
                 longitude: self.cam.lon,
                 altitude_km: self.cam.alt,
