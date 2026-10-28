@@ -34,6 +34,7 @@ pub mod satellites;
 pub mod traffic;
 pub mod transport;
 pub mod updater;
+pub mod vector_tiles;
 pub mod vessels;
 
 pub mod sky;

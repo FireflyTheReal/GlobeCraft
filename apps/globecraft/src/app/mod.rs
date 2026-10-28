@@ -501,6 +501,22 @@ impl eframe::App for App {
             self.cam.alt,
             move || road_wake.request_repaint(),
         );
+        let road_tile_wake = ctx.clone();
+        self.roads.tiles.update(
+            &self.runtime,
+            earth && self.layer(MapLayer::Roads),
+            (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+            move || road_tile_wake.request_repaint(),
+        );
+        self.roads.current = if earth && self.layer(MapLayer::Roads) {
+            let streets =
+                self.roads
+                    .service
+                    .shared_snapshot(self.cam.lat, self.cam.lon, self.cam.alt);
+            self.roads.tiles.merged(streets)
+        } else {
+            None
+        };
         let traffic_wake = ctx.clone();
         self.traffic.service.update(
             &self.runtime,

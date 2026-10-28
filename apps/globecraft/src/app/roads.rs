@@ -4,7 +4,12 @@ use std::sync::Arc;
 
 #[derive(Default)]
 pub(super) struct RoadOverlay {
+    /// Minor streets of close views (Overpass).
     pub service: globecraft_data::roads::LiveRoads,
+    /// Motorways to tertiary roads (GlobeCraft's road tiles).
+    pub tiles: globecraft_data::roads::RoadTiles,
+    /// Both, as drawn.
+    pub current: Option<Arc<[globecraft_data::roads::Road]>>,
     projected: Option<Arc<Vec<globecraft_render::live_layers::ProjectedRoad>>>,
     shapes: Vec<egui::Shape>,
 }
@@ -57,7 +62,14 @@ impl RoadOverlay {
             let text = lang.format(
                 "roads-hover-tooltip",
                 &[
-                    ("name", road.name.as_str().into()),
+                    (
+                        "name",
+                        if road.name.is_empty() {
+                            lang.text("roads-unnamed").into()
+                        } else {
+                            road.name.as_str().into()
+                        },
+                    ),
                     ("kind", road.kind.as_str().into()),
                     ("state", state.into()),
                 ],

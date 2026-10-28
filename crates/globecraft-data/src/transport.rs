@@ -4,35 +4,32 @@
 //! tiles: a zoom level for the altitude, the tiles around the view, nearest first, and
 //! coarser loaded tiles drawn while finer ones arrive.
 use crate::boundaries::osm_tiles::content::{TileBounds, TileKey, clip};
-use crate::boundaries::osm_tiles::pick::{around, ideal_zoom, view_radius_deg};
 use crate::mvt::{self, GeomType};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use crate::vector_tiles::{Snapshot, Spec, TileStream, View};
+use std::sync::Arc;
 
 /// Above this the layers are hidden (ferries show up to here).
 pub const MAX_ALTITUDE_KM: f64 = 3_000.0;
-/// The coarsest and finest levels of the set. Measured on the published tiles
-/// (2026-10-28): ferries from zoom 5, railways and airport names from zoom 8, runways
-/// from zoom 10; trams, subways and sidings only at zoom 14, and zoom 13 holds
-/// nothing zoom 14 lacks.
-const MIN_ZOOM: u8 = 5;
-const MAX_ZOOM: u8 = 14;
-/// Railways and airports exist from this level: while they are on, views up to
-/// `DETAIL_FLOOR_MAX_ALTITUDE_KM` take tiles at least this fine.
-const DETAIL_FLOOR_ZOOM: u8 = 8;
+/// Railways and airports exist from `DETAIL_FLOOR_ZOOM`: while they are on, views up
+/// to this altitude take tiles at least that fine (zoom 8 tiles average under 1 KiB).
 pub const DETAIL_FLOOR_MAX_ALTITUDE_KM: f64 = 1_000.0;
-/// The most tiles taken to stay at that floor (zoom 8 tiles average under 1 KiB).
-const MAX_FLOOR_TILES: usize = 200;
-/// Tiles across the view (finer than borders: rail lines are drawn at every level).
-const TILES_ACROSS_VIEW: f64 = 3.0;
-/// More tiles than this go one level up instead.
-const MAX_TILES: usize = 64;
-const MAX_INFLIGHT: usize = 6;
-/// Decoded tiles kept in memory.
-const MAX_CACHED_TILES: usize = 600;
-const FAILED_RETRY: Duration = Duration::from_secs(30);
-const TEMPLATE_RETRY: Duration = Duration::from_secs(60);
+const DETAIL_FLOOR_ZOOM: u8 = 8;
+
+/// Measured on the published tiles (2026-10-28): ferries from zoom 5, railways and
+/// airport names from zoom 8, runways from zoom 10; trams, subways and sidings only
+/// at zoom 14, and zoom 13 holds nothing zoom 14 lacks.
+static SPEC: Spec<TransportTile> = Spec {
+    set: "transport",
+    min_zoom: 5,
+    max_zoom: 14,
+    skip_zoom: Some(13),
+    // Finer than borders: rail lines are drawn at every level.
+    tiles_across_view: 3.0,
+    max_tiles: 64,
+    max_floor_tiles: 200,
+    max_cached_tiles: 600,
+    decode,
+};
 
 /// What a line is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -101,14 +98,8 @@ pub struct TransportTile {
     pub airports: Vec<Airport>,
 }
 
-/// The tiles to draw for the current view: wanted tiles that are loaded, and coarser
-/// loaded tiles in place of those still loading.
-#[derive(Debug, Default)]
-pub struct TransportSnapshot {
-    pub tiles: Vec<Arc<TransportTile>>,
-    /// The level the view wants.
-    pub zoom: u8,
-}
+/// The tiles to draw for the current view.
+pub type TransportSnapshot = Snapshot<TransportTile>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TransportQuery {
@@ -121,46 +112,33 @@ pub struct TransportQuery {
     pub tilt_deg: f64,
 }
 
-#[derive(Default)]
-struct Shared {
-    template: Option<Arc<str>>,
-    template_loading: bool,
-    template_failed: Option<Instant>,
-    template_error: Option<String>,
-    tiles: HashMap<TileKey, (Arc<TransportTile>, Instant)>,
-    inflight: HashSet<TileKey>,
-    failed: HashMap<TileKey, Instant>,
-    /// Bumped whenever a tile arrives.
-    revision: u64,
+/// The transport tile layer: call [`Self::update`] every frame it is shown.
+pub struct TransportTiles {
+    stream: TileStream<TransportTile>,
 }
 
-/// The transport tile layer: call [`Self::update`] every frame it is shown.
-#[derive(Default)]
-pub struct TransportTiles {
-    shared: Arc<Mutex<Shared>>,
-    snapshot: Option<Arc<TransportSnapshot>>,
-    /// What the snapshot was built from: the wanted tiles and the revision.
-    built: Option<(Vec<TileKey>, u64)>,
+impl Default for TransportTiles {
+    fn default() -> Self {
+        Self {
+            stream: TileStream::new(&SPEC),
+        }
+    }
 }
 
 impl TransportTiles {
     /// The tiles to draw, when the layer is on and something is loaded.
     pub fn shared_snapshot(&self) -> Option<Arc<TransportSnapshot>> {
-        self.snapshot
-            .clone()
-            .filter(|snapshot| !snapshot.tiles.is_empty())
+        self.stream.shared_snapshot()
     }
 
     /// Why nothing shows yet, if something is wrong.
     pub fn error(&self) -> Option<String> {
-        self.shared.lock().ok()?.template_error.clone()
+        self.stream.error()
     }
 
     /// Whether downloads are running.
     pub fn loading(&self) -> bool {
-        self.shared
-            .lock()
-            .is_ok_and(|shared| !shared.inflight.is_empty())
+        self.stream.loading()
     }
 
     pub fn update(
@@ -170,177 +148,23 @@ impl TransportTiles {
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
         if !query.enabled || query.altitude_km > MAX_ALTITUDE_KM {
-            self.snapshot = None;
-            self.built = None;
+            self.stream.hide();
             return;
         }
         let floor = if query.rail_or_airports && query.altitude_km <= DETAIL_FLOOR_MAX_ALTITUDE_KM {
             DETAIL_FLOOR_ZOOM
         } else {
-            MIN_ZOOM
+            SPEC.min_zoom
         };
-        let (zoom, wanted) = wanted(
-            query.latitude,
-            query.longitude,
-            query.altitude_km,
-            query.tilt_deg,
+        let view = View {
+            latitude: query.latitude,
+            longitude: query.longitude,
+            altitude_km: query.altitude_km,
+            tilt_deg: query.tilt_deg,
             floor,
-        );
-        let now = Instant::now();
-        let Ok(mut shared) = self.shared.lock() else {
-            return;
         };
-        let Some(template) = shared.template.clone() else {
-            let due = shared
-                .template_failed
-                .is_none_or(|at| now.duration_since(at) >= TEMPLATE_RETRY);
-            if !shared.template_loading && due {
-                shared.template_loading = true;
-                let state = self.shared.clone();
-                runtime.spawn(async move {
-                    let result = crate::map_data::template("transport").await;
-                    if let Ok(mut shared) = state.lock() {
-                        shared.template_loading = false;
-                        match result {
-                            Ok(template) => {
-                                shared.template = Some(template.into());
-                                shared.template_error = None;
-                            }
-                            Err(error) => {
-                                shared.template_failed = Some(Instant::now());
-                                shared.template_error = Some(error.to_string());
-                            }
-                        }
-                    }
-                    repaint();
-                });
-            }
-            return;
-        };
-        // Downloads for missing tiles, nearest first.
-        for key in &wanted {
-            if shared.inflight.len() >= MAX_INFLIGHT {
-                break;
-            }
-            let retry = shared
-                .failed
-                .get(key)
-                .is_none_or(|at| now.duration_since(*at) >= FAILED_RETRY);
-            if shared.tiles.contains_key(key) || shared.inflight.contains(key) || !retry {
-                continue;
-            }
-            shared.inflight.insert(*key);
-            let (state, template, key, repaint) =
-                (self.shared.clone(), template.clone(), *key, repaint.clone());
-            runtime.spawn(async move {
-                let result = fetch(key, &template).await;
-                if let Ok(mut shared) = state.lock() {
-                    shared.inflight.remove(&key);
-                    match result {
-                        Ok(tile) => {
-                            shared.failed.remove(&key);
-                            shared.tiles.insert(key, (Arc::new(tile), Instant::now()));
-                            shared.revision += 1;
-                            evict(&mut shared.tiles);
-                        }
-                        Err(_) => {
-                            shared.failed.insert(key, Instant::now());
-                        }
-                    }
-                }
-                repaint();
-            });
-        }
-        if self
-            .built
-            .as_ref()
-            .is_some_and(|(keys, revision)| *keys == wanted && *revision == shared.revision)
-        {
-            return;
-        }
-        // Each wanted tile, or its nearest loaded ancestor while it loads.
-        let mut chosen: Vec<TileKey> = Vec::new();
-        for key in &wanted {
-            let mut candidate = Some(*key);
-            while let Some(at) = candidate {
-                if shared.tiles.contains_key(&at) {
-                    if !chosen.contains(&at) {
-                        chosen.push(at);
-                    }
-                    break;
-                }
-                candidate = at.parent().filter(|parent| parent.z >= MIN_ZOOM);
-            }
-        }
-        let tiles = chosen
-            .iter()
-            .filter_map(|key| {
-                let entry = shared.tiles.get_mut(key)?;
-                entry.1 = now;
-                Some(entry.0.clone())
-            })
-            .collect();
-        self.built = Some((wanted, shared.revision));
-        self.snapshot = Some(Arc::new(TransportSnapshot { tiles, zoom }));
+        self.stream.update(runtime, view, repaint);
     }
-}
-
-/// The zoom level and the tiles around the view, nearest first.
-fn wanted(lat: f64, lon: f64, altitude_km: f64, tilt_deg: f64, floor: u8) -> (u8, Vec<TileKey>) {
-    let mut zoom = ideal_zoom(lat, altitude_km, TILES_ACROSS_VIEW)
-        .round()
-        .clamp(f64::from(floor), f64::from(MAX_ZOOM)) as u8;
-    // Zoom 13 holds nothing zoom 14 lacks, and only zoom 14 has trams and subways.
-    if zoom == MAX_ZOOM - 1 {
-        zoom = MAX_ZOOM;
-    }
-    let radius = view_radius_deg(altitude_km, tilt_deg);
-    loop {
-        let tiles = around(zoom, lat, lon, radius);
-        let limit = if zoom <= floor {
-            MAX_FLOOR_TILES
-        } else {
-            MAX_TILES
-        };
-        if tiles.len() <= limit || zoom <= MIN_ZOOM {
-            return (zoom, tiles.into_iter().take(MAX_FLOOR_TILES).collect());
-        }
-        zoom -= if zoom == MAX_ZOOM { 2 } else { 1 };
-    }
-}
-
-/// Drops the tiles used longest ago beyond the cache size.
-fn evict(tiles: &mut HashMap<TileKey, (Arc<TransportTile>, Instant)>) {
-    if tiles.len() <= MAX_CACHED_TILES {
-        return;
-    }
-    let mut ages: Vec<(Instant, TileKey)> =
-        tiles.iter().map(|(key, (_, at))| (*at, *key)).collect();
-    ages.sort();
-    for (_, key) in ages.into_iter().take(tiles.len() - MAX_CACHED_TILES) {
-        tiles.remove(&key);
-    }
-}
-
-async fn fetch(key: TileKey, template: &str) -> Result<TransportTile, crate::Error> {
-    let archives = template
-        .strip_prefix(crate::map_data::PMTILES_PREFIX)
-        .ok_or("transport tiles need GlobeCraft's archives")?
-        .to_owned();
-    let parts = crate::map_data::tile_parts(key.z, key.x, key.y, &archives).await?;
-    crate::cpu::run(crate::cpu::Service::Features, move || {
-        let mut bytes = Vec::new();
-        for part in parts {
-            bytes.extend(crate::map_data::gunzip_if_needed(part)?);
-        }
-        decode(key, &bytes).ok_or_else(|| {
-            crate::Error::from(format!(
-                "malformed transport tile {}/{}/{}",
-                key.z, key.x, key.y
-            ))
-        })
-    })
-    .await
 }
 
 /// The lines and airports of a vector tile, in latitude/longitude.
@@ -556,6 +380,29 @@ mod tests {
         assert_eq!(tile.airports[0].importance(), 0);
     }
 
+    fn wanted(
+        lat: f64,
+        lon: f64,
+        altitude_km: f64,
+        tilt_deg: f64,
+        floor: u8,
+    ) -> (u8, Vec<TileKey>) {
+        crate::vector_tiles::wanted(
+            &SPEC,
+            View {
+                latitude: lat,
+                longitude: lon,
+                altitude_km,
+                tilt_deg,
+                floor,
+            },
+        )
+    }
+    const MIN_ZOOM: u8 = 5;
+    const MAX_ZOOM: u8 = 14;
+    const MAX_TILES: usize = 64;
+    const MAX_FLOOR_TILES: usize = 200;
+
     #[test]
     fn closer_views_want_finer_tiles_up_to_zoom_fourteen() {
         let (far, _) = wanted(48.1, 11.6, 2_500.0, 0.0, MIN_ZOOM);
@@ -583,6 +430,7 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
+    use std::collections::HashMap;
 
     /// The published transport archive, read as the app reads it, and what each level
     /// holds around Munich (rail, S-Bahn/U-Bahn, tram, airport MUC) and the Strait of
@@ -595,7 +443,9 @@ mod live_tests {
         for (place, lat, lon) in [("Munich", 48.14, 11.56), ("Dover", 51.05, 1.6)] {
             for z in 5..=14 {
                 let key = TileKey::at(z, lat, lon);
-                let tile = fetch(key, &template).await.unwrap();
+                let tile = crate::vector_tiles::fetch(&SPEC, key, &template)
+                    .await
+                    .unwrap();
                 let mut kinds: HashMap<LineKind, usize> = HashMap::new();
                 for line in &tile.lines {
                     *kinds.entry(line.kind).or_default() += 1;

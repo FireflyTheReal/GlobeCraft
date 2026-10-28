@@ -94,14 +94,7 @@ impl App {
                 traffic_width_px: width,
                 traffic_height_px: height,
             },
-            roads: self
-                .layer(globecraft_core::layers::MapLayer::Roads)
-                .then(|| {
-                    self.roads
-                        .service
-                        .shared_snapshot(camera.lat, camera.lon, camera.alt)
-                })
-                .flatten(),
+            roads: self.roads.current.clone(),
             vessels: self
                 .layer(globecraft_core::layers::MapLayer::Vessels)
                 .then(|| self.live_vessels.shared_snapshot())

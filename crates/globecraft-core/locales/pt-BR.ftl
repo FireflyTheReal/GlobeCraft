@@ -450,7 +450,7 @@ layers-ferries-toggle = Rotas de balsa (OSM)
 layers-airports-toggle = Aeroportos (OSM)
 transport-zoom-help = Aproxime para vê-los (abaixo de { $altitude } de altitude)
 transport-loading-status = Carregando…
-transport-error-status = Dados de transporte indisponíveis: { $error }
+transport-error-status = Dados do mapa indisponíveis: { $error }
 
 roads-zoom-help = Aproxime para exibir estradas (até { $altitude } de altitude)
 roads-loading-status = Carregando vias próximas…
@@ -470,6 +470,7 @@ traffic-loaded-status = Tráfego atualizado há { $minutes } min (verde=livre, a
 
 roads-restricted-help = Acesso restrito/obra registrado no OSM (não é congestionamento)
 roads-flow-unknown-help = Fluxo de veículos: desconhecido (sem dados ao vivo)
+roads-unnamed = via sem nome
 roads-hover-tooltip =
     { $name } • { $kind }
     { $state }

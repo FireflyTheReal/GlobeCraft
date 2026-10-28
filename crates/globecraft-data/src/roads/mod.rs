@@ -1,10 +1,15 @@
-//! Road geometry and static access restrictions from OpenStreetMap/Overpass.
-//! No account/API key. OSM is NOT a source of live vehicle speeds or jams.
+//! Roads from OpenStreetMap: motorways to service roads from GlobeCraft's own road
+//! tiles (`tiles`, zoom 0–12), and in close views the minor streets those leave out,
+//! with access restrictions, from Overpass. No account/API key. OSM is NOT a source
+//! of live vehicle speeds or jams.
+mod tiles;
 use std::{
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
-const MAX_ALTITUDE_KM: f64 = 180.0;
+pub use tiles::{MAX_ALTITUDE_KM as TILES_MAX_ALTITUDE_KM, RoadTiles};
+/// Overpass is asked for minor streets below this.
+const MAX_ALTITUDE_KM: f64 = 65.0;
 const REFRESH: Duration = Duration::from_secs(20 * 60);
 const MOVE_RETRY: Duration = Duration::from_secs(35);
 const ERROR_RETRY: Duration = Duration::from_secs(90);
@@ -53,11 +58,14 @@ impl LiveRoads {
         lang: globecraft_core::language::Lang,
         units: globecraft_core::units::DistanceUnits,
     ) -> String {
-        if alt > MAX_ALTITUDE_KM {
+        if alt > tiles::MAX_ALTITUDE_KM {
             return lang.format(
                 "roads-zoom-help",
-                &[("altitude", units.altitude(MAX_ALTITUDE_KM).into())],
+                &[("altitude", units.altitude(tiles::MAX_ALTITUDE_KM).into())],
             );
+        }
+        if alt > MAX_ALTITUDE_KM {
+            return String::new();
         }
         if let Some(error) = &self.error {
             return format!("OpenStreetMap/Overpass: {error}");
@@ -139,17 +147,16 @@ fn nearby(lat: f64, lon: f64, a: f64, b: f64, radius: f64) -> bool {
     (lat - a).abs() <= radius && dlon.abs() * lat.to_radians().cos().abs().max(0.1) <= radius
 }
 async fn download(lat: f64, lon: f64, alt: f64) -> Result<Arc<[Road]>, crate::Error> {
+    // The box grows with the altitude; the classes do not.
     let delta = coverage_radius(alt);
     let lat0 = (lat - delta).max(-85.0);
     let lat1 = (lat + delta).min(85.0);
     // Deliberately avoid wrapping one bbox across the 180th meridian.
     let lon0 = (lon - delta / lat.to_radians().cos().abs().max(0.2)).max(-180.0);
     let lon1 = (lon + delta / lat.to_radians().cos().abs().max(0.2)).min(180.0);
-    let ways = if alt > 65.0 {
-        "motorway|trunk|primary|secondary|tertiary|construction"
-    } else {
-        "motorway|trunk|primary|secondary|tertiary|residential|unclassified|service|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|construction"
-    };
+    // The road tiles hold motorways to tertiary roads (zoom 12): only what they
+    // leave out, and roadworks.
+    let ways = "residential|unclassified|service|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|construction";
     let query = format!(
         "[out:json][timeout:23];way[\"highway\"~\"^({ways})$\"]({lat0:.5},{lon0:.5},{lat1:.5},{lon1:.5});out geom 4500;"
     );
@@ -213,7 +220,7 @@ fn parse_overpass(json: &serde_json::Value) -> Vec<Road> {
             let name = tags["name"]
                 .as_str()
                 .or_else(|| tags["ref"].as_str())
-                .unwrap_or("(sem nome)")
+                .unwrap_or("")
                 .chars()
                 .take(100)
                 .collect();
@@ -254,10 +261,14 @@ mod status_tests {
     fn zoom_hint_follows_metric_and_imperial_units_in_both_languages() {
         let roads = LiveRoads::default();
         for lang in Lang::ALL {
-            let metric = roads.status(MAX_ALTITUDE_KM + 1.0, lang, DistanceUnits::Metric);
-            let imperial = roads.status(MAX_ALTITUDE_KM + 1.0, lang, DistanceUnits::Imperial);
-            assert!(metric.contains("180 km"), "{metric}");
-            assert!(imperial.contains("112 mi"), "{imperial}");
+            let far = tiles::MAX_ALTITUDE_KM + 1.0;
+            let metric = roads.status(far, lang, DistanceUnits::Metric);
+            let imperial = roads.status(far, lang, DistanceUnits::Imperial);
+            assert!(
+                metric.contains("1000 km") || metric.contains("1,000 km"),
+                "{metric}"
+            );
+            assert!(imperial.contains("621 mi"), "{imperial}");
             assert!(!imperial.contains("km"));
             assert_eq!(
                 roads.status(MAX_ALTITUDE_KM, lang, DistanceUnits::Imperial),

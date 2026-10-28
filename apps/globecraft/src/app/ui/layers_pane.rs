@@ -418,14 +418,16 @@ impl App {
                 );
             }
             MapLayer::Roads => {
-                note(
-                    ui,
-                    t,
-                    &self
-                        .roads
+                let status = if let Some(error) = self.roads.tiles.error() {
+                    lang.format("transport-error-status", &[("error", error.into())])
+                } else {
+                    self.roads
                         .service
-                        .status(self.cam.alt, lang, self.distance_units()),
-                );
+                        .status(self.cam.alt, lang, self.distance_units())
+                };
+                if !status.is_empty() {
+                    note(ui, t, &status);
+                }
                 credit(
                     ui,
                     "© OpenStreetMap contributors (ODbL)",

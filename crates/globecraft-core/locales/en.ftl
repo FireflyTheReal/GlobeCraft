@@ -450,7 +450,7 @@ layers-ferries-toggle = Ferry routes (OSM)
 layers-airports-toggle = Airports (OSM)
 transport-zoom-help = Zoom in to see them (below { $altitude } altitude)
 transport-loading-status = Loading…
-transport-error-status = Transport tiles not available: { $error }
+transport-error-status = Map data not available: { $error }
 
 roads-zoom-help = Zoom in for roads (below { $altitude } altitude)
 roads-loading-status = Loading nearby roads…
@@ -470,6 +470,7 @@ traffic-loaded-status = Traffic updated { $minutes } min ago (green=free, yellow
 
 roads-restricted-help = OSM access restriction/construction (not a traffic jam)
 roads-flow-unknown-help = Vehicle flow: unknown (no live observations)
+roads-unnamed = unnamed road
 roads-hover-tooltip =
     { $name } • { $kind }
     { $state }
