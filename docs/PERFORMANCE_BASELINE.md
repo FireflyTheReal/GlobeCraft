@@ -547,3 +547,30 @@ A view needs a few dozen tiles of about 1 KiB each, against 100–500 KiB per
 full OpenFreeMap tile. The ignored test
 `published_border_parts_serve_border_tiles` reads border tiles at z5, z10, z11
 and both z12 halves from the published files.
+
+### GitHub archives against OpenFreeMap (2026-10-28)
+
+`.github/workflows/border-bench.yml` (run 40641169091, a GitHub runner; the
+development container cannot reach OpenFreeMap) fetches the tiles ten typical
+views want, four at a time as the app does. GitHub: GlobeCraft's archives, cold
+(directories not yet read) and warm. OpenFreeMap: its full tiles, as transferred.
+
+| View | Tiles | GitHub KiB (tiles) | requests | ms | warm ms | OpenFreeMap KiB | ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| globe | 77 | 6,553 (6,416) | 160 | 706 | 106 | 14,517 | 1,506 |
+| Europe | 80 | 3,898 | 148 | 103 | 75 | 12,338 | 1,283 |
+| Germany | 12 | 1,379 | 23 | 22 | 19 | 4,945 | 885 |
+| Bavaria | 16 | 1,157 (1,086) | 26 | 71 | 16 | 6,012 | 452 |
+| Munich | 36 | 1,012 (923) | 45 | 112 | 33 | 2,992 | 3,037 |
+| Alps tilted | 42 | 1,041 (962) | 50 | 57 | 29 | 5,277 | 2,790 |
+| USA | 36 | 1,739 | 63 | 33 | 40 | 6,644 | 634 |
+| Brazil | 25 | 1,235 | 46 | 27 | 24 | 4,063 | 368 |
+| India | 16 | 1,337 | 28 | 24 | 19 | 3,746 | 1,778 |
+| Tokyo tilted | 90 | 1,101 (1,053) | 134 | 95 | 68 | 5,242 | 3,870 |
+| **total** | **430** | **20,451** | **723** | **1,248** | | **65,776** | **16,603** |
+
+A third of the bytes and a thirteenth of the time; directories add 2 % to the
+bytes. Every tile has the same border lines and places from both sources (the
+same planet build), and no tile has lines on OpenFreeMap but none on GitHub.
+Requests exceed tiles because each tile is read from two sets (borders and
+names, water) at the same time.

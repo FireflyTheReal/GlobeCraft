@@ -165,6 +165,15 @@ mod tests {
             &geometry,
             &overlay.update(input.clone()).unwrap()
         ));
+        // A later motion step keeps the last geometry on screen while it is prepared
+        // (vessels and satellites blinked on every step before).
+        let mut later = input.clone();
+        later.satellites = Some(Vec::new().into());
+        overlay
+            .accept(globecraft_render::live_layers::LivePreparer::default().prepare(later.clone()));
+        let shown = overlay.update(later.clone()).unwrap();
+        later.unix_secs += 5.0;
+        assert!(Arc::ptr_eq(&shown, &overlay.update(later).unwrap()));
         let mut moved = input;
         moved.view.rect = moved.view.rect.translate(egui::vec2(10.0, 0.0));
         assert!(overlay.update(moved).is_none());
