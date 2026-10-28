@@ -7,6 +7,8 @@ name: Map data
 #   borders    `boundary` and `place`, plus the ocean of `water` (a second set), z0-12
 #   transport  railways, trams and subways, ferries (`transportation`, with their
 #              names) and airports (`aeroway`, `aerodrome_label`), z0-14
+#   roads      roads (`transportation` motorway to service, with
+#              `transportation_name` for their names), z0-12
 # Manual only. Publishing replaces that set's files in the one `map-data`
 # pre-release (the app's updater ignores pre-releases); its manifest.json names the
 # current files of every set. Data: (c) OpenStreetMap contributors (ODbL),
@@ -17,7 +19,7 @@ on:
       set:
         description: 'Which tile set to build'
         type: choice
-        options: [borders, transport]
+        options: [borders, transport, roads]
         default: borders
       version:
         description: 'OpenFreeMap planet version, e.g. 20261025_080012_pt (empty: the newest)'
@@ -94,6 +96,7 @@ jobs:
           case '${{ inputs.set }}' in
             borders) echo "maxzoom=12" >> "$GITHUB_OUTPUT"; echo "names=borders water" >> "$GITHUB_OUTPUT" ;;
             transport) echo "maxzoom=14" >> "$GITHUB_OUTPUT"; echo "names=transport" >> "$GITHUB_OUTPUT" ;;
+            roads) echo "maxzoom=12" >> "$GITHUB_OUTPUT"; echo "names=roads" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::unknown set"; exit 1 ;;
           esac
 
@@ -230,6 +233,16 @@ jobs:
                 --feature-filter='{"transportation":["in","class","rail","transit","ferry"],"transportation_name":["in","class","rail","transit","ferry"]}' \
                 -A "$attribution" -n "GlobeCraft railways, ferries and airports" \
                 -o transport.mbtiles planet.mbtiles
+              ;;
+            roads)
+              # Roads from motorways to service roads (rail, ferries and paths are
+              # elsewhere or left out), and the named lines for their names.
+              classes='"motorway","trunk","primary","secondary","tertiary","minor","service","busway","raceway"'
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
+                --layer=transportation --layer=transportation_name \
+                --feature-filter="{\"transportation\":[\"in\",\"class\",$classes],\"transportation_name\":[\"in\",\"class\",$classes]}" \
+                -A "$attribution" -n "GlobeCraft roads" \
+                -o roads.mbtiles planet.mbtiles
               ;;
           esac
           rm planet.mbtiles
