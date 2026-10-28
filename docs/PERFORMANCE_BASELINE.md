@@ -524,7 +524,7 @@ march except sub-pixel shifts of thin lines (different exact-measurement points)
 The `Border tiles` workflow (run 40607701043, OpenFreeMap planet
 `20261025_080012_pt`, about 2.6 h on a standard runner) keeps the OpenMapTiles
 `boundary` and `place` layers and the ocean polygons of `water`, zoom 0–12.
-Published as the pre-release `tiles-borders-20261025_080012_pt`.
+Published in the `map-data` pre-release (all map data lives in that one release).
 
 | Set | Tiles | Size | Average at z12 |
 | --- | ---: | ---: | ---: |
