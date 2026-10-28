@@ -71,6 +71,16 @@ fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
     }
 }
 impl LiveInput {
+    /// The same view and data, whatever the time: geometry for it may be drawn while
+    /// the next motion step is prepared (requiring the time too blanked the vessels
+    /// and satellites on every step).
+    pub fn same_source(&self, other: &Self) -> bool {
+        self.view == other.view
+            && same(&self.roads, &other.roads)
+            && same(&self.vessels, &other.vessels)
+            && same(&self.satellites, &other.satellites)
+            && same(&self.traffic, &other.traffic)
+    }
     pub fn same_request(&self, other: &Self) -> bool {
         self.view == other.view
             && same(&self.roads, &other.roads)

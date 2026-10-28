@@ -1,5 +1,6 @@
-//! Borders and place names from OpenStreetMap vector tiles (OpenMapTiles schema,
-//! served by OpenFreeMap), streamed like imagery: a zoom level for the altitude and the
+//! Borders and place names from OpenStreetMap vector tiles (OpenMapTiles schema, cut
+//! from OpenFreeMap's planet into GlobeCraft's own PMTiles archives on GitHub),
+//! streamed like imagery: a zoom level for the altitude and the
 //! tiles around the view.
 //!
 //! OpenStreetMap stores a border once, shared by the areas on both sides, and
@@ -27,7 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-/// Parallel tile downloads (OpenFreeMap asks bulk clients for at most 4).
+/// Parallel tile downloads (range reads of the archives on GitHub's release CDN).
 const MAX_NETWORK_INFLIGHT: usize = 4;
 /// Of those, at most this many load ahead of need, so the view's own tiles always
 /// find a free slot.

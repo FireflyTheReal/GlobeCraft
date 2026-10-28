@@ -1,8 +1,8 @@
 //! The border tile cache on disk: one SQLite file, one row per tile in the compact
 //! format, kept under a byte limit by dropping the tiles used longest ago.
 //!
-//! A tile is stored with the tile set version it came from (OpenFreeMap publishes a new
-//! set weekly). A tile of an older version is still shown, and refetched when the
+//! A tile is stored with the tile set version it came from (a new border tile build
+//! names new archives). A tile of an older version is still shown, and refetched when the
 //! network is free, so a new version never leaves the globe without borders.
 use super::compact::FORMAT_VERSION;
 use super::content::TileKey;
@@ -186,7 +186,7 @@ impl DiskStore {
         .await
     }
 
-    /// The tile URL last read from the TileJSON, so an offline start can use the cache.
+    /// The tile set last read from the manifest, so an offline start can use the cache.
     pub(super) async fn template(&self) -> Result<Option<String>, crate::Error> {
         self.call(|db| {
             Ok(db

@@ -29,26 +29,35 @@ impl LiveOverlay {
         self.latest = Some(geometry);
         self.requested = None;
     }
+    /// Geometry for the displayed view and data, and a request for the current motion
+    /// step when it is older: the last step stays on screen until the next is ready.
     pub fn update(&mut self, input: LiveInput) -> Option<Arc<LiveGeometry>> {
         if let Some(geometry) = self.worker.take_completed()
-            && geometry.input.same_request(&input)
+            && geometry.input.same_source(&input)
+            && self.latest.as_ref().is_none_or(|old| {
+                !old.input.same_source(&input) || old.input.unix_secs <= geometry.input.unix_secs
+            })
         {
-            self.accept(geometry);
+            self.latest = Some(geometry);
         }
-        if let Some(geometry) = &self.latest
-            && geometry.input.same_request(&input)
-        {
-            return Some(geometry.clone());
-        }
-        if self
-            .requested
+        let current = self
+            .latest
             .as_ref()
-            .is_none_or(|old| !old.same_request(&input))
+            .filter(|geometry| geometry.input.same_source(&input))
+            .cloned();
+        let stale = current
+            .as_ref()
+            .is_none_or(|geometry| !geometry.input.same_request(&input));
+        if stale
+            && self
+                .requested
+                .as_ref()
+                .is_none_or(|old| !old.same_request(&input))
         {
             self.worker.submit(input.clone());
             self.requested = Some(input);
         }
-        None
+        current
     }
 }
 impl App {

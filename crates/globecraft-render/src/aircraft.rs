@@ -14,9 +14,13 @@ pub use worker::{
 const ICON_SIZE_POINTS: f32 = 7.0;
 const TRAIL_SIZE_POINTS: f32 = 12.0;
 const WING_WIDTH_RATIO: f32 = 0.4;
-const EXTRAPOLATION_MAX_SECS: f64 = 25.0;
-/// Flights whose last report is this old are drawn at the stale opacity.
-const STALE_SECS: f64 = 90.0;
+/// Flights keep flying their last track at their last ground speed for this long:
+/// as long as the global feed keeps a report (it is fetched every 17 minutes and
+/// kept for 20), so planes never stand still between reports.
+const EXTRAPOLATION_MAX_SECS: f64 = 20.0 * 60.0;
+/// Reports up to this old are drawn at full opacity: the local feed near the camera
+/// refreshes every 90 seconds.
+const FRESH_SECS: f64 = 120.0;
 const EXTRAPOLATION_MAX_SPEED_KNOTS: f64 = 1200.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
 const SECONDS_PER_HOUR: f64 = 3600.0;
@@ -47,8 +51,8 @@ pub fn project_flights(
         .enumerate()
         .filter_map(|(source_index, flight)| {
             let age = (unix_secs - flight.observed_unix).max(0.0);
-            // Never invent an entire route between remote updates. Small extrapolation
-            // is allowed for recent transponder reports, then the marker freezes.
+            // Dead reckoning along the great circle of the last track. The error grows
+            // with turns and wind, so older reports fade (see `opacity`).
             let speed_km_s = flight
                 .speed_knots
                 .unwrap_or(0.0)
@@ -79,7 +83,7 @@ pub fn project_flights(
             let wing = Vec2::new(-forward.y, forward.x) * WING_WIDTH_RATIO;
             let tail = Vec2::angled(heading) * (TRAIL_SIZE_POINTS * map_scale);
             Some(ProjectedFlight {
-                opacity: crate::motion::age_opacity(age, EXTRAPOLATION_MAX_SECS, STALE_SECS),
+                opacity: crate::motion::age_opacity(age, FRESH_SECS, EXTRAPOLATION_MAX_SECS),
                 source_index,
                 position: screen,
                 icon: [

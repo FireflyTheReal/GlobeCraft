@@ -574,7 +574,7 @@ impl App {
             attribution.push_str(Provider::NightLights.attribution(lg));
         }
         if self.uses_border_tiles() && self.boundary_loader.has_osm_tiles() {
-            // OpenFreeMap's terms ask clients without MapLibre to show this credit.
+            // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             attribution = lg.format(
                 "osm-tiles-combined-credit",
                 &[
@@ -820,5 +820,5 @@ impl App {
     }
 }
 
-/// The credit OpenFreeMap's vector tiles require (names, so never translated).
+/// The credit for the border tiles' sources (names, so never translated).
 pub(super) const OSM_TILES_CREDIT: &str = "OpenFreeMap © OpenMapTiles Data from OpenStreetMap";

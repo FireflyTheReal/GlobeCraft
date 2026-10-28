@@ -17,8 +17,21 @@ const MAX_TILE_BYTES: u64 = 4_000_000;
 /// Leaf directories kept in memory.
 const MAX_CACHED_LEAVES: usize = 64;
 /// How long a redirect target (a signed download link) is reused before the
-/// archive's own address is asked again.
-const REDIRECT_REUSE: Duration = Duration::from_secs(10 * 60);
+/// archive's own address is asked again. GitHub's signed release links expire after
+/// 5 minutes (then answer 618 `jwt:expired`).
+const REDIRECT_REUSE: Duration = Duration::from_secs(4 * 60);
+
+/// Range requests made and bytes received by all archives (headers, directories and
+/// tiles), for measurements.
+static REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RECEIVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Requests and bytes over the wire since the start, see [`REQUESTS`].
+#[cfg(test)]
+pub(crate) fn transferred() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (REQUESTS.load(Relaxed), RECEIVED.load(Relaxed))
+}
 /// Leaf directories nest at most this deep in a valid archive.
 const MAX_DIRECTORY_DEPTH: usize = 4;
 
@@ -363,6 +376,7 @@ impl Archive {
                 )
                 .send()
                 .await?;
+            REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let status = response.status();
             // An expired signed link: ask the archive's own address again.
             if url != self.url && !status.is_success() {
@@ -385,6 +399,15 @@ impl Archive {
                     bytes.truncate(length as usize);
                     break;
                 }
+            }
+            RECEIVED.fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            // Directories count too: the session's border download total is what
+            // crossed the network.
+            if self.policy == crate::http::Policy::Boundary {
+                crate::download_stats::record(
+                    crate::download_stats::DownloadKind::BorderTiles,
+                    bytes.len(),
+                );
             }
             return Ok(bytes);
         }

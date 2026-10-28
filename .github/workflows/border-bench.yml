@@ -1,0 +1,37 @@
+name: Border tile benchmark
+
+# Compares GlobeCraft's border archives on GitHub with OpenFreeMap's full tiles (the
+# source used before): bytes over the wire, requests, time and content per view, and
+# any tile that has border lines on OpenFreeMap but none in GlobeCraft's archives.
+# Runs from a GitHub runner because the development containers cannot reach
+# OpenFreeMap. Manual only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: border-bench-1.97
+      - name: Compare the border tile sources
+        run: |
+          set -o pipefail
+          cargo test -p globecraft-data --release --locked --lib border_tile_sources \
+            -- --ignored --nocapture --test-threads=1 | tee bench.txt
+          {
+            echo '## Border tile sources'
+            grep -E '^\||^GAP' bench.txt || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          # One annotation each (multi-line), readable without the job log.
+          echo "::notice::$(grep -E '^\|' bench.txt | sed ':a;N;$!ba;s/\n/%0A/g')"
+          gaps=$(grep -c '^GAP' bench.txt || true)
+          echo "::notice::$gaps gap tiles%0A$(grep '^GAP' bench.txt | head -40 | sed ':a;N;$!ba;s/\n/%0A/g')"
