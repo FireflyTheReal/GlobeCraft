@@ -1,14 +1,12 @@
-//! Keyless worldwide OSM road geometry; restrictions are not congestion reports.
+//! Keyless worldwide OSM road geometry; roadworks are not congestion reports.
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use std::sync::Arc;
 
 #[derive(Default)]
 pub(super) struct RoadOverlay {
-    /// Minor streets of close views (Overpass).
-    pub service: globecraft_data::roads::LiveRoads,
-    /// Motorways to tertiary roads (GlobeCraft's road tiles).
+    /// GlobeCraft's road tiles.
     pub tiles: globecraft_data::roads::RoadTiles,
-    /// Both, as drawn.
+    /// The roads drawn.
     pub current: Option<Arc<[globecraft_data::roads::Road]>>,
     projected: Option<Arc<Vec<globecraft_render::live_layers::ProjectedRoad>>>,
     shapes: Vec<egui::Shape>,

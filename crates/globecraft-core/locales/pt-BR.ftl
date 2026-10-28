@@ -444,17 +444,20 @@ layers-vessels-toggle = Navios AIS do mundo inteiro
 layers-satellites-toggle = Satélites (órbitas CelesTrak, estimadas)
 layers-traffic-toggle = Congestionamento real (TomTom; chave opcional)
 layers-traffic-key = Chave de API TomTom (não é salva)
-layers-roads-toggle = Estradas do mundo (OSM, sem chave)
+layers-roads-toggle = Estradas (OSM)
 layers-railways-toggle = Ferrovias, metrôs e bondes (OSM)
 layers-ferries-toggle = Rotas de balsa (OSM)
 layers-airports-toggle = Aeroportos (OSM)
+layers-poi-toggle = Pontos de interesse (OSM)
+layers-peaks-toggle = Picos de montanhas (OSM)
+layers-waters-toggle = Rios e nomes de águas (OSM)
+layers-parks-toggle = Parques e reservas naturais (OSM)
 transport-zoom-help = Aproxime para vê-los (abaixo de { $altitude } de altitude)
 transport-loading-status = Carregando…
 transport-error-status = Dados do mapa indisponíveis: { $error }
 
 roads-zoom-help = Aproxime para exibir estradas (até { $altitude } de altitude)
-roads-loading-status = Carregando vias próximas…
-roads-loaded-status = { $count } trechos OSM • cinza = trânsito desconhecido; vermelho = acesso restrito/obra (não é engarrafamento)
+roads-legend = Cinza = trânsito desconhecido; vermelho = em obras (não é engarrafamento)
 
 vessels-loading-status = Carregando navios AIS mundiais…
 vessels-world-status = { $count } navios • OpenSeaFeed mundial • cobertura parcial, observações até 90 min
@@ -468,7 +471,7 @@ traffic-zoom-help = Aproxime o mapa para mostrar o trânsito
 traffic-loading-status = Carregando tráfego real…
 traffic-loaded-status = Tráfego atualizado há { $minutes } min (verde=livre, amarelo=lento, vermelho=congestionado)
 
-roads-restricted-help = Acesso restrito/obra registrado no OSM (não é congestionamento)
+roads-restricted-help = Em obras no OSM (não é congestionamento)
 roads-flow-unknown-help = Fluxo de veículos: desconhecido (sem dados ao vivo)
 roads-unnamed = via sem nome
 roads-hover-tooltip =
@@ -876,6 +879,10 @@ ribbon-layer-roads = Estradas
 ribbon-layer-railways = Ferrovias
 ribbon-layer-ferries = Balsas
 ribbon-layer-airports = Aeroportos
+ribbon-layer-poi = Pontos de interesse
+ribbon-layer-peaks = Picos
+ribbon-layer-waters = Rios e águas
+ribbon-layer-parks = Parques
 ribbon-layer-traffic = Trânsito
 statusbar-tiles-ready = Blocos prontos
 assistant-settings-title = Configurações do assistente

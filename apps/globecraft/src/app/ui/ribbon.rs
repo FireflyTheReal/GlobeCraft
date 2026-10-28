@@ -350,6 +350,12 @@ impl App {
             });
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::MunicipalBorders);
+                self.layer_small(ui, MapLayer::PointsOfInterest);
+                self.layer_small(ui, MapLayer::Peaks);
+            });
+            col(ui, |ui| {
+                self.layer_small(ui, MapLayer::Waters);
+                self.layer_small(ui, MapLayer::Parks);
             });
         });
         group(ui, lang.text("layers-globe-title"), |ui| {
@@ -815,6 +821,10 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Railways => "ribbon-layer-railways",
         MapLayer::Ferries => "ribbon-layer-ferries",
         MapLayer::Airports => "ribbon-layer-airports",
+        MapLayer::PointsOfInterest => "ribbon-layer-poi",
+        MapLayer::Peaks => "ribbon-layer-peaks",
+        MapLayer::Waters => "ribbon-layer-waters",
+        MapLayer::Parks => "ribbon-layer-parks",
     })
 }
 

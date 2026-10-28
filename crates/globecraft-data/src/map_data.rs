@@ -21,6 +21,25 @@ pub(crate) async fn template(set: &str) -> Result<String, crate::Error> {
         .ok_or_else(|| format!("map data manifest without the {set} set").into())
 }
 
+/// One set read from several manifest entries: `set` and its zoom bands (`bands`,
+/// each built by a run of its own, e.g. the roads of zoom 13 and of zoom 14), as one
+/// set of parts; each part's header says which zooms it holds. Bands not published
+/// yet are left out.
+pub(crate) async fn banded_template(set: &str, bands: &[&str]) -> Result<String, crate::Error> {
+    let json = manifest().await?;
+    let parts: Vec<String> = std::iter::once(set)
+        .chain(bands.iter().copied())
+        .filter_map(|key| manifest_template(&json[key]))
+        .filter_map(|template| template.strip_prefix(PMTILES_PREFIX).map(str::to_owned))
+        // A banded entry is one set; its parts join the others'.
+        .map(|template| template.replace(' ', "|"))
+        .collect();
+    if parts.is_empty() {
+        return Err(format!("map data manifest without the {set} set").into());
+    }
+    Ok(format!("{PMTILES_PREFIX}{}", parts.join("|")))
+}
+
 async fn manifest() -> Result<Arc<serde_json::Value>, crate::Error> {
     static LAST: std::sync::Mutex<Option<(Instant, Arc<serde_json::Value>)>> =
         std::sync::Mutex::new(None);

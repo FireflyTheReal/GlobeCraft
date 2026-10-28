@@ -388,6 +388,35 @@ impl App {
                 note(ui, t, lang.text("layers-terrain-help"));
                 credit(ui, "© Mapterhorn", "https://mapterhorn.com/attribution");
             }
+            MapLayer::PointsOfInterest | MapLayer::Peaks | MapLayer::Waters | MapLayer::Parks => {
+                let status = if self.cam.alt > globecraft_data::poi::MAX_ALTITUDE_KM {
+                    Some(
+                        lang.format(
+                            "transport-zoom-help",
+                            &[(
+                                "altitude",
+                                self.distance_units()
+                                    .altitude(globecraft_data::poi::MAX_ALTITUDE_KM)
+                                    .into(),
+                            )],
+                        ),
+                    )
+                } else if let Some(error) = self.poi_tiles.error() {
+                    Some(lang.format("transport-error-status", &[("error", error.into())]))
+                } else if self.poi_tiles.loading() {
+                    Some(lang.text("transport-loading-status").into())
+                } else {
+                    None
+                };
+                if let Some(status) = status {
+                    note(ui, t, &status);
+                }
+                credit(
+                    ui,
+                    "© OpenStreetMap contributors (ODbL), © OpenMapTiles",
+                    "https://www.openstreetmap.org/copyright",
+                );
+            }
             MapLayer::Railways | MapLayer::Ferries | MapLayer::Airports => {
                 let status = if self.cam.alt > globecraft_data::transport::MAX_ALTITUDE_KM {
                     Some(
@@ -418,12 +447,22 @@ impl App {
                 );
             }
             MapLayer::Roads => {
-                let status = if let Some(error) = self.roads.tiles.error() {
+                let status = if self.cam.alt > globecraft_data::roads::MAX_ALTITUDE_KM {
+                    lang.format(
+                        "roads-zoom-help",
+                        &[(
+                            "altitude",
+                            self.distance_units()
+                                .altitude(globecraft_data::roads::MAX_ALTITUDE_KM)
+                                .into(),
+                        )],
+                    )
+                } else if let Some(error) = self.roads.tiles.error() {
                     lang.format("transport-error-status", &[("error", error.into())])
+                } else if self.roads.tiles.loading() {
+                    lang.text("transport-loading-status").into()
                 } else {
-                    self.roads
-                        .service
-                        .status(self.cam.alt, lang, self.distance_units())
+                    lang.text("roads-legend").into()
                 };
                 if !status.is_empty() {
                     note(ui, t, &status);

@@ -1,10 +1,12 @@
 //! Geographic preparation for roads, AIS, predicted satellites and traffic.
+mod poi;
 mod transport;
 mod worker;
 use crate::motion;
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{roads::Road, satellites::Satellite, traffic::TrafficTiles, vessels::Vessel};
+pub use poi::{PoiLayers, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
 use std::sync::Arc;
 pub use transport::{
     ProjectedAirport, ProjectedTransport, ProjectedTransportLine, TransportLayers,
@@ -68,6 +70,9 @@ pub struct LiveInput {
     /// Railways, ferries and airports, and which of them are on.
     pub transport: Option<Arc<globecraft_data::transport::TransportSnapshot>>,
     pub transport_layers: TransportLayers,
+    /// Places of interest, peaks, waters and parks, and which of them are on.
+    pub poi: Option<Arc<globecraft_data::poi::PoiSnapshot>>,
+    pub poi_layers: PoiLayers,
     pub unix_secs: f64,
 }
 fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
@@ -100,7 +105,10 @@ impl LiveInput {
             && (self.satellites.is_none() || self.same_satellite_time(other))
     }
     fn same_transport(&self, other: &Self) -> bool {
-        same(&self.transport, &other.transport) && self.transport_layers == other.transport_layers
+        same(&self.transport, &other.transport)
+            && self.transport_layers == other.transport_layers
+            && same(&self.poi, &other.poi)
+            && self.poi_layers == other.poi_layers
     }
     fn same_vessel_time(&self, other: &Self) -> bool {
         let step = self.view.vessel_step();
@@ -135,6 +143,7 @@ pub struct LiveGeometry {
     pub satellites: Arc<Vec<ProjectedSatellite>>,
     pub traffic: Option<Arc<Vec<u8>>>,
     pub transport: Arc<ProjectedTransport>,
+    pub poi: Arc<ProjectedPoi>,
 }
 impl LiveGeometry {
     pub fn nearest_road(&self, mouse: Pos2, radius: f32) -> Option<(usize, Pos2)> {
@@ -210,10 +219,13 @@ impl LivePreparer {
                     ))
                 })
             };
-        let transport = previous
-            .filter(|old| old.input.same_transport(&input))
+        let reused = previous.filter(|old| old.input.same_transport(&input));
+        let transport = reused
             .map(|old| old.transport.clone())
             .unwrap_or_else(|| Arc::new(transport::project(&input)));
+        let poi = reused
+            .map(|old| old.poi.clone())
+            .unwrap_or_else(|| Arc::new(poi::project(&input)));
         let geometry = Arc::new(LiveGeometry {
             input,
             roads,
@@ -221,6 +233,7 @@ impl LivePreparer {
             satellites,
             traffic,
             transport,
+            poi,
         });
         self.latest = Some(geometry.clone());
         geometry

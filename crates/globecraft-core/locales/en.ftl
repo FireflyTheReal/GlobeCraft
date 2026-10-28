@@ -444,17 +444,20 @@ layers-vessels-toggle = Worldwide AIS ships
 layers-satellites-toggle = Satellites (predicted CelesTrak orbits)
 layers-traffic-toggle = Live congestion (TomTom; optional key)
 layers-traffic-key = TomTom API key (not stored)
-layers-roads-toggle = Worldwide roads (OSM, no key)
+layers-roads-toggle = Roads (OSM)
 layers-railways-toggle = Railways, subways and trams (OSM)
 layers-ferries-toggle = Ferry routes (OSM)
 layers-airports-toggle = Airports (OSM)
+layers-poi-toggle = Places of interest (OSM)
+layers-peaks-toggle = Mountain peaks (OSM)
+layers-waters-toggle = Rivers and water names (OSM)
+layers-parks-toggle = Parks and nature reserves (OSM)
 transport-zoom-help = Zoom in to see them (below { $altitude } altitude)
 transport-loading-status = Loading…
 transport-error-status = Map data not available: { $error }
 
 roads-zoom-help = Zoom in for roads (below { $altitude } altitude)
-roads-loading-status = Loading nearby roads…
-roads-loaded-status = { $count } OSM road segments • gray = traffic unknown; red = restricted/under construction (NOT a traffic jam)
+roads-legend = Gray = traffic unknown; red = under construction (NOT a traffic jam)
 
 vessels-loading-status = Loading worldwide AIS ships…
 vessels-world-status = { $count } vessels • worldwide OpenSeaFeed • partial reception, reports up to 90 min old
@@ -468,7 +471,7 @@ traffic-zoom-help = Zoom in to see traffic
 traffic-loading-status = Loading live traffic…
 traffic-loaded-status = Traffic updated { $minutes } min ago (green=free, yellow=slow, red=jammed)
 
-roads-restricted-help = OSM access restriction/construction (not a traffic jam)
+roads-restricted-help = Under construction in OSM (not a traffic jam)
 roads-flow-unknown-help = Vehicle flow: unknown (no live observations)
 roads-unnamed = unnamed road
 roads-hover-tooltip =
@@ -876,6 +879,10 @@ ribbon-layer-roads = Roads
 ribbon-layer-railways = Railways
 ribbon-layer-ferries = Ferries
 ribbon-layer-airports = Airports
+ribbon-layer-poi = Places of interest
+ribbon-layer-peaks = Peaks
+ribbon-layer-waters = Rivers & waters
+ribbon-layer-parks = Parks
 ribbon-layer-traffic = Traffic
 statusbar-tiles-ready = Tiles ready
 assistant-settings-title = Assistant settings

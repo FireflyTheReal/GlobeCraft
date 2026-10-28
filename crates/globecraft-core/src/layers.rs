@@ -32,6 +32,14 @@ pub enum MapLayer {
     Ferries,
     /// Airports: names and codes, runways and taxiways close up.
     Airports,
+    /// Named places of interest (museums, stations, shops…) close up.
+    PointsOfInterest,
+    /// Mountain peaks with their heights.
+    Peaks,
+    /// Rivers and canals, and the names of seas, lakes and bays.
+    Waters,
+    /// Parks, nature reserves and protected areas.
+    Parks,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -68,7 +76,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 27] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -92,6 +100,10 @@ impl MapLayer {
         Self::Railways,
         Self::Ferries,
         Self::Airports,
+        Self::PointsOfInterest,
+        Self::Peaks,
+        Self::Waters,
+        Self::Parks,
     ];
 
     /// Stable identifier used in settings files and assistant commands.
@@ -120,6 +132,10 @@ impl MapLayer {
             Self::Railways => "railways",
             Self::Ferries => "ferries",
             Self::Airports => "airports",
+            Self::PointsOfInterest => "points_of_interest",
+            Self::Peaks => "peaks",
+            Self::Waters => "waters",
+            Self::Parks => "parks",
         }
     }
 
@@ -153,6 +169,10 @@ impl MapLayer {
             Self::Railways => "layers-railways-toggle",
             Self::Ferries => "layers-ferries-toggle",
             Self::Airports => "layers-airports-toggle",
+            Self::PointsOfInterest => "layers-poi-toggle",
+            Self::Peaks => "layers-peaks-toggle",
+            Self::Waters => "layers-waters-toggle",
+            Self::Parks => "layers-parks-toggle",
         }
     }
 
@@ -179,6 +199,10 @@ impl MapLayer {
             Self::Railways => "railway",
             Self::Ferries => "ferry",
             Self::Airports => "airport",
+            Self::PointsOfInterest => "poi",
+            Self::Peaks => "peak",
+            Self::Waters => "river",
+            Self::Parks => "park",
         }
     }
 
@@ -187,7 +211,11 @@ impl MapLayer {
             Self::CountryBorders
             | Self::StateBorders
             | Self::PlaceLabels
-            | Self::MunicipalBorders => LayerGroup::Geography,
+            | Self::MunicipalBorders
+            | Self::PointsOfInterest
+            | Self::Peaks
+            | Self::Waters
+            | Self::Parks => LayerGroup::Geography,
             Self::Terrain | Self::Grid | Self::GridLabels => LayerGroup::Globe,
             Self::Atmosphere
             | Self::Sunlight

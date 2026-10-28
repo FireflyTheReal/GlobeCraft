@@ -1,7 +1,7 @@
-//! Roads from GlobeCraft's own `roads` tile set (OpenMapTiles `transportation`
-//! motorway to service, and `transportation_name` for the names, zoom 0–12;
-//! `crate::map_data`), streamed for the view like the transport layer. Closer views
-//! add the minor streets zoom 12 leaves out from Overpass (see `super::LiveRoads`).
+//! Roads from GlobeCraft's own road tile sets (OpenMapTiles `transportation` motorway
+//! to service and their roadworks, and `transportation_name` for the names;
+//! `crate::map_data`): `roads` holds zoom 0–12, `roads13` and `roads14` the closest
+//! levels. Streamed for the view like the transport layer.
 use super::Road;
 use crate::boundaries::osm_tiles::content::{TileBounds, TileKey, clip};
 use crate::mvt::{self, GeomType};
@@ -13,6 +13,9 @@ use std::sync::Arc;
 /// tertiary from 11, residential streets at 12. Names come with motorways and trunk
 /// roads from zoom 6 and with most roads at zoom 12.
 ///
+/// Zoom 13 adds service roads and the remaining residential streets, zoom 14 every
+/// street (the bands are their own runs; see `map-data.yml`).
+///
 /// Above this roads are hidden: only motorways remain, lost in the imagery.
 pub const MAX_ALTITUDE_KM: f64 = 1_000.0;
 /// A name line this close (tile units, of 4,096) to a road's middle names it.
@@ -20,8 +23,9 @@ const NAME_MATCH_UNITS: f64 = 6.0;
 
 static SPEC: Spec<RoadTile> = Spec {
     set: "roads",
+    bands: &["roads13", "roads14"],
     min_zoom: 4,
-    max_zoom: 12,
+    max_zoom: 14,
     skip_zoom: None,
     tiles_across_view: 3.0,
     max_tiles: 64,
@@ -36,12 +40,12 @@ pub struct RoadTile {
     pub roads: Vec<Road>,
 }
 
-/// The road tile layer, merged with the Overpass streets of close views.
+/// The road tile layer.
 #[derive(Default)]
 pub struct RoadTiles {
     stream: Option<TileStream<RoadTile>>,
-    /// The last merge: from these inputs, this list.
-    merged: Option<(usize, usize, Arc<[Road]>)>,
+    /// The last list: from this snapshot, these roads.
+    merged: Option<(usize, Arc<[Road]>)>,
 }
 
 impl RoadTiles {
@@ -80,36 +84,35 @@ impl RoadTiles {
         self.stream.as_ref().is_some_and(TileStream::loading)
     }
 
-    /// The roads to draw: the tiles' and `streets` (Overpass, close views). The same
-    /// list is returned while neither changes, so its projection is reused.
-    pub fn merged(&mut self, streets: Option<Arc<[Road]>>) -> Option<Arc<[Road]>> {
+    /// The roads to draw. The same list is returned while the tiles do not change,
+    /// so its projection is reused.
+    pub fn roads(&mut self) -> Option<Arc<[Road]>> {
         let snapshot: Option<Arc<Snapshot<RoadTile>>> =
             self.stream.as_ref().and_then(TileStream::shared_snapshot);
-        let key = (
-            snapshot.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize),
-            streets
-                .as_ref()
-                .map_or(0, |s| Arc::as_ptr(s) as *const u8 as usize),
-        );
-        if let Some((tiles, streets, roads)) = &self.merged
-            && (*tiles, *streets) == key
+        let key = snapshot.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
+        if let Some((built, roads)) = &self.merged
+            && *built == key
         {
             return (!roads.is_empty()).then(|| roads.clone());
         }
-        let mut roads: Vec<Road> = snapshot
+        let roads: Arc<[Road]> = snapshot
             .iter()
             .flat_map(|snapshot| snapshot.tiles.iter())
             .flat_map(|tile| tile.roads.iter().cloned())
-            .collect();
-        roads.extend(streets.iter().flat_map(|streets| streets.iter().cloned()));
-        let roads: Arc<[Road]> = roads.into();
-        self.merged = Some((key.0, key.1, roads.clone()));
+            .collect::<Vec<_>>()
+            .into();
+        self.merged = Some((key, roads.clone()));
         (!roads.is_empty()).then_some(roads)
     }
 }
 
-/// OpenStreetMap's `highway` value for an OpenMapTiles class, as Overpass roads use.
-fn kind(class: &str, ramp: bool) -> String {
+/// OpenStreetMap's `highway` value for an OpenMapTiles class (roadworks drop their
+/// `_construction`), and whether the road is under construction.
+fn kind(class: &str, ramp: bool) -> (String, bool) {
+    let (class, construction) = match class.strip_suffix("_construction") {
+        Some(class) => (class, true),
+        None => (class, false),
+    };
     let base = match class {
         "minor" => "residential",
         other => other,
@@ -120,21 +123,24 @@ fn kind(class: &str, ramp: bool) -> String {
             "motorway" | "trunk" | "primary" | "secondary" | "tertiary"
         )
     {
-        format!("{base}_link")
+        (format!("{base}_link"), construction)
     } else {
-        base.to_owned()
+        (base.to_owned(), construction)
     }
 }
 
+/// A line in tile units.
+type Points = Vec<(f64, f64)>;
 /// A road or name line of a tile, in tile units.
-type TileLine = (String, Vec<(f64, f64)>);
+type TileLine = (String, Points);
 
 fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
     let layers = mvt::decode(bytes, |name| {
         matches!(name, "transportation" | "transportation_name")
     })?;
     // Geometry from `transportation`; names from `transportation_name`'s lines.
-    let mut lines: Vec<TileLine> = Vec::new();
+    // (kind, under construction) and the line.
+    let mut lines: Vec<((String, bool), Points)> = Vec::new();
     let mut names: Vec<(String, TileLine)> = Vec::new();
     let mut extent = 4096.0;
     for layer in &layers {
@@ -158,10 +164,10 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
                 .tag(feature, "ramp")
                 .and_then(mvt::Value::as_number)
                 .is_some_and(|ramp| ramp != 0.0);
-            let kind = kind(&class, ramp);
+            let (kind, construction) = kind(&class, ramp);
             for part in &feature.parts {
                 if layer.name == "transportation" {
-                    lines.push((kind.clone(), part.clone()));
+                    lines.push(((kind.clone(), construction), part.clone()));
                 } else if let Some(name) = text("name_en")
                     .or_else(|| text("name:latin"))
                     .or_else(|| text("name"))
@@ -179,7 +185,7 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
         east: extent,
     };
     let mut tile = RoadTile::default();
-    for (kind, points) in lines {
+    for ((kind, construction), points) in lines {
         if points.len() < 2 {
             continue;
         }
@@ -193,7 +199,7 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
             tile.roads.push(Road {
                 name: name.clone(),
                 kind: kind.clone(),
-                restricted: false,
+                restricted: construction,
                 points: run
                     .into_iter()
                     .map(|(y, x)| key.point(x / extent, y / extent))
@@ -242,6 +248,16 @@ fn segment_distance(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 mod tests {
     use super::*;
     use crate::mvt::encode::{TestFeature, TestValue, layer, tile};
+
+    #[test]
+    fn roadworks_keep_their_road_kind() {
+        assert_eq!(
+            kind("motorway_construction", false),
+            ("motorway".into(), true)
+        );
+        assert_eq!(kind("minor", false), ("residential".into(), false));
+        assert_eq!(kind("trunk", true), ("trunk_link".into(), false));
+    }
 
     #[test]
     fn roads_take_the_name_of_the_name_line_along_them() {

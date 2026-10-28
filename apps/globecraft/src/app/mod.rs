@@ -109,6 +109,8 @@ pub(crate) struct App {
     live_vessels: globecraft_data::vessels::LiveVessels,
     transport_tiles: globecraft_data::transport::TransportTiles,
     transport_shapes: live_layers::TransportShapes,
+    poi_tiles: globecraft_data::poi::PoiTiles,
+    poi_shapes: live_layers::PoiShapes,
     live_satellites: globecraft_data::satellites::LiveSatellites,
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
@@ -315,6 +317,8 @@ impl App {
             live_vessels: globecraft_data::vessels::LiveVessels::default(),
             transport_tiles: globecraft_data::transport::TransportTiles::default(),
             transport_shapes: live_layers::TransportShapes::default(),
+            poi_tiles: globecraft_data::poi::PoiTiles::default(),
+            poi_shapes: live_layers::PoiShapes::default(),
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
@@ -492,14 +496,17 @@ impl eframe::App for App {
             },
             move || transport_wake.request_repaint(),
         );
-        let road_wake = ctx.clone();
-        self.roads.service.update(
+        let poi_wake = ctx.clone();
+        self.poi_tiles.update(
             &self.runtime,
-            earth && self.layer(MapLayer::Roads),
-            self.cam.lat,
-            self.cam.lon,
-            self.cam.alt,
-            move || road_wake.request_repaint(),
+            globecraft_data::poi::PoiQuery {
+                enabled: earth && self.poi_layers().any(),
+                latitude: self.cam.lat,
+                longitude: self.cam.lon,
+                altitude_km: self.cam.alt,
+                tilt_deg: self.cam.tilt,
+            },
+            move || poi_wake.request_repaint(),
         );
         let road_tile_wake = ctx.clone();
         self.roads.tiles.update(
@@ -509,11 +516,7 @@ impl eframe::App for App {
             move || road_tile_wake.request_repaint(),
         );
         self.roads.current = if earth && self.layer(MapLayer::Roads) {
-            let streets =
-                self.roads
-                    .service
-                    .shared_snapshot(self.cam.lat, self.cam.lon, self.cam.alt);
-            self.roads.tiles.merged(streets)
+            self.roads.tiles.roads()
         } else {
             None
         };

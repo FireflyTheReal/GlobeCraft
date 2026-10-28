@@ -1,7 +1,9 @@
 //! Aircraft geometry is prepared in render; styled shapes and hover stay in egui.
 use globecraft_core::layers::MapLayer;
+mod poi;
 mod shapes;
 mod transport;
+pub(super) use poi::PoiShapes;
 pub(super) use transport::TransportShapes;
 mod world;
 pub(super) use world::WorldShapes;

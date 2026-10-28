@@ -489,7 +489,7 @@ impl App {
                 || self.layer(MapLayer::Traffic)
                 || self.layer(MapLayer::Vessels)
                 || self.layer(MapLayer::Satellites)
-                || self.transport_shown()
+                || self.map_data_shown()
             {
                 let input = self.live_layer_input(
                     display_basis,
@@ -513,6 +513,7 @@ impl App {
                 self.traffic.draw(&painter, geometry);
             }
             if let Some(geometry) = &live_geometry {
+                painter.extend(self.poi_shapes.lines(&painter, geometry).iter().cloned());
                 painter.extend(
                     self.transport_shapes
                         .lines(&painter, geometry)
@@ -522,6 +523,7 @@ impl App {
             }
             self.draw_overlays(&painter, &display_basis, rect, display_cam.alt);
             if let Some(geometry) = &live_geometry {
+                painter.extend(self.poi_shapes.labels(&painter, geometry).iter().cloned());
                 painter.extend(
                     self.transport_shapes
                         .airports(&painter, geometry)
@@ -590,8 +592,10 @@ impl App {
             attribution.push_str(" · ");
             attribution.push_str(Provider::NightLights.attribution(lg));
         }
-        let transport_drawn =
-            self.transport_shown() && self.cam.alt <= globecraft_data::transport::MAX_ALTITUDE_KM;
+        let transport_drawn = (self.map_data_shown()
+            && self.cam.alt <= globecraft_data::transport::MAX_ALTITUDE_KM)
+            || (self.layer(MapLayer::Roads)
+                && self.cam.alt <= globecraft_data::roads::MAX_ALTITUDE_KM);
         if (self.uses_border_tiles() && self.boundary_loader.has_osm_tiles()) || transport_drawn {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             attribution = lg.format(

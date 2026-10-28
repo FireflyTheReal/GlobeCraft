@@ -29,6 +29,7 @@ pub mod links;
 pub mod live_maps;
 pub mod model_http;
 pub mod planet;
+pub mod poi;
 pub mod roads;
 pub mod satellites;
 pub mod traffic;

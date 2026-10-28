@@ -69,6 +69,19 @@ impl App {
             airports: self.layer(MapLayer::Airports),
         }
     }
+    pub(super) fn poi_layers(&self) -> globecraft_render::live_layers::PoiLayers {
+        use globecraft_core::layers::MapLayer;
+        globecraft_render::live_layers::PoiLayers {
+            places: self.layer(MapLayer::PointsOfInterest),
+            peaks: self.layer(MapLayer::Peaks),
+            waters: self.layer(MapLayer::Waters),
+            parks: self.layer(MapLayer::Parks),
+        }
+    }
+    /// Whether any layer drawn from the transport or places tiles is on.
+    pub(super) fn map_data_shown(&self) -> bool {
+        self.transport_shown() || self.poi_layers().any()
+    }
     pub(super) fn transport_shown(&self) -> bool {
         let layers = self.transport_layers();
         layers.railways || layers.ferries || layers.airports
@@ -109,6 +122,8 @@ impl App {
                 .flatten(),
             transport: self.transport_tiles.shared_snapshot(),
             transport_layers: self.transport_layers(),
+            poi: self.poi_tiles.shared_snapshot(),
+            poi_layers: self.poi_layers(),
             unix_secs: now_unix(),
         }
     }
@@ -165,6 +180,8 @@ mod tests {
             traffic: None,
             transport: None,
             transport_layers: Default::default(),
+            poi: None,
+            poi_layers: Default::default(),
             unix_secs: 1_700_000_000.0,
         };
         let geometry =

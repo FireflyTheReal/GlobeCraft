@@ -16,6 +16,9 @@ const TEMPLATE_RETRY: Duration = Duration::from_secs(60);
 pub(crate) struct Spec<T> {
     /// The manifest entry.
     pub(crate) set: &'static str,
+    /// Further entries holding more zooms of the same set (see
+    /// `map_data::banded_template`).
+    pub(crate) bands: &'static [&'static str],
     /// The coarsest and finest levels fetched.
     pub(crate) min_zoom: u8,
     pub(crate) max_zoom: u8,
@@ -143,7 +146,7 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                 shared.template_loading = true;
                 let state = self.shared.clone();
                 runtime.spawn(async move {
-                    let result = crate::map_data::template(spec.set).await;
+                    let result = crate::map_data::banded_template(spec.set, spec.bands).await;
                     if let Ok(mut shared) = state.lock() {
                         shared.template_loading = false;
                         match result {

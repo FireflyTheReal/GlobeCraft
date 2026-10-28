@@ -173,6 +173,8 @@ mod tests {
             traffic: None,
             transport: None,
             transport_layers: Default::default(),
+            poi: None,
+            poi_layers: Default::default(),
             unix_secs: 1_700_000_000.0,
         };
         let geometry = LivePreparer::default().prepare(input);

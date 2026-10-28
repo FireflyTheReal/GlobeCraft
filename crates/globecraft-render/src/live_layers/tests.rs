@@ -51,6 +51,8 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         traffic: None,
         transport: None,
         transport_layers: Default::default(),
+        poi: None,
+        poi_layers: Default::default(),
         unix_secs: 1_700_000_000.0,
     }
 }
@@ -281,4 +283,60 @@ fn transport_lines_and_airports_follow_their_layers() {
         (vec![LineKind::Rail], 0)
     );
     assert_eq!(kinds(TransportLayers::default()), (vec![], 0));
+}
+
+#[test]
+fn poi_names_follow_their_layers_and_altitude() {
+    use globecraft_data::poi::{PoiLine, PoiLineKind, PoiPoint, PoiSnapshot, PoiTile, PointKind};
+    let mut request = input(EarthModel::Wgs84);
+    let point = |kind, name: &str, lon| PoiPoint {
+        kind,
+        lat: 0.0,
+        lon,
+        name: name.into(),
+        class: String::new(),
+        rank: 1,
+        elevation_m: None,
+    };
+    request.poi = Some(Arc::new(PoiSnapshot {
+        tiles: vec![Arc::new(PoiTile {
+            points: vec![
+                point(PointKind::Poi, "Museum", -0.2),
+                point(PointKind::Peak, "Peak", 0.0),
+                point(PointKind::Water, "Lake", 0.2),
+            ],
+            lines: vec![PoiLine {
+                kind: PoiLineKind::River,
+                name: None,
+                points: vec![(0.1, -0.5), (0.1, 0.5)],
+            }],
+        })],
+        zoom: 12,
+    }));
+    let shown = |altitude_km, layers| {
+        let mut request = request.clone();
+        request.view.altitude_km = altitude_km;
+        request.poi_layers = layers;
+        let geometry = LivePreparer::default().prepare(request);
+        (geometry.poi.labels.len(), geometry.poi.lines.len())
+    };
+    let all = PoiLayers {
+        places: true,
+        peaks: true,
+        waters: true,
+        parks: true,
+    };
+    // Close up everything shows; from 100 km the places of interest are gone.
+    assert_eq!(shown(10.0, all), (3, 1));
+    assert_eq!(shown(100.0, all), (2, 1));
+    assert_eq!(
+        shown(
+            10.0,
+            PoiLayers {
+                peaks: true,
+                ..Default::default()
+            }
+        ),
+        (1, 0)
+    );
 }
