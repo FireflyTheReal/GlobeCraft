@@ -518,3 +518,32 @@ Replay with relief (`GLOBECRAFT_REPLAY_TERRAIN=1`, fast link), motion frame medi
 Holes while moving and bytes are unchanged within noise. Pixels match the previous
 march except sub-pixel shifts of thin lines (different exact-measurement points).
 
+
+## Own border tiles, 2026-10-28
+
+The `Border tiles` workflow (run 40607701043, OpenFreeMap planet
+`20261025_080012_pt`, about 2.6 h on a standard runner) keeps the OpenMapTiles
+`boundary` and `place` layers and the ocean polygons of `water`, zoom 0–12.
+Published as the pre-release `tiles-borders-20261025_080012_pt`.
+
+| Set | Tiles | Size | Average at z12 |
+| --- | ---: | ---: | ---: |
+| Borders and names | 2,483,920 | 4,326 MiB | 1.12 KiB |
+| Ocean | 13,388,235 | 1,198 MiB in MBTiles, 233 MiB as PMTiles (repeated tiles stored once) | 0.08 KiB |
+
+Borders and names by zoom (tiles, MiB): z8 18,786 / 112, z9 56,744 / 302,
+z10 171,743 / 620, z11 550,667 / 1,341, z12 1,678,242 / 1,840; zooms 0–7 add
+85 MiB together. As published (GitHub assets must stay under 2 GiB):
+
+| Part | Holds | Size |
+| --- | --- | ---: |
+| `-0` | z0–10 | 1,145 MiB |
+| `-1` | z11 | 1,341 MiB |
+| `-2` | z12 west of 0° | 489 MiB |
+| `-3` | z12 east of 0° | 1,347 MiB |
+| water | z0–12 | 233 MiB |
+
+A view needs a few dozen tiles of about 1 KiB each, against 100–500 KiB per
+full OpenFreeMap tile. The ignored test
+`published_border_parts_serve_border_tiles` reads border tiles at z5, z10, z11
+and both z12 halves from the published files.

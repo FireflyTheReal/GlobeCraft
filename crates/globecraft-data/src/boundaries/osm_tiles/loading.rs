@@ -335,3 +335,47 @@ mod manifest_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod live_tests {
+    use super::{TileKey, fetch_archived_tile, fetch_manifest};
+
+    fn key(z: u8, lat: f64, lon: f64) -> TileKey {
+        let n = f64::from(1u32 << z);
+        let x = ((lon + 180.0) / 360.0 * n) as u32;
+        let s = lat.to_radians();
+        let y = ((1.0 - (s.tan() + 1.0 / s.cos()).ln() / std::f64::consts::PI) / 2.0 * n) as u32;
+        TileKey { z, x, y }
+    }
+
+    /// The published border archives, read as the app reads them: every part of the
+    /// split set answers tiles on a border.
+    #[tokio::test]
+    #[ignore = "network: reads GlobeCraft's published border tile archives"]
+    async fn published_border_parts_serve_border_tiles() {
+        let template = fetch_manifest().await.unwrap();
+        let archives = template
+            .strip_prefix(super::PMTILES_PREFIX)
+            .unwrap()
+            .to_owned();
+        // Germany–Austria near Salzburg (east of 0°) and Kansas–Missouri (west):
+        // zoom 5 and 10 from the low part, 11 from its own, 12 from either half.
+        for (z, lat, lon) in [
+            (5, 47.7, 13.0),
+            (10, 47.7, 13.0),
+            (11, 47.7, 13.0),
+            (12, 47.7, 13.0),
+            (12, 39.0, -94.61),
+        ] {
+            let tile = fetch_archived_tile(key(z, lat, lon), &archives)
+                .await
+                .unwrap();
+            println!(
+                "z{z} {lat},{lon}: {} lines, {} places",
+                tile.lines.len(),
+                tile.places.len()
+            );
+            assert!(!tile.lines.is_empty(), "z{z} {lat},{lon}");
+        }
+    }
+}
