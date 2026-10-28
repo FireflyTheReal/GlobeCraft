@@ -345,9 +345,11 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "network: reads GlobeCraft's published road tiles"]
     async fn published_road_tiles_hold_named_roads() {
-        let template = crate::map_data::template("roads").await.unwrap();
+        let template = crate::map_data::banded_template(SPEC.set, SPEC.bands)
+            .await
+            .unwrap();
         let mut motorway_names = BTreeMap::new();
-        for z in [4, 6, 8, 10, 11, 12] {
+        for z in [4, 6, 8, 10, 11, 12, 13, 14] {
             let key = TileKey::at(z, 48.2, 11.6);
             let tile = crate::vector_tiles::fetch(&SPEC, key, &template)
                 .await
