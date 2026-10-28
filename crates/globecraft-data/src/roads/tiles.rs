@@ -8,6 +8,11 @@ use crate::mvt::{self, GeomType};
 use crate::vector_tiles::{Snapshot, Spec, TileStream, View};
 use std::sync::Arc;
 
+/// What the published tiles hold (read around Munich, 2026-10-28): motorways from
+/// zoom 4, trunk roads from 6, primary from 8, secondary and the links from 10,
+/// tertiary from 11, residential streets at 12. Names come with motorways and trunk
+/// roads from zoom 6 and with most roads at zoom 12.
+///
 /// Above this roads are hidden: only motorways remain, lost in the imagery.
 pub const MAX_ALTITUDE_KM: f64 = 1_000.0;
 /// A name line this close (tile units, of 4,096) to a road's middle names it.
@@ -311,5 +316,38 @@ mod tests {
                 ("residential", "")
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// The published road tiles around Munich, read as the app reads them: which road
+    /// kinds each level holds, and the motorways' names.
+    #[tokio::test]
+    #[ignore = "network: reads GlobeCraft's published road tiles"]
+    async fn published_road_tiles_hold_named_roads() {
+        let template = crate::map_data::template("roads").await.unwrap();
+        let mut motorway_names = BTreeMap::new();
+        for z in [4, 6, 8, 10, 11, 12] {
+            let key = TileKey::at(z, 48.2, 11.6);
+            let tile = crate::vector_tiles::fetch(&SPEC, key, &template)
+                .await
+                .unwrap();
+            let mut kinds: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+            for road in &tile.roads {
+                let entry = kinds.entry(road.kind.as_str()).or_default();
+                entry.0 += 1;
+                entry.1 += usize::from(!road.name.is_empty());
+                if road.kind == "motorway" && !road.name.is_empty() {
+                    *motorway_names.entry(road.name.clone()).or_insert(0) += 1;
+                }
+            }
+            println!("z{z}: (count, named) {kinds:?}");
+        }
+        println!("motorway names: {motorway_names:?}");
+        assert!(motorway_names.keys().any(|name| name.contains('9')));
     }
 }

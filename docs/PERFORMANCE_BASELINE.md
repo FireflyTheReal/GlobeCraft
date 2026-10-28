@@ -606,3 +606,23 @@ zoom and the largest layers (shares of uncompressed bytes):
 Roads with names (`transportation` + `transportation_name`) would come to roughly
 4–5 GiB at zoom 12, 7–8 GiB at zoom 13 and about 25–30 GiB at zoom 14, so 35–45
 GiB to zoom 14 (20+ files) against about 5 GiB to zoom 12 (three files).
+
+## Road tiles, 2026-10-28
+
+The `roads` set (`map-data.yml`, run 40670204457, 1.4 h) keeps OpenMapTiles
+`transportation` and `transportation_name` features of class motorway, trunk,
+primary, secondary, tertiary, minor, service, busway and raceway, zoom 0–12:
+1,687,450 tiles, 2,558 MiB, published as three files (zoom 0–11: 503 MiB; zoom 12
+west of 0°: 711 MiB; east: 1,347 MiB).
+
+| Zoom | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Tiles | 674 | 2,460 | 7,695 | 27,090 | 84,241 | 318,682 | 1,246,323 |
+| MiB | 3 | 9 | 19 | 64 | 109 | 297 | 2,056 |
+
+Zoom 12 averages 1.69 KiB per tile. Around Munich the tiles hold motorways from
+zoom 4, trunk roads from 6, primary from 8, secondary and the links from 10,
+tertiary from 11 and residential streets at 12; service roads are not in any
+level. Overpass now adds only service roads, living streets and roadworks below
+65 km. The planet estimate above (about 5 GiB to zoom 12) was high: these classes
+come to 2.5 GiB.

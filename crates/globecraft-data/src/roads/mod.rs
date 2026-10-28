@@ -154,9 +154,9 @@ async fn download(lat: f64, lon: f64, alt: f64) -> Result<Arc<[Road]>, crate::Er
     // Deliberately avoid wrapping one bbox across the 180th meridian.
     let lon0 = (lon - delta / lat.to_radians().cos().abs().max(0.2)).max(-180.0);
     let lon1 = (lon + delta / lat.to_radians().cos().abs().max(0.2)).min(180.0);
-    // The road tiles hold motorways to tertiary roads (zoom 12): only what they
-    // leave out, and roadworks.
-    let ways = "residential|unclassified|service|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|construction";
+    // The road tiles' zoom 12 holds motorways to residential streets and the links
+    // (read around Munich, 2026-10-28): only what it leaves out, and roadworks.
+    let ways = "service|living_street|construction";
     let query = format!(
         "[out:json][timeout:23];way[\"highway\"~\"^({ways})$\"]({lat0:.5},{lon0:.5},{lat1:.5},{lon1:.5});out geom 4500;"
     );
