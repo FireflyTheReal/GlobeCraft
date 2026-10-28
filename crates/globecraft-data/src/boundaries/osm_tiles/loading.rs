@@ -95,18 +95,37 @@ async fn fetch_manifest() -> Result<String, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Boundary)?;
     let bytes = crate::http::body(client.get(MANIFEST_URL), MAX_MANIFEST_BYTES).await?;
     let json = crate::http::parse_json(bytes).await?;
-    let archives: Vec<&str> = json["archives"]
-        .as_array()
-        .map(|list| list.iter().filter_map(|url| url.as_str()).collect())
-        .unwrap_or_default();
-    if archives.is_empty()
-        || archives
+    manifest_template(&json).ok_or_else(|| "border tile manifest without archives".into())
+}
+
+/// The tile source a manifest describes: `pmtiles:` followed by its sets separated
+/// by spaces, each set's parts separated by `|`. A set holds some of the layers
+/// (borders and names, water); its parts split it under GitHub's 2 GiB asset limit
+/// (by zoom and longitude) and are tried in order. `"archives"` lists sets of one part.
+fn manifest_template(json: &serde_json::Value) -> Option<String> {
+    let urls = |list: &serde_json::Value| -> Option<Vec<String>> {
+        let urls: Vec<String> = list
+            .as_array()?
             .iter()
-            .any(|url| !url.starts_with("https://") || url.contains(' '))
-    {
-        return Err("border tile manifest without archives".into());
-    }
-    Ok(format!("{PMTILES_PREFIX}{}", archives.join(" ")))
+            .map(|url| url.as_str().map(str::to_owned))
+            .collect::<Option<_>>()?;
+        let valid = !urls.is_empty()
+            && urls
+                .iter()
+                .all(|url| url.starts_with("https://") && !url.contains(' ') && !url.contains('|'));
+        valid.then_some(urls)
+    };
+    let sets: Vec<Vec<String>> = match json.get("sets") {
+        Some(sets) => sets.as_array()?.iter().map(urls).collect::<Option<_>>()?,
+        None => urls(json.get("archives")?)?
+            .into_iter()
+            .map(|url| vec![url])
+            .collect(),
+    };
+    (!sets.is_empty()).then(|| {
+        let sets: Vec<String> = sets.iter().map(|parts| parts.join("|")).collect();
+        format!("{PMTILES_PREFIX}{}", sets.join(" "))
+    })
 }
 
 async fn fetch_tilejson() -> Result<String, crate::Error> {
@@ -230,14 +249,19 @@ async fn fetch_tile(key: TileKey, template: &str) -> Result<Filtered, crate::Err
 /// concatenate. An archive without the tile adds nothing (open sea).
 async fn fetch_archived_tile(key: TileKey, archives: &str) -> Result<Filtered, crate::Error> {
     let mut joined = Vec::new();
-    for url in archives.split(' ') {
-        let archive = archive(url).await?;
-        if let Some(bytes) = archive.tile(key.z, key.x, key.y).await? {
-            crate::download_stats::record(
-                crate::download_stats::DownloadKind::BorderTiles,
-                bytes.len(),
-            );
-            joined.push(bytes);
+    for set in archives.split(' ') {
+        // The parts of a set are disjoint but for tiles on a band's edge, which are
+        // the same in both: the first part holding the tile gives it.
+        for url in set.split('|') {
+            let archive = archive(url).await?;
+            if let Some(bytes) = archive.tile(key.z, key.x, key.y).await? {
+                crate::download_stats::record(
+                    crate::download_stats::DownloadKind::BorderTiles,
+                    bytes.len(),
+                );
+                joined.push(bytes);
+                break;
+            }
         }
     }
     crate::cpu::run(crate::cpu::Service::Features, move || {
@@ -279,4 +303,35 @@ pub(super) fn gunzip_if_needed(bytes: Vec<u8>) -> Result<Vec<u8>, crate::Error> 
     let mut out = Vec::new();
     std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::manifest_template;
+
+    #[test]
+    fn manifests_name_sets_of_archive_parts() {
+        let split = serde_json::json!({
+            "version": "1",
+            "sets": [["https://a/b0.pmtiles", "https://a/b1.pmtiles"], ["https://a/w.pmtiles"]],
+        });
+        assert_eq!(
+            manifest_template(&split).as_deref(),
+            Some("pmtiles:https://a/b0.pmtiles|https://a/b1.pmtiles https://a/w.pmtiles")
+        );
+        let plain = serde_json::json!({"archives": ["https://a/b.pmtiles", "https://a/w.pmtiles"]});
+        assert_eq!(
+            manifest_template(&plain).as_deref(),
+            Some("pmtiles:https://a/b.pmtiles https://a/w.pmtiles")
+        );
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"sets": []}),
+            serde_json::json!({"sets": [[]]}),
+            serde_json::json!({"sets": [["http://a/b.pmtiles"]]}),
+            serde_json::json!({"archives": ["https://a/b|c.pmtiles"]}),
+        ] {
+            assert_eq!(manifest_template(&bad), None, "{bad}");
+        }
+    }
 }

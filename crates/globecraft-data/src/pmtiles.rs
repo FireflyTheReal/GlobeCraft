@@ -55,9 +55,23 @@ pub(crate) struct Header {
     tile_compression: Compression,
     min_zoom: u8,
     max_zoom: u8,
+    /// West and east edges in degrees: GlobeCraft's border archives are split into
+    /// longitude bands to stay under GitHub's 2 GiB asset limit, and a tile outside
+    /// a band is not looked up there. `None` when the header leaves them unset.
+    longitudes: Option<(f64, f64)>,
 }
 
 impl Header {
+    /// Whether the archive's bounds can hold tile `z/x` (any latitude).
+    fn may_hold(&self, z: u8, x: u32) -> bool {
+        let Some((west, east)) = self.longitudes else {
+            return true;
+        };
+        let width = 360.0 / f64::from(1u32 << z);
+        let tile_west = -180.0 + f64::from(x) * width;
+        // Strictly overlapping: a tile only touching a band's edge belongs next door.
+        tile_west < east && tile_west + width > west
+    }
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, crate::Error> {
         if bytes.len() < HEADER_BYTES || &bytes[..7] != b"PMTiles" {
             return Err("not a PMTiles archive".into());
@@ -75,6 +89,15 @@ impl Header {
             tile_compression: Compression::from_byte(bytes[98]),
             min_zoom: bytes[100],
             max_zoom: bytes[101],
+            longitudes: {
+                let degrees = |at: usize| {
+                    f64::from(i32::from_le_bytes(
+                        bytes[at..at + 4].try_into().expect("4 bytes"),
+                    )) / 1e7
+                };
+                let (west, east) = (degrees(102), degrees(110));
+                (west < east).then_some((west, east))
+            },
         };
         if !matches!(
             header.internal_compression,
@@ -226,6 +249,7 @@ impl Archive {
                 tile_compression: Compression::None,
                 min_zoom: 0,
                 max_zoom: 0,
+                longitudes: None,
             },
             root: Vec::new(),
             leaves: Mutex::new(HashMap::new()),
@@ -256,7 +280,7 @@ impl Archive {
         x: u32,
         y: u32,
     ) -> Result<Option<Vec<u8>>, crate::Error> {
-        if z < self.header.min_zoom || z > self.header.max_zoom {
+        if z < self.header.min_zoom || z > self.header.max_zoom || !self.header.may_hold(z, x) {
             return Ok(None);
         }
         let id = tile_id(z, x, y);
@@ -483,6 +507,14 @@ mod tests {
         assert_eq!(header.root_offset, 127);
         assert_eq!(header.tile_compression, Compression::Gzip);
         assert_eq!((header.min_zoom, header.max_zoom), (0, 12));
+        // Unset bounds hold everything; a band holds the tiles overlapping it.
+        assert!(header.may_hold(12, 0) && header.may_hold(12, 4095));
+        bytes[102..106].copy_from_slice(&(-1_800_000_000i32).to_le_bytes());
+        bytes[110..114].copy_from_slice(&0i32.to_le_bytes());
+        let west = Header::parse(&bytes).unwrap();
+        assert!(west.may_hold(12, 0) && west.may_hold(12, 2047));
+        assert!(!west.may_hold(12, 2048) && !west.may_hold(1, 1));
+        assert!(west.may_hold(0, 0));
         bytes[97] = 3;
         assert!(Header::parse(&bytes).is_err());
         assert!(Header::parse(b"MBTiles").is_err());

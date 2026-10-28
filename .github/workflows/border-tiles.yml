@@ -154,6 +154,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           for set in borders water; do
+            echo "::notice::$set by zoom (z tiles MiB): $(sqlite3 "$set.mbtiles" "SELECT group_concat(zoom_level || ' ' || n || ' ' || mib, ', ') FROM (SELECT zoom_level, count(*) AS n, round(sum(length(tile_data))/1048576.0) AS mib FROM tiles GROUP BY zoom_level ORDER BY zoom_level)")"
             echo "::notice::$set: $(sqlite3 "$set.mbtiles" "SELECT count(*) || ' tiles, ' || round(sum(length(tile_data))/1048576.0) || ' MiB, z12 avg ' || round(avg(CASE WHEN zoom_level = 12 THEN length(tile_data) END)/1024.0, 2) || ' KiB' FROM tiles")"
           done
 
@@ -174,6 +175,60 @@ jobs:
             echo "::notice::$file: $(( $(stat -c %s "$file") / 1048576 )) MiB"
           done
 
+      - name: Split under GitHub's asset limit
+        working-directory: /work
+        env:
+          VERSION: ${{ steps.pick.outputs.version }}
+          TMPDIR: /work/tmp
+        # Release assets must stay under 2 GiB: an archive over the limit is cut into
+        # parts, first by peeling off its top zoom, then into longitude halves. The app
+        # tries a set's parts in order and skips those whose bounds miss a tile.
+        shell: python3 {0}
+        run: |
+          import json, os, subprocess
+          LIMIT = 1_900_000_000
+          SOUTH, NORTH = -85.0511287798, 85.0511287798
+          version = os.environ["VERSION"]
+          sets = []
+          for name in ["borders", "water"]:
+              whole = f"globecraft-{name}-{version}.pmtiles"
+              queue, parts = [(0, 12, -180.0, 180.0, whole)], []
+              while queue:
+                  low, high, west, east, path = queue.pop(0)
+                  if os.path.getsize(path) < LIMIT:
+                      parts.append(path)
+                      continue
+                  if low < high:
+                      pieces = [(low, high - 1, west, east), (high, high, west, east)]
+                  elif east - west > 1.0:
+                      middle = (west + east) / 2
+                      pieces = [(low, high, west, middle), (low, high, middle, east)]
+                  else:
+                      raise SystemExit(f"::error::{path} cannot be split further")
+                  for low_z, high_z, w, e in pieces:
+                      out = f"part-{name}-z{low_z}-{high_z}-{w:+.1f}-{e:+.1f}.pmtiles"
+                      subprocess.run(["./pmtiles", "extract", whole, out,
+                                      f"--minzoom={low_z}", f"--maxzoom={high_z}",
+                                      f"--bbox={w},{SOUTH},{e},{NORTH}"], check=True)
+                      queue.append((low_z, high_z, w, e, out))
+                  if path != whole:
+                      os.remove(path)
+              # Final names: one part keeps the plain name, several are numbered.
+              if parts != [whole]:
+                  named = []
+                  for index, path in enumerate(parts):
+                      final = f"globecraft-{name}-{version}-{index}.pmtiles"
+                      os.rename(path, final)
+                      named.append(final)
+                  os.remove(whole)
+                  parts = named
+              for path in parts:
+                  print(f"::notice::{path}: {os.path.getsize(path) // 1048576} MiB")
+              sets.append(parts)
+          with open("parts.json", "w") as out:
+              json.dump(sets, out)
+          print(json.dumps(sets))
+
       - name: Publish a data pre-release
         if: inputs.publish
         working-directory: /work
@@ -182,7 +237,7 @@ jobs:
         run: |
           version='${{ steps.pick.outputs.version }}'
           tag="tiles-borders-$version"
-          for file in globecraft-*-"$version".pmtiles; do
+          for file in globecraft-*-"$version"*.pmtiles; do
             size=$(stat -c %s "$file")
             if [ "$size" -ge 2147483648 ]; then
               echo "::error::$file is $size bytes, over GitHub's 2 GiB asset limit"
@@ -192,11 +247,13 @@ jobs:
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --prerelease --latest=false --title "Border tiles $version" \
             --notes "Borders, names and water for GlobeCraft, cut from the OpenFreeMap planet $version (OpenMapTiles schema, zoom 0-12). Data © OpenStreetMap contributors, available under the Open Database License (ODbL); schema © OpenMapTiles." \
-            globecraft-*-"$version".pmtiles measure.txt
+            globecraft-*-"$version"*.pmtiles measure.txt
           # The fixed manifest the app reads names the newest archives.
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
-          printf '{"version":"%s","archives":["%s/globecraft-borders-%s.pmtiles","%s/globecraft-water-%s.pmtiles"]}\n' \
-            "$version" "$base" "$version" "$base" "$version" > borders.json
+          python3 -c 'import json, sys
+          sets = json.load(open("parts.json"))
+          print(json.dumps({"version": sys.argv[1], "sets": [[f"{sys.argv[2]}/{p}" for p in parts] for parts in sets]}))' \
+            "$version" "$base" > borders.json
           cat borders.json
           if ! gh release view tiles-borders --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create tiles-borders --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
