@@ -19,6 +19,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
             pixels_per_point: 1.0,
             traffic_width_px: 16,
             traffic_height_px: 16,
+            ground: None,
         },
         roads: Some(
             vec![Road {
@@ -43,6 +44,11 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
                 lon: 0.0,
                 course: 45.0,
                 speed_knots: Some(8.0),
+                ship_type: None,
+                destination: None,
+                draught_m: None,
+                length_m: None,
+                beam_m: None,
                 observed_unix: 1_700_000_000.0,
             }]
             .into(),
@@ -56,6 +62,79 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         unix_secs: 1_700_000_000.0,
     }
 }
+struct Relief;
+impl Ground for Relief {
+    fn height(&self, _lat: f64, _lon: f64) -> f64 {
+        // World units, as `GroundHeights` returns: a few kilometres, exaggerated.
+        0.002
+    }
+}
+
+/// A nine-kilometre ridge across the view near the equator, in world units.
+struct Ridge;
+impl Ground for Ridge {
+    fn height(&self, lat: f64, _lon: f64) -> f64 {
+        if (0.2..0.3).contains(&lat) {
+            9.0 / globecraft_core::EARTH_RADIUS_KM
+        } else {
+            0.0
+        }
+    }
+}
+
+#[test]
+fn terrain_occlusion_drops_a_road_hidden_behind_a_ridge() {
+    let mut input = input(EarthModel::Wgs84);
+    input.view.basis = Cam {
+        lat: 0.0,
+        lon: 0.0,
+        heading: 0.0,
+        alt: 30.0,
+        tilt: 65.0,
+    }
+    .basis(1.0);
+    input.view.altitude_km = 30.0;
+    input.roads = Some(
+        vec![Road {
+            name: "Hidden road".into(),
+            kind: "primary".into(),
+            restricted: false,
+            points: vec![(0.35, 0.0), (0.4, 0.0), (0.45, 0.0)],
+        }]
+        .into(),
+    );
+    let open = project_roads(&input, None);
+    assert!(
+        open.iter().any(|road| !road.segments.is_empty()),
+        "without relief the road is drawn"
+    );
+    let occluded = project_roads(&input, Some(&Ridge));
+    assert!(
+        occluded.iter().all(|road| road.segments.is_empty()),
+        "the ridge must hide the whole road"
+    );
+}
+
+#[test]
+fn live_lines_are_raised_onto_the_relief() {
+    let mut input = input(EarthModel::Wgs84);
+    input.view.basis = Cam {
+        lat: 0.0,
+        lon: 0.0,
+        heading: 0.0,
+        alt: 100.0,
+        tilt: 60.0,
+    }
+    .basis(1.0);
+    input.view.altitude_km = 100.0;
+    let flat = project_roads(&input, None);
+    let raised = project_roads(&input, Some(&Relief));
+    assert_ne!(
+        flat[0].segments[0][0], raised[0].segments[0][0],
+        "a road on a mountain must be projected at the raised position"
+    );
+}
+
 #[test]
 fn roads_vessels_and_hover_match_the_selected_surface_and_keep_all_visible_fragments() {
     for model in EarthModel::ALL {
@@ -207,6 +286,11 @@ fn vessels_sail_their_course_for_a_while_after_a_report() {
         lon: 0.0,
         course: 90.0,
         speed_knots,
+        ship_type: None,
+        destination: None,
+        draught_m: None,
+        length_m: None,
+        beam_m: None,
         observed_unix: 0.0,
     };
     let km_east = |(lat, lon): (f64, f64)| {

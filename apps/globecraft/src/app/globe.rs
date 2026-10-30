@@ -530,6 +530,8 @@ impl App {
                         .iter()
                         .cloned(),
                 );
+                self.poi_shapes.hover(&painter, geometry, self.lang);
+                self.transport_shapes.hover(&painter, geometry, self.lang);
             }
             self.draw_live_layers(
                 &painter,

@@ -1,4 +1,6 @@
 use globecraft_core::coordinates::{parse_coordinates, validate_coordinates};
+/// Nominatim and Photon replies are a handful of compact JSON records.
+const MAX_SEARCH_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 const SEARCH_KM_PER_DEGREE: f64 = 111.2;
 const SEARCH_VIEW_PADDING_RATIO: f64 = 1.6;
 const MIN_SEARCH_ALTITUDE_KM: f64 = 0.5;
@@ -30,7 +32,8 @@ pub async fn geocode(q: &str, lang: &str) -> Result<Vec<GeoResult>, crate::Error
             ("accept-language", lang),
             ("q", q),
         ]);
-    let v = crate::http::parse_json(crate::http::body(request, 1 << 30).await?).await?;
+    let v = crate::http::parse_json(crate::http::body(request, MAX_SEARCH_RESPONSE_BYTES).await?)
+        .await?;
     parse_geocode_response(v)
 }
 
@@ -95,7 +98,8 @@ pub async fn photon_suggest(q: &str, lang: &str) -> Result<Vec<Suggestion>, crat
     if lang == "en" {
         request = request.query(&[("lang", "en")]);
     }
-    let v = crate::http::parse_json(crate::http::body(request, 1 << 30).await?).await?;
+    let v = crate::http::parse_json(crate::http::body(request, MAX_SEARCH_RESPONSE_BYTES).await?)
+        .await?;
     Ok(parse_photon_response(v))
 }
 

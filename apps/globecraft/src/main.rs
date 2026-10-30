@@ -10,7 +10,7 @@
 
 mod app;
 mod presentation;
-use app::{App, RestartRequest};
+use app::{App, RestartRequest, WINDOW_TITLE};
 use eframe::egui;
 use std::sync::{Arc, atomic::Ordering};
 const INITIAL_WINDOW_SIZE_POINTS: [f32; 2] = [1280.0, 800.0];
@@ -33,8 +33,22 @@ fn main() -> Result<(), eframe::Error> {
         let settings = globecraft_data::settings::Settings::load();
         let mut viewport = egui::ViewportBuilder::default()
             .with_inner_size(INITIAL_WINDOW_SIZE_POINTS)
-            .with_title("GlobeCraft")
+            .with_title(WINDOW_TITLE)
             .with_app_id("globecraft");
+        // The header is the titlebar: macOS keeps its native traffic lights over a
+        // transparent titlebar, while Windows and Linux draw their own controls.
+        #[cfg(target_os = "macos")]
+        {
+            viewport = viewport
+                .with_fullsize_content_view(true)
+                .with_titlebar_shown(false)
+                .with_title_shown(false)
+                .with_titlebar_buttons_shown(true);
+        }
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        {
+            viewport = viewport.with_decorations(false);
+        }
         if let Ok(img) = image::load_from_memory(APP_ICON_PNG) {
             let img = img.to_rgba8();
             viewport = viewport.with_icon(egui::IconData {
@@ -50,7 +64,7 @@ fn main() -> Result<(), eframe::Error> {
         };
         let app_restart = restart.clone();
         eframe::run_native(
-            "GlobeCraft",
+            WINDOW_TITLE,
             options,
             Box::new(move |cc| Ok(Box::new(App::new(cc, settings, app_restart)))),
         )?;

@@ -5,7 +5,7 @@
 //! (`crates/ui-egui/src/theme.rs`, Apache-2.0); see CREDITS.md.
 use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, Visuals};
 
-/// GlobeCraft's brand colour (the File button and the logo), and its pressed shade.
+/// GlobeCraft's brand colour (the File button and accents), and its pressed shade.
 pub(in crate::app) const BRAND: Color32 = Color32::from_rgb(0x1F, 0x6F, 0xB2);
 pub(in crate::app) const BRAND_DARK: Color32 = Color32::from_rgb(0x17, 0x57, 0x8D);
 /// Name of the semibold font family installed by `fonts`.

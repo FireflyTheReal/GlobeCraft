@@ -37,7 +37,11 @@ Developer ID certificate or notarization. The ARM64 build packages `GlobeCraft.a
 directly into a DMG. Packaging verifies its ARM64 Mach-O header, embeds the padded
 macOS icon, then signs and verifies the assembled app. Ad-hoc signing does not
 establish a trusted publisher or remove Gatekeeper prompts.
-Windows/Linux/FreeBSD portable archives contain just the executable at their root. On macOS,
+Windows/Linux/FreeBSD portable archives contain just the executable at their root. The
+user-visible application name is **GlobeCraft**; the executable, package file names and
+command remain `globecraft`. The macOS bundle metadata sets both `CFBundleName` and
+`CFBundleDisplayName` to `GlobeCraft`, while the bundle keeps its `Contents/MacOS/globecraft`
+executable so the updater and packaging helpers continue to find it. On macOS,
 open the DMG and drag GlobeCraft along the arrow onto the Applications shortcut.
 The window opens in icon view with the app on the left and Applications on the
 right. Only those two items are visible; Finder layout/background metadata stays

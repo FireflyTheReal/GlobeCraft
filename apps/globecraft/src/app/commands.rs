@@ -152,13 +152,9 @@ impl App {
                     globecraft_core::MIN_CAMERA_ALTITUDE_KM,
                     globecraft_core::MAX_CAMERA_ALTITUDE_KM,
                 );
-                self.fly_to(lat, lon, alt);
-                if let Some(heading) = f64_param(p, "heading_deg")? {
-                    self.cam.heading = globecraft_core::math::wrap_lon(heading);
-                }
-                if let Some(tilt) = f64_param(p, "tilt_deg")? {
-                    self.cam.set_tilt(tilt);
-                }
+                let heading = f64_param(p, "heading_deg")?;
+                let tilt = f64_param(p, "tilt_deg")?;
+                self.fly_to_with_orientation(lat, lon, alt, heading, tilt);
                 json!({"flying_to": {"lat": lat, "lon": lon, "altitude_km": alt}})
             }
             "camera.set" => {

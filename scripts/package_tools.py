@@ -46,7 +46,9 @@ def app_bundle(version, binary, output):
     plist_path = output.parent / "Info.plist"
     numeric_version = version.split("-")[0].split("+")[0]
     with plist_path.open("wb") as stream:
-        plistlib.dump({"CFBundleVersion": numeric_version,
+        plistlib.dump({"CFBundleName": "GlobeCraft",
+                      "CFBundleDisplayName": "GlobeCraft",
+                      "CFBundleVersion": numeric_version,
                       "CFBundleShortVersionString": numeric_version,
                       "NSHighResolutionCapable": True}, stream)
     config["macos"]["infoPlistPath"] = str(plist_path)

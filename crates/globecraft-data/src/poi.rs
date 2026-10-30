@@ -20,6 +20,8 @@ static SPEC: Spec<PoiTile> = Spec {
     max_tiles: 64,
     max_floor_tiles: 64,
     max_cached_tiles: 600,
+    max_cached_bytes: crate::vector_tiles::MAX_VECTOR_CACHE_BYTES,
+    size_bytes,
     decode,
 };
 
@@ -70,6 +72,31 @@ pub struct PoiLine {
 pub struct PoiTile {
     pub points: Vec<PoiPoint>,
     pub lines: Vec<PoiLine>,
+}
+
+/// Estimated heap size of a decoded POI tile, for the stream's byte budget.
+fn size_bytes(tile: &PoiTile) -> usize {
+    let points: usize = tile
+        .points
+        .iter()
+        .map(|point| {
+            std::mem::size_of::<PoiPoint>() + point.name.capacity() + point.class.capacity()
+        })
+        .sum();
+    let lines: usize = tile
+        .lines
+        .iter()
+        .map(|line| {
+            std::mem::size_of::<PoiLine>()
+                + line.name.as_ref().map_or(0, String::capacity)
+                + line.points.capacity() * std::mem::size_of::<(f64, f64)>()
+        })
+        .sum();
+    std::mem::size_of::<PoiTile>()
+        + tile.points.capacity() * std::mem::size_of::<PoiPoint>()
+        + tile.lines.capacity() * std::mem::size_of::<PoiLine>()
+        + points
+        + lines
 }
 
 pub type PoiSnapshot = Snapshot<PoiTile>;

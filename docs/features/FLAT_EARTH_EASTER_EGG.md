@@ -29,7 +29,7 @@ nuvens, os mapas meteorológicos ou quaisquer fontes de dados.
 - `apps/globecraft/src/app/flat_earth.rs` — lógica de ativação e visualização.
 - `apps/globecraft/src/app/mod.rs` — integração com o estado e a tela principal.
 - `apps/globecraft/src/app/search.rs` — frase secreta na pesquisa.
-- `apps/globecraft/src/app/ui/bars.rs` e `apps/globecraft/src/app/explorer.rs` — retorno aos corpos reais.
+- `apps/globecraft/src/app/ui/chrome.rs` e `apps/globecraft/src/app/explorer.rs` — retorno aos corpos reais.
 - `crates/globecraft-core/locales/{en,pt-BR}.ftl` — textos em ambos os idiomas.
 
 The image is displayed for illustration/humor, not as a scientific depiction.

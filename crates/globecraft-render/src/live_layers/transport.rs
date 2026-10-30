@@ -1,6 +1,7 @@
 //! Railways, ferries and airports on screen: lines clipped to the view in f64 (as
 //! roads), and the airports to label, most important first and kept apart.
 use super::LiveInput;
+use crate::overlays::{Ground, TerrainVisibility, ground_position};
 use emath::Pos2;
 use globecraft_data::transport::{LineKind, TransportSnapshot};
 use std::collections::HashSet;
@@ -74,12 +75,13 @@ fn order(kind: LineKind) -> u8 {
     }
 }
 
-pub(super) fn project(input: &LiveInput) -> ProjectedTransport {
+pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> ProjectedTransport {
     let Some(snapshot) = &input.transport else {
         return ProjectedTransport::default();
     };
     let layers = input.transport_layers;
     let view = input.view;
+    let visibility = TerrainVisibility::new(&view.basis, ground);
     let clip = view
         .rect
         .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
@@ -93,9 +95,16 @@ pub(super) fn project(input: &LiveInput) -> ProjectedTransport {
             let mut run: Vec<Pos2> = Vec::new();
             let mut previous = None;
             for &(lat, lon) in &line.points {
-                let current = view
-                    .basis
-                    .project_precise(view.basis.surface_position(lat, lon), view.rect);
+                let current = visibility
+                    .as_ref()
+                    .is_none_or(|visibility| visibility.visible(lat, lon))
+                    .then(|| {
+                        view.basis.project_precise(
+                            ground_position(&view.basis, ground, lat, lon),
+                            view.rect,
+                        )
+                    })
+                    .flatten();
                 match previous
                     .zip(current)
                     .and_then(|(a, b)| crate::overlays::clip_segment([a, b], clip))
@@ -128,15 +137,20 @@ pub(super) fn project(input: &LiveInput) -> ProjectedTransport {
     ProjectedTransport {
         lines,
         airports: if layers.airports {
-            airports(input, snapshot)
+            airports(input, snapshot, ground)
         } else {
             Vec::new()
         },
     }
 }
 
-fn airports(input: &LiveInput, snapshot: &TransportSnapshot) -> Vec<ProjectedAirport> {
+fn airports(
+    input: &LiveInput,
+    snapshot: &TransportSnapshot,
+    ground: Option<&dyn Ground>,
+) -> Vec<ProjectedAirport> {
     let view = input.view;
+    let visibility = TerrainVisibility::new(&view.basis, ground);
     let max_importance = if view.altitude_km <= SMALL_AIRPORT_MAX_ALTITUDE_KM {
         4
     } else if view.altitude_km <= REGIONAL_AIRPORT_MAX_ALTITUDE_KM {
@@ -161,8 +175,14 @@ fn airports(input: &LiveInput, snapshot: &TransportSnapshot) -> Vec<ProjectedAir
             if !seen.insert(identity) {
                 continue;
             }
+            if visibility
+                .as_ref()
+                .is_some_and(|visibility| !visibility.visible(airport.lat, airport.lon))
+            {
+                continue;
+            }
             let Some(position) = view.basis.project(
-                view.basis.surface_position(airport.lat, airport.lon),
+                ground_position(&view.basis, ground, airport.lat, airport.lon),
                 view.rect,
             ) else {
                 continue;

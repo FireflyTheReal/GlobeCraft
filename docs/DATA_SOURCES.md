@@ -476,7 +476,7 @@ Crate facts below were read from the crates.io API on 2026-10-19 (version, last 
 |---|---|---|---|
 | 25.1 | Arnis (`louis-e/arnis`) | Rust (99.8%), Apache-2.0. Generates Minecraft Java 1.17+ and Bedrock worlds from OpenStreetMap (Overpass) with elevation from AWS Terrain Tiles, cached locally. The closest sibling to GlobeCraft's data path | Proves Terrarium tiles + Overpass is a workable Rust stack. Read its elevation module before writing 1.1 |
 | 25.2 | Terra++ / Terra121 (`BuildTheEarth/terraplusplus`) | MIT Java mod: elevation and biomes from public datasets, OSM roads, oceans from elevation with depth data, `/tpll lat lon` | Reference for source selection (BuildTheEarth) |
-| 25.3 | `sgp4` crate | Pure Rust SGP4, 2.4.0 (2026-02-23), MIT, 402k downloads | Upgrade path for the approximate two-body satellite model in `earthcraft-core::orbit`. The older `satellite` crate (0.1.2, 2024-09) is stale |
+| 25.3 | `sgp4` crate | Pure Rust SGP4, 2.4.0 (2026-02-23), MIT, 402k downloads | Upgrade path for the approximate two-body satellite model in `globecraft-core::orbit`. The older `satellite` crate (0.1.2, 2024-09) is stale |
 | 25.4 | `pmtiles` crate | 0.25.0 (2026-10-15), MIT/Apache-2.0, MSRV 1.88, sync and async backends including HTTP | One reader unlocks 1.2, 5.3, 7.1, 20.2, 22.1 |
 | 25.5 | `mvt-reader` 2.5.0 (MIT), `galileo-mvt` 0.2.1 | Decode Mapbox vector tiles (pure Rust, also WASM) | Unlocks vector sources: 5.1, 16.1, PMTiles vector layers |
 | 25.6 | `grib` crate | 0.20.0 (updated 2026-10-18), MIT/Apache-2.0, pure-Rust GRIB parser and writer | Could turn 2.5 and 23.1 from pre-bake into a runtime fetch of small subsets |

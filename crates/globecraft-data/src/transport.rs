@@ -29,6 +29,8 @@ static SPEC: Spec<TransportTile> = Spec {
     max_tiles: 64,
     max_floor_tiles: 200,
     max_cached_tiles: 600,
+    max_cached_bytes: crate::vector_tiles::MAX_VECTOR_CACHE_BYTES,
+    size_bytes,
     decode,
 };
 
@@ -97,6 +99,34 @@ impl Airport {
 pub struct TransportTile {
     pub lines: Vec<TransportLine>,
     pub airports: Vec<Airport>,
+}
+
+/// Estimated heap size of a decoded transport tile, for the stream's byte budget.
+fn size_bytes(tile: &TransportTile) -> usize {
+    let lines: usize = tile
+        .lines
+        .iter()
+        .map(|line| {
+            std::mem::size_of::<TransportLine>()
+                + line.points.capacity() * std::mem::size_of::<(f64, f64)>()
+        })
+        .sum();
+    let airports: usize = tile
+        .airports
+        .iter()
+        .map(|airport| {
+            std::mem::size_of::<Airport>()
+                + airport.name.capacity()
+                + airport.class.capacity()
+                + airport.iata.as_ref().map_or(0, String::capacity)
+                + airport.icao.as_ref().map_or(0, String::capacity)
+        })
+        .sum();
+    std::mem::size_of::<TransportTile>()
+        + tile.lines.capacity() * std::mem::size_of::<TransportLine>()
+        + tile.airports.capacity() * std::mem::size_of::<Airport>()
+        + lines
+        + airports
 }
 
 /// The tiles to draw for the current view.
@@ -444,9 +474,10 @@ mod live_tests {
         for (place, lat, lon) in [("Munich", 48.14, 11.56), ("Dover", 51.05, 1.6)] {
             for z in 5..=14 {
                 let key = TileKey::at(z, lat, lon);
-                let tile = crate::vector_tiles::fetch(&SPEC, key, &template)
+                let mut tiles = crate::vector_tiles::fetch_many(&SPEC, &[key], &template)
                     .await
                     .unwrap();
+                let tile = tiles.pop().unwrap().1.unwrap();
                 let mut kinds: HashMap<LineKind, usize> = HashMap::new();
                 for line in &tile.lines {
                     *kinds.entry(line.kind).or_default() += 1;

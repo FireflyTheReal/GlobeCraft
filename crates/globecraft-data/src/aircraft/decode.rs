@@ -87,6 +87,7 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 .or_else(|| number(f.get(13)))
                 .map(|m| m * FEET_PER_METER);
             let speed_knots = number(f.get(9)).map(|mps| mps * KNOTS_PER_METER_PER_SECOND);
+            let vertical_rate_fpm = number(f.get(11)).map(|mps| mps * FEET_PER_METER * 60.0);
             Some(Aircraft {
                 hex: hex.into(),
                 callsign: callsign.into(),
@@ -95,6 +96,7 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 heading_deg: safe_heading(number(f.get(10))),
                 speed_knots,
                 altitude_feet,
+                vertical_rate_fpm,
                 observed_unix: observed,
             })
         })
@@ -132,6 +134,8 @@ fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 heading_deg: safe_heading(number(v.get("track"))),
                 speed_knots: number(v.get("gs")),
                 altitude_feet: number(v.get("alt_baro")).or_else(|| number(v.get("alt_geom"))),
+                vertical_rate_fpm: number(v.get("baro_rate"))
+                    .or_else(|| number(v.get("geom_rate"))),
                 observed_unix: now - age,
             })
         })

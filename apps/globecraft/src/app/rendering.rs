@@ -61,7 +61,8 @@ impl Renderer {
             globecraft_render::overlays::OverlayPreparer::with_elevation(cache.clone());
         let mut last_fading: Option<super::overlays::PreparedOverlay> = None;
         let overlay_ctx = ctx.clone();
-        let mut live_preparer = globecraft_render::live_layers::LivePreparer::default();
+        let mut live_preparer =
+            globecraft_render::live_layers::LivePreparer::with_elevation(cache.clone());
         let mut aircraft_preparer = globecraft_render::aircraft::AircraftPreparer::default();
         // The swipe compare renders in the same job as the main frame, right after it:
         // both images arrive together for the same camera, their missing tiles reach
@@ -438,11 +439,13 @@ impl App {
         // A new frame of the view on screen (tiles arrived, or the view came to
         // rest) fades in over the picture it replaces instead of popping in (roadmap
         // 1.6). The two textures swap roles, so the old picture costs no upload.
-        let same_view = self.texture.is_some()
-            && self
-                .renderer
-                .displayed
-                .is_some_and(|(cam, _)| same_camera(cam, frame.request.cam));
+        let same_view = same_view(
+            self.texture.is_some(),
+            self.renderer.displayed,
+            self.renderer.displayed_rect,
+            frame.request.cam,
+            frame.request.overlays.as_ref().map(|input| input.view.rect),
+        );
         if same_view {
             std::mem::swap(&mut self.texture, &mut self.fade_from);
             self.fade_started = Some(std::time::Instant::now());
@@ -507,7 +510,20 @@ impl App {
     }
 }
 
-/// Two frames show the same view when their cameras match exactly.
+/// Two frames show the same view when their cameras and viewport rectangles match exactly.
+fn same_view(
+    has_texture: bool,
+    displayed: Option<(Cam, Basis)>,
+    displayed_rect: Option<egui::Rect>,
+    cam: Cam,
+    rect: Option<egui::Rect>,
+) -> bool {
+    has_texture
+        && displayed.is_some_and(|(displayed, _)| same_camera(displayed, cam))
+        && displayed_rect.is_some_and(|displayed| Some(displayed) == rect)
+}
+
+/// Two frames show the same camera when every camera value matches exactly.
 fn same_camera(a: Cam, b: Cam) -> bool {
     [a.lat, a.lon, a.alt, a.heading, a.tilt]
         .iter()
@@ -547,5 +563,47 @@ mod tests {
             displayed_basis(None, requested_basis).pick(rect, rect.center()),
             requested_basis.pick(rect, rect.center())
         );
+    }
+
+    #[test]
+    fn crossfade_requires_the_same_camera_and_viewport_rect() {
+        let shown = Cam {
+            lat: 20.0,
+            lon: 30.0,
+            heading: 0.0,
+            alt: 14000.0,
+            tilt: 0.0,
+        };
+        let basis = shown.basis(4.0 / 3.0);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        assert!(same_view(
+            true,
+            Some((shown, basis)),
+            Some(rect),
+            shown,
+            Some(rect)
+        ));
+        let resized = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
+        assert!(!same_view(
+            true,
+            Some((shown, basis)),
+            Some(rect),
+            shown,
+            Some(resized)
+        ));
+        assert!(!same_view(
+            true,
+            Some((Cam { lon: 31.0, ..shown }, basis)),
+            Some(rect),
+            shown,
+            Some(rect)
+        ));
+        assert!(!same_view(
+            false,
+            Some((shown, basis)),
+            Some(rect),
+            shown,
+            Some(rect)
+        ));
     }
 }

@@ -85,6 +85,17 @@ impl Flight {
         }
         .with_tilt_clamped()
     }
+    /// Ends the flight looking in the requested direction, instead of north and the
+    /// starting tilt. Used by `camera.flyTo`; ordinary flights keep the existing defaults.
+    pub fn with_orientation(mut self, heading_deg: Option<f64>, tilt_deg: Option<f64>) -> Self {
+        if let Some(heading) = heading_deg {
+            self.b.heading = wrap_lon(heading);
+        }
+        if let Some(tilt) = tilt_deg {
+            self.b.set_tilt(tilt);
+        }
+        self
+    }
     /// Where the flight ends.
     pub fn destination(&self) -> Cam {
         self.b
@@ -142,5 +153,21 @@ mod tests {
         assert_eq!(end.lat, MAX_CAMERA_LATITUDE_DEG);
         assert_eq!(end.lon, -180.0);
         assert_eq!(end.alt, MIN_CAMERA_ALTITUDE_KM);
+    }
+    #[test]
+    fn requested_destination_orientation_is_reached() {
+        let from = Cam {
+            lat: 10.0,
+            lon: 20.0,
+            heading: 30.0,
+            alt: 500.0,
+            tilt: 10.0,
+        };
+        let mut flight =
+            Flight::new(from, 40.0, 50.0, 400.0).with_orientation(Some(370.0), Some(45.0));
+        let end = flight.advance(100.0);
+        assert!(flight.is_finished());
+        assert_eq!(end.heading, 10.0);
+        assert_eq!(end.tilt, 45.0);
     }
 }

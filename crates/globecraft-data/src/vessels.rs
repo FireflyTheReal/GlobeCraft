@@ -22,6 +22,14 @@ pub struct Vessel {
     pub lon: f64,
     pub course: f64,
     pub speed_knots: Option<f64>,
+    /// AIS ship-and-cargo type code (30 fishing, 60-69 passenger, 70-79 cargo,
+    /// 80-89 tanker, and so on).
+    pub ship_type: Option<u16>,
+    /// Reported destination, when the transponder sends one.
+    pub destination: Option<String>,
+    pub draught_m: Option<f64>,
+    pub length_m: Option<f64>,
+    pub beam_m: Option<f64>,
     pub observed_unix: f64,
 }
 #[derive(Clone, Copy, Debug, Default)]
@@ -176,6 +184,24 @@ fn valid_position(lat: f64, lon: f64, time: f64, now: f64) -> bool {
 fn time_seconds(raw: f64) -> f64 {
     if raw > 1e11 { raw / 1000.0 } else { raw }
 }
+/// A non-empty reported string, trimmed.
+fn text(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+}
+/// The AIS ship-and-cargo type, restricted to the defined single-digit groups.
+fn ship_type(value: Option<&serde_json::Value>) -> Option<u16> {
+    number(value)
+        .filter(|code| (0.0..=99.0).contains(code))
+        .map(|code| code as u16)
+}
+/// A positive size given by the transponder, in metres.
+fn measurement(value: Option<&serde_json::Value>) -> Option<f64> {
+    number(value).filter(|value| *value > 0.0)
+}
 fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
     json["vessels"]
         .as_array()
@@ -199,6 +225,11 @@ fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
                 lon,
                 course: number(p.get("cog")).unwrap_or(0.0).rem_euclid(360.0),
                 speed_knots: number(p.get("sog")).filter(|s| (0.0..=102.2).contains(s)),
+                ship_type: ship_type(p.get("type")),
+                destination: text(p.get("dest")).or_else(|| text(p.get("destination"))),
+                draught_m: measurement(p.get("draught")),
+                length_m: measurement(p.get("len")).or_else(|| measurement(p.get("length"))),
+                beam_m: measurement(p.get("beam")),
                 observed_unix: observed,
             })
         })
@@ -246,6 +277,15 @@ fn parse_ais_geojson(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
                     .unwrap_or(0.0)
                     .rem_euclid(360.0),
                 speed_knots: number(p.get("sog").or_else(|| p.get("speed"))),
+                ship_type: ship_type(
+                    p.get("shipType")
+                        .or_else(|| p.get("ship_type"))
+                        .or_else(|| p.get("type")),
+                ),
+                destination: text(p.get("destination")).or_else(|| text(p.get("dest"))),
+                draught_m: measurement(p.get("draught")),
+                length_m: measurement(p.get("length")).or_else(|| measurement(p.get("len"))),
+                beam_m: measurement(p.get("beam")),
                 observed_unix: observed,
             })
         })
@@ -258,7 +298,7 @@ mod tests {
     fn worldwide_snapshot_reads_milliseconds_and_multiple_regions() {
         let now = 1_800_000_000.0;
         let input = serde_json::json!({"generated_at":1_800_000_000_000u64,"vessels":[
-            {"mmsi":123456789,"lat":-23.95,"lon":-46.3,"name":"SANTOS","ts":1_799_999_930_000u64,"sog":9.1,"cog":110.0},
+            {"mmsi":123456789,"lat":-23.95,"lon":-46.3,"name":"SANTOS","ts":1_799_999_930_000u64,"sog":9.1,"cog":110.0,"type":70,"dest":"RIO","draught":8.4,"len":199.9,"beam":32.2},
             {"mmsi":987654321,"lat":35.7,"lon":139.8,"name":"TOKYO","ts":1_799_999_940_000u64},
             {"mmsi":111111111,"lat":60.1,"lon":25.0,"ts":1_799_900_000_000u64}
         ]});
@@ -267,14 +307,25 @@ mod tests {
         assert_eq!(ships[0].name, "SANTOS");
         assert_eq!(ships[1].lat, 35.7);
         assert_eq!(ships[0].speed_knots, Some(9.1));
+        assert_eq!(ships[0].ship_type, Some(70));
+        assert_eq!(ships[0].destination.as_deref(), Some("RIO"));
+        assert_eq!(ships[0].draught_m, Some(8.4));
+        assert_eq!(ships[0].length_m, Some(199.9));
+        assert_eq!(ships[0].beam_m, Some(32.2));
+        assert_eq!(ships[1].ship_type, None);
     }
     #[test]
     fn geojson_preserves_external_timestamp() {
         let input = serde_json::json!({"features":[{"geometry":{"coordinates":[24.93,60.15]},
-            "properties":{"mmsi":123456789,"sog":12.5,"cog":32,"timestampExternal":1_800_000_000_000u64}}]});
+            "properties":{"mmsi":123456789,"sog":12.5,"cog":32,"timestampExternal":1_800_000_000_000u64,"shipType":60,"destination":"HELSINKI","draught":4.2,"length":45.0,"beam":9.5}}]});
         let v = parse_ais_geojson(&input, 1_800_000_002.0);
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].speed_knots, Some(12.5));
         assert_eq!(v[0].observed_unix, 1_800_000_000.0);
+        assert_eq!(v[0].ship_type, Some(60));
+        assert_eq!(v[0].destination.as_deref(), Some("HELSINKI"));
+        assert_eq!(v[0].draught_m, Some(4.2));
+        assert_eq!(v[0].length_m, Some(45.0));
+        assert_eq!(v[0].beam_m, Some(9.5));
     }
 }

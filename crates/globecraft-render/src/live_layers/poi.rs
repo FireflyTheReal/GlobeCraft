@@ -2,6 +2,7 @@
 //! outlines clipped to the view in f64, and the names to show, most important first
 //! and kept apart.
 use super::LiveInput;
+use crate::overlays::{Ground, TerrainVisibility, ground_position};
 use emath::Pos2;
 use globecraft_data::poi::{PoiLineKind, PoiSnapshot, PointKind};
 use std::collections::HashSet;
@@ -80,7 +81,7 @@ fn point_priority(
     }
 }
 
-pub(super) fn project(input: &LiveInput) -> ProjectedPoi {
+pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> ProjectedPoi {
     let Some(snapshot) = &input.poi else {
         return ProjectedPoi::default();
     };
@@ -89,6 +90,7 @@ pub(super) fn project(input: &LiveInput) -> ProjectedPoi {
         return ProjectedPoi::default();
     }
     let view = input.view;
+    let visibility = TerrainVisibility::new(&view.basis, ground);
     let clip = view
         .rect
         .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
@@ -102,9 +104,16 @@ pub(super) fn project(input: &LiveInput) -> ProjectedPoi {
             let mut run: Vec<Pos2> = Vec::new();
             let mut previous = None;
             for &(lat, lon) in &line.points {
-                let current = view
-                    .basis
-                    .project_precise(view.basis.surface_position(lat, lon), view.rect);
+                let current = visibility
+                    .as_ref()
+                    .is_none_or(|visibility| visibility.visible(lat, lon))
+                    .then(|| {
+                        view.basis.project_precise(
+                            ground_position(&view.basis, ground, lat, lon),
+                            view.rect,
+                        )
+                    })
+                    .flatten();
                 match previous
                     .zip(current)
                     .and_then(|(a, b)| crate::overlays::clip_segment([a, b], clip))
@@ -134,12 +143,18 @@ pub(super) fn project(input: &LiveInput) -> ProjectedPoi {
     }
     ProjectedPoi {
         lines,
-        labels: labels(input, snapshot, layers),
+        labels: labels(input, snapshot, layers, ground),
     }
 }
 
-fn labels(input: &LiveInput, snapshot: &PoiSnapshot, layers: PoiLayers) -> Vec<ProjectedPoiLabel> {
+fn labels(
+    input: &LiveInput,
+    snapshot: &PoiSnapshot,
+    layers: PoiLayers,
+    ground: Option<&dyn Ground>,
+) -> Vec<ProjectedPoiLabel> {
     let view = input.view;
+    let visibility = TerrainVisibility::new(&view.basis, ground);
     let mut seen = HashSet::new();
     let mut found: Vec<(i64, ProjectedPoiLabel)> = Vec::new();
     for (tile_index, tile) in snapshot.tiles.iter().enumerate() {
@@ -156,10 +171,16 @@ fn labels(input: &LiveInput, snapshot: &PoiSnapshot, layers: PoiLayers) -> Vec<P
             if !seen.insert(identity) {
                 continue;
             }
-            let Some(position) = view
-                .basis
-                .project(view.basis.surface_position(point.lat, point.lon), view.rect)
-            else {
+            if visibility
+                .as_ref()
+                .is_some_and(|visibility| !visibility.visible(point.lat, point.lon))
+            {
+                continue;
+            }
+            let Some(position) = view.basis.project(
+                ground_position(&view.basis, ground, point.lat, point.lon),
+                view.rect,
+            ) else {
                 continue;
             };
             if view.rect.contains(position) {

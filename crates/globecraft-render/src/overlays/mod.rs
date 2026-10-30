@@ -9,6 +9,8 @@ use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use std::collections::HashMap;
 pub mod grid;
 mod labels;
+mod occlusion;
+pub use occlusion::TerrainVisibility;
 mod picking;
 pub use picking::pick_on_ground;
 mod spatial;
@@ -320,38 +322,47 @@ pub fn project_borders(
         }
     };
     let mut draw_line = |line: &[(f64, f64)], kind: BorderKind, max_step_deg: f64| {
-        {
+        let visibility = TerrainVisibility::new(view.basis, view.ground);
+        let project = |lat: f64, lon: f64| {
+            if visibility
+                .as_ref()
+                .is_some_and(|visibility| !visibility.visible(lat, lon))
             {
-                let mut anchor: Option<glam::DVec2> = None;
-                for pair in line.array_windows::<2>() {
-                    let (lat1, lon1) = pair[0];
-                    let (lat2, lon2) = pair[1];
-                    let dlat = lat2 - lat1;
-                    let mut dlon = lon2 - lon1;
-                    if dlon > 180.0 {
-                        dlon -= 360.0;
+                return None;
+            }
+            basis.project_precise(view.surface(lat, lon), rect)
+        };
+        let mut anchor: Option<glam::DVec2> = None;
+        let mut previous: Option<(f64, f64, Option<glam::DVec2>)> = None;
+        for &(lat, lon) in line {
+            let current = project(lat, lon);
+            if let Some((lat1, lon1, start)) = previous {
+                let dlat = lat - lat1;
+                let mut dlon = lon - lon1;
+                if dlon > 180.0 {
+                    dlon -= 360.0;
+                }
+                if dlon < -180.0 {
+                    dlon += 360.0;
+                }
+                if let (Some(a), Some(b)) = (start, current) {
+                    // Common case: both endpoints are visible, so no extra sampling needed.
+                    // The anchor stays on the last emitted vertex: short steps accumulate
+                    // against it until the path strays `min_sq` away, then one chord is
+                    // emitted. Adjacent polyline pairs overlap, so measuring each step
+                    // against the previous vertex instead would drop fine runs entirely
+                    // and leave dotted borders.
+                    let from = anchor.unwrap_or(a);
+                    if (b - from).length_squared() >= min_sq {
+                        emit_segment(kind, [from, b]);
+                        anchor = Some(b);
+                    } else if anchor.is_none() {
+                        anchor = Some(a);
                     }
-                    if dlon < -180.0 {
-                        dlon += 360.0;
-                    }
-                    let start = basis.project_precise(view.surface(lat1, lon1), rect);
-                    let end = basis.project_precise(view.surface(lat2, lon2), rect);
-                    if let (Some(a), Some(b)) = (start, end) {
-                        // Common case: both endpoints are visible, so no extra sampling needed.
-                        // The anchor stays on the last emitted vertex: short steps accumulate
-                        // against it until the path strays `min_sq` away, then one chord is
-                        // emitted. Adjacent polyline pairs overlap, so measuring each step
-                        // against the previous vertex instead would drop fine runs entirely
-                        // and leave dotted borders.
-                        let from = anchor.unwrap_or(a);
-                        if (b - from).length_squared() >= min_sq {
-                            emit_segment(kind, [from, b]);
-                            anchor = Some(b);
-                        } else if anchor.is_none() {
-                            anchor = Some(a);
-                        }
-                        continue;
-                    }
+                } else {
+                    // A hidden vertex or a horizon crossing breaks the run and the
+                    // dash phase; the stretch is resampled so the visible part before
+                    // it still reaches the edge of the terrain silhouette.
                     anchor = None;
                     let span = dlat.abs().max(dlon.abs());
                     // Below one subdivision step the chord is already the right
@@ -364,7 +375,7 @@ pub fn project_borders(
                         let t = i as f64 / steps as f64;
                         let lon = wrap_lon(lon1 + dlon * t);
                         let lat = lat1 + dlat * t;
-                        let cur = basis.project_precise(view.surface(lat, lon), rect);
+                        let cur = project(lat, lon);
                         if let (Some(a), Some(b)) = (prev, cur) {
                             emit_segment(kind, [a, b]);
                         }
@@ -372,6 +383,7 @@ pub fn project_borders(
                     }
                 }
             }
+            previous = Some((lat, lon, current));
         }
     };
     let close_zoom = view.altitude_km <= CLOSE_BORDER_ALTITUDE_KM;
@@ -542,6 +554,7 @@ pub fn project_labels<'a>(
         return Vec::new();
     }
     let (basis, rect) = (view.basis, view.rect);
+    let visibility = TerrainVisibility::new(basis, view.ground);
     let mut cands: Vec<(u8, u8, Pos2, &MapLabel, usize)> = Vec::new();
     for (source_index, label) in boundaries.labels.iter().enumerate() {
         // States are gated entirely here because their threshold is the app's
@@ -564,6 +577,12 @@ pub fn project_labels<'a>(
             }
         };
         if !enabled {
+            continue;
+        }
+        if visibility
+            .as_ref()
+            .is_some_and(|visibility| !visibility.visible(label.lat, label.lon))
+        {
             continue;
         }
         if let Some(pos) = basis.project(view.surface(label.lat, label.lon), rect)

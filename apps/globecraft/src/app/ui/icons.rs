@@ -1506,6 +1506,12 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.line(&[(6.0, 6.0), (18.0, 18.0)], 1.8, ink);
             p.line(&[(18.0, 6.0), (6.0, 18.0)], 1.8, ink);
         }
+        "window_minimize" => p.line(&[(6.0, 12.0), (18.0, 12.0)], 1.6, ink),
+        "window_maximize" => p.rect(6.0, 6.0, 12.0, 12.0, None, Some((1.4, ink)), 0.0),
+        "window_restore" => {
+            p.line(&[(8.0, 6.0), (18.0, 6.0), (18.0, 16.0)], 1.4, ink);
+            p.rect(6.0, 8.0, 10.0, 10.0, None, Some((1.4, ink)), 0.0);
+        }
         "dropdown" => p.fill(&[(7.0, 9.5), (17.0, 9.5), (12.0, 15.0)], ink),
         "chevron_right" => p.line(&[(9.0, 6.0), (15.0, 12.0), (9.0, 18.0)], 1.8, ink),
         "chevron_left" => p.line(&[(15.0, 6.0), (9.0, 12.0), (15.0, 18.0)], 1.8, ink),
@@ -2087,7 +2093,8 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
         }
         // ── GlobeCraft: globe, live layers and application icons ──
         "logo" => {
-            // The globe with an orbit, in the brand colour.
+            // The globe with an orbit, in the brand colour. Used by About, not the
+            // header (the merged header starts with File).
             let brand = super::theme::BRAND;
             p.circle(12.0, 12.0, 9.5, Some(brand), None);
             p.circle(9.0, 9.0, 4.5, Some(Color32::from_white_alpha(60)), None);

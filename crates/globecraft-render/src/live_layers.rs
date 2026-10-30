@@ -3,9 +3,12 @@ mod poi;
 mod transport;
 mod worker;
 use crate::motion;
+use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility, ground_position};
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
-use globecraft_data::{roads::Road, satellites::Satellite, traffic::TrafficTiles, vessels::Vessel};
+use globecraft_data::{
+    roads::Road, satellites::Satellite, tiles::TileCache, traffic::TrafficTiles, vessels::Vessel,
+};
 pub use poi::{PoiLayers, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
 use std::sync::Arc;
 pub use transport::{
@@ -41,8 +44,23 @@ pub struct LiveView {
     pub pixels_per_point: f32,
     pub traffic_width_px: usize,
     pub traffic_height_px: usize,
+    /// Relief under the layers, when terrain is drawn: lines and markers sit on the
+    /// ridges and valleys they follow, as borders, ruler and placemarks already do.
+    pub ground: Option<OverlayGround>,
 }
 impl LiveView {
+    /// The same camera and viewport; relief generation is compared separately because
+    /// it only moves points by a few pixels and must not blank a layer while the new
+    /// heights are projected.
+    fn same_frame(self, other: Self) -> bool {
+        self.basis == other.basis
+            && self.rect == other.rect
+            && self.altitude_km == other.altitude_km
+            && self.map_scale == other.map_scale
+            && self.pixels_per_point == other.pixels_per_point
+            && self.traffic_width_px == other.traffic_width_px
+            && self.traffic_height_px == other.traffic_height_px
+    }
     /// How often vessels move in this view, in seconds (see [`crate::motion`]).
     pub fn vessel_step(&self) -> f64 {
         motion::step_secs(
@@ -83,6 +101,22 @@ fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
     }
 }
 impl LiveInput {
+    /// The same camera and layer selection, whatever the data or time: geometry for
+    /// this view stays on screen while newly arrived tile snapshots are projected
+    /// (requiring the same snapshot pointers blanked the transport and places layers
+    /// on every tile that arrived). A layer that is turned off, or whose data is
+    /// cleared, changes presence and is hidden at once instead of after projection.
+    pub fn same_view(&self, other: &Self) -> bool {
+        self.view.same_frame(other.view)
+            && self.transport_layers == other.transport_layers
+            && self.poi_layers == other.poi_layers
+            && self.roads.is_some() == other.roads.is_some()
+            && self.vessels.is_some() == other.vessels.is_some()
+            && self.satellites.is_some() == other.satellites.is_some()
+            && self.traffic.is_some() == other.traffic.is_some()
+            && self.transport.is_some() == other.transport.is_some()
+            && self.poi.is_some() == other.poi.is_some()
+    }
     /// The same view and data, whatever the time: geometry for it may be drawn while
     /// the next motion step is prepared (requiring the time too blanked the vessels
     /// and satellites on every step).
@@ -176,28 +210,49 @@ impl LiveGeometry {
 #[derive(Default)]
 pub struct LivePreparer {
     latest: Option<Arc<LiveGeometry>>,
+    /// Where the relief heights come from when the view asks for them.
+    elevation: Option<Arc<TileCache>>,
 }
 impl LivePreparer {
+    /// A preparer that can raise live layers onto the relief from `cache`'s
+    /// elevation tiles.
+    pub fn with_elevation(cache: Arc<TileCache>) -> Self {
+        Self {
+            elevation: Some(cache),
+            ..Self::default()
+        }
+    }
     pub fn prepare(&mut self, input: LiveInput) -> Arc<LiveGeometry> {
         if let Some(old) = &self.latest
             && old.input.same_request(&input)
         {
             return old.clone();
         }
+        let heights = GroundHeights::new(
+            self.elevation.as_deref(),
+            input.view.ground,
+            input.view.altitude_km,
+        );
+        let ground = heights.as_ref().map(|heights| heights as &dyn Ground);
         let previous = self
             .latest
             .as_ref()
+            .filter(|old| old.input.view.same_frame(input.view));
+        // Ground-following layers also need the same relief generation and altitude.
+        let on_ground = self
+            .latest
+            .as_ref()
             .filter(|old| old.input.view == input.view);
-        let roads = previous
+        let roads = on_ground
             .filter(|old| same(&old.input.roads, &input.roads))
             .map(|old| old.roads.clone())
-            .unwrap_or_else(|| Arc::new(project_roads(&input)));
+            .unwrap_or_else(|| Arc::new(project_roads(&input, ground)));
         let vessels = previous
             .filter(|old| {
                 same(&old.input.vessels, &input.vessels) && old.input.same_vessel_time(&input)
             })
             .map(|old| old.vessels.clone())
-            .unwrap_or_else(|| Arc::new(project_vessels(&input)));
+            .unwrap_or_else(|| Arc::new(project_vessels(&input, ground)));
         let satellites = previous
             .filter(|old| {
                 same(&old.input.satellites, &input.satellites)
@@ -219,13 +274,13 @@ impl LivePreparer {
                     ))
                 })
             };
-        let reused = previous.filter(|old| old.input.same_transport(&input));
+        let reused = on_ground.filter(|old| old.input.same_transport(&input));
         let transport = reused
             .map(|old| old.transport.clone())
-            .unwrap_or_else(|| Arc::new(transport::project(&input)));
+            .unwrap_or_else(|| Arc::new(transport::project(&input, ground)));
         let poi = reused
             .map(|old| old.poi.clone())
-            .unwrap_or_else(|| Arc::new(poi::project(&input)));
+            .unwrap_or_else(|| Arc::new(poi::project(&input, ground)));
         let geometry = Arc::new(LiveGeometry {
             input,
             roads,
@@ -239,10 +294,11 @@ impl LivePreparer {
         geometry
     }
 }
-fn project_roads(input: &LiveInput) -> Vec<ProjectedRoad> {
+fn project_roads(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<ProjectedRoad> {
     let Some(roads) = &input.roads else {
         return Vec::new();
     };
+    let visibility = TerrainVisibility::new(&input.view.basis, ground);
     roads
         .iter()
         .enumerate()
@@ -259,10 +315,16 @@ fn project_roads(input: &LiveInput) -> Vec<ProjectedRoad> {
             let mut visible: Vec<Pos2> = Vec::new();
             let mut previous = None;
             for &(lat, lon) in &road.points {
-                let current = input
-                    .view
-                    .basis
-                    .project_precise(input.view.basis.surface_position(lat, lon), input.view.rect);
+                let current = visibility
+                    .as_ref()
+                    .is_none_or(|visibility| visibility.visible(lat, lon))
+                    .then(|| {
+                        input.view.basis.project_precise(
+                            ground_position(&input.view.basis, ground, lat, lon),
+                            input.view.rect,
+                        )
+                    })
+                    .flatten();
                 let piece = previous
                     .zip(current)
                     .and_then(|(a, b)| crate::overlays::clip_segment([a, b], clip));
@@ -296,17 +358,24 @@ fn project_roads(input: &LiveInput) -> Vec<ProjectedRoad> {
         })
         .collect()
 }
-fn project_vessels(input: &LiveInput) -> Vec<ProjectedVessel> {
+fn project_vessels(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<ProjectedVessel> {
     let Some(vessels) = &input.vessels else {
         return Vec::new();
     };
     let view = input.view;
+    let visibility = TerrainVisibility::new(&view.basis, ground);
     vessels
         .iter()
         .enumerate()
         .filter_map(|(source_index, ship)| {
             let age = (input.unix_secs - ship.observed_unix).max(0.0);
             let (lat, lon) = dead_reckon(ship, age);
+            if visibility
+                .as_ref()
+                .is_some_and(|visibility| !visibility.visible(lat, lon))
+            {
+                return None;
+            }
             let at = view
                 .basis
                 .project(view.basis.surface_position(lat, lon), view.rect)?;

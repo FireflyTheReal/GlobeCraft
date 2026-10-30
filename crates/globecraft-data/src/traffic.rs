@@ -7,7 +7,17 @@ use std::{
 const UPDATE_INTERVAL: Duration = Duration::from_secs(120);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 const MOVE_INTERVAL: Duration = Duration::from_secs(25);
+/// The composite covers the requested tile and one neighbour in each direction.
+const TRAFFIC_GRID_TILES: i64 = 3;
+const TRAFFIC_GRID_RADIUS: i64 = 1;
+/// TomTom's raster tile edge, in pixels, and the composite edge built from the grid.
+const TRAFFIC_TILE_SIZE_PX: u32 = 256;
+const TRAFFIC_COMPOSITE_SIZE_PX: u32 = TRAFFIC_GRID_TILES as u32 * TRAFFIC_TILE_SIZE_PX;
+/// One encoded TomTom tile, with room for PNG metadata.
+const TRAFFIC_TILE_MAX_BYTES: u64 = 350_000;
 pub const MAX_TRAFFIC_ALTITUDE_KM: f64 = 80.0;
+/// TomTom's Web Mercator tiles stop at this latitude.
+const MAX_TRAFFIC_LATITUDE_DEG: f64 = 85.0;
 #[derive(Clone)]
 pub struct TrafficTiles {
     pub image: RgbaImage,
@@ -18,7 +28,7 @@ pub struct TrafficTiles {
 }
 impl TrafficTiles {
     pub fn sample(&self, lat: f64, lon: f64) -> Option<[u8; 4]> {
-        if lat.abs() >= 85.0 {
+        if lat.abs() >= MAX_TRAFFIC_LATITUDE_DEG {
             return None;
         }
         let scale = (1u64 << self.zoom) as f64;
@@ -29,12 +39,21 @@ impl TrafficTiles {
         if dx < 0.0 {
             dx += scale;
         }
-        if dx >= 3.0 || !(0.0..3.0).contains(&(ty - self.top_y as f64)) {
+        if dx >= TRAFFIC_GRID_TILES as f64
+            || !(0.0..TRAFFIC_GRID_TILES as f64).contains(&(ty - self.top_y as f64))
+        {
             return None;
         }
-        let x = (dx * 256.0) as u32;
-        let y = ((ty - self.top_y as f64) * 256.0) as u32;
-        Some(self.image.get_pixel(x.min(767), y.min(767)).0)
+        let x = (dx * f64::from(TRAFFIC_TILE_SIZE_PX)) as u32;
+        let y = ((ty - self.top_y as f64) * f64::from(TRAFFIC_TILE_SIZE_PX)) as u32;
+        Some(
+            self.image
+                .get_pixel(
+                    x.min(TRAFFIC_COMPOSITE_SIZE_PX - 1),
+                    y.min(TRAFFIC_COMPOSITE_SIZE_PX - 1),
+                )
+                .0,
+        )
     }
 }
 pub struct TrafficQuery<'a> {
@@ -107,7 +126,11 @@ impl LiveTraffic {
         let key = key.trim();
         self.set_key(key);
         self.poll(key);
-        if !enabled || key.is_empty() || alt > MAX_TRAFFIC_ALTITUDE_KM || lat.abs() >= 85.0 {
+        if !enabled
+            || key.is_empty()
+            || alt > MAX_TRAFFIC_ALTITUDE_KM
+            || lat.abs() >= MAX_TRAFFIC_LATITUDE_DEG
+        {
             return;
         }
         let zoom = zoom_for_altitude(alt);
@@ -184,27 +207,29 @@ fn center_tile(lat: f64, lon: f64, zoom: u32) -> (i64, i64) {
 async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Radar)?;
     let n = 1i64 << zoom;
-    let left = x - 1;
-    let top = (y - 1).clamp(0, n - 1);
-    let mut decoded = Vec::with_capacity(9);
+    let left = x - TRAFFIC_GRID_RADIUS;
+    let top = (y - TRAFFIC_GRID_RADIUS).clamp(0, n - 1);
+    let mut decoded = Vec::with_capacity((TRAFFIC_GRID_TILES * TRAFFIC_GRID_TILES) as usize);
     let mut tasks = tokio::task::JoinSet::new();
-    for iy in 0..3 {
-        for ix in 0..3 {
+    for iy in 0..TRAFFIC_GRID_TILES {
+        for ix in 0..TRAFFIC_GRID_TILES {
             let ty = top + iy;
             if ty >= n {
                 continue;
             }
             let tx = (left + ix).rem_euclid(n);
             let url = format!(
-                "https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{zoom}/{tx}/{ty}?apiVersion=2&style=light&tileSize=256"
+                "https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{zoom}/{tx}/{ty}?apiVersion=2&style=light&tileSize={TRAFFIC_TILE_SIZE_PX}"
             );
             let client = client.clone();
             let key = key.clone();
             tasks.spawn(async move {
-                let bytes =
-                    crate::http::body(client.get(url).header("TomTom-Api-Key", key), 350_000)
-                        .await
-                        .ok()?;
+                let bytes = crate::http::body(
+                    client.get(url).header("TomTom-Api-Key", key),
+                    TRAFFIC_TILE_MAX_BYTES,
+                )
+                .await
+                .ok()?;
                 let tile = crate::cpu::run(crate::cpu::Service::Tiles, move || {
                     Ok(image::load_from_memory(&bytes)?.to_rgba8())
                 })
@@ -216,8 +241,8 @@ async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles
     }
     while let Some(item) = tasks.join_next().await {
         if let Ok(Some((ix, iy, img))) = item
-            && img.width() == 256
-            && img.height() == 256
+            && img.width() == TRAFFIC_TILE_SIZE_PX
+            && img.height() == TRAFFIC_TILE_SIZE_PX
         {
             decoded.push((ix, iy, img));
         }
@@ -228,9 +253,14 @@ async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles
         );
     }
     crate::cpu::run(crate::cpu::Service::Features, move || {
-        let mut image = RgbaImage::new(768, 768);
+        let mut image = RgbaImage::new(TRAFFIC_COMPOSITE_SIZE_PX, TRAFFIC_COMPOSITE_SIZE_PX);
         for (ix, iy, tile) in decoded {
-            imageops::overlay(&mut image, &tile, ix * 256, iy * 256);
+            imageops::overlay(
+                &mut image,
+                &tile,
+                ix * i64::from(TRAFFIC_TILE_SIZE_PX),
+                iy * i64::from(TRAFFIC_TILE_SIZE_PX),
+            );
         }
         Ok(TrafficTiles {
             image,

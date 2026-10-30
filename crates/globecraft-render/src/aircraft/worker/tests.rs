@@ -14,6 +14,7 @@ fn input() -> ProjectionInput {
             heading_deg: 90.0,
             speed_knots: Some(440.0),
             altitude_feet: Some(35_000.0),
+            vertical_rate_fpm: None,
             observed_unix: 1000.0,
         })
         .collect::<Vec<_>>()

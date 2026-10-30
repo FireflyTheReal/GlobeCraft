@@ -1,5 +1,7 @@
 //! Cache styled AIS/orbital meshes without changing polygon/label ordering.
 use eframe::egui::{self, Align2, Color32, Pos2, Shape, Stroke, Vec2};
+use globecraft_core::language::Lang;
+use globecraft_data::{satellites::Satellite, vessels::Vessel};
 use globecraft_render::live_layers::{LiveGeometry, ProjectedSatellite, ProjectedVessel};
 use std::sync::Arc;
 
@@ -99,6 +101,95 @@ fn build_vessels(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape>
     }
     shapes
 }
+/// AIS ship-and-cargo groups the tooltip names.
+fn vessel_class(code: Option<u16>) -> &'static str {
+    match code {
+        Some(30) => "fishing",
+        Some(31 | 32 | 52) => "tug",
+        Some(35 | 55) => "military",
+        Some(36 | 37) => "pleasure",
+        Some(40..=49) => "high_speed",
+        Some(50 | 51 | 53 | 54 | 58 | 59) => "service",
+        Some(60..=69) => "passenger",
+        Some(70..=79) => "cargo",
+        Some(80..=89) => "tanker",
+        Some(90..=99) => "other",
+        _ => "unknown",
+    }
+}
+
+pub(super) fn vessel_tooltip(lang: Lang, ship: &Vessel) -> String {
+    let name = if ship.name.is_empty() {
+        lang.text("vessels-unnamed")
+    } else {
+        &ship.name
+    };
+    let destination = ship.destination.as_deref().unwrap_or("—");
+    let dimensions = match (ship.length_m, ship.beam_m) {
+        (Some(length), Some(beam)) => format!("{length:.0} × {beam:.0} m"),
+        (Some(length), None) => format!("{length:.0} m"),
+        (None, Some(beam)) => format!("{beam:.0} m"),
+        (None, None) => "—".to_owned(),
+    };
+    let draught = ship
+        .draught_m
+        .map_or_else(|| "—".to_owned(), |draught| format!("{draught:.1} m"));
+    lang.format(
+        "vessels-hover-tooltip",
+        &[
+            ("name", name.into()),
+            ("mmsi", ship.mmsi.as_str().into()),
+            ("ship_type", vessel_class(ship.ship_type).into()),
+            ("destination", destination.into()),
+            ("dimensions", dimensions.into()),
+            ("draught", draught.into()),
+            ("latitude", format!("{:.3}", ship.lat).into()),
+            ("longitude", format!("{:.3}", ship.lon).into()),
+            (
+                "course",
+                globecraft_core::compass::heading_text(ship.course, lang).into(),
+            ),
+            (
+                "speed",
+                ship.speed_knots
+                    .map_or_else(|| "?".to_owned(), |speed| format!("{speed:.1}"))
+                    .into(),
+            ),
+            (
+                "minutes",
+                format!(
+                    "{:.0}",
+                    ((globecraft_core::math::now_unix() - ship.observed_unix).max(0.0) / 60.0)
+                        .round()
+                )
+                .into(),
+            ),
+        ],
+    )
+}
+
+pub(super) fn satellite_tooltip(lang: Lang, satellite: &Satellite) -> String {
+    let period = satellite
+        .orbit
+        .period_minutes()
+        .map_or_else(|| "—".to_owned(), |minutes| format!("{minutes:.1} min"));
+    let altitude = satellite
+        .orbit
+        .altitude_km()
+        .map_or_else(|| "—".to_owned(), |km| format!("{km:.0} km"));
+    let inclination = format!("{:.1}°", satellite.orbit.inclination_deg);
+    lang.format(
+        "satellites-hover-tooltip",
+        &[
+            ("name", satellite.name.as_str().into()),
+            ("norad", satellite.norad.as_str().into()),
+            ("period", period.into()),
+            ("altitude", altitude.into()),
+            ("inclination", inclination.into()),
+        ],
+    )
+}
+
 fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape> {
     let Some(satellites) = &geometry.input.satellites else {
         return Vec::new();
@@ -137,17 +228,84 @@ fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Sha
 mod tests {
     use super::*;
     use globecraft_core::camera::Cam;
+    use globecraft_core::orbit::OrbitalElements;
     use globecraft_render::live_layers::{LiveInput, LivePreparer, LiveView};
-    #[test]
-    fn vessel_label_order_limits_and_cached_meshes_survive_unchanged_frames() {
-        let ctx = egui::Context::default();
-        let ship = globecraft_data::vessels::Vessel {
+
+    fn ship() -> Vessel {
+        Vessel {
             mmsi: "123456789".into(),
             name: "Ship".into(),
             lat: 0.0,
             lon: 0.0,
             course: 45.0,
             speed_knots: None,
+            ship_type: Some(70),
+            destination: Some("RIO".into()),
+            draught_m: Some(8.4),
+            length_m: Some(200.0),
+            beam_m: Some(32.0),
+            observed_unix: 1_700_000_000.0,
+        }
+    }
+
+    #[test]
+    fn vessel_tooltip_surfaces_type_destination_and_dimensions() {
+        let text = vessel_tooltip(Lang::En, &ship());
+        assert!(text.contains("Cargo ship"), "{text}");
+        assert!(text.contains("Destination: RIO"), "{text}");
+        assert!(text.contains("200 × 32 m"), "{text}");
+        assert!(text.contains("Draught: 8.4 m"), "{text}");
+        assert!(text.contains("MMSI 123456789"), "{text}");
+        let unnamed = Vessel {
+            name: String::new(),
+            destination: None,
+            length_m: None,
+            beam_m: None,
+            draught_m: None,
+            ship_type: None,
+            ..ship()
+        };
+        assert!(vessel_tooltip(Lang::En, &unnamed).contains("Unidentified vessel"));
+        assert!(vessel_tooltip(Lang::PtBr, &unnamed).contains("Navio não identificado"));
+        assert!(vessel_tooltip(Lang::En, &unnamed).contains("Vessel type not reported"));
+    }
+
+    #[test]
+    fn satellite_tooltip_reports_period_altitude_and_inclination() {
+        let satellite = Satellite {
+            name: "ISS".into(),
+            norad: "25544".into(),
+            orbit: OrbitalElements {
+                inclination_deg: 51.6,
+                raan_deg: 0.0,
+                eccentricity: 0.001,
+                argument_perigee_deg: 0.0,
+                mean_anomaly_deg: 0.0,
+                mean_motion_rev_per_day: 15.0,
+                epoch_unix_secs: 1_700_000_000.0,
+            },
+        };
+        let text = satellite_tooltip(Lang::En, &satellite);
+        assert!(text.contains("Period 96.0 min"), "{text}");
+        assert!(text.contains("Altitude 574 km"), "{text}");
+        assert!(text.contains("Inclination 51.6°"), "{text}");
+    }
+
+    #[test]
+    fn vessel_label_order_limits_and_cached_meshes_survive_unchanged_frames() {
+        let ctx = egui::Context::default();
+        let ship = Vessel {
+            mmsi: "123456789".into(),
+            name: "Ship".into(),
+            lat: 0.0,
+            lon: 0.0,
+            course: 45.0,
+            speed_knots: None,
+            ship_type: None,
+            destination: None,
+            draught_m: None,
+            length_m: None,
+            beam_m: None,
             observed_unix: 1_700_000_000.0,
         };
         let input = LiveInput {
@@ -166,6 +324,7 @@ mod tests {
                 pixels_per_point: 1.0,
                 traffic_width_px: 16,
                 traffic_height_px: 16,
+                ground: None,
             },
             roads: None,
             vessels: Some(vec![ship; 100].into()),

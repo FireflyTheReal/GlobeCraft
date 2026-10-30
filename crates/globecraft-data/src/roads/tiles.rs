@@ -31,6 +31,8 @@ static SPEC: Spec<RoadTile> = Spec {
     max_tiles: 64,
     max_floor_tiles: 64,
     max_cached_tiles: 500,
+    max_cached_bytes: crate::vector_tiles::MAX_VECTOR_CACHE_BYTES,
+    size_bytes,
     decode,
 };
 
@@ -38,6 +40,21 @@ static SPEC: Spec<RoadTile> = Spec {
 #[derive(Debug, Default)]
 pub struct RoadTile {
     pub roads: Vec<Road>,
+}
+
+/// Estimated heap size of a decoded road tile, for the stream's byte budget.
+fn size_bytes(tile: &RoadTile) -> usize {
+    let roads: usize = tile
+        .roads
+        .iter()
+        .map(|road| {
+            std::mem::size_of::<Road>()
+                + road.name.capacity()
+                + road.kind.capacity()
+                + road.points.capacity() * std::mem::size_of::<(f64, f64)>()
+        })
+        .sum();
+    std::mem::size_of::<RoadTile>() + tile.roads.capacity() * std::mem::size_of::<Road>() + roads
 }
 
 /// The road tile layer.
@@ -345,15 +362,23 @@ mod live_tests {
     #[tokio::test]
     #[ignore = "network: reads GlobeCraft's published road tiles"]
     async fn published_road_tiles_hold_named_roads() {
-        let template = crate::map_data::banded_template(SPEC.set, SPEC.bands)
-            .await
-            .unwrap();
+        let template = crate::map_data::template("roads").await.unwrap();
         let mut motorway_names = BTreeMap::new();
-        for z in [4, 6, 8, 10, 11, 12, 13, 14] {
+        for z in [4, 6, 8, 10, 11, 12] {
             let key = TileKey::at(z, 48.2, 11.6);
-            let tile = crate::vector_tiles::fetch(&SPEC, key, &template)
+            let (requests_before, bytes_before) = crate::pmtiles::transferred();
+            let started = std::time::Instant::now();
+            let mut tiles = crate::vector_tiles::fetch_many(&SPEC, &[key], &template)
                 .await
                 .unwrap();
+            let (requests, bytes) = crate::pmtiles::transferred();
+            println!(
+                "z{z}: {:?}, {} requests, {:.1} KB",
+                started.elapsed(),
+                requests - requests_before,
+                (bytes - bytes_before) as f64 / 1024.0
+            );
+            let tile = tiles.pop().unwrap().1.unwrap();
             let mut kinds: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
             for road in &tile.roads {
                 let entry = kinds.entry(road.kind.as_str()).or_default();

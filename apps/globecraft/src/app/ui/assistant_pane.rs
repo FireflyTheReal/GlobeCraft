@@ -24,18 +24,44 @@ const SUGGESTIONS: [&str; 5] = [
 
 /// A transcript note, translated where the catalog knows its template.
 fn note_text(lang: Lang, note: &provider::Note) -> String {
-    let key = match note.template {
+    let Some(key) = note_key(note.template) else {
+        return note.to_string();
+    };
+    let args: Vec<_> = note
+        .args
+        .iter()
+        .map(|(name, value)| (*name, value.as_str().into()))
+        .collect();
+    if args.is_empty() {
+        lang.text(key).to_string()
+    } else {
+        lang.format(key, &args)
+    }
+}
+
+/// The catalog key for every English template in `provider::NOTE_TEMPLATES`.
+fn note_key(template: &str) -> Option<&'static str> {
+    Some(match template {
         "The reply reached its length limit." => "assistant-note-length",
         "The provider's content filter stopped the reply." => "assistant-note-filter",
+        "The reply stopped early ({reason})." => "assistant-note-stopped-early",
+        "The model declined this request." => "assistant-note-declined",
+        "The model declined this request: {why}" => "assistant-note-declined-reason",
+        "The reply stopped before completion; no actions were run." => "assistant-note-incomplete",
+        "Gemini stopped the reply ({reason})." => "assistant-note-gemini-stopped",
         "Summarising the earlier conversation to keep it within the model's context…" => {
             "assistant-note-summarising"
         }
         "Compacted the earlier conversation." => "assistant-note-compacted",
+        "The provider returned HTTP {status}; trying again in {seconds} s." => {
+            "assistant-note-http-retry"
+        }
+        "The connection failed; trying again in {seconds} s." => "assistant-note-connection-retry",
         "The model sent an empty reply; ask again, or try another model." => "assistant-note-empty",
+        "Stopped after {steps} steps; say \"continue\" to go on." => "assistant-note-step-limit",
         "Stopped." => "assistant-note-stopped",
-        _ => return note.to_string(),
-    };
-    lang.text(key).to_string()
+        _ => return None,
+    })
 }
 
 impl App {
@@ -643,4 +669,69 @@ fn inline(ui: &Ui, text: &str, t: &Tokens, size: f32, heading: bool) -> egui::te
     }
     flush(&mut job, &mut buf, bold, italic);
     job
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A note with every `{placeholder}` filled, so translated templates that
+    /// need values can be formatted without knowing each template's arguments.
+    fn filled_note(template: &'static str) -> provider::Note {
+        let mut args = Vec::new();
+        let mut rest = template;
+        while let Some((_, tail)) = rest.split_once('{') {
+            let Some((name, after)) = tail.split_once('}') else {
+                break;
+            };
+            args.push((
+                name.trim().trim_start_matches('$').trim(),
+                "example".to_owned(),
+            ));
+            rest = after;
+        }
+        provider::Note { template, args }
+    }
+
+    #[test]
+    fn every_assistant_note_template_has_a_usable_translation() {
+        for template in provider::NOTE_TEMPLATES.iter().copied() {
+            let key = note_key(template).unwrap_or_else(|| panic!("missing key for {template}"));
+            let note = filled_note(template);
+            for lang in Lang::ALL {
+                let text = note_text(lang, &note);
+                assert_ne!(text, key, "{} lacks {key}", lang.code());
+                assert!(
+                    !text.contains('{'),
+                    "{} left placeholders in {key}: {text}",
+                    lang.code()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parameterized_notes_fill_the_translated_message() {
+        let stopped = provider::Note::with(
+            "The reply stopped early ({reason}).",
+            [("reason", "safety".to_owned())],
+        );
+        assert_eq!(
+            note_text(Lang::En, &stopped),
+            "The reply stopped early (safety)."
+        );
+        assert_eq!(
+            note_text(Lang::PtBr, &stopped),
+            "A resposta parou cedo (safety)."
+        );
+
+        let declined = provider::Note::with(
+            "The model declined this request: {why}",
+            [("why", "policy".to_owned())],
+        );
+        assert_eq!(
+            note_text(Lang::En, &declined),
+            "The model declined this request: policy"
+        );
+    }
 }

@@ -70,3 +70,4 @@ espeak-ng = "*"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda.workspace = true
+raw-window-handle.workspace = true

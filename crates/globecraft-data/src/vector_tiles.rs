@@ -8,9 +8,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const MAX_INFLIGHT: usize = 6;
+/// Tiles downloaded in one batch. A batch shares archive lookups and coalesced byte
+/// ranges, so a view's 64 tiles take a few requests instead of one per tile.
+const MAX_BATCH_TILES: usize = 24;
 const FAILED_RETRY: Duration = Duration::from_secs(30);
 const TEMPLATE_RETRY: Duration = Duration::from_secs(60);
+/// Decoded vector tiles kept per set are bounded by both count and this estimated
+/// heap budget. The estimate counts owned names and coordinate capacity, not the
+/// allocator's overhead.
+pub(crate) const MAX_VECTOR_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 /// How one set is streamed.
 pub(crate) struct Spec<T> {
@@ -31,6 +37,11 @@ pub(crate) struct Spec<T> {
     pub(crate) max_floor_tiles: usize,
     /// Decoded tiles kept in memory.
     pub(crate) max_cached_tiles: usize,
+    /// Estimated decoded memory the tiles may occupy before the least recently used
+    /// are dropped.
+    pub(crate) max_cached_bytes: usize,
+    /// Estimated heap size of one decoded tile.
+    pub(crate) size_bytes: fn(&T) -> usize,
     /// A decompressed vector tile's content.
     pub(crate) decode: fn(TileKey, &[u8]) -> Option<T>,
 }
@@ -60,11 +71,18 @@ struct Shared<T> {
     template_loading: bool,
     template_failed: Option<Instant>,
     template_error: Option<String>,
-    tiles: HashMap<TileKey, (Arc<T>, Instant)>,
+    tiles: HashMap<TileKey, Cached<T>>,
     inflight: HashSet<TileKey>,
     failed: HashMap<TileKey, Instant>,
     /// Bumped whenever a tile arrives.
     revision: u64,
+}
+
+struct Cached<T> {
+    tile: Arc<T>,
+    used: Instant,
+    /// Estimated decoded heap size, see `Spec::size_bytes`.
+    bytes: usize,
 }
 
 impl<T> Default for Shared<T> {
@@ -165,9 +183,12 @@ impl<T: Send + Sync + 'static> TileStream<T> {
             }
             return;
         };
-        // Downloads for missing tiles, nearest first.
+        // Downloads for missing tiles, nearest first. One batch of tiles shares its
+        // archive lookups and coalesced byte ranges instead of one request each.
+        let mut batch = Vec::new();
         for key in &wanted {
-            if shared.inflight.len() >= MAX_INFLIGHT {
+            // `inflight` already holds the batch's keys, so it bounds the whole batch.
+            if shared.inflight.len() >= MAX_BATCH_TILES {
                 break;
             }
             let retry = shared
@@ -178,22 +199,51 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                 continue;
             }
             shared.inflight.insert(*key);
-            let (state, template, key, repaint) =
-                (self.shared.clone(), template.clone(), *key, repaint.clone());
+            batch.push(*key);
+        }
+        if !batch.is_empty() {
+            let (state, template, repaint) =
+                (self.shared.clone(), template.clone(), repaint.clone());
             runtime.spawn(async move {
-                let result = fetch(spec, key, &template).await;
+                let result = fetch_many(spec, &batch, &template).await;
                 if let Ok(mut shared) = state.lock() {
-                    shared.inflight.remove(&key);
-                    match result {
-                        Ok(tile) => {
-                            shared.failed.remove(&key);
-                            shared.tiles.insert(key, (Arc::new(tile), Instant::now()));
-                            shared.revision += 1;
-                            evict(&mut shared.tiles, spec.max_cached_tiles);
+                    let mut remaining: HashSet<TileKey> = batch.iter().copied().collect();
+                    let mut arrived = false;
+                    if let Ok(tiles) = result {
+                        for (key, tile) in tiles {
+                            remaining.remove(&key);
+                            shared.inflight.remove(&key);
+                            match tile {
+                                Ok(tile) => {
+                                    shared.failed.remove(&key);
+                                    let bytes = (spec.size_bytes)(&tile);
+                                    shared.tiles.insert(
+                                        key,
+                                        Cached {
+                                            tile: Arc::new(tile),
+                                            used: Instant::now(),
+                                            bytes,
+                                        },
+                                    );
+                                    arrived = true;
+                                }
+                                Err(_) => {
+                                    shared.failed.insert(key, Instant::now());
+                                }
+                            }
                         }
-                        Err(_) => {
-                            shared.failed.insert(key, Instant::now());
-                        }
+                    }
+                    for key in remaining {
+                        shared.inflight.remove(&key);
+                        shared.failed.insert(key, Instant::now());
+                    }
+                    if arrived {
+                        shared.revision += 1;
+                        evict(
+                            &mut shared.tiles,
+                            spec.max_cached_tiles,
+                            spec.max_cached_bytes,
+                        );
                     }
                 }
                 repaint();
@@ -224,8 +274,8 @@ impl<T: Send + Sync + 'static> TileStream<T> {
             .iter()
             .filter_map(|key| {
                 let entry = shared.tiles.get_mut(key)?;
-                entry.1 = now;
-                Some(entry.0.clone())
+                entry.used = now;
+                Some(entry.tile.clone())
             })
             .collect();
         self.built = Some((wanted, shared.revision));
@@ -261,40 +311,101 @@ pub(crate) fn wanted<T>(spec: &Spec<T>, view: View) -> (u8, Vec<TileKey>) {
     }
 }
 
-/// Drops the tiles used longest ago beyond `limit`.
-fn evict<T>(tiles: &mut HashMap<TileKey, (Arc<T>, Instant)>, limit: usize) {
-    if tiles.len() <= limit {
+/// Drops the tiles used longest ago until both the count and the estimated heap
+/// budget fit. Tiles are never evicted below one, even when a single tile exceeds the
+/// byte target, so a view can still draw.
+fn evict<T>(tiles: &mut HashMap<TileKey, Cached<T>>, limit: usize, max_bytes: usize) {
+    let mut total_bytes: usize = tiles.values().map(|cached| cached.bytes).sum();
+    if tiles.len() <= limit && total_bytes <= max_bytes {
         return;
     }
-    let mut ages: Vec<(Instant, TileKey)> =
-        tiles.iter().map(|(key, (_, at))| (*at, *key)).collect();
+    let mut ages: Vec<(Instant, TileKey)> = tiles
+        .iter()
+        .map(|(key, cached)| (cached.used, *key))
+        .collect();
     ages.sort();
-    for (_, key) in ages.into_iter().take(tiles.len() - limit) {
-        tiles.remove(&key);
+    for (_, key) in ages {
+        if tiles.len() <= 1 || (tiles.len() <= limit && total_bytes <= max_bytes) {
+            break;
+        }
+        if let Some(cached) = tiles.remove(&key) {
+            total_bytes = total_bytes.saturating_sub(cached.bytes);
+        }
     }
 }
 
-pub(crate) async fn fetch<T: Send + 'static>(
+/// Fetches and decodes several tiles at once. Their archive locations and exactly
+/// contiguous byte ranges are read in as few requests as possible; decoding stays on
+/// the feature pool. One failed tile does not discard the others.
+pub(crate) async fn fetch_many<T: Send + 'static>(
     spec: &'static Spec<T>,
-    key: TileKey,
+    keys: &[TileKey],
     template: &str,
-) -> Result<T, crate::Error> {
+) -> Result<Vec<(TileKey, Result<T, crate::Error>)>, crate::Error> {
     let archives = template
         .strip_prefix(crate::map_data::PMTILES_PREFIX)
         .ok_or("map data tiles need GlobeCraft's archives")?
         .to_owned();
-    let parts = crate::map_data::tile_parts(key.z, key.x, key.y, &archives).await?;
+    let tiles: Vec<(u8, u32, u32)> = keys.iter().map(|key| (key.z, key.x, key.y)).collect();
+    let parts = crate::map_data::tile_parts_many(&tiles, &archives).await?;
+    let keys = keys.to_vec();
     crate::cpu::run(crate::cpu::Service::Features, move || {
-        let mut bytes = Vec::new();
-        for part in parts {
-            bytes.extend(crate::map_data::gunzip_if_needed(part)?);
-        }
-        (spec.decode)(key, &bytes).ok_or_else(|| {
-            crate::Error::from(format!(
-                "malformed {} tile {}/{}/{}",
-                spec.set, key.z, key.x, key.y
-            ))
-        })
+        Ok::<_, crate::Error>(
+            keys.into_iter()
+                .zip(parts)
+                .map(|(key, parts)| {
+                    let result = (|| {
+                        let mut bytes = Vec::new();
+                        for part in parts {
+                            bytes.extend(crate::map_data::gunzip_if_needed(part)?);
+                        }
+                        (spec.decode)(key, &bytes).ok_or_else(|| {
+                            crate::Error::from(format!(
+                                "malformed {} tile {}/{}/{}",
+                                spec.set, key.z, key.x, key.y
+                            ))
+                        })
+                    })();
+                    (key, result)
+                })
+                .collect(),
+        )
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cached(used: Instant, bytes: usize) -> Cached<()> {
+        Cached {
+            tile: Arc::new(()),
+            used,
+            bytes,
+        }
+    }
+
+    #[test]
+    fn eviction_drops_oldest_tiles_until_count_and_bytes_fit() {
+        let now = Instant::now();
+        let mut tiles = HashMap::new();
+        for x in 0..4 {
+            tiles.insert(
+                TileKey { z: 4, x, y: 0 },
+                cached(now + Duration::from_secs(u64::from(x)), 10),
+            );
+        }
+        // Count still fits but 40 estimated bytes do not: the two oldest go.
+        evict(&mut tiles, 4, 25);
+        assert_eq!(tiles.len(), 2);
+        assert!(!tiles.contains_key(&TileKey { z: 4, x: 0, y: 0 }));
+        assert!(!tiles.contains_key(&TileKey { z: 4, x: 1, y: 0 }));
+        assert!(tiles.contains_key(&TileKey { z: 4, x: 2, y: 0 }));
+        // A single tile above the target is kept so the view can still draw.
+        let mut one = HashMap::new();
+        one.insert(TileKey { z: 4, x: 0, y: 0 }, cached(now, 100));
+        evict(&mut one, 10, 50);
+        assert_eq!(one.len(), 1);
+    }
 }

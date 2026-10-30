@@ -1,4 +1,5 @@
 use super::{LiveGeometry, LiveInput, LivePreparer};
+use globecraft_data::tiles::TileCache;
 use std::sync::{Arc, Condvar, Mutex};
 #[derive(Default)]
 struct Mailbox {
@@ -16,12 +17,22 @@ pub struct LiveWorker {
 }
 impl LiveWorker {
     pub fn new(repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
+        Self::with_elevation(None, repaint)
+    }
+    /// A worker whose layers can be raised onto the relief from `elevation`.
+    pub fn with_elevation(
+        elevation: Option<Arc<TileCache>>,
+        repaint: impl Fn() + Send + 'static,
+    ) -> std::io::Result<Self> {
         let shared = Arc::new(Shared::default());
         let worker = shared.clone();
         std::thread::Builder::new()
             .name("globecraft-live-layers".into())
             .spawn(move || {
-                let mut preparer = LivePreparer::default();
+                let mut preparer = LivePreparer {
+                    elevation,
+                    ..LivePreparer::default()
+                };
                 loop {
                     let input = {
                         let mut state = worker.mailbox.lock().unwrap();

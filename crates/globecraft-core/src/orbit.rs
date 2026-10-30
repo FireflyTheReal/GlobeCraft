@@ -21,6 +21,22 @@ pub struct OrbitalElements {
     pub epoch_unix_secs: f64,
 }
 impl OrbitalElements {
+    /// Time for one revolution, in minutes, when the mean motion is valid.
+    pub fn period_minutes(&self) -> Option<f64> {
+        (self.mean_motion_rev_per_day.is_finite() && self.mean_motion_rev_per_day > 0.0)
+            .then(|| SECONDS_PER_DAY / self.mean_motion_rev_per_day / 60.0)
+    }
+    /// Mean altitude above the mean Earth radius, in kilometres, from the two-body
+    /// semi-major axis. Not the current osculating altitude.
+    pub fn altitude_km(&self) -> Option<f64> {
+        let revolutions_per_day = self.mean_motion_rev_per_day;
+        if !revolutions_per_day.is_finite() || revolutions_per_day <= 0.0 {
+            return None;
+        }
+        let n = revolutions_per_day * std::f64::consts::TAU / SECONDS_PER_DAY;
+        let semi_major_axis = (GRAVITY_MU_KM3_PER_SEC2 / (n * n)).cbrt();
+        Some(semi_major_axis - crate::EARTH_RADIUS_KM)
+    }
     /// Approximate subpoint from low-precision two-body propagation (no J2/SGP4).
     pub fn ground_position(&self, unix: f64) -> Option<(f64, f64)> {
         if ![
@@ -126,6 +142,20 @@ mod tests {
                 .ground_position(orbit.epoch_unix_secs + MAX_EPOCH_AGE_SECS + 1.0)
                 .is_none()
         );
+    }
+    #[test]
+    fn period_and_altitude_follow_the_mean_motion() {
+        let orbit = orbit();
+        // 15 revolutions per day: 96 minutes, about 574 km up.
+        assert!((orbit.period_minutes().unwrap() - 96.0).abs() < 1e-9);
+        let altitude = orbit.altitude_km().unwrap();
+        assert!((altitude - 574.0).abs() < 2.0, "{altitude}");
+        let invalid = OrbitalElements {
+            mean_motion_rev_per_day: 0.0,
+            ..orbit
+        };
+        assert!(invalid.period_minutes().is_none());
+        assert!(invalid.altitude_km().is_none());
     }
     #[test]
     fn invalid_elements_and_nonfinite_time_do_not_publish_nan_coordinates() {

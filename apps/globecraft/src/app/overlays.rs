@@ -169,6 +169,7 @@ impl App {
         let ground = heights
             .as_ref()
             .map(|heights| heights as &dyn globecraft_render::overlays::Ground);
+        let visibility = globecraft_render::overlays::TerrainVisibility::new(basis, ground);
         let on_ground = |lat: f64, lon: f64| {
             globecraft_render::overlays::ground_position(basis, ground, lat, lon)
         };
@@ -214,6 +215,12 @@ impl App {
         }
         // placemarks
         for pm in self.placemarks.markers(true) {
+            if visibility
+                .as_ref()
+                .is_some_and(|visibility| !visibility.visible(pm.lat, pm.lon))
+            {
+                continue;
+            }
             if let Some(s) = basis.project(on_ground(pm.lat, pm.lon), rect)
                 && rect.contains(s)
             {

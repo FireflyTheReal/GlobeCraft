@@ -160,6 +160,8 @@ class NativePackagingTests(unittest.TestCase):
                                  (release.ROOT / "assets/packaging/macos/icon.icns").read_bytes())
                 with Path(config["macos"]["infoPlistPath"]).open("rb") as stream:
                     plist = plistlib.load(stream)
+                self.assertEqual(plist["CFBundleName"], "GlobeCraft")
+                self.assertEqual(plist["CFBundleDisplayName"], "GlobeCraft")
                 self.assertEqual(plist["CFBundleVersion"], "1.2.3")
                 self.assertEqual(plist["CFBundleShortVersionString"], "1.2.3")
                 self.assertTrue(plist["NSHighResolutionCapable"])

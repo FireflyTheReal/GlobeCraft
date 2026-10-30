@@ -16,6 +16,7 @@ fn flight(hex: &str, observed: f64, latitude: f64) -> Aircraft {
         heading_deg: 90.0,
         speed_knots: Some(400.0),
         altitude_feet: None,
+        vertical_rate_fpm: None,
         observed_unix: observed,
     }
 }
@@ -121,15 +122,15 @@ fn live_service_fetches_both_sources_off_ui_and_publishes_without_duplicate_requ
     let (global_url, global) = server(
         "200 OK",
         serde_json::json!({"states":[
-            ["aa", "GLOBAL", "x", now, now, 1.0, 2.0, 1000, false, 200.0, 90.0],
-            ["bb", "OTHER", "x", now, now, 2.0, 3.0, 1000, false, 200.0, 90.0]
+            ["aa", "GLOBAL", "x", now, now, 1.0, 2.0, 1000, false, 200.0, 90.0, 2.5],
+            ["bb", "OTHER", "x", now, now, 2.0, 3.0, 1000, false, 200.0, 90.0, -1.0]
         ]})
         .to_string(),
     );
     let (local_url, local) = server(
         "200 OK",
         serde_json::json!({"ac":[
-            {"hex":"aa","flight":"LOCAL","lat":1.0,"lon":2.0,"seen_pos":0,"track":90.0}
+            {"hex":"aa","flight":"LOCAL","lat":1.0,"lon":2.0,"seen_pos":0,"track":90.0,"baro_rate":-640}
         ]})
         .to_string(),
     );
@@ -159,6 +160,12 @@ fn live_service_fetches_both_sources_off_ui_and_publishes_without_duplicate_requ
         if snapshot.global.loaded.is_some() && snapshot.local.loaded.is_some() {
             assert_eq!(snapshot.aircraft.len(), 2);
             assert_eq!(snapshot.aircraft[0].callsign.as_ref(), "LOCAL");
+            assert_eq!(snapshot.aircraft[0].vertical_rate_fpm, Some(-640.0));
+            let global_rate = snapshot.aircraft[1].vertical_rate_fpm.unwrap();
+            assert!(
+                (global_rate + 196.85).abs() < 0.01,
+                "OpenSky feet per minute: {global_rate}"
+            );
             break;
         }
         wakes.recv_timeout(Duration::from_secs(10)).unwrap();

@@ -3,6 +3,12 @@ use std::{path::PathBuf, time::Duration};
 const MAX_CACHE_FILENAME_CHARS: usize = 120;
 const JSON_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const JSON_READ_TIMEOUT: Duration = Duration::from_secs(90);
+/// Whole-request ceiling for boundary JSON and PMTiles range reads, including a slow
+/// body: connect and read timeouts alone let a trickle last indefinitely.
+const BOUNDARY_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Concurrent PMTiles range reads across every archive. They all come from the same
+/// release host, so separate layers share one limit instead of multiplying it.
+const BOUNDARY_RANGE_CONCURRENCY: usize = 6;
 
 pub(crate) fn geo_cache_path(url: &str) -> PathBuf {
     let clean: String = url
@@ -56,6 +62,7 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
             builder = builder
                 .connect_timeout(JSON_CONNECT_TIMEOUT)
                 .read_timeout(JSON_READ_TIMEOUT)
+                .timeout(BOUNDARY_TOTAL_TIMEOUT)
         }
         Policy::Wayback => {
             builder = builder
@@ -71,6 +78,12 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
     let client = builder.build()?;
     clients.insert(policy, client.clone());
     Ok(client)
+}
+/// The semaphore a policy's PMTiles range reads share, when they are limited.
+pub(crate) fn range_limit(policy: Policy) -> Option<&'static tokio::sync::Semaphore> {
+    static BOUNDARY: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    (policy == Policy::Boundary)
+        .then(|| BOUNDARY.get_or_init(|| tokio::sync::Semaphore::new(BOUNDARY_RANGE_CONCURRENCY)))
 }
 pub(crate) async fn body(
     request: reqwest::RequestBuilder,

@@ -31,6 +31,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
                 heading_deg: 90.0,
                 speed_knots: Some(400.0),
                 altitude_feet: Some(30_000.0),
+                vertical_rate_fpm: None,
                 observed_unix: 1000.0,
             }]
             .into(),
@@ -108,6 +109,7 @@ fn aircraft_mesh_repaint_cost() {
             heading_deg: 90.0,
             speed_knots: Some(440.0),
             altitude_feet: Some(35_000.0),
+            vertical_rate_fpm: None,
             observed_unix: 1000.0,
         })
         .collect();
@@ -199,6 +201,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                     heading_deg: 90.0,
                     speed_knots: Some(400.0),
                     altitude_feet: Some(30_000.0),
+                    vertical_rate_fpm: None,
                     observed_unix: 1000.0,
                 }]
                 .into(),
@@ -228,4 +231,12 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
         .recv_timeout(Duration::from_secs(20))
         .expect("drawing labelled flights froze");
     assert_eq!(texts, 2, "callsign and its shadow");
+}
+
+#[test]
+fn vertical_rate_reads_level_climb_and_descent() {
+    assert_eq!(vertical_rate_text(None), "—");
+    assert_eq!(vertical_rate_text(Some(10.0)), "0 ft/min");
+    assert_eq!(vertical_rate_text(Some(1200.4)), "+1200 ft/min");
+    assert_eq!(vertical_rate_text(Some(-640.0)), "-640 ft/min");
 }

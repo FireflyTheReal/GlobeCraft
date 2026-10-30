@@ -19,6 +19,10 @@ globe-copy-coordinates-action = Copiar coordenadas
 globe-context-menu-hint = Clique sobre o globo.
 
 app-ready-status = Pronto. Arraste para girar, role para aproximar.
+window-minimize = Minimizar
+window-maximize = Maximizar
+window-restore = Restaurar
+window-close = Fechar
 
 search-empty-status = Nenhum resultado encontrado.
 
@@ -144,7 +148,8 @@ aircraft-updated-status = há { $minutes } min
 aircraft-source-error = { $source }: { $error }
 aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Velocidade: { $speed }
-    Rumo: { $heading }  |  Posição há { $age } s
+    Rumo: { $heading }  |  Taxa vertical: { $vertical_rate }
+    Posição há { $age } s
 layers-weather-toggle = Mapa do clima (radar de chuva ao vivo)
 layers-clouds-toggle = Mapa das nuvens por satélite (Matt Eason)
 layers-live-overlays-help = Aviões reais, com cobertura incompleta: atualização global a cada ~17 min e local a cada ~90 s. Nuvens ~3 h; radar de chuva ~10 min. Requer internet.
@@ -478,13 +483,52 @@ roads-hover-tooltip =
     { $name } • { $kind }
     { $state }
 
+vessels-unnamed = Navio não identificado
 vessels-hover-tooltip =
     { $name } • MMSI { $mmsi }
+    { $ship_type ->
+        [fishing] Navio de pesca
+        [tug] Rebocador ou prático
+        [military] Navio militar ou de fiscalização
+        [pleasure] Embarcação de recreio ou vela
+        [passenger] Navio de passageiros
+        [cargo] Navio de carga
+        [tanker] Petroleiro
+        [high_speed] Embarcação de alta velocidade
+        [service] Embarcação de serviço
+        [other] Outro navio
+       *[unknown] Tipo de navio não informado
+    } • Destino: { $destination }
+    Tamanho: { $dimensions }  |  Calado: { $draught }
     { $latitude }°, { $longitude }° • { $course } • { $speed } kt
     Último sinal AIS há { $minutes } min • cobertura depende da fonte
 satellites-hover-tooltip =
     { $name } (NORAD { $norad })
+    Período { $period } • Altitude { $altitude } • Inclinação { $inclination }
     Posição orbital estimada • CelesTrak
+transport-airport-hover-tooltip =
+    { $name }
+    IATA { $iata } • ICAO { $icao }
+    { $class ->
+        [international] Aeroporto internacional
+        [public] Aeroporto público
+        [regional] Aeroporto regional
+        [military] Aeródromo militar
+        [private] Aeródromo privado
+       *[other] Aeródromo
+    }
+poi-hover-place =
+    { $name }
+    Ponto de interesse • { $class }
+poi-hover-peak =
+    { $name }
+    Pico • { $elevation }
+poi-hover-water =
+    { $name }
+    Água • { $class }
+poi-hover-park =
+    { $name }
+    Parque ou área protegida • { $class }
 
 update-available-label = Atualizar para v{ $version }
 update-available-tooltip = Atualização disponível: v{ $version } — clique para baixar e instalar
@@ -795,6 +839,14 @@ assistant-note-summarising = Resumindo a conversa anterior para caber no context
 assistant-note-compacted = A conversa anterior foi resumida.
 assistant-note-empty = O modelo enviou uma resposta vazia; pergunte de novo ou tente outro modelo.
 assistant-note-stopped = Interrompido.
+assistant-note-stopped-early = A resposta parou cedo ({ $reason }).
+assistant-note-declined = O modelo recusou esta solicitação.
+assistant-note-declined-reason = O modelo recusou esta solicitação: { $why }
+assistant-note-incomplete = A resposta parou antes de terminar; nenhuma ação foi executada.
+assistant-note-gemini-stopped = O Gemini interrompeu a resposta ({ $reason }).
+assistant-note-http-retry = O provedor retornou HTTP { $status }; tentando novamente em { $seconds } s.
+assistant-note-connection-retry = A conexão falhou; tentando novamente em { $seconds } s.
+assistant-note-step-limit = Interrompido após { $steps } etapas; diga "continuar" para prosseguir.
 assistant-model-tooltip = O modelo que responde; clique para trocar
 assistant-new-chat = Nova conversa
 assistant-compact-tooltip = Resume a conversa até aqui para que um chat longo caiba no contexto do modelo

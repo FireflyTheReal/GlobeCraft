@@ -17,9 +17,9 @@ pub(super) struct LiveOverlay {
     latest: Option<Arc<LiveGeometry>>,
 }
 impl LiveOverlay {
-    pub fn new(ctx: egui::Context) -> Self {
+    pub fn new(ctx: egui::Context, cache: Option<Arc<globecraft_data::tiles::TileCache>>) -> Self {
         Self {
-            worker: LiveWorker::new(move || ctx.request_repaint())
+            worker: LiveWorker::with_elevation(cache, move || ctx.request_repaint())
                 .expect("start live-layer projection"),
             requested: None,
             latest: None,
@@ -33,9 +33,9 @@ impl LiveOverlay {
     /// step when it is older: the last step stays on screen until the next is ready.
     pub fn update(&mut self, input: LiveInput) -> Option<Arc<LiveGeometry>> {
         if let Some(geometry) = self.worker.take_completed()
-            && geometry.input.same_source(&input)
+            && geometry.input.same_view(&input)
             && self.latest.as_ref().is_none_or(|old| {
-                !old.input.same_source(&input) || old.input.unix_secs <= geometry.input.unix_secs
+                !old.input.same_view(&input) || old.input.unix_secs <= geometry.input.unix_secs
             })
         {
             self.latest = Some(geometry);
@@ -43,7 +43,7 @@ impl LiveOverlay {
         let current = self
             .latest
             .as_ref()
-            .filter(|geometry| geometry.input.same_source(&input))
+            .filter(|geometry| geometry.input.same_view(&input))
             .cloned();
         let stale = current
             .as_ref()
@@ -106,6 +106,7 @@ impl App {
                 pixels_per_point,
                 traffic_width_px: width,
                 traffic_height_px: height,
+                ground: self.renderer.displayed_ground(self.overlay_ground()),
             },
             roads: self.roads.current.clone(),
             vessels: self
@@ -156,7 +157,7 @@ mod tests {
     #[test]
     fn a_geometry_publication_for_an_old_view_is_never_drawn_on_a_new_view() {
         let ctx = egui::Context::default();
-        let mut overlay = LiveOverlay::new(ctx);
+        let mut overlay = LiveOverlay::new(ctx, None);
         let cam = Cam {
             lat: 0.0,
             lon: 0.0,
@@ -173,6 +174,7 @@ mod tests {
                 pixels_per_point: 1.0,
                 traffic_width_px: 16,
                 traffic_height_px: 16,
+                ground: None,
             },
             roads: None,
             vessels: None,
@@ -199,9 +201,73 @@ mod tests {
             .accept(globecraft_render::live_layers::LivePreparer::default().prepare(later.clone()));
         let shown = overlay.update(later.clone()).unwrap();
         later.unix_secs += 5.0;
-        assert!(Arc::ptr_eq(&shown, &overlay.update(later).unwrap()));
+        assert!(Arc::ptr_eq(&shown, &overlay.update(later.clone()).unwrap()));
+        // Turning the layer off hides its last geometry at once; a new tile snapshot
+        // (above) keeps it only because the layer stays present.
+        let mut hidden = later;
+        hidden.satellites = None;
+        assert!(overlay.update(hidden).is_none());
         let mut moved = input;
         moved.view.rect = moved.view.rect.translate(egui::vec2(10.0, 0.0));
         assert!(overlay.update(moved).is_none());
+    }
+
+    #[test]
+    fn a_new_tile_snapshot_keeps_the_last_geometry_until_it_is_projected() {
+        let ctx = egui::Context::default();
+        let mut overlay = LiveOverlay::new(ctx, None);
+        let cam = Cam {
+            lat: 0.0,
+            lon: 0.0,
+            heading: 0.0,
+            alt: 1000.0,
+            tilt: 0.0,
+        };
+        let mut input = LiveInput {
+            view: LiveView {
+                basis: cam.basis(1.0),
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 300.0)),
+                altitude_km: cam.alt,
+                map_scale: 1.0,
+                pixels_per_point: 1.0,
+                traffic_width_px: 16,
+                traffic_height_px: 16,
+                ground: None,
+            },
+            roads: None,
+            vessels: None,
+            satellites: None,
+            traffic: None,
+            transport: Some(Arc::new(globecraft_data::transport::TransportSnapshot {
+                tiles: Vec::new(),
+                zoom: 10,
+            })),
+            transport_layers: Default::default(),
+            poi: None,
+            poi_layers: Default::default(),
+            unix_secs: 1_700_000_000.0,
+        };
+        let geometry =
+            globecraft_render::live_layers::LivePreparer::default().prepare(input.clone());
+        overlay.accept(geometry.clone());
+        assert!(Arc::ptr_eq(
+            &geometry,
+            &overlay.update(input.clone()).unwrap()
+        ));
+        // A poll lands with a new snapshot pointer: the last geometry still matches
+        // this view and stays on screen while the new snapshot is projected.
+        input.transport = Some(Arc::new(globecraft_data::transport::TransportSnapshot {
+            tiles: Vec::new(),
+            zoom: 10,
+        }));
+        input.unix_secs += 1.0;
+        assert!(Arc::ptr_eq(
+            &geometry,
+            &overlay.update(input.clone()).unwrap()
+        ));
+        // Turning on a layer group whose geometry is not projected yet does blank it
+        // rather than showing a set that lacks the newly enabled layer.
+        input.transport_layers.airports = true;
+        assert!(overlay.update(input).is_none());
     }
 }

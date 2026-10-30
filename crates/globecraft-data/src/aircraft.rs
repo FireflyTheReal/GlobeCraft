@@ -20,6 +20,8 @@ pub struct Aircraft {
     pub heading_deg: f64,
     pub speed_knots: Option<f64>,
     pub altitude_feet: Option<f64>,
+    /// Climb (positive) or descent (negative), in feet per minute.
+    pub vertical_rate_fpm: Option<f64>,
     pub observed_unix: f64,
 }
 

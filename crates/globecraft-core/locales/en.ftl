@@ -19,6 +19,10 @@ globe-copy-coordinates-action = Copy coordinates
 globe-context-menu-hint = Click on the globe.
 
 app-ready-status = Ready. Drag to rotate, scroll to zoom.
+window-minimize = Minimize
+window-maximize = Maximize
+window-restore = Restore
+window-close = Close
 
 search-empty-status = No results found.
 
@@ -144,7 +148,8 @@ aircraft-updated-status = { $minutes } min ago
 aircraft-source-error = { $source }: { $error }
 aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Speed: { $speed }
-    Heading: { $heading }  |  Position { $age } s old
+    Heading: { $heading }  |  Vertical rate: { $vertical_rate }
+    Position { $age } s old
 layers-weather-toggle = Live precipitation radar (RainViewer)
 layers-clouds-toggle = Satellite cloud map (Matt Eason)
 layers-live-overlays-help = Aircraft positions come from live tracking (coverage incomplete); global updates ~17 min and nearby updates ~90 s. Cloud imagery ~3 h; rain radar ~10 min. Internet required.
@@ -478,13 +483,52 @@ roads-hover-tooltip =
     { $name } • { $kind }
     { $state }
 
+vessels-unnamed = Unidentified vessel
 vessels-hover-tooltip =
     { $name } • MMSI { $mmsi }
+    { $ship_type ->
+        [fishing] Fishing vessel
+        [tug] Tug or pilot boat
+        [military] Military or law-enforcement vessel
+        [pleasure] Pleasure craft or sailing vessel
+        [passenger] Passenger ship
+        [cargo] Cargo ship
+        [tanker] Tanker
+        [high_speed] High-speed craft
+        [service] Service vessel
+        [other] Other vessel
+       *[unknown] Vessel type not reported
+    } • Destination: { $destination }
+    Size: { $dimensions }  |  Draught: { $draught }
     { $latitude }°, { $longitude }° • { $course } • { $speed } kt
     Last AIS report { $minutes } min ago • coverage varies
 satellites-hover-tooltip =
     { $name } (NORAD { $norad })
+    Period { $period } • Altitude { $altitude } • Inclination { $inclination }
     Estimated orbital position • CelesTrak
+transport-airport-hover-tooltip =
+    { $name }
+    IATA { $iata } • ICAO { $icao }
+    { $class ->
+        [international] International airport
+        [public] Public airport
+        [regional] Regional airport
+        [military] Military airfield
+        [private] Private airfield
+       *[other] Airfield
+    }
+poi-hover-place =
+    { $name }
+    Place of interest • { $class }
+poi-hover-peak =
+    { $name }
+    Peak • { $elevation }
+poi-hover-water =
+    { $name }
+    Water • { $class }
+poi-hover-park =
+    { $name }
+    Park or protected area • { $class }
 
 update-available-label = Update to v{ $version }
 update-available-tooltip = Update available: v{ $version } — click to download and install
@@ -795,6 +839,14 @@ assistant-note-summarising = Summarising the earlier conversation to keep it wit
 assistant-note-compacted = Compacted the earlier conversation.
 assistant-note-empty = The model sent an empty reply; ask again, or try another model.
 assistant-note-stopped = Stopped.
+assistant-note-stopped-early = The reply stopped early ({ $reason }).
+assistant-note-declined = The model declined this request.
+assistant-note-declined-reason = The model declined this request: { $why }
+assistant-note-incomplete = The reply stopped before completion; no actions were run.
+assistant-note-gemini-stopped = Gemini stopped the reply ({ $reason }).
+assistant-note-http-retry = The provider returned HTTP { $status }; trying again in { $seconds } s.
+assistant-note-connection-retry = The connection failed; trying again in { $seconds } s.
+assistant-note-step-limit = Stopped after { $steps } steps; say "continue" to go on.
 assistant-model-tooltip = The model answering; click to change it
 assistant-new-chat = New conversation
 assistant-compact-tooltip = Summarise the conversation so far, so a long chat stays within the model's context

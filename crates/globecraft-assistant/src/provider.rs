@@ -351,10 +351,7 @@ pub fn retry_delay_for(
         .as_ref()
         .ok()
         .filter(|r| (200..300).contains(&r.status))?;
-    let error = match parsed {
-        Err(e) => e,
-        Ok(reply) => reply.failure.as_ref()?,
-    };
+    let error = parsed.as_ref().err()?;
     if !matches!(
         error.code.as_deref(),
         Some("overloaded_error" | "rate_limit_error" | "rate_limit_exceeded" | "server_error")
@@ -630,8 +627,6 @@ pub struct Reply {
     pub native: Value,
     /// Why the reply stopped early (length limit, a refusal), if it did.
     pub cut: Option<Note>,
-    /// A failed terminal response accompanying partial text.
-    pub failure: Option<Error>,
 }
 
 /// Replies may be long (tables, explanations) but are never documents.
@@ -1216,7 +1211,6 @@ fn openai_reply(v: &Value) -> Result<Reply, String> {
         calls,
         native,
         cut,
-        failure: None,
     })
 }
 
@@ -1355,7 +1349,6 @@ fn anthropic_reply(v: &Value) -> Result<Reply, String> {
         calls,
         native: Value::Array(content.clone()),
         cut,
-        failure: None,
     })
 }
 
@@ -1539,7 +1532,6 @@ fn gemini_reply(v: &Value) -> Result<Reply, String> {
         calls,
         native,
         cut,
-        failure: None,
     })
 }
 

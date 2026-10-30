@@ -289,11 +289,10 @@ impl Agent {
         parsed: Result<provider::Reply, crate::Error>,
     ) -> Step {
         match parsed {
-            Ok(reply) if reply.cut.is_some() || reply.failure.is_some() => {
-                self.transcript
-                    .push(Entry::Error(reply.failure.unwrap_or_else(|| {
-                        "The summary was cut short; the conversation wasn't compacted.".into()
-                    })));
+            Ok(reply) if reply.cut.is_some() => {
+                self.transcript.push(Entry::Error(
+                    "The summary was cut short; the conversation wasn't compacted.".into(),
+                ));
             }
             Ok(reply) if !reply.text.trim().is_empty() => {
                 compact::apply(&mut self.turns, upto, &reply.text);
@@ -446,9 +445,6 @@ impl Agent {
             self.transcript.push(Entry::Note(Note::new(
                 "The model sent an empty reply; ask again, or try another model.",
             )));
-        }
-        if let Some(error) = reply.failure {
-            self.transcript.push(Entry::Error(error));
         }
         let calls = reply.calls.clone();
         self.turns.push(Turn::Assistant {

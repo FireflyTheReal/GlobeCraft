@@ -1,5 +1,12 @@
 //! Desktop state and orchestration; widgets live in focused child modules.
 use globecraft_core::layers::MapLayer;
+
+/// The window title. The titlebar text stays hidden in the merged header, but the
+/// system still uses this value for Mission Control, the taskbar and window lists.
+pub(crate) const WINDOW_TITLE: &str = "GlobeCraft";
+/// Used when macOS cannot report the native traffic-light bounds. AppKit points.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_WIDTH_FALLBACK_POINTS: f32 = 78.0;
 #[cfg(test)]
 mod screenshots;
 #[cfg(test)]
@@ -69,8 +76,10 @@ pub(crate) struct App {
     /// The ribbon shown over the globe while collapsed (a tab was clicked).
     ribbon_peek: bool,
     tab_strip_rect: Option<Rect>,
-    /// The title last sent to the window, so it is only sent when it changes.
-    window_title: String,
+    /// The native macOS traffic-light width, in AppKit points. Divide by egui's
+    /// zoom factor to reserve the same room in egui points.
+    #[cfg(target_os = "macos")]
+    traffic_lights_width_native: f32,
     /// Fly to the best result when a search completes.
     search_fly: bool,
     /// Focus the place search field on the next frame.
@@ -276,7 +285,18 @@ impl App {
             command_search: None,
             ribbon_peek: false,
             tab_strip_rect: None,
-            window_title: String::new(),
+            #[cfg(target_os = "macos")]
+            traffic_lights_width_native: {
+                use raw_window_handle::HasWindowHandle as _;
+                cc.window_handle()
+                    .ok()
+                    .and_then(|handle| {
+                        eframe::WindowChromeMetrics::from_window_handle(&handle.as_raw())
+                    })
+                    .map(|metrics| metrics.traffic_lights_size.x)
+                    .filter(|width| *width > 0.0)
+                    .unwrap_or(TRAFFIC_LIGHTS_WIDTH_FALLBACK_POINTS)
+            },
             search_fly: true,
             focus_search: false,
             updater: globecraft_data::updater::UpdateService::new(runtime.handle(), {
@@ -296,7 +316,7 @@ impl App {
             language_preference,
             cam: settings.navigation.startup.camera(),
             fly: None,
-            cache,
+            cache: cache.clone(),
             renderer,
             scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache::default(),
             tile_warmup: TileWarmup::startup_satellite(),
@@ -328,7 +348,10 @@ impl App {
                 move || ctx.request_repaint()
             }),
             aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
-            live_geometry: live_geometry::LiveOverlay::new(cc.egui_ctx.clone()),
+            live_geometry: live_geometry::LiveOverlay::new(
+                cc.egui_ctx.clone(),
+                Some(cache.clone()),
+            ),
             world_shapes: live_layers::WorldShapes::default(),
             texture: None,
             fade_from: None,
@@ -422,19 +445,51 @@ impl App {
 }
 impl eframe::App for App {
     fn on_exit(&mut self) {
-        if self
+        let restarting = self
             .update_restart
             .request
             .requested
-            .load(std::sync::atomic::Ordering::Acquire)
-            && let Err(error) = self.settings_writer.finish()
-        {
-            *self.update_restart.request.error.lock().unwrap() = Some(format!(
-                "Settings save before restart failed: {error}. Click Restart to update to retry."
-            ));
+            .load(std::sync::atomic::Ordering::Acquire);
+        match self.settings_writer.finish() {
+            Ok(()) => {}
+            Err(error) if restarting => {
+                *self.update_restart.request.error.lock().unwrap() = Some(format!(
+                    "Settings save before restart failed: {error}. Click Restart to update to retry."
+                ));
+            }
+            Err(error) => {
+                eprintln!("Settings persistence failed during shutdown: {error}");
+            }
         }
         #[cfg(feature = "profiling")]
         globecraft_data::profiling::flush();
+        // macOS: end the process here, before eframe tears down the window. AccessKit's
+        // adapter restores the content view's class on teardown while AppKit's Touch Bar
+        // support still observes that view; the next display cycle then throws
+        // "not registered as an observer" and every quit ends in SIGABRT. Settings and
+        // profiling data are already flushed above. A pending update restart must exec
+        // the replacement here too, because returning to eframe's teardown aborts before
+        // `main` can do it. On other platforms eframe returns and `main` finishes
+        // normally.
+        #[cfg(target_os = "macos")]
+        if restarting {
+            if let Some(error) = self.update_restart.request.error.lock().unwrap().clone() {
+                eprintln!("Update restart stopped: {error}. Relaunch GlobeCraft manually.");
+                std::process::exit(1);
+            }
+            eprintln!("Restarting GlobeCraft to finish the update");
+            match self_update::restart::restart() {
+                Ok(never) => match never {},
+                Err(error) => {
+                    eprintln!("Restart failed: {error}. Relaunch GlobeCraft manually.");
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if !restarting {
+            std::process::exit(0);
+        }
     }
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.fonts.poll(
@@ -602,6 +657,7 @@ impl eframe::App for App {
         if self.fly.is_some() {
             ui.request_repaint();
         }
+        ui::window_chrome::resize_edges(ui);
         self.header(ui);
         self.ribbon(ui);
         self.status_bar(ui);

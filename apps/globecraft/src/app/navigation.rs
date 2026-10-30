@@ -27,13 +27,22 @@ impl App {
     }
 
     pub(super) fn fly_to(&mut self, lat: f64, lon: f64, alt: f64) {
-        self.fly = Some(Flight::new_for_model(
-            self.cam,
-            lat,
-            lon,
-            alt,
-            self.active_earth_model(),
-        ));
+        self.fly_to_with_orientation(lat, lon, alt, None, None);
+    }
+
+    /// Starts a flight that ends at the requested heading and tilt when given.
+    pub(super) fn fly_to_with_orientation(
+        &mut self,
+        lat: f64,
+        lon: f64,
+        alt: f64,
+        heading_deg: Option<f64>,
+        tilt_deg: Option<f64>,
+    ) {
+        self.fly = Some(
+            Flight::new_for_model(self.cam, lat, lon, alt, self.active_earth_model())
+                .with_orientation(heading_deg, tilt_deg),
+        );
     }
 
     pub(super) fn step_fly(&mut self, dt: f64) {

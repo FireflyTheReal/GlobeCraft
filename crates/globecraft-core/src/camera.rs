@@ -31,6 +31,9 @@ pub struct Cam {
 pub struct Basis {
     pub c: DVec3, // camera position (mean Earth radii)
     pub model: EarthModel,
+    /// How far the view leans from straight down, in degrees. Overlays use it to
+    /// skip terrain line-of-sight tests that cannot hide anything.
+    pub tilt_deg: f64,
     center: (f64, f64),
     view_from_world: DMat3,
     world_from_view: DMat3,
@@ -72,6 +75,7 @@ impl Cam {
         Basis {
             c: target + back * (self.alt / EARTH_RADIUS_KM),
             model,
+            tilt_deg: t.to_degrees(),
             center: (self.lat, self.lon),
             view_from_world,
             world_from_view: view_from_world.transpose(),

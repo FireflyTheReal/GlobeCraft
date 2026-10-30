@@ -68,7 +68,7 @@ and adds numeric suffixes on collisions before encoding the unchanged PNG pixels
 The pin shortcut shares the sidebar's At center placemark action, including
 selected-folder insertion and localized default names. A pending reveal reopens
 Placemarks and focuses/scrolls its existing name editor into view.
-The top/bottom panel layout lives in `app/ui/bars.rs`; the search input and
+The top/bottom panel layout lives in `app/ui/chrome.rs`; the search input and
 submission widgets live in `app/ui/search_bar.rs`. Query state, suggestion
 merging/debouncing and search dispatch stay in `app/search.rs`, while
 `app/ui/suggestions.rs` draws the results popup.
@@ -94,8 +94,12 @@ stores their visibility (`layers`, plus the earlier `sky` and `grid_numbers` fie
 
 The window is laid out like RustGIS (Apache-2.0, see CREDITS.md): header,
 ribbon, left/right panes, status bar and the globe in the central panel (`app/ui/chrome.rs`,
-`ribbon.rs`, `panes.rs`, `widgets.rs`, `theme.rs`, `icons.rs`). Theme tokens are applied to
-both egui themes once per UI scale; egui switches themes itself. The render pipeline below is
+`ribbon.rs`, `panes.rs`, `widgets.rs`, `theme.rs`, `icons.rs`). The header also serves as the
+title bar (`app/ui/window_chrome.rs`): macOS uses a full-size content view with hidden title
+text and its native traffic lights, while Windows and Linux remove native decorations and
+draw minimize, maximize/restore and close plus edge-resize handling. The window title stays
+`GlobeCraft`; the executable keeps its `globecraft` name. Theme tokens are applied to both
+egui themes once per UI scale; egui switches themes itself. The render pipeline below is
 unchanged by the interface. See [interface](features/INTERFACE.md).
 
 ## AI assistant
@@ -131,9 +135,21 @@ they arrive.
 
 The camera looks at the terrain height under the view centre (`Cam::basis_over_ground`,
 eased in `App::follow_ground`), a tilted camera is kept 150 m above the ground beneath it,
-and borders and names are raised onto the relief from the loaded tiles
+and borders, names and live vector layers (roads, railways, ferries, airports, rivers,
+parks and place/peak markers) are raised onto the relief from the loaded tiles
 (`overlays::GroundHeights`). Terrain is drawn below 150 km and only on the CPU path (the GPU
 renderer falls back).
+
+The CPU renderer has no depth buffer, so overlays are also tested against that relief:
+`overlays::TerrainVisibility` samples the straight eye-to-point line at 16 points and
+reports the target hidden when the line passes below the ground. Borders split into their
+visible runs, and roads, railways, ferries, airport markers, rivers, parks, place/peak
+markers, vessels, placemarks, satellite subpoints and their labels are dropped where a
+ridge or island hides them. Ships stay on the water surface but can still be hidden by
+land. The test runs only when relief is drawn and the view is tilted at least 1°; the
+exact top-down default view performs no elevation lookups. It reads the frame's loaded
+elevation tiles and never requests new ones, and a missing tile reads as sea level. A
+tilted view with relief therefore pays up to 16 elevation lookups per overlay point.
 
 ## Live layers and the hidden illustration
 
@@ -219,6 +235,9 @@ survey-grade accuracy.
 
 The app owns one Tokio `ServiceRuntime` and injects handles/repaint callbacks.
 Pooled reqwest clients enforce response limits, timeouts and retry policies.
+Boundary JSON and PMTiles range reads also share a 120 s whole-request timeout,
+so a body that trickles cannot outlive the connect/read limits, and all archive
+range reads share six permits because they come from the same release host.
 Network I/O runs asynchronously; bounded feature, tile-decoding and file workers
 separate CPU-heavy parsing from interactive imagery. A panic in one of those
 jobs is returned as that job's error, so the pool and the application keep
@@ -344,6 +363,12 @@ It reuses native save dialogs and the bounded file service, waits for file
 completions without blocking egui, and closes normally. Startup relaunches only
 after `run_native` returns, so preference flushing and app teardown precede restart.
 A failed restart reopens the desktop with an inline error and the saved documents.
+On macOS a normal quit flushes the settings writer and profiling log in `on_exit`
+and then ends the process directly: AccessKit restores the content view's class
+during window teardown while AppKit still observes it, so returning to eframe's
+teardown crashes in `_NSTouchBarFinderObservation`. A pending update restart execs
+the replacement from `on_exit` for the same reason; a failed restart reports to
+stderr and exits instead of returning to the crashing teardown.
 See [releases](RELEASING.md) for artifact names, install policy and integrity limits.
 
 ## Cache ownership
@@ -351,6 +376,7 @@ See [releases](RELEASING.md) for artifact names, install policy and integrity li
 | Storage | Policy |
 | --- | --- |
 | Decoded tiles | Moka `sync`, weighted LRU, 256 MiB best-effort target; temporary overshoot and frame references are separate |
+| Decoded vector tiles | Per set, LRU bounded by both tile count and a 64 MiB estimated decoded-heap budget; one tile is always kept, and the estimate excludes allocator overhead |
 | Encoded imagery | MBTiles 1.3 through one tokio-rusqlite worker; 1 GiB managed-file target by default (Settings → Cache; 128 MiB before 2026-10-25), including SQLite overhead |
 
 MBTiles separates providers, stable Wayback releases and encoded formats, converts

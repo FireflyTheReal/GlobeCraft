@@ -337,8 +337,10 @@ fn replay(
         frames += 1;
         let holes = frame
             .pixels
-            .chunks_exact(RGBA_CHANNELS)
-            .filter(|pixel| *pixel == hole)
+            .as_chunks::<RGBA_CHANNELS>()
+            .0
+            .iter()
+            .filter(|pixel| **pixel == hole)
             .count();
         let holes_pct = 100.0 * holes as f64 / (w * h) as f64;
         buffer = frame.pixels;

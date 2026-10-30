@@ -29,6 +29,8 @@ const HOVER_MIN_MARGIN_POINTS: f32 = 6.0;
 const HOVER_PADDING_POINTS: f32 = 6.0;
 const HOVER_CORNER_POINTS: f32 = 5.0;
 const HOVER_FILL_RGBA: [u8; 4] = [13, 24, 35, 235];
+/// Climbs and descents below this read as level flight.
+const LEVEL_VERTICAL_RATE_FPM: f64 = 50.0;
 
 pub(super) struct AircraftOverlay {
     geometry: Option<Arc<AircraftGeometry>>,
@@ -155,6 +157,19 @@ impl App {
     }
 }
 
+fn vertical_rate_text(rate: Option<f64>) -> String {
+    rate.map_or_else(
+        || "—".to_owned(),
+        |rate| {
+            if rate.abs() < LEVEL_VERTICAL_RATE_FPM {
+                "0 ft/min".to_owned()
+            } else {
+                format!("{rate:+.0} ft/min")
+            }
+        },
+    )
+}
+
 fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) {
     let view = geometry.view;
     let ms = view.map_scale;
@@ -205,6 +220,10 @@ fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) 
             (
                 "heading",
                 globecraft_core::compass::heading_text(sample.heading_deg, lang).into(),
+            ),
+            (
+                "vertical_rate",
+                vertical_rate_text(sample.vertical_rate_fpm).into(),
             ),
             (
                 "age",
@@ -260,32 +279,7 @@ impl App {
             }
         }
         if let Some((ship, at)) = nearest {
-            let name = if ship.name.is_empty() {
-                "AIS vessel"
-            } else {
-                &ship.name
-            };
-            let age_minutes = ((now_unix() - ship.observed_unix).max(0.0) / 60.0).round();
-            let text = self.lang.format(
-                "vessels-hover-tooltip",
-                &[
-                    ("name", name.into()),
-                    ("mmsi", ship.mmsi.as_str().into()),
-                    ("latitude", format!("{:.3}", ship.lat).into()),
-                    ("longitude", format!("{:.3}", ship.lon).into()),
-                    (
-                        "course",
-                        globecraft_core::compass::heading_text(ship.course, self.lang).into(),
-                    ),
-                    (
-                        "speed",
-                        ship.speed_knots
-                            .map_or("?".into(), |speed| format!("{speed:.1}"))
-                            .into(),
-                    ),
-                    ("minutes", format!("{age_minutes:.0}").into()),
-                ],
-            );
+            let text = world::vessel_tooltip(self.lang, ship);
             hover_label(painter, rect, at, &text, ms);
         }
     }
@@ -320,13 +314,7 @@ impl App {
             }
         }
         if let Some((sat, at)) = nearest {
-            let text = self.lang.format(
-                "satellites-hover-tooltip",
-                &[
-                    ("name", sat.name.as_str().into()),
-                    ("norad", sat.norad.as_str().into()),
-                ],
-            );
+            let text = world::satellite_tooltip(self.lang, sat);
             hover_label(painter, rect, at, &text, ms);
         }
     }

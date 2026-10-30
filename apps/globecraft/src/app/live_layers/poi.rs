@@ -1,9 +1,12 @@
 //! Places of interest, peaks, waters and parks: rivers and park outlines under the
 //! borders, names over them, styled once per projected geometry.
 use eframe::egui::{self, Align2, Color32, FontId, Shape, Stroke, Vec2};
-use globecraft_data::poi::{PoiLineKind, PointKind};
+use globecraft_core::language::Lang;
+use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
 use globecraft_render::live_layers::LiveGeometry;
 use std::sync::Arc;
+
+const HOVER_RADIUS_POINTS: f32 = 12.0;
 
 const LABEL_FONT_POINTS: f32 = 11.0;
 const WATER_FONT_POINTS: f32 = 12.0;
@@ -58,6 +61,82 @@ impl PoiShapes {
     ) -> &[Shape] {
         self.refresh(painter, geometry);
         &self.labels
+    }
+    /// The nearest name under the pointer, with its class or elevation.
+    pub(in crate::app) fn hover(
+        &self,
+        painter: &egui::Painter,
+        geometry: &LiveGeometry,
+        lang: Lang,
+    ) {
+        let Some(pointer) = painter.ctx().pointer_hover_pos() else {
+            return;
+        };
+        let Some(snapshot) = &geometry.input.poi else {
+            return;
+        };
+        let scale = geometry.input.view.map_scale;
+        let mut nearest = None;
+        let mut minimum = (HOVER_RADIUS_POINTS * scale).powi(2);
+        for label in &geometry.poi.labels {
+            let distance = (pointer - label.position).length_sq();
+            if distance < minimum {
+                minimum = distance;
+                nearest = Some((label.position, label.tile, label.index));
+            }
+        }
+        let Some((at, tile, index)) = nearest else {
+            return;
+        };
+        let Some(point) = snapshot
+            .tiles
+            .get(tile)
+            .and_then(|tile| tile.points.get(index))
+        else {
+            return;
+        };
+        let text = tooltip(lang, point);
+        super::hover_label(painter, geometry.input.view.rect, at, &text, scale);
+    }
+}
+
+fn tooltip(lang: Lang, point: &PoiPoint) -> String {
+    let name = if point.name.is_empty() {
+        "—"
+    } else {
+        &point.name
+    };
+    let class = if point.class.is_empty() {
+        "—"
+    } else {
+        &point.class
+    };
+    match point.kind {
+        PointKind::Poi => lang.format(
+            "poi-hover-place",
+            &[("name", name.into()), ("class", class.into())],
+        ),
+        PointKind::Peak => lang.format(
+            "poi-hover-peak",
+            &[
+                ("name", name.into()),
+                (
+                    "elevation",
+                    point
+                        .elevation_m
+                        .map_or_else(|| "—".to_owned(), |metres| format!("{metres} m"))
+                        .into(),
+                ),
+            ],
+        ),
+        PointKind::Water => lang.format(
+            "poi-hover-water",
+            &[("name", name.into()), ("class", class.into())],
+        ),
+        PointKind::Park => lang.format(
+            "poi-hover-park",
+            &[("name", name.into()), ("class", class.into())],
+        ),
     }
 }
 
@@ -163,4 +242,40 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
     }
     markers.extend(texts);
     markers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn point(kind: PointKind) -> PoiPoint {
+        PoiPoint {
+            kind,
+            lat: 0.0,
+            lon: 0.0,
+            name: "Feature".into(),
+            class: "museum".into(),
+            rank: 1,
+            elevation_m: None,
+        }
+    }
+
+    #[test]
+    fn hover_names_the_feature_class_and_peak_elevation() {
+        let place = tooltip(Lang::En, &point(PointKind::Poi));
+        assert!(place.contains("Feature"), "{place}");
+        assert!(place.contains("Place of interest • museum"), "{place}");
+        let peak = tooltip(
+            Lang::En,
+            &PoiPoint {
+                kind: PointKind::Peak,
+                elevation_m: Some(1_234),
+                class: "peak".into(),
+                ..point(PointKind::Poi)
+            },
+        );
+        assert!(peak.contains("Peak • 1234 m"), "{peak}");
+        let park = tooltip(Lang::PtBr, &point(PointKind::Park));
+        assert!(park.contains("Parque ou área protegida • museum"), "{park}");
+    }
 }

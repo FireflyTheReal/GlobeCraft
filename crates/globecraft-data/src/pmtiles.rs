@@ -229,6 +229,13 @@ fn decompress(bytes: Vec<u8>, compression: Compression) -> Result<Vec<u8>, crate
     }
 }
 
+/// The archive offset and stored length of one tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TileLocation {
+    pub(crate) offset: u64,
+    pub(crate) length: u32,
+}
+
 struct CachedLeaf {
     entries: std::sync::Arc<Vec<Entry>>,
     used: Instant,
@@ -285,14 +292,14 @@ impl Archive {
         Ok(archive)
     }
 
-    /// The tile `z/x/y` as stored (still compressed as `header().tile_compression`
-    /// says), or `None` when the archive has no such tile.
-    pub(crate) async fn tile(
+    /// Where the tile's bytes are, without reading them. A batch of tiles can group
+    /// these ranges into fewer requests.
+    pub(crate) async fn locate(
         &self,
         z: u8,
         x: u32,
         y: u32,
-    ) -> Result<Option<Vec<u8>>, crate::Error> {
+    ) -> Result<Option<TileLocation>, crate::Error> {
         if z < self.header.min_zoom || z > self.header.max_zoom || !self.header.may_hold(z, x) {
             return Ok(None);
         }
@@ -307,13 +314,10 @@ impl Archive {
                 if u64::from(entry.length) > MAX_TILE_BYTES {
                     return Err("PMTiles tile too large".into());
                 }
-                let bytes = self
-                    .range(
-                        self.header.tile_offset + entry.offset,
-                        u64::from(entry.length),
-                    )
-                    .await?;
-                return Ok(Some(bytes));
+                return Ok(Some(TileLocation {
+                    offset: self.header.tile_offset + entry.offset,
+                    length: entry.length,
+                }));
             }
             directory = Some(self.leaf(entry).await?);
         }
@@ -358,7 +362,16 @@ impl Archive {
 
     /// Bytes `offset..offset + length` of the archive. A server that ignores the range
     /// is an error rather than a download of the whole file.
-    async fn range(&self, offset: u64, length: u64) -> Result<Vec<u8>, crate::Error> {
+    pub(crate) async fn range(&self, offset: u64, length: u64) -> Result<Vec<u8>, crate::Error> {
+        let _permit = match crate::http::range_limit(self.policy) {
+            Some(limit) => Some(
+                limit
+                    .acquire()
+                    .await
+                    .map_err(|_| crate::Error::from("HTTP range limiter closed"))?,
+            ),
+            None => None,
+        };
         let client = crate::http::client(self.policy)?;
         let reused = self
             .resolved
@@ -663,12 +676,21 @@ mod tests {
             let archive = Archive::open(&url, crate::http::Policy::Boundary)
                 .await
                 .unwrap();
-            assert_eq!(archive.tile(0, 0, 0).await.unwrap().unwrap(), b"world");
-            assert_eq!(archive.tile(1, 1, 0).await.unwrap().unwrap(), b"quarter");
-            assert_eq!(archive.tile(2, 0, 0).await.unwrap().unwrap(), b"sixteenth");
+            for (z, x, y, expected) in [
+                (0, 0, 0, &b"world"[..]),
+                (1, 1, 0, &b"quarter"[..]),
+                (2, 0, 0, &b"sixteenth"[..]),
+            ] {
+                let location = archive.locate(z, x, y).await.unwrap().unwrap();
+                let bytes = archive
+                    .range(location.offset, u64::from(location.length))
+                    .await
+                    .unwrap();
+                assert_eq!(bytes, expected);
+            }
             // Missing tiles and zooms outside the archive.
-            assert_eq!(archive.tile(1, 0, 0).await.unwrap(), None);
-            assert_eq!(archive.tile(3, 0, 0).await.unwrap(), None);
+            assert_eq!(archive.locate(1, 0, 0).await.unwrap(), None);
+            assert_eq!(archive.locate(3, 0, 0).await.unwrap(), None);
         });
     }
 

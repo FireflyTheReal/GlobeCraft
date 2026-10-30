@@ -29,4 +29,5 @@ pub(in crate::app) mod theme;
 pub(in crate::app) mod tile_diagnostics;
 mod updater;
 pub(in crate::app) mod widgets;
+pub(in crate::app) mod window_chrome;
 mod windows;
