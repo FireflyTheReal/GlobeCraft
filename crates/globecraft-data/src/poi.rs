@@ -363,3 +363,87 @@ mod tests {
         assert_eq!(tile.lines[0].name.as_deref(), Some("Isar"));
     }
 }
+
+#[cfg(test)]
+mod size_probe {
+    /// Which layer fills the published `poi` tiles at zoom 14, in a city, farmland,
+    /// forest, desert and on the sea: the numbers behind trimming the set.
+    #[tokio::test]
+    #[ignore = "network: reads GlobeCraft's published places tiles"]
+    async fn published_poi_layer_sizes() {
+        let template = crate::map_data::template("poi").await.unwrap();
+        let archives = template
+            .strip_prefix(crate::map_data::PMTILES_PREFIX)
+            .unwrap()
+            .to_owned();
+        let places = [
+            ("Munich", 48.14, 11.56),
+            ("Bavarian farmland", 48.6, 12.4),
+            ("Black Forest", 48.0, 8.2),
+            ("Amazon", -3.5, -62.0),
+            ("Sahara", 23.0, 12.0),
+            ("Siberia", 62.0, 100.0),
+            ("Kansas", 38.5, -98.0),
+            ("Yellowstone", 44.6, -110.5),
+            ("North Atlantic", 45.0, -35.0),
+        ];
+        for z in [12u8, 14] {
+            let keys: Vec<_> = places
+                .iter()
+                .map(|&(_, lat, lon)| {
+                    let key = crate::boundaries::osm_tiles::content::TileKey::at(z, lat, lon);
+                    (key.z, key.x, key.y)
+                })
+                .collect();
+            let parts = crate::map_data::tile_parts_many(&keys, &archives).await.unwrap();
+            for ((name, _, _), parts) in places.iter().zip(parts) {
+                let compressed: usize = parts.iter().map(Vec::len).sum();
+                let mut layers = std::collections::BTreeMap::new();
+                for part in parts {
+                    let bytes = crate::map_data::gunzip_if_needed(part).unwrap();
+                    let mut reader = crate::mvt::Reader::new(&bytes);
+                    while !reader.done() {
+                        let key = reader.varint().unwrap();
+                        if key >> 3 == 3 && key & 7 == 2 {
+                            let layer = reader.bytes().unwrap();
+                            let mut inner = crate::mvt::Reader::new(layer);
+                            let mut name = String::new();
+                            while !inner.done() {
+                                let key = inner.varint().unwrap();
+                                match key & 7 {
+                                    2 => {
+                                        let value = inner.bytes().unwrap();
+                                        if key >> 3 == 1 {
+                                            name = String::from_utf8_lossy(value).into_owned();
+                                        }
+                                    }
+                                    0 => {
+                                        inner.varint();
+                                    }
+                                    5 => {
+                                        inner.take(4);
+                                    }
+                                    _ => {
+                                        inner.take(8);
+                                    }
+                                }
+                            }
+                            *layers.entry(name).or_insert(0usize) += layer.len();
+                        } else {
+                            match key & 7 {
+                                2 => {
+                                    reader.bytes();
+                                }
+                                0 => {
+                                    reader.varint();
+                                }
+                                _ => break,
+                            }
+                        }
+                    }
+                }
+                println!("z{z} {name}: {compressed} B gzip, raw by layer {layers:?}");
+            }
+        }
+    }
+}

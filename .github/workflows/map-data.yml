@@ -229,6 +229,9 @@ jobs:
         run: |
           mkdir -p "$TMPDIR"
           attribution='<a href="https://openmaptiles.org/">&copy; OpenMapTiles</a> <a href="https://www.openstreetmap.org/copyright">&copy; OpenStreetMap contributors</a>'
+          # Only the attributes GlobeCraft reads: OpenMapTiles carries a name in every
+          # language (name:xx), which made up most of a city's places tile.
+          names='-y name -y name_en -y name:latin'
           case '${{ inputs.set }}' in
             borders)
               ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
@@ -240,11 +243,12 @@ jobs:
               ;;
             transport)
               # Rail (incl. narrow gauge, preserved, funicular), transit (subway, light
-              # rail, monorail, tram) and ferries with their names; every airport
-              # feature (runways, taxiways, aprons, areas) and airport label.
+              # rail, monorail, tram) and ferries; every airport feature (runways,
+              # taxiways, aprons, areas) and airport label.
               ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
-                --layer=transportation --layer=transportation_name --layer=aeroway --layer=aerodrome_label \
-                --feature-filter='{"transportation":["in","class","rail","transit","ferry"],"transportation_name":["in","class","rail","transit","ferry"]}' \
+                --layer=transportation --layer=aeroway --layer=aerodrome_label \
+                --feature-filter='{"transportation":["in","class","rail","transit","ferry"]}' \
+                $names -y class -y subclass -y service -y brunnel -y iata -y icao \
                 -A "$attribution" -n "GlobeCraft railways, ferries and airports" \
                 -o transport.mbtiles planet.mbtiles
               ;;
@@ -257,15 +261,17 @@ jobs:
               ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
                 --layer=transportation --layer=transportation_name \
                 --feature-filter="{\"transportation\":[\"in\",\"class\",$classes],\"transportation_name\":[\"in\",\"class\",$classes]}" \
+                $names -y ref -y class -y ramp \
                 -A "$attribution" -n "GlobeCraft roads" \
                 -o "${{ inputs.set }}.mbtiles" planet.mbtiles
               ;;
             poi)
-              # Points of interest, peaks, rivers and canals (not streams and
+              # Named points of interest, peaks, rivers and canals (not streams and
               # ditches), names of seas, lakes and bays, and parks.
               ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
                 --layer=poi --layer=mountain_peak --layer=waterway --layer=water_name --layer=park \
-                --feature-filter='{"waterway":["in","class","river","canal"]}' \
+                --feature-filter='{"waterway":["in","class","river","canal"],"poi":["has","name"]}' \
+                $names -y class -y subclass -y rank -y ele \
                 -A "$attribution" -n "GlobeCraft places of interest" \
                 -o poi.mbtiles planet.mbtiles
               ;;
@@ -432,12 +438,23 @@ jobs:
             echo "The manifest changed underneath; merging again ($attempt)"
           done
           cat check.json
-          # Keep this build's files and the previous build's; delete the set's others.
-          keep_previous=$(python3 -c 'import json, os; print(json.load(open("manifest.json"))[os.environ["KEY"]]["previous"] or "")')
+          # Keep this build's files and the files of the build before (a running app
+          # may still read them); delete the set's other files. Compared by name, so a
+          # rebuild of the same planet version that needs fewer parts drops the rest.
+          python3 - > keep.txt <<'PY'
+          import json, os
+          key = os.environ["KEY"]
+          keep = {os.path.basename(url) for parts in json.load(open("check.json"))[key]["sets"] for url in parts}
+          old = json.load(open("old-manifest.json")).get(key, {})
+          if old.get("version") != os.environ["VERSION"]:
+              keep |= {os.path.basename(url) for parts in old.get("sets", []) for url in parts}
+          keep.add(f"measure-{key}-{os.environ['VERSION']}.txt")
+          print("\n".join(sorted(keep)))
+          PY
           prefixes=$(echo $NAMES | tr ' ' '|')
           stale=$(gh release view "$release" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
             grep -E "^(globecraft-($prefixes)-|measure-$KEY-)" |
-            grep -v -F -e "$VERSION" ${keep_previous:+-e "$keep_previous"} || true)
+            grep -v -x -F -f keep.txt || true)
           for old in $stale; do
             echo "Deleting $old"
             gh release delete-asset "$release" "$old" --repo "$GITHUB_REPOSITORY" --yes
