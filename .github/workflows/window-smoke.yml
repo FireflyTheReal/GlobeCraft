@@ -22,7 +22,7 @@ jobs:
           - {name: windows, os: windows-2022}
           - {name: linux-x11, os: ubuntu-24.04}
           - {name: linux-wayland, os: ubuntu-24.04}
-          - {name: macos, os: macos-14}
+          - {name: macos, os: macos-15}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
