@@ -104,16 +104,14 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
             let mut run: Vec<Pos2> = Vec::new();
             let mut previous = None;
             for &(lat, lon) in &line.points {
-                let current = visibility
-                    .as_ref()
-                    .is_none_or(|visibility| visibility.visible(lat, lon))
-                    .then(|| {
-                        view.basis.project_precise(
-                            ground_position(&view.basis, ground, lat, lon),
-                            view.rect,
-                        )
-                    })
-                    .flatten();
+                let current = crate::overlays::project_unhidden(
+                    &view.basis,
+                    view.rect,
+                    ground,
+                    visibility.as_ref(),
+                    lat,
+                    lon,
+                );
                 match previous
                     .zip(current)
                     .and_then(|(a, b)| crate::overlays::clip_segment([a, b], clip))
@@ -171,19 +169,18 @@ fn labels(
             if !seen.insert(identity) {
                 continue;
             }
-            if visibility
-                .as_ref()
-                .is_some_and(|visibility| !visibility.visible(point.lat, point.lon))
-            {
-                continue;
-            }
             let Some(position) = view.basis.project(
                 ground_position(&view.basis, ground, point.lat, point.lon),
                 view.rect,
             ) else {
                 continue;
             };
-            if view.rect.contains(position) {
+            // On screen first: the line-of-sight test is the expensive part.
+            if view.rect.contains(position)
+                && visibility
+                    .as_ref()
+                    .is_none_or(|visibility| visibility.visible(point.lat, point.lon))
+            {
                 found.push((
                     priority,
                     ProjectedPoiLabel {

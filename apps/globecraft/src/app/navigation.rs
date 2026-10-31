@@ -84,7 +84,7 @@ impl App {
         self.terrain_active()
             .then(|| globecraft_render::overlays::OverlayGround {
                 exaggeration: self.settings.layers.terrain_exaggeration,
-                generation: self.cache.generation(),
+                generation: self.cache.elevation_generation(),
             })
     }
 
@@ -199,7 +199,7 @@ impl GroundSource {
                 rect,
                 pos,
                 &heights,
-                heights.max_height(),
+                globecraft_render::overlays::Ground::max_height(&heights),
             ),
             None => basis.pick(rect, pos),
         }

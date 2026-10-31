@@ -35,8 +35,9 @@ fn main() -> Result<(), eframe::Error> {
             .with_inner_size(INITIAL_WINDOW_SIZE_POINTS)
             .with_title(WINDOW_TITLE)
             .with_app_id("globecraft");
-        // The header is the titlebar: macOS keeps its native traffic lights over a
-        // transparent titlebar, while Windows and Linux draw their own controls.
+        // macOS: the header is the titlebar, with the native traffic lights over a
+        // transparent titlebar. Windows and Linux keep their native title bar and its
+        // own minimize, maximize and close buttons.
         #[cfg(target_os = "macos")]
         {
             viewport = viewport
@@ -44,10 +45,6 @@ fn main() -> Result<(), eframe::Error> {
                 .with_titlebar_shown(false)
                 .with_title_shown(false)
                 .with_titlebar_buttons_shown(true);
-        }
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        {
-            viewport = viewport.with_decorations(false);
         }
         if let Ok(img) = image::load_from_memory(APP_ICON_PNG) {
             let img = img.to_rgba8();

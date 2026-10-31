@@ -10,8 +10,15 @@ use std::time::{Duration, Instant};
 
 /// Tiles downloaded in one batch. A batch shares archive lookups and coalesced byte
 /// ranges, so a view's 64 tiles take a few requests instead of one per tile.
-const MAX_BATCH_TILES: usize = 24;
+const MAX_BATCH_TILES: usize = 8;
+/// Tiles downloading at once, in several batches: the nearest tiles appear as soon as
+/// their batch is in, instead of waiting for one large batch.
+const MAX_INFLIGHT_TILES: usize = 24;
+/// A tile that could not be decoded is tried again after this long.
 const FAILED_RETRY: Duration = Duration::from_secs(30);
+/// A batch that failed as a whole (a network error, an archive that did not answer)
+/// is tried again soon: its tiles are most likely fine.
+const BATCH_RETRY: Duration = Duration::from_secs(4);
 const TEMPLATE_RETRY: Duration = Duration::from_secs(60);
 /// Decoded vector tiles kept per set are bounded by both count and this estimated
 /// heap budget. The estimate counts owned names and coordinate capacity, not the
@@ -73,6 +80,7 @@ struct Shared<T> {
     template_error: Option<String>,
     tiles: HashMap<TileKey, Cached<T>>,
     inflight: HashSet<TileKey>,
+    /// When a failed tile may be requested again.
     failed: HashMap<TileKey, Instant>,
     /// Bumped whenever a tile arrives.
     revision: u64,
@@ -183,71 +191,25 @@ impl<T: Send + Sync + 'static> TileStream<T> {
             }
             return;
         };
-        // Downloads for missing tiles, nearest first. One batch of tiles shares its
-        // archive lookups and coalesced byte ranges instead of one request each.
+        // Downloads for missing tiles, nearest first, in batches that share their
+        // archive lookups and coalesced byte ranges.
         let mut batch = Vec::new();
         for key in &wanted {
-            // `inflight` already holds the batch's keys, so it bounds the whole batch.
-            if shared.inflight.len() >= MAX_BATCH_TILES {
+            if shared.inflight.len() >= MAX_INFLIGHT_TILES {
                 break;
             }
-            let retry = shared
-                .failed
-                .get(key)
-                .is_none_or(|at| now.duration_since(*at) >= FAILED_RETRY);
+            let retry = shared.failed.get(key).is_none_or(|at| now >= *at);
             if shared.tiles.contains_key(key) || shared.inflight.contains(key) || !retry {
                 continue;
             }
             shared.inflight.insert(*key);
             batch.push(*key);
+            if batch.len() == MAX_BATCH_TILES {
+                self.spawn_batch(runtime, std::mem::take(&mut batch), &template, &repaint);
+            }
         }
         if !batch.is_empty() {
-            let (state, template, repaint) =
-                (self.shared.clone(), template.clone(), repaint.clone());
-            runtime.spawn(async move {
-                let result = fetch_many(spec, &batch, &template).await;
-                if let Ok(mut shared) = state.lock() {
-                    let mut remaining: HashSet<TileKey> = batch.iter().copied().collect();
-                    let mut arrived = false;
-                    if let Ok(tiles) = result {
-                        for (key, tile) in tiles {
-                            remaining.remove(&key);
-                            shared.inflight.remove(&key);
-                            match tile {
-                                Ok(tile) => {
-                                    shared.failed.remove(&key);
-                                    let bytes = (spec.size_bytes)(&tile);
-                                    shared.tiles.insert(
-                                        key,
-                                        Cached {
-                                            tile: Arc::new(tile),
-                                            used: Instant::now(),
-                                            bytes,
-                                        },
-                                    );
-                                    arrived = true;
-                                }
-                                Err(_) => {
-                                    shared.failed.insert(key, Instant::now());
-                                }
-                            }
-                        }
-                    }
-                    for key in remaining {
-                        shared.inflight.remove(&key);
-                        shared.failed.insert(key, Instant::now());
-                    }
-                    if arrived {
-                        shared.revision += 1;
-                        evict(
-                            &mut shared.tiles,
-                            spec.max_cached_tiles,
-                            spec.max_cached_bytes,
-                        );
-                    }
-                }
-                repaint();
-            });
+            self.spawn_batch(runtime, batch, &template, &repaint);
         }
         if self
             .built
@@ -280,6 +242,68 @@ impl<T: Send + Sync + 'static> TileStream<T> {
             .collect();
         self.built = Some((wanted, shared.revision));
         self.snapshot = Some(Arc::new(Snapshot { tiles, zoom }));
+    }
+}
+
+impl<T: Send + Sync + 'static> TileStream<T> {
+    fn spawn_batch(
+        &self,
+        runtime: &crate::runtime::ServiceRuntime,
+        batch: Vec<TileKey>,
+        template: &Arc<str>,
+        repaint: &(impl Fn() + Send + Sync + Clone + 'static),
+    ) {
+        let spec = self.spec;
+        let (state, template, repaint) = (self.shared.clone(), template.clone(), repaint.clone());
+        runtime.spawn(async move {
+            let result = fetch_many(spec, &batch, &template).await;
+            if let Ok(mut shared) = state.lock() {
+                let now = Instant::now();
+                let mut arrived = false;
+                // Every key of the batch is settled here, whatever came back.
+                for key in &batch {
+                    shared.inflight.remove(key);
+                }
+                match result {
+                    Ok(tiles) => {
+                        for (key, tile) in tiles {
+                            match tile {
+                                Ok(tile) => {
+                                    shared.failed.remove(&key);
+                                    let bytes = (spec.size_bytes)(&tile);
+                                    shared.tiles.insert(
+                                        key,
+                                        Cached {
+                                            tile: Arc::new(tile),
+                                            used: now,
+                                            bytes,
+                                        },
+                                    );
+                                    arrived = true;
+                                }
+                                Err(_) => {
+                                    shared.failed.insert(key, now + FAILED_RETRY);
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        for key in &batch {
+                            shared.failed.insert(*key, now + BATCH_RETRY);
+                        }
+                    }
+                }
+                if arrived {
+                    shared.revision += 1;
+                    evict(
+                        &mut shared.tiles,
+                        spec.max_cached_tiles,
+                        spec.max_cached_bytes,
+                    );
+                }
+            }
+            repaint();
+        });
     }
 }
 

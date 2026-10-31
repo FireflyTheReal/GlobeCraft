@@ -96,8 +96,8 @@ The window is laid out like RustGIS (Apache-2.0, see CREDITS.md): header,
 ribbon, left/right panes, status bar and the globe in the central panel (`app/ui/chrome.rs`,
 `ribbon.rs`, `panes.rs`, `widgets.rs`, `theme.rs`, `icons.rs`). The header also serves as the
 title bar (`app/ui/window_chrome.rs`): macOS uses a full-size content view with hidden title
-text and its native traffic lights, while Windows and Linux remove native decorations and
-draw minimize, maximize/restore and close plus edge-resize handling. The window title stays
+text and its native traffic lights; Windows and Linux keep the native title bar, buttons and
+resize borders, so the header is an ordinary row there. The window title stays
 `GlobeCraft`; the executable keeps its `globecraft` name. Theme tokens are applied to both
 egui themes once per UI scale; egui switches themes itself. The render pipeline below is
 unchanged by the interface. See [interface](features/INTERFACE.md).

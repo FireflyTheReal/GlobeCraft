@@ -1,0 +1,86 @@
+name: Window smoke test
+
+# Starts the CPU-only build on Windows, Linux (X11 and Wayland) and macOS (as the
+# packaged GlobeCraft.app) and drives the native title bar: maximize, minimize,
+# restore, drag and close or quit. Uploads screenshots and a report per platform, and
+# runs the tilted relief frame-time and terrain-occlusion benchmarks. Manual only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: windows, os: windows-2022}
+          - {name: linux-x11, os: ubuntu-24.04}
+          - {name: linux-wayland, os: ubuntu-24.04}
+          - {name: macos, os: macos-14}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: window-smoke-${{ matrix.name }}
+      - name: Install Linux libraries and test tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libudev-dev libgtk-3-dev libxkbcommon-dev \
+            libwayland-dev libx11-dev xvfb openbox xdotool wmctrl x11-utils imagemagick \
+            weston bc mesa-vulkan-drivers
+      - name: Build
+        run: cargo build -p globecraft --release --no-default-features --locked
+      - name: Drive the window (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/window-smoke/windows.ps1 -Exe target/release/globecraft.exe -Out smoke
+      - name: Drive the window (Linux)
+        if: runner.os == 'Linux'
+        run: ./scripts/window-smoke/linux.sh ${{ matrix.name == 'linux-x11' && 'x11' || 'wayland' }} target/release/globecraft smoke
+      - name: Install cargo-packager (macOS)
+        if: runner.os == 'macOS'
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Package and drive the app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p bundle
+          python3 -c "import sys; sys.path.insert(0, 'scripts'); import package_tools, pathlib; package_tools.app_bundle('0.0.0', pathlib.Path('target/release/globecraft').resolve(), pathlib.Path('bundle'))"
+          codesign --force --sign - bundle/GlobeCraft.app
+          ./scripts/window-smoke/macos.sh bundle/GlobeCraft.app smoke
+      - name: Benchmarks
+        if: matrix.name != 'linux-wayland'
+        shell: bash
+        run: |
+          set -o pipefail
+          export XDG_CACHE_HOME="$RUNNER_TEMP/cache"
+          cargo test -p globecraft-render --release --locked --lib tilted_relief_occlusion_cost \
+            -- --ignored --nocapture | tee -a smoke/bench.txt
+          cargo test -p globecraft --release --locked tilted_relief_frame_time \
+            -- --ignored --nocapture --test-threads=1 | tee -a smoke/bench.txt
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ matrix.name }}"
+            echo '```'
+            cat smoke/report.txt 2>/dev/null
+            grep -E "relief|lookups|ms" smoke/bench.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: window-smoke-${{ matrix.name }}
+          path: smoke/
+          retention-days: 7

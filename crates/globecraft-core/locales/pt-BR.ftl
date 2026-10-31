@@ -19,10 +19,6 @@ globe-copy-coordinates-action = Copiar coordenadas
 globe-context-menu-hint = Clique sobre o globo.
 
 app-ready-status = Pronto. Arraste para girar, role para aproximar.
-window-minimize = Minimizar
-window-maximize = Maximizar
-window-restore = Restaurar
-window-close = Fechar
 
 search-empty-status = Nenhum resultado encontrado.
 

@@ -28,7 +28,8 @@ pub struct OverlayView {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct OverlayGround {
     pub exaggeration: f32,
-    /// The tile cache's generation: new elevation tiles move the lines again.
+    /// The tile cache's elevation generation: new elevation tiles move the lines
+    /// again (imagery tiles do not).
     pub generation: u64,
 }
 pub struct PreparedLabel {

@@ -5,20 +5,20 @@ GlobeCraft's window follows the layout of [RustGIS](https://github.com/opengeos/
 
 | Area | What it holds |
 | --- | --- |
-| Header | File, Quick Access Toolbar (Undo, Redo, Screenshot), the place search and **Command Search** (Ctrl/⌘+K); Open KML and Save stay in the File menu. On Windows and Linux the header also holds minimize, maximize/restore and close. macOS keeps its native traffic lights at the left. The window title stays **GlobeCraft** and is not drawn in the merged header |
+| Header | File, Quick Access Toolbar (Undo, Redo, Screenshot), the place search and **Command Search** (Ctrl/⌘+K); Open KML and Save stay in the File menu. Windows and Linux keep their native title bar with the system's own minimize, maximize/restore and close. macOS keeps its native traffic lights at the left. The window title stays **GlobeCraft** and is not drawn in the merged header |
 | Ribbon | **File** menu, then the tabs Home, Layers, Live, View, Places, Settings and Help. Double-click a tab (or Ctrl+F1) to collapse the ribbon; a collapsed ribbon opens over the globe when a tab is clicked |
 | Left pane | **Layers** (basemap and every layer as a table of contents with status and credits), **Places** (the KML tree; it can be pinned below the other tabs) and **Globe** (search results, navigation, export, controls) |
 | Right pane | **AI Assistant** and **Measure** as closable tabs |
 | Globe | The renderer, the navigator (rotation ring, move pad, zoom slider), scale bar and credits |
 | Status bar | Cursor and centre coordinates (click to copy), camera altitude (click to type one), heading (click for north up), status messages, updates and tile loading |
 
-The header is also the title bar. On macOS the native traffic lights stay at the left and
-the header starts after them; dragging empty header space moves the window, and a
-double-click zooms or restores it. On Windows and Linux the window has no native
-decorations: minimize, maximize/restore and close are drawn at the right of the header,
-the border resizes the window, and the same drag/double-click behaviour applies. The
-window title stays **GlobeCraft** for Mission Control, the taskbar and window lists even
-though the merged header does not draw it.
+On macOS the header is also the title bar: the native traffic lights stay at the left and
+the header starts after them (in fullscreen, where macOS hides them, the header uses the
+full width); dragging empty header space moves the window, and a double-click zooms or
+restores it. Windows and Linux keep the operating system's own title bar, buttons, window
+drag and resize borders (under Wayland, compositors without server-side decorations get
+winit's client-side ones). The window title stays **GlobeCraft** for Mission Control, the
+taskbar and window lists.
 
 The theme follows the system, or Settings › Theme. Pane widths, the open panes, the ribbon
 tab and whether it is collapsed are saved in `settings.json` (`sidebar` and `workspace`).

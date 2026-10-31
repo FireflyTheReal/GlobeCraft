@@ -357,6 +357,80 @@ fn fast_zoom_ui_passes() {
     }
 }
 
+/// Frame time over the tilted relief view: 3D terrain on, borders, roads, railways,
+/// peaks and waters shown, camera low over the Alps tilted towards the horizon, so the
+/// line-of-sight test runs for every overlay point. Waits for tiles first (needs
+/// network), then reports the median and p95 of whole UI passes. Manual.
+#[test]
+#[ignore = "manual: needs network; run alone with --release --ignored --nocapture"]
+fn tilted_relief_frame_time() {
+    use globecraft_core::layers::MapLayer;
+    let mut settings = globecraft_data::settings::Settings::default();
+    for layer in [
+        MapLayer::Terrain,
+        MapLayer::CountryBorders,
+        MapLayer::StateBorders,
+        MapLayer::Roads,
+        MapLayer::Railways,
+        MapLayer::Peaks,
+        MapLayer::Waters,
+    ] {
+        settings.set_layer_visible(layer, true);
+    }
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(eframe::egui::vec2(1480.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_eframe(move |cc| {
+            super::App::new(
+                cc,
+                settings,
+                std::sync::Arc::new(super::RestartRequest::default()),
+            )
+        });
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 46.55, "lon": 8.0, "altitude_km": 12.0, "heading_deg": 150.0}),
+    );
+    let _ = h.state_mut().run("camera.set", json!({"tilt_deg": 75.0}));
+    // Let elevation, imagery and the overlay tiles arrive.
+    let settle_for = std::time::Duration::from_secs(
+        std::env::var("GLOBECRAFT_RELIEF_SETTLE_S")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(40),
+    );
+    let started = std::time::Instant::now();
+    while started.elapsed() < settle_for {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    let cam = h.state().cam;
+    println!(
+        "tilted relief view: tilt {:.1}°, altitude {:.1} km",
+        cam.tilt, cam.alt
+    );
+    let mut walls = Vec::new();
+    let mut cpus = Vec::new();
+    for frame in 0..600 {
+        // A slow pan, so the overlays are re-prepared as the user would see them.
+        h.state_mut().cam.heading = 150.0 + f64::from(frame) * 0.05;
+        let (wall, cpu) = (std::time::Instant::now(), thread_cpu_ns());
+        h.step();
+        walls.push(wall.elapsed().as_secs_f64() * 1000.0);
+        cpus.push((thread_cpu_ns() - cpu) as f64 / 1e6);
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    }
+    for (what, values) in [("wall", &mut walls), ("UI-thread CPU", &mut cpus)] {
+        values.sort_by(f64::total_cmp);
+        println!(
+            "tilted relief frame ({what}): median {:.2} ms, p95 {:.2} ms, max {:.2} ms",
+            values[values.len() / 2],
+            values[values.len() * 95 / 100],
+            values[values.len() - 1]
+        );
+    }
+}
+
 /// CPU time of the calling thread in nanoseconds (Linux scheduler statistics), so background
 /// loaders competing for cores do not count; elsewhere, wall time since the first call.
 fn thread_cpu_ns() -> u64 {

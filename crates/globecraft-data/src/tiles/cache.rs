@@ -102,6 +102,8 @@ pub struct TileCache {
     disk: DiskCache,
     tx: tokio::sync::mpsc::Sender<TileKey>,
     generation: AtomicU64,
+    /// Like `generation`, for elevation tiles only: what raises overlays onto the relief.
+    elevation_generation: AtomicU64,
     inflight: AtomicUsize,
     /// Benchmarks only: every tile comes from `{base}/{provider}/{z}/{x}/{y}/{release}`.
     fixture_source: Option<Arc<str>>,
@@ -177,6 +179,7 @@ impl TileCache {
             disk: DiskCache::with_budget(directory, budgets.disk_bytes),
             tx,
             generation: AtomicU64::new(0),
+            elevation_generation: AtomicU64::new(0),
             inflight: AtomicUsize::new(0),
             fixture_source: None,
             reserved: Mutex::new(HashSet::default()),
@@ -541,10 +544,31 @@ impl TileCache {
             self.inflight.fetch_sub(1, Ordering::Relaxed);
         }
         self.generation.fetch_add(1, Ordering::Relaxed);
+        if admitted && unkey(key).0 == super::Provider::TerrainDem {
+            self.elevation_generation.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    /// Waits up to `limit` for tile writes to the disk cache to finish (a quit that
+    /// ends the process itself). Returns whether they did.
+    pub fn wait_for_disk_writes(&self, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while self.disk.writes_in_progress() > 0 {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
     }
     /// Changes whenever a tile request finishes, including failures.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+    /// Changes whenever an elevation tile arrives. Overlays raised onto the relief
+    /// follow this one: imagery tiles arriving (most of them) do not move them, and
+    /// re-projecting every border, road and place on each of those cost the most.
+    pub fn elevation_generation(&self) -> u64 {
+        self.elevation_generation.load(Ordering::Relaxed)
     }
     pub fn inflight(&self) -> usize {
         self.inflight.load(Ordering::Relaxed)

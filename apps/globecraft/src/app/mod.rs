@@ -443,6 +443,37 @@ impl App {
         }
     }
 }
+/// How long a quit waits for a running screenshot, a file save and tile cache writes
+/// before the process ends (macOS ends it itself, see `on_exit`).
+#[cfg(target_os = "macos")]
+const QUIT_SCREENSHOT_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+#[cfg(target_os = "macos")]
+const QUIT_FILE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(target_os = "macos")]
+const QUIT_DISK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl App {
+    /// Lets work that a quit would cut short land first: a screenshot being rendered
+    /// or written, a KML or planet file being saved, and tile cache writes. Each wait
+    /// is bounded, so a stuck job cannot keep the app from quitting.
+    #[cfg(target_os = "macos")]
+    fn finish_background_work(&mut self) {
+        use std::time::{Duration, Instant};
+        let started = Instant::now();
+        while self.screenshot_running() && started.elapsed() < QUIT_SCREENSHOT_WAIT {
+            self.poll_still_shot();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let started = Instant::now();
+        while self.file_jobs.is_busy() && started.elapsed() < QUIT_FILE_WAIT {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if !self.cache.wait_for_disk_writes(QUIT_DISK_WAIT) {
+            eprintln!("Quit before every tile reached the disk cache");
+        }
+    }
+}
+
 impl eframe::App for App {
     fn on_exit(&mut self) {
         let restarting = self
@@ -463,14 +494,17 @@ impl eframe::App for App {
         }
         #[cfg(feature = "profiling")]
         globecraft_data::profiling::flush();
+        #[cfg(target_os = "macos")]
+        self.finish_background_work();
         // macOS: end the process here, before eframe tears down the window. AccessKit's
         // adapter restores the content view's class on teardown while AppKit's Touch Bar
         // support still observes that view; the next display cycle then throws
         // "not registered as an observer" and every quit ends in SIGABRT. Settings and
         // profiling data are already flushed above. A pending update restart must exec
         // the replacement here too, because returning to eframe's teardown aborts before
-        // `main` can do it. On other platforms eframe returns and `main` finishes
-        // normally.
+        // `main` can do it. Running screenshots, file saves and tile writes are given a
+        // bounded time to finish first. On other platforms eframe returns and `main`
+        // finishes normally.
         #[cfg(target_os = "macos")]
         if restarting {
             if let Some(error) = self.update_restart.request.error.lock().unwrap().clone() {
@@ -657,7 +691,6 @@ impl eframe::App for App {
         if self.fly.is_some() {
             ui.request_repaint();
         }
-        ui::window_chrome::resize_edges(ui);
         self.header(ui);
         self.ribbon(ui);
         self.status_bar(ui);

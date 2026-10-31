@@ -6,7 +6,6 @@
 use super::ribbon::COLLAPSE_W;
 use super::theme::{Tokens, regular};
 use super::widgets::{icon_command, text_w};
-use super::window_chrome::{WINDOW_CONTROLS_GAP, WINDOW_CONTROLS_WIDTH};
 use super::{icons, status};
 use crate::app::App;
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
@@ -38,8 +37,9 @@ const CURSOR_READOUT_WIDTH: f32 = 250.0;
 
 impl App {
     /// The single header row: File, the ribbon tabs, the Quick Access Toolbar, the
-    /// place search, the command search, the ribbon collapse button and, on Windows and
-    /// Linux, the window controls. macOS keeps its native traffic lights at the left.
+    /// place search, the command search and the ribbon collapse button. On macOS it is
+    /// also the titlebar, after the native traffic lights; Windows and Linux keep their
+    /// native title bar above it.
     pub(in crate::app) fn header(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
@@ -60,22 +60,14 @@ impl App {
             )
             .show(ui, |ui| {
                 let full = ui.max_rect();
-                let drag_rect = Rect::from_min_max(
-                    full.min,
-                    pos2(full.max.x - WINDOW_CONTROLS_WIDTH, full.max.y),
-                );
-                let drag = ui.interact(
-                    drag_rect,
-                    egui::Id::new("header_drag"),
-                    Sense::click_and_drag(),
-                );
+                let drag = ui.interact(full, egui::Id::new("header_drag"), Sense::click_and_drag());
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
                     self.file_button(ui);
                     ui.add_space(6.0);
-                    // Right side, measured from the window edge: window controls, collapse
-                    // button, command search, place search and the Quick Access Toolbar.
-                    let right = full.max.x - WINDOW_CONTROLS_WIDTH - WINDOW_CONTROLS_GAP;
+                    // Right side, measured from the window edge: collapse button, command
+                    // search, place search and the Quick Access Toolbar.
+                    let right = full.max.x;
                     let left = ui.cursor().min.x;
                     let tabs_min =
                         self.tab_captions_width(ui) + Tab::ALL.len() as f32 * TAB_MIN_PAD;
@@ -88,14 +80,7 @@ impl App {
                     let full_cmd_w =
                         (text_w(ui, label, regular(12.0)) + text_w(ui, hint, regular(11.0)) + 60.0)
                             .clamp(170.0, 230.0);
-                    let fixed = COLLAPSE_W
-                        + 8.0
-                        + 10.0
-                        + 10.0
-                        + QAT_WIDTH
-                        + 8.0
-                        + WINDOW_CONTROLS_WIDTH
-                        + WINDOW_CONTROLS_GAP;
+                    let fixed = COLLAPSE_W + 8.0 + 10.0 + 10.0 + QAT_WIDTH + 8.0;
                     let room = right - left - fixed - tabs_min;
                     let wanted_search = PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0);
                     let cmd_w = if room >= full_cmd_w + wanted_search {
@@ -202,8 +187,6 @@ impl App {
                     }
                     // The tabs take what is left; they scroll when the window is narrow.
                     self.tab_buttons(ui, &t, qat.min.x - 8.0 - left);
-                    #[cfg(any(target_os = "windows", target_os = "linux"))]
-                    self.window_controls(ui, &t, full, lang);
                 });
                 self.header_drag(ui, &drag);
             });

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Launches GlobeCraft under X11 (Xvfb with a decorating window manager) or Wayland
+# (headless Weston), then maximizes, minimizes, restores and closes it the way the
+# title bar buttons do. Usage: linux.sh x11|wayland <binary> <out-dir>
+set -uo pipefail
+mode=$1 bin=$2 out=$3
+mkdir -p "$out"
+report="$out/report.txt"; : > "$report"
+log() { echo "$*" | tee -a "$report"; }
+if [ "$mode" = x11 ]; then
+  Xvfb :99 -screen 0 1600x1000x24 & sleep 2
+  export DISPLAY=:99
+  openbox & sleep 2
+  unset WAYLAND_DISPLAY
+  shot() { import -window root "$out/$1.png"; }
+else
+  export XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"
+  weston --backend=headless --renderer=pixman --width=1600 --height=1000 \
+    --socket=wayland-1 --debug > "$out/weston.log" 2>&1 & sleep 3
+  export WAYLAND_DISPLAY=wayland-1
+  unset DISPLAY
+  shot() { weston-screenshooter > /dev/null 2>&1 && mv wayland-screenshot-*.png "$out/$1.png" 2>/dev/null || true; }
+fi
+"$bin" > "$out/app.log" 2>&1 &
+pid=$!
+sleep 25
+if ! kill -0 $pid 2>/dev/null; then log "app exited early"; exit 1; fi
+log "running under $mode"
+if [ "$mode" = x11 ]; then
+  win=$(xdotool search --sync --pid $pid --onlyvisible | head -1)
+  log "title: $(xdotool getwindowname "$win")"
+  log "WM_CLASS: $(xprop -id "$win" WM_CLASS | cut -d= -f2)"
+  log "frame extents (native decorations): $(xprop -id "$win" _NET_FRAME_EXTENTS | cut -d= -f2)"
+  state() { log "$1: $(xprop -id "$win" _NET_WM_STATE | cut -d= -f2) $(xdotool getwindowgeometry "$win" | tr '\n' ' ')"; }
+  state launched; shot 01-launched
+  wmctrl -i -r "$win" -b add,maximized_vert,maximized_horz; sleep 3; state maximized; shot 02-maximized
+  xdotool windowminimize "$win"; sleep 2; state minimized; shot 03-minimized
+  wmctrl -i -a "$win"; sleep 2
+  wmctrl -i -r "$win" -b remove,maximized_vert,maximized_horz; sleep 3; state restored; shot 04-restored
+  # Drag the window by its title bar 200 px to the right.
+  eval "$(xdotool getwindowgeometry --shell "$win")"
+  xdotool mousemove $((X + 200)) $((Y - 12)) mousedown 1 mousemove_relative --sync 200 0 mouseup 1; sleep 1
+  state dragged; shot 05-dragged
+  start=$(date +%s.%N)
+  wmctrl -i -c "$win"   # what the close button sends
+else
+  log "Wayland: xdg-shell window; winit draws client-side decorations (Weston has no server-side ones)"
+  grep -i -E "xdg|decoration|error" "$out/app.log" | head -20 >> "$report" || true
+  shot 01-launched
+  start=$(date +%s.%N)
+  kill -TERM $pid
+fi
+for _ in $(seq 60); do kill -0 $pid 2>/dev/null || break; sleep 0.5; done
+if kill -0 $pid 2>/dev/null; then log "closed: still running after 30 s"; kill -9 $pid; exit 1; fi
+wait $pid; code=$?
+log "closed: exit $code after $(echo "$(date +%s.%N) - $start" | bc) s"

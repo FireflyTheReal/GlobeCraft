@@ -19,10 +19,6 @@ globe-copy-coordinates-action = Copy coordinates
 globe-context-menu-hint = Click on the globe.
 
 app-ready-status = Ready. Drag to rotate, scroll to zoom.
-window-minimize = Minimize
-window-maximize = Maximize
-window-restore = Restore
-window-close = Close
 
 search-empty-status = No results found.
 

@@ -3,7 +3,7 @@ mod poi;
 mod transport;
 mod worker;
 use crate::motion;
-use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility, ground_position};
+use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility};
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
@@ -315,16 +315,14 @@ fn project_roads(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projecte
             let mut visible: Vec<Pos2> = Vec::new();
             let mut previous = None;
             for &(lat, lon) in &road.points {
-                let current = visibility
-                    .as_ref()
-                    .is_none_or(|visibility| visibility.visible(lat, lon))
-                    .then(|| {
-                        input.view.basis.project_precise(
-                            ground_position(&input.view.basis, ground, lat, lon),
-                            input.view.rect,
-                        )
-                    })
-                    .flatten();
+                let current = crate::overlays::project_unhidden(
+                    &input.view.basis,
+                    input.view.rect,
+                    ground,
+                    visibility.as_ref(),
+                    lat,
+                    lon,
+                );
                 let piece = previous
                     .zip(current)
                     .and_then(|(a, b)| crate::overlays::clip_segment([a, b], clip));
@@ -370,16 +368,15 @@ fn project_vessels(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projec
         .filter_map(|(source_index, ship)| {
             let age = (input.unix_secs - ship.observed_unix).max(0.0);
             let (lat, lon) = dead_reckon(ship, age);
-            if visibility
-                .as_ref()
-                .is_some_and(|visibility| !visibility.visible(lat, lon))
-            {
-                return None;
-            }
             let at = view
                 .basis
                 .project(view.basis.surface_position(lat, lon), view.rect)?;
-            if !view.rect.contains(at) {
+            // On screen first: the line-of-sight test is the expensive part.
+            if !view.rect.contains(at)
+                || visibility
+                    .as_ref()
+                    .is_some_and(|visibility| !visibility.visible(lat, lon))
+            {
                 return None;
             }
             // Preserve the original 2 km course probe; project it onto the selected model.

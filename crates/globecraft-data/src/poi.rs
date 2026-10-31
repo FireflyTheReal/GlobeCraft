@@ -395,7 +395,9 @@ mod size_probe {
                     (key.z, key.x, key.y)
                 })
                 .collect();
-            let parts = crate::map_data::tile_parts_many(&keys, &archives).await.unwrap();
+            let parts = crate::map_data::tile_parts_many(&keys, &archives)
+                .await
+                .unwrap();
             for ((name, _, _), parts) in places.iter().zip(parts) {
                 let compressed: usize = parts.iter().map(Vec::len).sum();
                 let mut layers = std::collections::BTreeMap::new();

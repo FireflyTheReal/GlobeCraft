@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub mod grid;
 mod labels;
 mod occlusion;
-pub use occlusion::TerrainVisibility;
+pub use occlusion::{TerrainVisibility, project_unhidden};
 mod picking;
 pub use picking::pick_on_ground;
 mod spatial;
@@ -87,6 +87,11 @@ pub fn ground_position(
 /// Terrain height (world units, exaggerated) at a coordinate.
 pub trait Ground {
     fn height(&self, lat: f64, lon: f64) -> f64;
+    /// No height exceeds this (world units). Line-of-sight tests skip their lookups
+    /// where the line runs higher than any relief can reach.
+    fn max_height(&self) -> f64 {
+        f64::INFINITY
+    }
 }
 
 /// Terrain heights from the elevation tiles already loaded (overlays never request
@@ -119,16 +124,14 @@ impl<'a> GroundHeights<'a> {
 /// The ground width of a tile that spans the view at a camera altitude of 1 km.
 const OVERLAY_GROUND_TILE_KM: f64 = 40_075.0;
 
-impl GroundHeights<'_> {
-    /// The highest the ground can be drawn, in world units: Everest, exaggerated.
-    pub fn max_height(&self) -> f64 {
-        MAX_GROUND_M * self.to_world
-    }
-}
 /// A little above Everest (8,849 m).
 const MAX_GROUND_M: f64 = 8_900.0;
 
 impl Ground for GroundHeights<'_> {
+    /// The highest the ground can be drawn, in world units: Everest, exaggerated.
+    fn max_height(&self) -> f64 {
+        MAX_GROUND_M * self.to_world
+    }
     fn height(&self, lat: f64, lon: f64) -> f64 {
         self.cache
             .loaded_elevation_m(lat, lon, self.zoom)
@@ -324,13 +327,16 @@ pub fn project_borders(
     let mut draw_line = |line: &[(f64, f64)], kind: BorderKind, max_step_deg: f64| {
         let visibility = TerrainVisibility::new(view.basis, view.ground);
         let project = |lat: f64, lon: f64| {
-            if visibility
-                .as_ref()
-                .is_some_and(|visibility| !visibility.visible(lat, lon))
+            let at = basis.project_precise(view.surface(lat, lon), rect)?;
+            // Only points near the view are tested: what lies far off screen is cut
+            // away anyway, and the test costs a line of elevation lookups.
+            if let Some(visibility) = &visibility
+                && visibility.near_view(at, rect)
+                && !visibility.visible(lat, lon)
             {
                 return None;
             }
-            basis.project_precise(view.surface(lat, lon), rect)
+            Some(at)
         };
         let mut anchor: Option<glam::DVec2> = None;
         let mut previous: Option<(f64, f64, Option<glam::DVec2>)> = None;
@@ -579,14 +585,12 @@ pub fn project_labels<'a>(
         if !enabled {
             continue;
         }
-        if visibility
-            .as_ref()
-            .is_some_and(|visibility| !visibility.visible(label.lat, label.lon))
-        {
-            continue;
-        }
+        // On screen first: the line-of-sight test is the expensive part.
         if let Some(pos) = basis.project(view.surface(label.lat, label.lon), rect)
             && rect.contains(pos)
+            && visibility
+                .as_ref()
+                .is_none_or(|visibility| visibility.visible(label.lat, label.lon))
         {
             let prio = match label.kind {
                 LabelKind::Country => 0,

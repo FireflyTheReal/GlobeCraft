@@ -4,7 +4,7 @@ use crate::wayback::wayback_release;
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 mod mbtiles;
@@ -16,6 +16,16 @@ pub(super) struct DiskCache {
     root: PathBuf,
     epoch: AtomicU64,
     gate: tokio::sync::RwLock<()>,
+    /// Tile writes started and not finished, so a quit can let them land.
+    writing: AtomicUsize,
+}
+
+/// Counts a write while it runs.
+struct Writing<'a>(&'a AtomicUsize);
+impl Drop for Writing<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl DiskCache {
@@ -26,6 +36,7 @@ impl DiskCache {
             root,
             epoch: AtomicU64::new(0),
             gate: tokio::sync::RwLock::new(()),
+            writing: AtomicUsize::new(0),
         }
     }
     pub(super) fn with_budget(root: PathBuf, bytes: u64) -> Self {
@@ -34,6 +45,7 @@ impl DiskCache {
             root,
             epoch: AtomicU64::new(0),
             gate: tokio::sync::RwLock::new(()),
+            writing: AtomicUsize::new(0),
         }
     }
     pub(super) fn budget_bytes(&self) -> u64 {
@@ -77,11 +89,17 @@ impl DiskCache {
         bytes: Vec<u8>,
         epoch: u64,
     ) -> Result<(), crate::Error> {
+        self.writing.fetch_add(1, Ordering::AcqRel);
+        let _writing = Writing(&self.writing);
         let _guard = self.gate.read().await;
         if epoch != self.epoch() {
             return Ok(());
         }
         self.tilesets.write_owned(path, bytes).await
+    }
+    /// Tile writes still running.
+    pub(super) fn writes_in_progress(&self) -> usize {
+        self.writing.load(Ordering::Acquire)
     }
     pub(super) async fn invalidate(&self, path: &Path) -> Result<(), crate::Error> {
         let _guard = self.gate.read().await;
