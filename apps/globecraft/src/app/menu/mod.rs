@@ -27,6 +27,10 @@ pub(super) fn native_shortcut(id: &str) -> bool {
 #[cfg(target_os = "macos")]
 impl App {
     pub(super) fn with_native_menu(mut self, cc: &eframe::CreationContext<'_>) -> Self {
+        // AppKit menus need the main thread; test harnesses run the app on a worker.
+        if cfg!(test) {
+            return self;
+        }
         match NativeMenu::new(cc, self.lang) {
             Ok(menu) => self.native_menu = Some(menu),
             Err(error) => self.status = format!("Native menu initialization failed: {error}"),

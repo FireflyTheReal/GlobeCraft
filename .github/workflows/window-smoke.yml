@@ -74,8 +74,8 @@ jobs:
           {
             echo "## ${{ matrix.name }}"
             echo '```'
-            cat smoke/report.txt 2>/dev/null
-            grep -E "relief|lookups|ms" smoke/bench.txt 2>/dev/null
+            cat smoke/report.txt 2>/dev/null || true
+            grep -E "relief|lookups" smoke/bench.txt 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7

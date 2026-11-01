@@ -15,7 +15,17 @@ public static class W {
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
   public struct RECT { public int L, T, R, B; }
+  public static System.Collections.Generic.List<IntPtr> Of(uint pid) {
+    var found = new System.Collections.Generic.List<IntPtr>();
+    EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p); if (p == pid) found.Add(h); return true; }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 $report = New-Object System.Collections.Generic.List[string]
@@ -33,12 +43,18 @@ function State($h, $label) {
   $report.Add($line); Write-Host $line
 }
 $p = Start-Process -FilePath $Exe -PassThru
+Start-Sleep -Seconds 20
+# The process owns helper windows too; the app window is the visible one titled GlobeCraft.
 $h = [IntPtr]::Zero
-for ($i = 0; $i -lt 120 -and $h -eq [IntPtr]::Zero; $i++) {
-  Start-Sleep -Milliseconds 500; $p.Refresh(); $h = $p.MainWindowHandle
+foreach ($w in [W]::Of([uint32]$p.Id)) {
+  $t = New-Object System.Text.StringBuilder 256; [W]::GetWindowText($w, $t, 256) | Out-Null
+  $c = New-Object System.Text.StringBuilder 256; [W]::GetClassName($w, $c, 256) | Out-Null
+  $r = New-Object W+RECT; [W]::GetWindowRect($w, [ref]$r) | Out-Null
+  $line = "window: '$t' class=$c visible=$([W]::IsWindowVisible($w)) rect=$($r.L),$($r.T),$($r.R),$($r.B)"
+  $report.Add($line); Write-Host $line
+  if ([W]::IsWindowVisible($w) -and $t.ToString() -eq 'GlobeCraft') { $h = $w }
 }
-if ($h -eq [IntPtr]::Zero) { throw 'no window appeared' }
-Start-Sleep -Seconds 15
+if ($h -eq [IntPtr]::Zero) { $report | Set-Content (Join-Path $Out 'report.txt'); throw 'no visible GlobeCraft window' }
 $t = New-Object System.Text.StringBuilder 256; [W]::GetWindowText($h, $t, 256) | Out-Null
 $style = [W]::GetWindowLong($h, -16)
 # WS_CAPTION 0x00C00000, WS_SYSMENU 0x00080000, WS_MINIMIZEBOX 0x00020000, WS_MAXIMIZEBOX 0x00010000
@@ -58,3 +74,4 @@ if ($p.WaitForExit(30000)) {
   $report.Add(("closed: exit {0} after {1:N1} s" -f $p.ExitCode, ((Get-Date) - $closed).TotalSeconds))
 } else { $report.Add('closed: still running after 30 s'); $p.Kill() }
 $report | Set-Content (Join-Path $Out 'report.txt')
+$report | ForEach-Object { Write-Host $_ }

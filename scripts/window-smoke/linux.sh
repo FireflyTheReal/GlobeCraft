@@ -24,7 +24,7 @@ fi
 "$bin" > "$out/app.log" 2>&1 &
 pid=$!
 sleep 25
-if ! kill -0 $pid 2>/dev/null; then log "app exited early"; exit 1; fi
+if ! kill -0 $pid 2>/dev/null; then wait $pid; log "app exited early with $?"; tail -40 "$out/app.log" | tee -a "$report"; exit 1; fi
 log "running under $mode"
 if [ "$mode" = x11 ]; then
   win=$(xdotool search --sync --pid $pid --onlyvisible | head -1)
@@ -39,7 +39,11 @@ if [ "$mode" = x11 ]; then
   wmctrl -i -r "$win" -b remove,maximized_vert,maximized_horz; sleep 3; state restored; shot 04-restored
   # Drag the window by its title bar 200 px to the right.
   eval "$(xdotool getwindowgeometry --shell "$win")"
-  xdotool mousemove $((X + 200)) $((Y - 12)) mousedown 1 mousemove_relative --sync 200 0 mouseup 1; sleep 1
+  # xdotool reports the frame's offset in Y; the title bar is the frame's top extent.
+  top=$(xprop -id "$win" _NET_FRAME_EXTENTS | cut -d= -f2 | cut -d, -f3 | tr -d ' ')
+  xdotool mousemove $((X + 200)) $((Y - 2 * top + top / 2)); sleep 0.3; xdotool mousedown 1; sleep 0.3
+  for _ in 1 2 3 4; do xdotool mousemove_relative 50 0; sleep 0.2; done
+  xdotool mouseup 1; sleep 1
   state dragged; shot 05-dragged
   start=$(date +%s.%N)
   wmctrl -i -c "$win"   # what the close button sends
@@ -48,9 +52,11 @@ else
   grep -i -E "xdg|decoration|error" "$out/app.log" | head -20 >> "$report" || true
   shot 01-launched
   start=$(date +%s.%N)
+  # No server-side close request exists for a headless Weston client; SIGTERM ends it.
   kill -TERM $pid
 fi
 for _ in $(seq 60); do kill -0 $pid 2>/dev/null || break; sleep 0.5; done
 if kill -0 $pid 2>/dev/null; then log "closed: still running after 30 s"; kill -9 $pid; exit 1; fi
 wait $pid; code=$?
 log "closed: exit $code after $(echo "$(date +%s.%N) - $start" | bc) s"
+tail -15 "$out/app.log" >> "$report"
