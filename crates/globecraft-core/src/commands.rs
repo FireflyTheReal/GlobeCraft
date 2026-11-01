@@ -491,6 +491,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "ui.pane.data",
+        "ui-pane-data",
+        "catalog",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
         "ui.pane.explore",
         "ui-pane-explore",
         "compass",

@@ -53,6 +53,7 @@ pub(in crate::app) enum Action {
     ShowExplore,
     ShowLayers,
     ShowPlaces,
+    ShowData,
     NavigationControls,
     Grid,
     Atmosphere,
@@ -70,7 +71,7 @@ pub(in crate::app) enum Action {
     ReportIssue,
 }
 impl Action {
-    pub(super) const ALL: [Self; 29] = [
+    pub(super) const ALL: [Self; 30] = [
         Self::About,
         Self::Settings,
         Self::Open,
@@ -85,6 +86,7 @@ impl Action {
         Self::ShowExplore,
         Self::ShowLayers,
         Self::ShowPlaces,
+        Self::ShowData,
         Self::NavigationControls,
         Self::Grid,
         Self::Atmosphere,
@@ -112,6 +114,7 @@ impl Action {
             | Self::ShowExplore
             | Self::ShowLayers
             | Self::ShowPlaces
+            | Self::ShowData
             | Self::NavigationControls
             | Self::Grid
             | Self::Atmosphere
@@ -140,6 +143,7 @@ impl Action {
             Self::ShowExplore => "sidebar-explore-title",
             Self::ShowLayers => "layers-section-title",
             Self::ShowPlaces => "sidebar-places-title",
+            Self::ShowData => "sidebar-data-title",
             Self::NavigationControls => "menu-navigation-toggle",
             Self::Grid => "layers-grid-toggle",
             Self::Atmosphere => "layers-atmosphere-toggle",
@@ -175,6 +179,7 @@ impl Action {
             Self::ShowExplore => ("ui.pane.explore", Value::Null),
             Self::ShowLayers => ("ui.pane.layers", Value::Null),
             Self::ShowPlaces => ("ui.pane.places", Value::Null),
+            Self::ShowData => ("ui.pane.data", Value::Null),
             Self::NavigationControls => ("ui.navigationControls", Value::Null),
             Self::Grid => ("layer.show", json!({"layer": "grid"})),
             Self::Atmosphere => ("layer.show", json!({"layer": "atmosphere"})),

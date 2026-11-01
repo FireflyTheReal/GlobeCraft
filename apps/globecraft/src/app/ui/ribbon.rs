@@ -595,6 +595,9 @@ impl App {
                 small(ui, self, "ui.pane.measure", Value::Null);
                 small(ui, self, "ui.leftPane", Value::Null);
             });
+            col(ui, |ui| {
+                small(ui, self, "ui.pane.data", Value::Null);
+            });
         });
         group(ui, lang.text("ribbon-group-window"), |ui| {
             big(ui, self, "ui.navigationControls", Value::Null);

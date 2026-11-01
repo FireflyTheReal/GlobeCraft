@@ -362,6 +362,7 @@ impl super::App {
             .max()
             .map_or(1, |id| id + 1);
         let id = layer.id;
+        self.settings.saved_sources.remember(&layer);
         self.settings.user_layers.push(layer);
         id
     }

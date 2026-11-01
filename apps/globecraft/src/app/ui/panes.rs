@@ -19,7 +19,7 @@ const HEADER_H: f32 = 32.0;
 const PINNED_PLACES_MAX_HEIGHT_FRACTION: f32 = 0.65;
 
 /// The left panes in tab order, with their command and icon.
-const LEFT: [(SidebarPanel, &str, &str, &str); 3] = [
+const LEFT: [(SidebarPanel, &str, &str, &str); 4] = [
     (
         SidebarPanel::Layers,
         "layers-section-title",
@@ -31,6 +31,12 @@ const LEFT: [(SidebarPanel, &str, &str, &str); 3] = [
         "sidebar-places-title",
         "ui.pane.places",
         "places",
+    ),
+    (
+        SidebarPanel::Data,
+        "sidebar-data-title",
+        "ui.pane.data",
+        "catalog",
     ),
     (
         SidebarPanel::Explore,
@@ -194,6 +200,16 @@ impl App {
                                 egui::Frame::NONE
                                     .inner_margin(margin)
                                     .show(ui, |ui| self.layers_pane(ui));
+                            });
+                    }
+                    SidebarPanel::Data => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("data-scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui::Frame::NONE
+                                    .inner_margin(margin)
+                                    .show(ui, |ui| self.data_pane(ui));
                             });
                     }
                     SidebarPanel::Explore => {

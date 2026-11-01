@@ -92,6 +92,8 @@ pub struct Settings {
     pub ruler_unit: RulerUnit,
     /// Layers the user added (Add Data), bottom to top.
     pub user_layers: Vec<crate::user_data::UserLayer>,
+    /// Starred and recently added sources (the Browser pane).
+    pub saved_sources: crate::user_data::SavedSources,
 }
 fn serialize_earth_model<S: serde::Serializer>(
     model: &EarthModel,
@@ -133,6 +135,7 @@ impl Default for Settings {
             earth_model: EarthModel::default(),
             ruler_unit: RulerUnit::Automatic,
             user_layers: Vec::new(),
+            saved_sources: Default::default(),
         }
     }
 }
@@ -168,6 +171,7 @@ struct SettingsInput {
     map_scale: Option<f64>,
     map_style: Option<serde_json::Value>,
     user_layers: Option<serde_json::Value>,
+    saved_sources: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     uncap_fps: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
@@ -242,6 +246,9 @@ impl Settings {
         }
         if let Some(value) = input.user_layers {
             self.user_layers = crate::user_data::layers_from_json(&value);
+        }
+        if let Some(value) = input.saved_sources {
+            self.saved_sources.apply(&value);
         }
         if let Some(uncap) = input.uncap_fps {
             self.uncap_fps = uncap;
@@ -528,6 +535,7 @@ mod tests {
             earth_model: EarthModel::default(),
             ruler_unit: RulerUnit::Automatic,
             user_layers: Vec::new(),
+            saved_sources: Default::default(),
         };
         settings
             .apply_json(

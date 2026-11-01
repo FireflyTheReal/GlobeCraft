@@ -382,6 +382,14 @@ fn add_data_screenshots() {
     h.state_mut().add_data = None;
     settle(&mut h, 1.0);
     save(&mut h, &dir, "09-user-layer");
+    // The Data pane, with the sample starred and the earthquakes in the history.
+    let app = h.state_mut();
+    let sample = app.settings.user_layers[0].clone();
+    app.settings.saved_sources.toggle_favorite(&sample);
+    let _ = app.run("data.add", json!({"preset": "earthquakes"}));
+    let _ = app.run("ui.pane.data", Value::Null);
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "10-data-pane");
 }
 
 /// The "What's here?" card over Munich. Manual (needs network for the ground height).

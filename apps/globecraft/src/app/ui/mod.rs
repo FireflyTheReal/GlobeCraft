@@ -8,6 +8,7 @@ mod chrome;
 mod compass;
 mod coordinate_display;
 mod cursor;
+mod data_pane;
 mod explore_pane;
 pub(in crate::app) mod icons;
 mod layers_pane;
