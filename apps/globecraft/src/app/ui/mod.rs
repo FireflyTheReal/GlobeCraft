@@ -1,5 +1,6 @@
 //! Desktop widgets. The window is laid out like RustGIS: a header, a ribbon of command tabs,
 //! panes on either side of the globe and a status bar.
+pub(in crate::app) mod add_data;
 pub(in crate::app) mod aircraft;
 pub(in crate::app) mod altitude;
 mod assistant_pane;

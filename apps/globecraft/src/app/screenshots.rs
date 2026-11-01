@@ -276,6 +276,55 @@ fn map_data_close_up_screenshot() {
     save(&mut h, &dir, &format!("07-map-data-{altitude}km"));
 }
 
+/// The Add Data window's library and a GeoJSON layer of a few cities with a route
+/// between them, in the Layers pane and on the globe. Manual.
+#[test]
+#[ignore = "manual: renders the Add Data window and a user layer"]
+fn add_data_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let file = std::env::temp_dir().join("globecraft-add-data-sample.geojson");
+    std::fs::write(
+        &file,
+        r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"name":"Lisbon"},"geometry":{"type":"Point","coordinates":[-9.14,38.72]}},
+          {"type":"Feature","properties":{"name":"Madrid"},"geometry":{"type":"Point","coordinates":[-3.70,40.42]}},
+          {"type":"Feature","properties":{"name":"Paris"},"geometry":{"type":"Point","coordinates":[2.35,48.86]}},
+          {"type":"Feature","properties":{"name":"Route"},"geometry":{"type":"LineString","coordinates":[[-9.14,38.72],[-3.70,40.42],[2.35,48.86]]}}
+        ]}"#,
+    )
+    .expect("sample file");
+    let mut h = harness(ThemePreference::Dark);
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 43.5, "lon": -3.0, "altitude_km": 2500.0}),
+    );
+    let app = h.state_mut();
+    app.add_user_layer(globecraft_data::user_data::UserLayer {
+        id: 0,
+        name: "Sample cities".into(),
+        source: globecraft_data::user_data::UserSource::Features {
+            location: file.to_string_lossy().into_owned(),
+            format: globecraft_data::user_data::FeatureFormat::GeoJson,
+            refresh_minutes: 0,
+        },
+        visible: true,
+        opacity: 1.0,
+        attribution: "Sample data".into(),
+        color: "#ffb000".into(),
+        preset: None,
+    });
+    let _ = app.run("ui.pane.layers", Value::Null);
+    let _ = app.run("ui.addData", Value::Null);
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "08-add-data-library");
+    h.state_mut().add_data = None;
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "09-user-layer");
+}
+
 /// Median CPU time of a whole interface frame (layout, widgets, overlays; no GPU work),
 /// stationary after startup. Manual, like `interface_screenshots`.
 #[test]

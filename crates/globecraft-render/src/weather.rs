@@ -46,6 +46,38 @@ pub fn project_live_maps(
     }
     rgba
 }
+/// The user's web map layers (Add Data) seen from `basis`, bottom to top, each at its
+/// opacity, as a `width` × `height` straight-alpha RGBA image of `rect`.
+pub fn project_user_rasters(
+    basis: &Basis,
+    rect: Rect,
+    width: usize,
+    height: usize,
+    layers: &[(&globecraft_data::user_data::RasterSnapshot, f32)],
+) -> Vec<u8> {
+    use rayon::prelude::*;
+    let mut rgba = vec![0u8; width * height * 4];
+    let rsize = rect.size();
+    rgba.par_chunks_mut(width * 4)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
+            for x in 0..width {
+                let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
+                let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
+                    continue;
+                };
+                let pixel = &mut row[x * 4..x * 4 + 4];
+                for (layer, opacity) in layers {
+                    if let Some(c) = layer.sample(lat, lon) {
+                        over(pixel, [c[0], c[1], c[2], (f32::from(c[3]) * opacity) as u8]);
+                    }
+                }
+            }
+        });
+    rgba
+}
+
 fn equirect_pixel(img: &RgbaImage, lat: f64, lon: f64) -> [u8; 4] {
     let x = (((lon + 180.0) / 360.0 * img.width() as f64) as u32).min(img.width() - 1);
     let y = (((90.0 - lat) / 180.0 * img.height() as f64) as u32).min(img.height() - 1);
@@ -58,7 +90,7 @@ fn mercator_pixel(img: &RgbaImage, lat: f64, lon: f64) -> [u8; 4] {
         .clamp(0.0, (img.height() - 1) as f64) as u32;
     img.get_pixel(x, y).0
 }
-fn over(dst: &mut [u8], src: [u8; 4]) {
+pub(crate) fn over(dst: &mut [u8], src: [u8; 4]) {
     let a = src[3] as f32 / 255.0;
     if a == 0.0 {
         return;

@@ -29,6 +29,8 @@ pub(crate) enum Policy {
     Cloud,
     Radar,
     Aircraft,
+    /// Map tiles and feature files the user added.
+    UserData,
 }
 pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
     use std::{
@@ -54,6 +56,9 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
         Policy::Cloud => "GlobeCraft/1.0 (attribution: Matt Eason, EUMETSAT)",
         Policy::Radar => "GlobeCraft/1.0 radar viewer",
         Policy::Aircraft => "GlobeCraft/1.0 (live aircraft viewer; OpenSky / ADSB.lol)",
+        Policy::UserData => {
+            "GlobeCraft/0.3 (3D globe; user-added layer; +https://github.com/FireflyTheReal/GlobeCraft)"
+        }
     };
     builder = builder.user_agent(agent);
     match policy {
@@ -73,6 +78,11 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
         Policy::Cloud => builder = builder.timeout(Duration::from_secs(65)),
         Policy::Radar => builder = builder.timeout(Duration::from_secs(12)),
         Policy::Aircraft => builder = builder.timeout(Duration::from_secs(25)),
+        Policy::UserData => {
+            builder = builder
+                .connect_timeout(Duration::from_secs(15))
+                .timeout(Duration::from_secs(60))
+        }
         Policy::Search => {}
     }
     let client = builder.build()?;

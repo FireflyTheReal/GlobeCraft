@@ -342,6 +342,9 @@ impl App {
                 self.wayback_stepper(ui);
             });
         });
+        group(ui, lang.text("layers-user-title"), |ui| {
+            big(ui, self, "ui.addData", serde_json::Value::Null);
+        });
         group(ui, lang.text("sidebar-geography-title"), |ui| {
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::CountryBorders);

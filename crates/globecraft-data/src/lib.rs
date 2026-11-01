@@ -35,6 +35,7 @@ pub mod satellites;
 pub mod traffic;
 pub mod transport;
 pub mod updater;
+pub mod user_data;
 pub mod vector_tiles;
 pub mod vessels;
 

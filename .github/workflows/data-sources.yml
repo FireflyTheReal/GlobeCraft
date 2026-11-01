@@ -1,0 +1,33 @@
+name: Data sources check
+
+# Fetches a sample from every Add Data library source (a tile of each web map, the
+# features of each feed), from a GitHub runner because development containers cannot
+# reach most of these hosts. Manual only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: data-sources-1.97
+      - name: Fetch from every library source
+        run: |
+          set -o pipefail
+          cargo test -p globecraft-data --locked --lib every_preset_answers \
+            -- --ignored --nocapture --test-threads=1 | tee check.txt
+          {
+            echo '## Library sources'
+            echo '```'
+            grep '^PRESET' check.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

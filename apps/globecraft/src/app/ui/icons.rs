@@ -335,6 +335,35 @@ fn maneuver(p: &P, kind: &str) {
     }
 }
 
+/// A small frameless button showing only icon `name`, with `help` as its tooltip and
+/// accessible name.
+pub(in crate::app) fn icon_button(ui: &mut egui::Ui, name: &str, help: &str) -> egui::Response {
+    let side = ui.spacing().interact_size.y;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), help));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        if response.hovered() || response.is_pointer_button_down_on() {
+            ui.painter()
+                .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+        }
+        let accent = super::theme::Tokens::get(ui.ctx()).accent;
+        paint(
+            ui.painter(),
+            Rect::from_center_size(rect.center(), egui::vec2(side - 6.0, side - 6.0)),
+            name,
+            visuals.text_color(),
+            if ui.is_enabled() {
+                accent
+            } else {
+                visuals.text_color()
+            },
+        );
+    }
+    response.on_hover_text(help)
+}
+
 /// A button with icon `name` before `text`, styled like egui's own buttons (framed, or
 /// frameless with a hover fill inside menus).
 pub(in crate::app) fn button(

@@ -334,6 +334,63 @@ pub const COMMANDS: &[CommandSpec] = &[
         Files,
         NO_PARAMS
     ),
+    // Data the user adds.
+    command!(
+        "ui.addData",
+        "ui-add-data",
+        "add_data",
+        Layers,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
+        "data.add",
+        "data-add",
+        "web_data",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"preset":{"type":"string","enum":["gebco","emodnet_bathymetry","gibs_true_colour","forest_loss","earthquakes"],"description":"A library source: GEBCO seafloor, EMODnet European bathymetry, NASA GIBS yesterday's true colour, Global Forest Watch tree cover loss, USGS earthquakes of the past week"},"url":{"type":"string","description":"Instead of a preset: a web address. For tiles a template with {z}, {x} and {y}; for a WMS its service address; for features a GeoJSON, GPX or CSV file"},"kind":{"type":"string","enum":["tiles","wms","features"]},"layers":{"type":"string","description":"WMS layer names, comma-separated"},"format":{"type":"string","enum":["geojson","gpx","csv"]},"refresh_minutes":{"type":"integer","description":"Reload a feature URL this often; 0 loads it once"},"max_zoom":{"type":"integer"},"name":{"type":"string"},"attribution":{"type":"string"}}}"#
+    ),
+    command!(
+        "data.show",
+        "data-show",
+        "eye",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"id":{"type":"integer","description":"A user layer's id (info.view lists them)"},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["id"]}"#
+    ),
+    command!(
+        "data.opacity",
+        "data-opacity",
+        "transparency",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"id":{"type":"integer"},"opacity":{"type":"number","description":"0 (invisible) to 1 (opaque)"}},"required":["id","opacity"]}"#
+    ),
+    command!(
+        "data.move",
+        "data-move",
+        "up",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"id":{"type":"integer"},"direction":{"type":"string","enum":["up","down"],"description":"Up draws it over the next layer"}},"required":["id"]}"#
+    ),
+    command!(
+        "data.zoomTo",
+        "data-zoom-to",
+        "zoom_full",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"id":{"type":"integer","description":"A feature layer's id"}},"required":["id"]}"#
+    ),
+    command!(
+        "data.remove",
+        "data-remove",
+        "delete",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#
+    ),
     // Layers.
     command!(
         "layer.basemap",

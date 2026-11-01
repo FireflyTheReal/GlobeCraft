@@ -747,6 +747,7 @@ impl App {
                 json!({"count": self.placemarks.len(), "items": places})
             }
             "info.ruler" => self.ruler_json(),
+            id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
             _ => return Err(format!("unknown command '{id}'")),
         };
         ctx.request_repaint();
@@ -949,6 +950,7 @@ impl App {
             "wayback_release": (self.settings.layers.basemap == globecraft_data::tiles::Provider::Wayback)
                 .then(|| self.wayback_list.get(self.wayback_idx).map(|r| r.date.clone())).flatten(),
             "visible_layers": layers,
+            "user_layers": self.user_layers_json(),
             "units": match self.distance_units() {
                 globecraft_core::units::DistanceUnits::Metric => "metric",
                 globecraft_core::units::DistanceUnits::Imperial => "imperial",

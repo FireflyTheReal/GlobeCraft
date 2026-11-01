@@ -42,6 +42,7 @@ pub(in crate::app) enum Action {
     About,
     Settings,
     Open,
+    AddData,
     Save,
     SaveAs,
     Screenshot,
@@ -69,10 +70,11 @@ pub(in crate::app) enum Action {
     ReportIssue,
 }
 impl Action {
-    pub(super) const ALL: [Self; 28] = [
+    pub(super) const ALL: [Self; 29] = [
         Self::About,
         Self::Settings,
         Self::Open,
+        Self::AddData,
         Self::Save,
         Self::SaveAs,
         Self::Screenshot,
@@ -102,7 +104,9 @@ impl Action {
     pub(super) fn section(self) -> Section {
         match self {
             Self::About | Self::Settings | Self::Quit => Section::Application,
-            Self::Open | Self::Save | Self::SaveAs | Self::Screenshot => Section::File,
+            Self::Open | Self::AddData | Self::Save | Self::SaveAs | Self::Screenshot => {
+                Section::File
+            }
             Self::Undo | Self::Redo => Section::Edit,
             Self::Sidebar
             | Self::ShowExplore
@@ -123,6 +127,7 @@ impl Action {
     pub(super) fn label(self, lang: Lang) -> &'static str {
         lang.text(match self {
             Self::Open => "menu-kml-open",
+            Self::AddData => "menu-add-data",
             Self::Save => "menu-kml-save",
             Self::SaveAs => "menu-kml-save-as",
             Self::Screenshot => "menu-screenshot-save",
@@ -159,6 +164,7 @@ impl Action {
             Self::About => ("ui.about", Value::Null),
             Self::Settings => ("ui.settings", Value::Null),
             Self::Open => ("places.open", Value::Null),
+            Self::AddData => ("ui.addData", Value::Null),
             Self::Save => ("places.save", Value::Null),
             Self::SaveAs => ("places.saveAs", Value::Null),
             Self::Screenshot => ("file.screenshot", Value::Null),

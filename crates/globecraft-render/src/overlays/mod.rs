@@ -208,13 +208,13 @@ impl BorderKind {
 
 /// How far beyond the view a border segment is kept, in points: line caps and joins
 /// just outside the edge still draw.
-pub(crate) const SEGMENT_CLIP_MARGIN_POINTS: f32 = 64.0;
+pub const SEGMENT_CLIP_MARGIN_POINTS: f32 = 64.0;
 
 /// The part of `[a, b]` inside `rect` (Liang–Barsky), or `None` when it misses it.
 /// A tilted camera projects lines passing beside or under it millions of points off
 /// screen; dashing those took forever and filled memory (the frozen close-up, user
 /// 2026-10-26), and drawing them costs the painter too.
-pub(crate) fn clip_segment([a, b]: [glam::DVec2; 2], rect: Rect) -> Option<[Pos2; 2]> {
+pub fn clip_segment([a, b]: [glam::DVec2; 2], rect: Rect) -> Option<[Pos2; 2]> {
     if !(a.is_finite() && b.is_finite()) {
         return None;
     }

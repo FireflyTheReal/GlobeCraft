@@ -485,6 +485,12 @@ impl App {
                 self.layer(MapLayer::Clouds),
                 self.layer(MapLayer::Radar),
             );
+            self.user_layers.draw_rasters(
+                &painter,
+                &display_basis,
+                rect,
+                &self.settings.user_layers,
+            );
             let live_geometry = if self.layer(MapLayer::Roads)
                 || self.layer(MapLayer::Traffic)
                 || self.layer(MapLayer::Vessels)
@@ -531,6 +537,13 @@ impl App {
                 self.poi_shapes.hover(&painter, geometry, self.lang);
                 self.transport_shapes.hover(&painter, geometry, self.lang);
             }
+            self.user_layers.draw_features(
+                &painter,
+                &display_basis,
+                rect,
+                &self.settings.user_layers,
+                self.settings.map_scale,
+            );
             self.draw_live_layers(
                 &painter,
                 &display_basis,

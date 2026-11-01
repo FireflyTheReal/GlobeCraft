@@ -59,6 +59,7 @@ mod still_shot;
 mod traffic;
 mod ui;
 mod update_restart;
+mod user_layers;
 mod wayback;
 pub(crate) use update_restart::RestartRequest;
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
@@ -128,6 +129,10 @@ pub(crate) struct App {
     transport_shapes: live_layers::TransportShapes,
     poi_tiles: globecraft_data::poi::PoiTiles,
     poi_shapes: live_layers::PoiShapes,
+    /// The layers the user added: their loading and drawing.
+    user_layers: user_layers::UserLayers,
+    /// The Add Data window, while open.
+    add_data: Option<ui::add_data::AddDataDialog>,
     live_satellites: globecraft_data::satellites::LiveSatellites,
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
@@ -350,6 +355,8 @@ impl App {
             transport_shapes: live_layers::TransportShapes::default(),
             poi_tiles: globecraft_data::poi::PoiTiles::default(),
             poi_shapes: live_layers::PoiShapes::default(),
+            user_layers: Default::default(),
+            add_data: None,
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
@@ -608,6 +615,13 @@ impl eframe::App for App {
             },
             move || poi_wake.request_repaint(),
         );
+        self.user_layers.update(
+            ctx,
+            &self.runtime,
+            &self.settings.user_layers,
+            (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+            earth,
+        );
         let place_wake = ctx.clone();
         self.place_names.update(
             &self.runtime,
@@ -719,6 +733,7 @@ impl eframe::App for App {
         self.menu_windows(ui);
         self.explorer_window(ui);
         self.altitude_window(ui);
+        self.add_data_window(ui);
         self.ruler_points_window(ui);
         self.command_search_window(ui);
         self.live_maps.update(

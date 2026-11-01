@@ -225,6 +225,9 @@ impl App {
                 }
             }
         }
+        if group_heading(ui, &t, "user_data", lang.text("layers-user-title")) {
+            self.user_layers_section(ui, &t, earth);
+        }
         for group in LayerGroup::ALL {
             if !group_heading(ui, &t, &format!("{group:?}"), lang.text(group.label_key())) {
                 continue;
@@ -287,6 +290,107 @@ impl App {
                 .size(11.0)
                 .color(t.text_dim),
         );
+    }
+
+    /// The layers the user added, top of the drawing order first, each with its status,
+    /// opacity, order, zoom and remove controls.
+    fn user_layers_section(&mut self, ui: &mut Ui, t: &Tokens, earth: bool) {
+        let lang = self.lang;
+        if self.settings.user_layers.is_empty() {
+            note(ui, t, lang.text("layers-user-empty"));
+        }
+        let count = self.settings.user_layers.len();
+        for index in (0..count).rev() {
+            let layer = self.settings.user_layers[index].clone();
+            let feature = matches!(
+                layer.source,
+                globecraft_data::user_data::UserSource::Features { .. }
+            );
+            let resp = toc_row(
+                ui,
+                t,
+                TocRow {
+                    icon: if feature {
+                        "point_layer"
+                    } else {
+                        "raster_layer"
+                    },
+                    label: &layer.name,
+                    checked: layer.visible,
+                    enabled: earth,
+                    radio: false,
+                    indent: 0.0,
+                },
+            );
+            if resp.clicked() && earth {
+                self.run_reporting("data.show", json!({"id": layer.id}));
+            }
+            if !layer.visible {
+                continue;
+            }
+            match self.user_layers.status(layer.id) {
+                crate::app::user_layers::LayerStatus::Loading => {
+                    loading_note(ui, t, lang.text("layers-user-loading"));
+                }
+                crate::app::user_layers::LayerStatus::Failed(error) => note(
+                    ui,
+                    t,
+                    &lang.format("layers-user-failed", &[("error", error.into())]),
+                ),
+                crate::app::user_layers::LayerStatus::Ready => {}
+            }
+            ui.horizontal(|ui| {
+                ui.add_space(INDENT + 24.0);
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let mut opacity = layer.opacity;
+                ui.spacing_mut().slider_width = 76.0;
+                if ui
+                    .add(egui::Slider::new(&mut opacity, 0.0..=1.0).show_value(false))
+                    .on_hover_text(lang.text("layers-user-opacity-label"))
+                    .changed()
+                {
+                    self.run_reporting("data.opacity", json!({"id": layer.id, "opacity": opacity}));
+                }
+                let small = |ui: &mut Ui, icon: &str, help: &str, enabled: bool| {
+                    ui.add_enabled_ui(enabled, |ui| icons::icon_button(ui, icon, help))
+                        .inner
+                        .clicked()
+                };
+                if small(
+                    ui,
+                    "up",
+                    lang.text("layers-user-up-help"),
+                    index + 1 < count,
+                ) {
+                    self.run_reporting("data.move", json!({"id": layer.id, "direction": "up"}));
+                }
+                if small(ui, "down", lang.text("layers-user-down-help"), index > 0) {
+                    self.run_reporting("data.move", json!({"id": layer.id, "direction": "down"}));
+                }
+                if feature
+                    && small(
+                        ui,
+                        "zoom_full",
+                        lang.text("layers-user-zoom-help"),
+                        self.user_layers.bounds(layer.id).is_some(),
+                    )
+                {
+                    self.run_reporting("data.zoomTo", json!({"id": layer.id}));
+                }
+                if small(ui, "delete", lang.text("layers-user-remove-help"), true) {
+                    self.run_reporting("data.remove", json!({"id": layer.id}));
+                }
+            });
+            if !layer.attribution.is_empty() {
+                note(ui, t, &layer.attribution);
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(INDENT);
+            if icons::button(ui, "add_data", lang.text("layers-user-add-action")).clicked() {
+                self.run_reporting("ui.addData", serde_json::Value::Null);
+            }
+        });
     }
 
     fn wayback_controls(&mut self, ui: &mut Ui, t: &Tokens) {
