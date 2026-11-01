@@ -48,7 +48,6 @@ const VESSEL_WIDTH_RATIO: f32 = 0.55;
 const VESSEL_REAR_RATIO: f32 = 0.8;
 const VESSEL_TAIL_RATIO: f32 = 0.65;
 const MIN_HEADING_LENGTH_SQUARED: f32 = 0.0001;
-const MIN_ROAD_SEGMENT_LENGTH_SQUARED: f32 = 0.01;
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct LiveView {
@@ -172,7 +171,6 @@ impl LiveInput {
 pub struct ProjectedRoad {
     pub source_index: usize,
     pub segments: Vec<Vec<Pos2>>,
-    bounds: Rect,
 }
 pub struct ProjectedVessel {
     pub source_index: usize,
@@ -193,34 +191,6 @@ pub struct LiveGeometry {
     pub traffic: Option<Arc<Vec<u8>>>,
     pub transport: Arc<ProjectedTransport>,
     pub poi: Arc<ProjectedPoi>,
-}
-impl LiveGeometry {
-    pub fn nearest_road(&self, mouse: Pos2, radius: f32) -> Option<(usize, Pos2)> {
-        let mut nearest = None;
-        let mut minimum = radius;
-        for road in self
-            .roads
-            .iter()
-            .filter(|road| road.bounds.expand(radius).contains(mouse))
-        {
-            for segment in road.segments.iter().flat_map(|line| line.windows(2)) {
-                let a = segment[0];
-                let ab = segment[1] - a;
-                let factor = if ab.length_sq() > MIN_ROAD_SEGMENT_LENGTH_SQUARED {
-                    ((mouse - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                let point = a + ab * factor;
-                let distance = (point - mouse).length();
-                if distance < minimum {
-                    minimum = distance;
-                    nearest = Some((road.source_index, point));
-                }
-            }
-        }
-        nearest
-    }
 }
 #[derive(Default)]
 pub struct LivePreparer {
@@ -357,16 +327,9 @@ fn project_roads(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projecte
             if !visible.is_empty() {
                 segments.push(visible);
             }
-            let bounds = segments
-                .iter()
-                .flatten()
-                .fold(Rect::NOTHING, |bounds, point| {
-                    bounds.union(Rect::from_min_max(*point, *point))
-                });
             ProjectedRoad {
                 source_index,
                 segments,
-                bounds,
             }
         })
         .collect()

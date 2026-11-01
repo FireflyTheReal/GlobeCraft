@@ -1,87 +1,54 @@
 //! Fades for the map-data layers (roads, railways, airports, rivers, parks and their
-//! names), as the borders fade: a layer that appears fades in, and when new tiles
-//! arrive for the same view the new set fades in over the old one, which then fades
-//! out. The altitude fade of each kind is part of the shapes' colours already.
+//! names), as the borders fade: each tile's drawing fades in when the tile is shown,
+//! and a replaced tile fades out after its replacement has faded in, also while the
+//! view moves (`vector_tiles::TileFade`). The altitude fade of each kind is part of the
+//! shapes' colours already.
 use eframe::egui::{self, Shape};
 use globecraft_data::settings::map_style::LineStyle;
-use std::time::{Duration, Instant};
+use globecraft_data::vector_tiles::TileFade;
+use std::time::Instant;
 
-/// How long a layer takes to fade in once it has something to show.
-const ARRIVAL_FADE: Duration = Duration::from_millis(600);
-/// How long a new set of tiles takes to replace the one before it.
-const EXCHANGE_FADE: Duration = Duration::from_millis(500);
-
-fn smoothstep(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn progress(since: Instant, now: Instant, length: Duration) -> f32 {
-    now.saturating_duration_since(since).as_secs_f32() / length.as_secs_f32()
-}
-
-/// Opacities of the incoming and outgoing sets at `t` (0..1) of an exchange: the new
-/// set fades in over the first half, then the old one fades out.
-fn exchange_opacities(t: f32) -> (f32, f32) {
-    (smoothstep(2.0 * t), 1.0 - smoothstep(2.0 * t - 1.0))
-}
-
-/// One layer's shapes and the fades running on them.
+/// A layer's shapes, grouped by the fade of the tile they came from.
 #[derive(Default)]
-pub(in crate::app) struct FadingShapes {
-    current: Vec<Shape>,
-    /// When the layer went from nothing to something.
-    arrived: Option<Instant>,
-    /// The set shown before, fading out, and when it was replaced.
-    outgoing: Option<(Vec<Shape>, Instant)>,
+pub(in crate::app) struct TiledShapes {
+    groups: Vec<(TileFade, Vec<Shape>)>,
 }
 
-impl FadingShapes {
-    /// New shapes for the layer. `new_data`: they come from new tiles for the same
-    /// view (the old set is still in place and crossfades); otherwise the view moved
-    /// and the old set, drawn for the old view, is dropped.
-    pub(in crate::app) fn replace(&mut self, shapes: Vec<Shape>, new_data: bool, now: Instant) {
-        let old = std::mem::replace(&mut self.current, shapes);
-        if self.current.is_empty() {
-            self.arrived = None;
-            self.outgoing = None;
-        } else if old.is_empty() {
-            self.arrived = Some(now);
-            self.outgoing = None;
-        } else if new_data {
-            self.outgoing = Some((old, now));
-        } else {
-            self.outgoing = None;
+impl TiledShapes {
+    /// Groups `shapes` by fade (keeping their order within a group) and tessellates
+    /// the lines of each group once.
+    pub(in crate::app) fn build(
+        painter: &egui::Painter,
+        shapes: impl IntoIterator<Item = (TileFade, Shape)>,
+    ) -> Self {
+        let mut groups: Vec<(TileFade, Vec<Shape>)> = Vec::new();
+        for (fade, shape) in shapes {
+            match groups.iter_mut().find(|(f, _)| *f == fade) {
+                Some((_, group)) => group.push(shape),
+                None => groups.push((fade, vec![shape])),
+            }
+        }
+        Self {
+            groups: groups
+                .into_iter()
+                .map(|(fade, shapes)| {
+                    (
+                        fade,
+                        super::super::live_geometry::mesh_shapes(painter, shapes),
+                    )
+                })
+                .collect(),
         }
     }
 
-    /// Draws the layer; requests another frame while a fade runs.
-    pub(in crate::app) fn draw(&mut self, painter: &egui::Painter, now: Instant) {
-        let arrival = match self.arrived {
-            Some(at) if progress(at, now, ARRIVAL_FADE) < 1.0 => {
-                smoothstep(progress(at, now, ARRIVAL_FADE))
-            }
-            _ => {
-                self.arrived = None;
-                1.0
-            }
-        };
-        let (incoming, outgoing) = match &self.outgoing {
-            Some((_, at)) if progress(*at, now, EXCHANGE_FADE) < 1.0 => {
-                exchange_opacities(progress(*at, now, EXCHANGE_FADE))
-            }
-            _ => {
-                self.outgoing = None;
-                (1.0, 0.0)
-            }
-        };
-        if let Some((old, _)) = &self.outgoing
-            && outgoing > 0.0
-        {
-            extend_with_opacity(painter, old, outgoing);
+    /// Draws each group at its fade's opacity; asks for another frame while one runs.
+    pub(in crate::app) fn draw(&self, painter: &egui::Painter, now: Instant) {
+        let mut animating = false;
+        for (fade, shapes) in &self.groups {
+            animating |= fade.animating(now);
+            extend_with_opacity(painter, shapes, fade.opacity(now));
         }
-        extend_with_opacity(painter, &self.current, arrival * incoming);
-        if self.arrived.is_some() || self.outgoing.is_some() {
+        if animating {
             painter.ctx().request_repaint();
         }
     }
@@ -126,40 +93,42 @@ pub(in crate::app) fn styled_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn shapes(count: usize) -> Vec<Shape> {
-        (0..count)
-            .map(|_| Shape::circle_filled(egui::Pos2::ZERO, 1.0, egui::Color32::WHITE))
-            .collect()
-    }
+    use std::time::Duration;
 
     #[test]
-    fn a_layer_that_appears_fades_in_and_new_tiles_crossfade() {
-        let start = Instant::now();
-        let mut layer = FadingShapes::default();
-        layer.replace(shapes(2), true, start);
-        assert_eq!(layer.arrived, Some(start), "appearing starts the fade-in");
-        assert!(layer.outgoing.is_none());
-
-        layer.arrived = None;
-        layer.replace(shapes(3), true, start);
-        assert!(
-            layer
-                .outgoing
-                .as_ref()
-                .is_some_and(|(old, _)| old.len() == 2),
-            "new tiles for the same view keep the old set for the crossfade"
+    fn shapes_group_by_the_fade_of_their_tile() {
+        let ctx = egui::Context::default();
+        // Tessellation needs the fonts, which the first frame loads.
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let painter = egui::Painter::new(ctx, egui::LayerId::background(), egui::Rect::EVERYTHING);
+        let now = Instant::now();
+        let fresh = TileFade {
+            shown: Some(now),
+            retired: None,
+        };
+        let dot = || Shape::circle_filled(egui::Pos2::ZERO, 1.0, egui::Color32::WHITE);
+        let shapes = TiledShapes::build(
+            &painter,
+            [
+                (TileFade::default(), dot()),
+                (fresh, dot()),
+                (TileFade::default(), dot()),
+            ],
         );
-        layer.replace(shapes(3), false, start);
-        assert!(layer.outgoing.is_none(), "a moved view drops the old set");
-        layer.replace(Vec::new(), true, start);
-        assert!(layer.arrived.is_none() && layer.outgoing.is_none());
-    }
-
-    #[test]
-    fn the_exchange_brings_the_new_set_in_before_the_old_one_goes() {
-        assert_eq!(exchange_opacities(0.0), (0.0, 1.0));
-        assert_eq!(exchange_opacities(0.5), (1.0, 1.0));
-        assert_eq!(exchange_opacities(1.0), (1.0, 0.0));
+        assert_eq!(shapes.groups.len(), 2);
+        assert_eq!(fresh.opacity(now), 0.0);
+        assert_eq!(fresh.opacity(now + Duration::from_secs(1)), 1.0);
+        let replaced = TileFade {
+            shown: None,
+            retired: Some(now),
+        };
+        assert_eq!(
+            replaced.opacity(now + Duration::from_millis(100)),
+            1.0,
+            "stays while the new one fades in"
+        );
+        assert_eq!(replaced.opacity(now + Duration::from_secs(1)), 0.0);
     }
 }

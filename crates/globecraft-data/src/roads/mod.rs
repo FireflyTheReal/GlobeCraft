@@ -11,4 +11,6 @@ pub struct Road {
     /// Under construction (OpenMapTiles `*_construction`).
     pub restricted: bool,
     pub points: Vec<(f64, f64)>,
+    /// The fade of the tile it came from.
+    pub fade: crate::vector_tiles::TileFade,
 }

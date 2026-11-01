@@ -254,6 +254,7 @@ mod tests {
             transport: Some(Arc::new(globecraft_data::transport::TransportSnapshot {
                 tiles: Vec::new(),
                 zoom: 10,
+                fades: Vec::new(),
             })),
             transport_layers: Default::default(),
             poi: None,
@@ -272,6 +273,7 @@ mod tests {
         input.transport = Some(Arc::new(globecraft_data::transport::TransportSnapshot {
             tiles: Vec::new(),
             zoom: 10,
+            fades: Vec::new(),
         }));
         input.unix_secs += 1.0;
         assert!(Arc::ptr_eq(

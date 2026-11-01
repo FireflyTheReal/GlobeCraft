@@ -30,6 +30,8 @@ pub struct TransportLayers {
 
 pub struct ProjectedTransportLine {
     pub kind: LineKind,
+    /// The snapshot tile it came from (for its fade).
+    pub tile: usize,
     pub tunnel: bool,
     /// The altitude fade of its kind (1 when fully shown).
     pub opacity: f32,
@@ -104,7 +106,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
         .rect
         .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
     let mut lines = Vec::new();
-    for tile in &snapshot.tiles {
+    for (tile_index, tile) in snapshot.tiles.iter().enumerate() {
         for line in &tile.lines {
             let opacity = line_opacity(line.kind, layers, view.altitude_km);
             if opacity <= 0.0 {
@@ -144,6 +146,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
             if !segments.is_empty() {
                 lines.push(ProjectedTransportLine {
                     kind: line.kind,
+                    tile: tile_index,
                     tunnel: line.tunnel,
                     opacity,
                     segments,

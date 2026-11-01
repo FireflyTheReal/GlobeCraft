@@ -114,8 +114,19 @@ impl RoadTiles {
         }
         let roads: Arc<[Road]> = snapshot
             .iter()
-            .flat_map(|snapshot| snapshot.tiles.iter())
-            .flat_map(|tile| tile.roads.iter().cloned())
+            .flat_map(|snapshot| {
+                snapshot
+                    .tiles
+                    .iter()
+                    .enumerate()
+                    .map(|(index, tile)| (tile, snapshot.fade(index)))
+            })
+            .flat_map(|(tile, fade)| {
+                tile.roads.iter().map(move |road| Road {
+                    fade,
+                    ..road.clone()
+                })
+            })
             .collect::<Vec<_>>()
             .into();
         self.merged = Some((key, roads.clone()));
@@ -221,6 +232,7 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
                     .into_iter()
                     .map(|(y, x)| key.point(x / extent, y / extent))
                     .collect(),
+                fade: Default::default(),
             });
         }
     }

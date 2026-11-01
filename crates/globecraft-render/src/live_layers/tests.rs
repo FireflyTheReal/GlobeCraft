@@ -33,6 +33,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
                     (0.0, 0.0),
                     (0.0, 0.1),
                 ],
+                fade: Default::default(),
             }]
             .into(),
         ),
@@ -100,6 +101,7 @@ fn terrain_occlusion_drops_a_road_hidden_behind_a_ridge() {
             kind: "primary".into(),
             restricted: false,
             points: vec![(0.35, 0.0), (0.4, 0.0), (0.45, 0.0)],
+            fade: Default::default(),
         }]
         .into(),
     );
@@ -153,22 +155,6 @@ fn roads_vessels_and_hover_match_the_selected_surface_and_keep_all_visible_fragm
                 .all(|p| p.x.is_finite() && p.y.is_finite())
         );
         assert_eq!(geometry.roads[0].segments.len(), 2);
-        let point = input
-            .view
-            .basis
-            .project(
-                input.view.basis.surface_position(0.0, -0.075),
-                input.view.rect,
-            )
-            .unwrap();
-        let (source, nearest) = geometry.nearest_road(point, 1.0).unwrap();
-        assert_eq!(source, 0);
-        assert!((nearest - point).length() < 0.01);
-        assert!(
-            geometry
-                .nearest_road(Pos2::new(-1000.0, -1000.0), 1.0)
-                .is_none()
-        );
     }
 }
 #[test]
@@ -337,6 +323,7 @@ fn transport_lines_and_airports_follow_their_layers() {
             }],
         })],
         zoom: 12,
+        fades: Vec::new(),
     }));
     let kinds = |layers| {
         let mut request = request.clone();
@@ -396,6 +383,7 @@ fn poi_names_follow_their_layers_and_altitude() {
             }],
         })],
         zoom: 12,
+        fades: Vec::new(),
     }));
     let shown = |altitude_km, layers| {
         let mut request = request.clone();

@@ -256,13 +256,13 @@ fn map_data_close_up_screenshot() {
     );
     std::fs::create_dir_all(&dir).expect("screenshot folder");
     let mut h = harness(ThemePreference::Dark);
-    for layer in [
-        MapLayer::Roads,
-        MapLayer::Railways,
-        MapLayer::Parks,
-        MapLayer::Waters,
-    ] {
-        h.state_mut().settings.set_layer_visible(layer, true);
+    let env_f64 = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+    let layers = std::env::var("GLOBECRAFT_SHOT_LAYERS")
+        .unwrap_or_else(|_| "roads,railways,parks,waters".into());
+    for code in layers.split(',') {
+        if let Some(layer) = MapLayer::from_code(code.trim()) {
+            h.state_mut().settings.set_layer_visible(layer, true);
+        }
     }
     let altitude = std::env::var("GLOBECRAFT_SHOT_ALT_KM")
         .ok()
@@ -270,10 +270,56 @@ fn map_data_close_up_screenshot() {
         .unwrap_or(3.0);
     let _ = h.state_mut().run(
         "camera.set",
-        json!({"lat": 48.137, "lon": 11.575, "altitude_km": altitude}),
+        json!({
+            "lat": env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(48.137),
+            "lon": env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(11.575),
+            "altitude_km": altitude
+        }),
     );
-    settle(&mut h, 30.0);
-    save(&mut h, &dir, &format!("07-map-data-{altitude}km"));
+    let mut waited = 0.0;
+    for seconds in [2.0, 4.0, 8.0, 30.0] {
+        settle(&mut h, seconds - waited);
+        waited = seconds;
+        save(
+            &mut h,
+            &dir,
+            &format!("07-map-data-{altitude}km-{seconds}s"),
+        );
+    }
+}
+
+/// Pans across northern Germany at 120 km with roads on while their tiles load,
+/// saving a frame every half second: for catching drawing faults in motion. Manual.
+#[test]
+#[ignore = "manual: needs network; frames of a pan with roads"]
+fn roads_pan_frames() {
+    use globecraft_core::layers::MapLayer;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    h.state_mut()
+        .settings
+        .set_layer_visible(MapLayer::Roads, true);
+    // GLOBECRAFT_SHOT_LAT / _LON / _ALT_KM / _STEP_DEG move the pan elsewhere.
+    let env_f64 = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+    let lat = env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(53.3);
+    let start = env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(6.0);
+    let altitude_km = env_f64("GLOBECRAFT_SHOT_ALT_KM").unwrap_or(120.0);
+    let step_deg = env_f64("GLOBECRAFT_SHOT_STEP_DEG").unwrap_or(0.08);
+    for step in 0..40 {
+        let lon = start + f64::from(step) * step_deg;
+        let _ = h.state_mut().run(
+            "camera.set",
+            json!({"lat": lat, "lon": lon, "altitude_km": altitude_km}),
+        );
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if step % 5 == 4 {
+            save(&mut h, &dir, &format!("11-pan-{step:02}"));
+        }
+    }
 }
 
 /// The Add Data window's library and a GeoJSON layer of a few cities with a route

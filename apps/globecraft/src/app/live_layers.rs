@@ -1,7 +1,7 @@
 //! Aircraft geometry is prepared in render; styled shapes and hover stay in egui.
 use globecraft_core::layers::MapLayer;
 mod fade;
-pub(super) use fade::{FadingShapes, styled_line};
+pub(super) use fade::{TiledShapes, styled_line};
 mod poi;
 mod shapes;
 mod transport;

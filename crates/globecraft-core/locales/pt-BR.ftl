@@ -473,13 +473,6 @@ traffic-zoom-help = Aproxime o mapa para mostrar o trânsito
 traffic-loading-status = Carregando tráfego real…
 traffic-loaded-status = Tráfego atualizado há { $minutes } min (verde=livre, amarelo=lento, vermelho=congestionado)
 
-roads-restricted-help = Em obras no OSM (não é congestionamento)
-roads-flow-unknown-help = Fluxo de veículos: desconhecido (sem dados ao vivo)
-roads-unnamed = via sem nome
-roads-hover-tooltip =
-    { $name } • { $kind }
-    { $state }
-
 vessels-unnamed = Navio não identificado
 vessels-hover-tooltip =
     { $name } • MMSI { $mmsi }

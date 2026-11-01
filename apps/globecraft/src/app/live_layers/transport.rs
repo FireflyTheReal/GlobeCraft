@@ -1,11 +1,12 @@
 //! Railways, ferries and airports: styled once per projected geometry and kept as
 //! tessellated meshes, so a still view costs nothing per frame.
-use super::fade::{FadingShapes, styled_line};
+use super::fade::{TiledShapes, styled_line};
 use eframe::egui::{self, Align2, Color32, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use globecraft_data::transport::{Airport, LineKind};
-use globecraft_render::live_layers::{LiveGeometry, LiveView, ProjectedTransport};
+use globecraft_data::vector_tiles::TileFade;
+use globecraft_render::live_layers::{LiveGeometry, ProjectedTransport};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -39,10 +40,8 @@ fn line_type(kind: LineKind) -> LineType {
 pub(in crate::app) struct TransportShapes {
     /// What the shapes were built from: the projected geometry, scale and style.
     key: Option<(usize, u32, MapStyle)>,
-    /// The view and data snapshot of the last build, to tell new tiles from a move.
-    source: Option<(LiveView, usize)>,
-    lines: FadingShapes,
-    airports: FadingShapes,
+    lines: TiledShapes,
+    airports: TiledShapes,
 }
 
 impl TransportShapes {
@@ -60,30 +59,24 @@ impl TransportShapes {
         }
         self.key = Some(key);
         let view = geometry.input.view;
-        let data = geometry
-            .input
-            .transport
-            .as_ref()
-            .map_or(0, |snapshot| Arc::as_ptr(snapshot) as usize);
-        let new_data = self
-            .source
-            .is_some_and(|(old_view, old_data)| old_view.same_frame(&view) && old_data != data);
-        self.source = Some((view, data));
-        let now = Instant::now();
-        let scale = view.map_scale;
-        self.lines.replace(
-            super::super::live_geometry::mesh_shapes(
-                painter,
-                lines(&geometry.transport, style, scale, view.altitude_km),
+        let fade = |tile: usize| {
+            geometry
+                .input
+                .transport
+                .as_ref()
+                .map_or_else(TileFade::default, |snapshot| snapshot.fade(tile))
+        };
+        self.lines = TiledShapes::build(
+            painter,
+            lines(
+                &geometry.transport,
+                style,
+                view.map_scale,
+                view.altitude_km,
+                &fade,
             ),
-            new_data,
-            now,
         );
-        self.airports.replace(
-            super::super::live_geometry::mesh_shapes(painter, airports(painter, geometry, scale)),
-            new_data,
-            now,
-        );
+        self.airports = TiledShapes::build(painter, airports(painter, geometry, view.map_scale));
     }
     /// The lines, drawn under the borders.
     pub(in crate::app) fn draw_lines(
@@ -165,13 +158,16 @@ fn lines(
     style: &MapStyle,
     scale: f32,
     altitude_km: f64,
-) -> Vec<Shape> {
+    fade: &dyn Fn(usize) -> TileFade,
+) -> Vec<(TileFade, Shape)> {
     let mut shapes = Vec::new();
     for line in &transport.lines {
+        let fade = fade(line.tile);
         let line_style = style.line(line_type(line.kind));
         let opacity = line.opacity * if line.tunnel { TUNNEL_OPACITY } else { 1.0 };
+        let mut drawn = Vec::new();
         for segment in &line.segments {
-            styled_line(&mut shapes, segment, line_style, scale, opacity);
+            styled_line(&mut drawn, segment, line_style, scale, opacity);
             if line.kind == LineKind::Rail
                 && line_style.dash == DashStyle::Solid
                 && altitude_km <= RAIL_DASH_MAX_ALTITUDE_KM
@@ -180,14 +176,19 @@ fn lines(
                     line_style.width_points * 0.45 * scale,
                     RAIL_DASH_COLOR.gamma_multiply(opacity),
                 );
-                shapes.extend(Shape::dashed_line(segment, white, 5.0 * scale, 5.0 * scale));
+                drawn.extend(Shape::dashed_line(segment, white, 5.0 * scale, 5.0 * scale));
             }
         }
+        shapes.extend(drawn.into_iter().map(|shape| (fade, shape)));
     }
     shapes
 }
 
-fn airports(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<Shape> {
+fn airports(
+    painter: &egui::Painter,
+    geometry: &LiveGeometry,
+    scale: f32,
+) -> Vec<(TileFade, Shape)> {
     let Some(snapshot) = &geometry.input.transport else {
         return Vec::new();
     };
@@ -202,18 +203,21 @@ fn airports(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec
         else {
             continue;
         };
+        let fade = snapshot.fade(projected.tile);
         let at = projected.position;
         let opacity = projected.opacity;
         let radius = AIRPORT_MARKER_POINTS * scale;
-        markers.push(Shape::circle_filled(
-            at,
-            radius,
-            AIRPORT_COLOR.gamma_multiply(opacity),
+        markers.push((
+            fade,
+            Shape::circle_filled(at, radius, AIRPORT_COLOR.gamma_multiply(opacity)),
         ));
-        markers.push(Shape::circle_stroke(
-            at,
-            radius,
-            Stroke::new(1.2 * scale, Color32::WHITE.gamma_multiply(opacity)),
+        markers.push((
+            fade,
+            Shape::circle_stroke(
+                at,
+                radius,
+                Stroke::new(1.2 * scale, Color32::WHITE.gamma_multiply(opacity)),
+            ),
         ));
         if !projected.labelled {
             continue;
@@ -232,8 +236,11 @@ fn airports(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec
             )
             .min;
         let shadow = painter.layout_no_wrap(text, font.clone(), Color32::BLACK);
-        labels.push(faded_text(position + Vec2::splat(1.0), shadow, opacity));
-        labels.push(faded_text(position, galley, opacity));
+        labels.push((
+            fade,
+            faded_text(position + Vec2::splat(1.0), shadow, opacity),
+        ));
+        labels.push((fade, faded_text(position, galley, opacity)));
     }
     markers.extend(labels);
     markers

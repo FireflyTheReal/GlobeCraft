@@ -163,6 +163,7 @@ mod tests {
                 labels: vec![label(lat, lon, "Neighbourhood", true)],
             })],
             zoom: 13,
+            fades: Vec::new(),
         };
         let names: Vec<String> = data
             .with_place_names(Some(&snapshot))

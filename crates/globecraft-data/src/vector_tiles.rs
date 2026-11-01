@@ -53,13 +53,73 @@ pub(crate) struct Spec<T> {
     pub(crate) decode: fn(TileKey, &[u8]) -> Option<T>,
 }
 
-/// The tiles to draw for the current view: wanted tiles that are loaded, and coarser
-/// loaded tiles in place of those still loading.
+/// How long a tile takes to fade in once it is shown.
+const FADE_IN: Duration = Duration::from_millis(450);
+/// A replaced tile stays fully drawn this long (its replacement fades in over it),
+/// then fades out over `FADE_OUT`, as the borders exchange their sets.
+const FADE_OUT_DELAY: Duration = Duration::from_millis(250);
+const FADE_OUT: Duration = Duration::from_millis(350);
+
+/// When a tile was shown and, once replaced, when it was: its drawing fades in after
+/// the first and out after the second, wherever the view is meanwhile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TileFade {
+    /// `None`: shown long enough ago to be fully drawn.
+    pub shown: Option<Instant>,
+    pub retired: Option<Instant>,
+}
+
+impl TileFade {
+    /// The tile's opacity at `now`.
+    pub fn opacity(&self, now: Instant) -> f32 {
+        let smooth = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let since = |at: Instant| now.saturating_duration_since(at).as_secs_f32();
+        let fade_in = self
+            .shown
+            .map_or(1.0, |at| smooth(since(at) / FADE_IN.as_secs_f32()));
+        let fade_out = self.retired.map_or(1.0, |at| {
+            1.0 - smooth((since(at) - FADE_OUT_DELAY.as_secs_f32()) / FADE_OUT.as_secs_f32())
+        });
+        fade_in * fade_out
+    }
+    /// Whether the opacity still changes.
+    pub fn animating(&self, now: Instant) -> bool {
+        self.shown
+            .is_some_and(|at| now.saturating_duration_since(at) < FADE_IN)
+            || self.retired.is_some()
+    }
+    /// Whether a replaced tile has faded out completely.
+    fn gone(&self, now: Instant) -> bool {
+        self.retired
+            .is_some_and(|at| now.saturating_duration_since(at) >= FADE_OUT_DELAY + FADE_OUT)
+    }
+}
+
+/// The tiles to draw for the current view: wanted tiles that are loaded, coarser
+/// loaded tiles in place of those still loading, and replaced tiles fading out.
 #[derive(Debug)]
 pub struct Snapshot<T> {
     pub tiles: Vec<Arc<T>>,
     /// The level the view wants.
     pub zoom: u8,
+    /// Each tile's fade, in the order of `tiles` (missing: fully drawn).
+    pub fades: Vec<TileFade>,
+}
+
+impl<T> Snapshot<T> {
+    /// The fade of tile `index`.
+    pub fn fade(&self, index: usize) -> TileFade {
+        self.fades.get(index).copied().unwrap_or_default()
+    }
+}
+
+/// A tile on show, for the fades.
+struct Shown<T> {
+    tile: Arc<T>,
+    fade: TileFade,
 }
 
 /// Where and how the view looks.
@@ -115,6 +175,8 @@ pub(crate) struct TileStream<T: 'static> {
     snapshot: Option<Arc<Snapshot<T>>>,
     /// What the snapshot was built from: the wanted tiles and the revision.
     built: Option<(Vec<TileKey>, u64)>,
+    /// The tiles on show, current and fading out.
+    shown: HashMap<TileKey, Shown<T>>,
 }
 
 impl<T: Send + Sync + 'static> TileStream<T> {
@@ -124,6 +186,7 @@ impl<T: Send + Sync + 'static> TileStream<T> {
             shared: Arc::default(),
             snapshot: None,
             built: None,
+            shown: HashMap::new(),
         }
     }
 
@@ -150,6 +213,7 @@ impl<T: Send + Sync + 'static> TileStream<T> {
     pub(crate) fn hide(&mut self) {
         self.snapshot = None;
         self.built = None;
+        self.shown.clear();
     }
 
     pub(crate) fn update(
@@ -211,10 +275,12 @@ impl<T: Send + Sync + 'static> TileStream<T> {
         if !batch.is_empty() {
             self.spawn_batch(runtime, batch, &template, &repaint);
         }
-        if self
-            .built
-            .as_ref()
-            .is_some_and(|(keys, revision)| *keys == wanted && *revision == shared.revision)
+        let expired = self.shown.values().any(|shown| shown.fade.gone(now));
+        if !expired
+            && self
+                .built
+                .as_ref()
+                .is_some_and(|(keys, revision)| *keys == wanted && *revision == shared.revision)
         {
             return;
         }
@@ -232,16 +298,61 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                 candidate = at.parent().filter(|parent| parent.z >= spec.min_zoom);
             }
         }
-        let tiles = chosen
+        // New tiles fade in; tiles no longer chosen fade out, then go.
+        for key in &chosen {
+            let Some(entry) = shared.tiles.get_mut(key) else {
+                continue;
+            };
+            entry.used = now;
+            let tile = entry.tile.clone();
+            match self.shown.get_mut(key) {
+                Some(shown) => {
+                    shown.tile = tile;
+                    if shown.fade.retired.take().is_some() {
+                        // Back before it had gone: shown in full again.
+                        shown.fade.shown = None;
+                    }
+                }
+                None => {
+                    self.shown.insert(
+                        *key,
+                        Shown {
+                            tile,
+                            fade: TileFade {
+                                shown: Some(now),
+                                retired: None,
+                            },
+                        },
+                    );
+                }
+            }
+        }
+        for (key, shown) in &mut self.shown {
+            if !chosen.contains(key) && shown.fade.retired.is_none() {
+                shown.fade.retired = Some(now);
+            }
+            // Fully faded in: no longer animating.
+            if shown
+                .fade
+                .shown
+                .is_some_and(|at| now.saturating_duration_since(at) >= FADE_IN)
+            {
+                shown.fade.shown = None;
+            }
+        }
+        self.shown.retain(|_, shown| !shown.fade.gone(now));
+        let retiring = self
+            .shown
             .iter()
-            .filter_map(|key| {
-                let entry = shared.tiles.get_mut(key)?;
-                entry.used = now;
-                Some(entry.tile.clone())
-            })
-            .collect();
+            .filter(|(key, _)| !chosen.contains(key))
+            .map(|(_, shown)| (shown.tile.clone(), shown.fade));
+        let (tiles, fades) = chosen
+            .iter()
+            .filter_map(|key| self.shown.get(key).map(|s| (s.tile.clone(), s.fade)))
+            .chain(retiring)
+            .unzip();
         self.built = Some((wanted, shared.revision));
-        self.snapshot = Some(Arc::new(Snapshot { tiles, zoom }));
+        self.snapshot = Some(Arc::new(Snapshot { tiles, zoom, fades }));
     }
 }
 

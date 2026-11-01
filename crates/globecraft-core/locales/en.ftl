@@ -473,13 +473,6 @@ traffic-zoom-help = Zoom in to see traffic
 traffic-loading-status = Loading live traffic…
 traffic-loaded-status = Traffic updated { $minutes } min ago (green=free, yellow=slow, red=jammed)
 
-roads-restricted-help = Under construction in OSM (not a traffic jam)
-roads-flow-unknown-help = Vehicle flow: unknown (no live observations)
-roads-unnamed = unnamed road
-roads-hover-tooltip =
-    { $name } • { $kind }
-    { $state }
-
 vessels-unnamed = Unidentified vessel
 vessels-hover-tooltip =
     { $name } • MMSI { $mmsi }

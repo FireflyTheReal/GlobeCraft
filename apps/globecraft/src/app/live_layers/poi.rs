@@ -1,11 +1,12 @@
 //! Places of interest, peaks, waters and parks: rivers and park outlines under the
 //! borders, names over them, styled once per projected geometry.
-use super::fade::{FadingShapes, styled_line};
+use super::fade::{TiledShapes, styled_line};
 use eframe::egui::{self, Align2, Color32, FontId, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
 use globecraft_data::settings::map_style::{LineType, MapStyle};
-use globecraft_render::live_layers::{LiveGeometry, LiveView};
+use globecraft_data::vector_tiles::TileFade;
+use globecraft_render::live_layers::LiveGeometry;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -26,10 +27,8 @@ const WATER_LABEL: Color32 = Color32::from_rgb(150, 200, 255);
 pub(in crate::app) struct PoiShapes {
     /// What the shapes were built from: the projected geometry, scale and style.
     key: Option<(usize, u32, MapStyle)>,
-    /// The view and data snapshot of the last build, to tell new tiles from a move.
-    source: Option<(LiveView, usize)>,
-    lines: FadingShapes,
-    labels: FadingShapes,
+    lines: TiledShapes,
+    labels: TiledShapes,
 }
 
 impl PoiShapes {
@@ -46,28 +45,9 @@ impl PoiShapes {
             return;
         }
         self.key = Some(key);
-        let view = geometry.input.view;
-        let data = geometry
-            .input
-            .poi
-            .as_ref()
-            .map_or(0, |snapshot| Arc::as_ptr(snapshot) as usize);
-        let new_data = self
-            .source
-            .is_some_and(|(old_view, old_data)| old_view.same_frame(&view) && old_data != data);
-        self.source = Some((view, data));
-        let now = Instant::now();
-        let scale = view.map_scale;
-        self.lines.replace(
-            super::super::live_geometry::mesh_shapes(painter, lines(geometry, style, scale)),
-            new_data,
-            now,
-        );
-        self.labels.replace(
-            super::super::live_geometry::mesh_shapes(painter, labels(painter, geometry, scale)),
-            new_data,
-            now,
-        );
+        let scale = geometry.input.view.map_scale;
+        self.lines = TiledShapes::build(painter, lines(geometry, style, scale));
+        self.labels = TiledShapes::build(painter, labels(painter, geometry, scale));
     }
     /// Rivers, canals and park outlines, drawn under the borders.
     pub(in crate::app) fn draw_lines(
@@ -167,22 +147,29 @@ fn tooltip(lang: Lang, point: &PoiPoint) -> String {
     }
 }
 
-fn lines(geometry: &LiveGeometry, style: &MapStyle, scale: f32) -> Vec<Shape> {
+fn lines(geometry: &LiveGeometry, style: &MapStyle, scale: f32) -> Vec<(TileFade, Shape)> {
     let mut shapes = Vec::new();
     for line in &geometry.poi.lines {
+        let fade = geometry
+            .input
+            .poi
+            .as_ref()
+            .map_or_else(TileFade::default, |snapshot| snapshot.fade(line.tile));
         let line_style = style.line(match line.kind {
             PoiLineKind::River => LineType::River,
             PoiLineKind::Canal => LineType::Canal,
             PoiLineKind::Park => LineType::Park,
         });
+        let mut drawn = Vec::new();
         for segment in &line.segments {
-            styled_line(&mut shapes, segment, line_style, scale, line.opacity);
+            styled_line(&mut drawn, segment, line_style, scale, line.opacity);
         }
+        shapes.extend(drawn.into_iter().map(|shape| (fade, shape)));
     }
     shapes
 }
 
-fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<Shape> {
+fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(TileFade, Shape)> {
     let Some(snapshot) = &geometry.input.poi else {
         return Vec::new();
     };
@@ -198,6 +185,7 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
         else {
             continue;
         };
+        let fade = snapshot.fade(label.tile);
         let at = label.position;
         let opacity = label.opacity;
         let r = MARKER_POINTS * scale;
@@ -215,14 +203,17 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
                 Align2::CENTER_CENTER,
             ),
             PointKind::Peak => {
-                markers.push(Shape::convex_polygon(
-                    vec![
-                        at + Vec2::new(0.0, -r * 1.4),
-                        at + Vec2::new(r * 1.3, r),
-                        at + Vec2::new(-r * 1.3, r),
-                    ],
-                    PEAK.gamma_multiply(opacity),
-                    Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
+                markers.push((
+                    fade,
+                    Shape::convex_polygon(
+                        vec![
+                            at + Vec2::new(0.0, -r * 1.4),
+                            at + Vec2::new(r * 1.3, r),
+                            at + Vec2::new(-r * 1.3, r),
+                        ],
+                        PEAK.gamma_multiply(opacity),
+                        Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
+                    ),
                 ));
                 let text = match point.elevation_m {
                     Some(metres) => format!("{} {metres} m", point.name),
@@ -231,7 +222,10 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
                 (text, LABEL, font.clone(), Align2::LEFT_CENTER)
             }
             PointKind::Park => {
-                markers.push(Shape::circle_filled(at, r, PARK.gamma_multiply(opacity)));
+                markers.push((
+                    fade,
+                    Shape::circle_filled(at, r, PARK.gamma_multiply(opacity)),
+                ));
                 (
                     point.name.clone(),
                     PARK_LABEL,
@@ -240,11 +234,17 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
                 )
             }
             PointKind::Poi => {
-                markers.push(Shape::circle_filled(at, r, POI.gamma_multiply(opacity)));
-                markers.push(Shape::circle_stroke(
-                    at,
-                    r,
-                    Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
+                markers.push((
+                    fade,
+                    Shape::circle_filled(at, r, POI.gamma_multiply(opacity)),
+                ));
+                markers.push((
+                    fade,
+                    Shape::circle_stroke(
+                        at,
+                        r,
+                        Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
+                    ),
                 ));
                 (point.name.clone(), LABEL, font.clone(), Align2::LEFT_CENTER)
             }
@@ -257,12 +257,14 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
         let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
         let position = anchor.anchor_size(at + offset, galley.size()).min;
         let shadow = painter.layout_no_wrap(text, font, Color32::BLACK);
-        texts.push(super::transport::faded_text(
-            position + Vec2::splat(1.0),
-            shadow,
-            opacity,
+        texts.push((
+            fade,
+            super::transport::faded_text(position + Vec2::splat(1.0), shadow, opacity),
         ));
-        texts.push(super::transport::faded_text(position, galley, opacity));
+        texts.push((
+            fade,
+            super::transport::faded_text(position, galley, opacity),
+        ));
     }
     markers.extend(texts);
     markers

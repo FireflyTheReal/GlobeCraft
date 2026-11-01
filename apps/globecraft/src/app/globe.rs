@@ -513,7 +513,6 @@ impl App {
                 self.roads.draw(
                     &painter,
                     geometry,
-                    self.lang,
                     self.settings.map_scale,
                     &self.settings.map_style,
                 );
