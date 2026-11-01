@@ -35,7 +35,8 @@ pub(crate) struct Spec<T> {
     /// The coarsest and finest levels fetched.
     pub(crate) min_zoom: u8,
     pub(crate) max_zoom: u8,
-    /// A level with nothing the next finer one lacks: never fetched.
+    /// A level never fetched (the next finer one is used): one with nothing the
+    /// finer one lacks, or whose data is too thinned out to show.
     pub(crate) skip_zoom: Option<u8>,
     pub(crate) tiles_across_view: f64,
     /// More tiles than this go one level up instead.

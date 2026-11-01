@@ -26,7 +26,10 @@ static SPEC: Spec<RoadTile> = Spec {
     bands: &["roads13", "roads14"],
     min_zoom: 4,
     max_zoom: 14,
-    skip_zoom: None,
+    // OpenMapTiles' zoom-6 roads keep about half the motorway length of zoom 5 and
+    // 7 (short pieces dropped in generalization), so a view there showed roads
+    // broken into scattered pieces (user report 2026-11-01); zoom 7 takes its place.
+    skip_zoom: Some(6),
     tiles_across_view: 3.0,
     max_tiles: 64,
     max_floor_tiles: 64,

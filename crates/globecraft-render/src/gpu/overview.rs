@@ -339,11 +339,12 @@ pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
         / (tuning::TILE_SIZE_PX * request.cam.alt * globecraft_core::METERS_PER_KM * pa))
         .log2()
         + tuning::LOD_SHARPNESS_BIAS;
-    let max_zoom = (max_lod.ceil().max(if request.cfg.provider.is_imagery() {
-        1.0
-    } else {
-        0.0
-    }) as u8)
+    // Below level 0 the shader clamps to level 0 but keeps the fraction, and blends
+    // in level 1 near the top of that band (a whole globe far out on a text map):
+    // level 1 is a dependency whenever the view is less than a level below 0.
+    // Imagery always blends from level 0 to 1.
+    let blends_level_one = request.cfg.provider.is_imagery() || max_lod > -1.0;
+    let max_zoom = (max_lod.ceil().max(if blends_level_one { 1.0 } else { 0.0 }) as u8)
         .min(request.cfg.provider.max_zoom());
     (max_zoom <= MAX_TRACKED_ZOOM).then_some(max_zoom)
 }
