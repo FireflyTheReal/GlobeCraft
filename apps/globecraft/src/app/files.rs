@@ -137,11 +137,42 @@ impl App {
                     self.placemarks.extend(placemarks);
                 }
                 Ok(FileOutcome::ScreenshotSaved { path }) => self.screenshot_saved(path),
+                Ok(FileOutcome::SourcesSaved { path, count }) => {
+                    self.status = self.lang.format(
+                        "data-pane-export-success",
+                        &[
+                            ("count", count.into()),
+                            ("path", path.display().to_string().into()),
+                        ],
+                    );
+                    self.status_file = Some(FileStatus {
+                        message: self.status.clone(),
+                        path,
+                    });
+                }
+                Ok(FileOutcome::SourcesLoaded { path, sources }) => {
+                    let mut added = 0;
+                    for source in &sources {
+                        if !self.settings.saved_sources.is_favorite(&source.source) {
+                            self.settings.saved_sources.toggle_favorite(source);
+                            added += 1;
+                        }
+                    }
+                    self.status = self.lang.format(
+                        "data-pane-import-success",
+                        &[
+                            ("count", added.into()),
+                            ("path", path.display().to_string().into()),
+                        ],
+                    );
+                }
                 Err(error) => {
                     let id = match kind {
                         FileKind::OpenKml | FileKind::RestoreKml => "kml-open-error",
                         FileKind::SaveKml => "kml-save-error",
                         FileKind::Screenshot => "screenshot-save-error",
+                        FileKind::OpenSources => "kml-open-error",
+                        FileKind::SaveSources => "kml-save-error",
                         FileKind::Image(globecraft_data::files::ImageTarget::FlatEarth) => {
                             self.flat_earth.image_failed = true;
                             self.status = format!("Flat Earth artwork failed: {error}");

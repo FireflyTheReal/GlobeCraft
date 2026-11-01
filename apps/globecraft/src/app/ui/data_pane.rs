@@ -119,7 +119,38 @@ fn location(layer: &UserLayer) -> String {
     }
 }
 
+/// File-name filter of exported source lists.
+const SOURCES_FILTER: (&str, &[&str]) = ("GlobeCraft sources (JSON)", &["json", "JSON"]);
+
 impl App {
+    fn pick_sources_export(&mut self) {
+        let sources = self.settings.saved_sources.favorites.clone();
+        if sources.is_empty() {
+            self.status = self.lang.text("data-pane-export-empty").to_owned();
+            return;
+        }
+        let dialog = rfd::FileDialog::new()
+            .add_filter(SOURCES_FILTER.0, SOURCES_FILTER.1)
+            .set_file_name("globecraft-sources.json")
+            .set_title(self.lang.text("data-pane-export-help"));
+        if let Some(path) = dialog.save_file()
+            && let Err(error) = self.file_jobs.save_sources(path, sources)
+        {
+            self.status = format!("Unable to export sources: {error}");
+        }
+    }
+
+    fn pick_sources_import(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter(SOURCES_FILTER.0, SOURCES_FILTER.1)
+            .set_title(self.lang.text("data-pane-import-help"));
+        if let Some(path) = dialog.pick_file()
+            && let Err(error) = self.file_jobs.open_sources(path)
+        {
+            self.status = format!("Unable to import sources: {error}");
+        }
+    }
+
     pub(in crate::app) fn data_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
@@ -135,7 +166,17 @@ impl App {
             RowAction::None => {}
         };
 
-        section_heading(ui, lang.text("data-pane-favorites-title"));
+        ui.horizontal(|ui| {
+            section_heading(ui, lang.text("data-pane-favorites-title"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icons::icon_button(ui, "export", lang.text("data-pane-export-help")).clicked() {
+                    self.pick_sources_export();
+                }
+                if icons::icon_button(ui, "open", lang.text("data-pane-import-help")).clicked() {
+                    self.pick_sources_import();
+                }
+            });
+        });
         if self.settings.saved_sources.favorites.is_empty() {
             ui.label(
                 egui::RichText::new(lang.text("data-pane-favorites-empty"))

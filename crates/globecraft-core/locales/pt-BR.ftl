@@ -545,6 +545,17 @@ data-pane-mine-title = Meus dados
 data-pane-star-help = Adicionar aos favoritos
 data-pane-unstar-help = Remover dos favoritos
 data-pane-open-layers-action = Ordem, opacidade e remoção em Camadas
+data-pane-export-help = Exportar favoritos para um arquivo
+data-pane-import-help = Importar favoritos de um arquivo
+data-pane-export-empty = Marque uma fonte com a estrela primeiro: só os favoritos são exportados.
+data-pane-export-success = { $count } { $count ->
+        [one] fonte exportada
+       *[other] fontes exportadas
+    } para { $path }
+data-pane-import-success = { $count } { $count ->
+        [one] fonte adicionada
+       *[other] fontes adicionadas
+    } aos seus favoritos a partir de { $path }
 sidebar-places-title = Lugares
 sidebar-pin-places-action = Fixar
 sidebar-pin-places-tooltip = Manter Lugares visível ao alternar painéis

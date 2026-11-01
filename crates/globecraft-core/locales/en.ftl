@@ -545,6 +545,17 @@ data-pane-mine-title = My data
 data-pane-star-help = Add to favorites
 data-pane-unstar-help = Remove from favorites
 data-pane-open-layers-action = Order, opacity and removal in Layers
+data-pane-export-help = Export favorites as a file
+data-pane-import-help = Import favorites from a file
+data-pane-export-empty = Star a source first: only favorites are exported.
+data-pane-export-success = Exported { $count } { $count ->
+        [one] source
+       *[other] sources
+    } to { $path }
+data-pane-import-success = Added { $count } { $count ->
+        [one] source
+       *[other] sources
+    } to your favorites from { $path }
 sidebar-places-title = Places
 sidebar-pin-places-action = Pin
 sidebar-pin-places-tooltip = Keep Places visible when switching panels

@@ -76,6 +76,44 @@ impl SavedSources {
     }
 }
 
+/// The format tag of an exported source list.
+const EXPORT_FORMAT: &str = "globecraft-sources";
+const EXPORT_VERSION: u64 = 1;
+
+/// A source list as a JSON document others can import: favorites shared between
+/// computers or people.
+pub fn export_sources(sources: &[UserLayer]) -> Vec<u8> {
+    let sources: Vec<UserLayer> = sources.iter().map(template).collect();
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "format": EXPORT_FORMAT,
+        "version": EXPORT_VERSION,
+        "sources": sources,
+    }))
+    .expect("source lists serialize")
+}
+
+/// The sources of an exported list (or a bare array of layers), each once; entries
+/// that do not parse are left out.
+pub fn import_sources(bytes: &[u8]) -> Result<Vec<UserLayer>, crate::Error> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let list = match &value {
+        serde_json::Value::Array(_) => &value,
+        serde_json::Value::Object(map) => {
+            if let Some(format) = map.get("format").and_then(serde_json::Value::as_str)
+                && format != EXPORT_FORMAT
+            {
+                return Err(format!("not a GlobeCraft source list ({format})").into());
+            }
+            map.get("sources")
+                .ok_or("not a GlobeCraft source list (no sources)")?
+        }
+        _ => return Err("not a GlobeCraft source list".into()),
+    };
+    let mut saved = SavedSources::default();
+    saved.apply(&serde_json::json!({ "favorites": list }));
+    Ok(saved.favorites)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +167,22 @@ mod tests {
         // Broken entries are skipped, not fatal.
         back.apply(&serde_json::json!({"favorites": [{"name": "broken"}, json["recent"][0]]}));
         assert_eq!(back.favorites.len(), 1);
+    }
+
+    #[test]
+    fn exported_lists_import_again_and_other_json_is_refused() {
+        let sources = vec![
+            layer("https://a/{z}/{x}/{y}"),
+            layer("https://b/{z}/{x}/{y}"),
+        ];
+        let bytes = export_sources(&sources);
+        let back = import_sources(&bytes).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].source, sources[0].source);
+        let bare = serde_json::to_vec(&sources).unwrap();
+        assert_eq!(import_sources(&bare).unwrap().len(), 2);
+        assert!(import_sources(br#"{"format":"geojson","sources":[]}"#).is_err());
+        assert!(import_sources(br#"{"type":"FeatureCollection"}"#).is_err());
+        assert!(import_sources(b"not json").is_err());
     }
 }

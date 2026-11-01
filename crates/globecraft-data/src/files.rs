@@ -40,6 +40,15 @@ pub enum FileOutcome {
     PlanetSaved {
         path: PathBuf,
     },
+    /// Data sources exported (Data pane).
+    SourcesSaved {
+        path: PathBuf,
+        count: usize,
+    },
+    SourcesLoaded {
+        path: PathBuf,
+        sources: Vec<crate::user_data::UserLayer>,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -50,6 +59,8 @@ pub enum FileKind {
     Image(ImageTarget),
     OpenPlanet,
     SavePlanet,
+    OpenSources,
+    SaveSources,
 }
 pub struct FileCompletion {
     pub kind: FileKind,
@@ -64,6 +75,8 @@ enum Job {
     Image(ImageTarget, ImageSource),
     OpenPlanet(PathBuf),
     SavePlanet(PlanetSave),
+    OpenSources(PathBuf),
+    SaveSources(PathBuf, Vec<crate::user_data::UserLayer>),
 }
 impl Job {
     fn kind(&self) -> FileKind {
@@ -75,6 +88,8 @@ impl Job {
             Self::Image(target, _) => FileKind::Image(*target),
             Self::OpenPlanet(..) => FileKind::OpenPlanet,
             Self::SavePlanet(..) => FileKind::SavePlanet,
+            Self::OpenSources(..) => FileKind::OpenSources,
+            Self::SaveSources(..) => FileKind::SaveSources,
         }
     }
     fn run(self) -> Result<FileOutcome, crate::Error> {
@@ -125,6 +140,17 @@ impl Job {
                 )?;
                 std::fs::write(&path, document)?;
                 Ok(FileOutcome::PlanetSaved { path })
+            }
+            Self::OpenSources(path) => Ok(FileOutcome::SourcesLoaded {
+                sources: crate::user_data::import_sources(&std::fs::read(&path)?)?,
+                path,
+            }),
+            Self::SaveSources(path, sources) => {
+                std::fs::write(&path, crate::user_data::export_sources(&sources))?;
+                Ok(FileOutcome::SourcesSaved {
+                    path,
+                    count: sources.len(),
+                })
             }
         }
     }
@@ -229,6 +255,18 @@ impl FileJobs {
     }
     pub fn save_planet(&self, snapshot: PlanetSave) -> Result<(), crate::Error> {
         self.submit(Job::SavePlanet(snapshot))
+    }
+    /// Reads an exported list of data sources.
+    pub fn open_sources(&self, path: PathBuf) -> Result<(), crate::Error> {
+        self.submit(Job::OpenSources(path))
+    }
+    /// Writes `sources` as a list others can import.
+    pub fn save_sources(
+        &self,
+        path: PathBuf,
+        sources: Vec<crate::user_data::UserLayer>,
+    ) -> Result<(), crate::Error> {
+        self.submit(Job::SaveSources(path, sources))
     }
 }
 

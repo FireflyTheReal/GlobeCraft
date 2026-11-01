@@ -11,7 +11,7 @@ mod vector;
 
 pub use capabilities::{WmsLayer, wms_layers};
 pub use raster::{RasterSnapshot, RasterTiles, test_tile};
-pub use saved::SavedSources;
+pub use saved::{SavedSources, export_sources, import_sources};
 pub use vector::{FeatureSet, NamedPoint, VectorLayer, load as load_features, parse_features};
 
 use serde::{Deserialize, Serialize};
