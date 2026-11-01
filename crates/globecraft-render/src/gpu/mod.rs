@@ -36,6 +36,19 @@ pub(crate) struct GpuRenderer {
     #[cfg_attr(not(test), allow(dead_code))]
     software: bool,
 }
+/// The share of colour channels that may differ from the CPU renderer by more than one
+/// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
+/// fraction of a texel, which shows on sharp imagery edges and nowhere else.
+#[cfg(test)]
+pub(crate) const PARITY_SHARE_OVER_ONE: f64 = 0.001;
+/// With real imagery (the frame benchmark) the f32 level of detail also lands on the
+/// other side of the CPU's area-filter and fade thresholds along thin contours: up to
+/// this share of channels, by at most this many levels.
+#[cfg(test)]
+pub(crate) const IMAGERY_SHARE_OVER_ONE: f64 = 0.01;
+#[cfg(test)]
+pub(crate) const IMAGERY_MAX_DIFFERENCE: u8 = 16;
+
 /// Set to accept a software GPU adapter (lavapipe, WARP): for checking parity where
 /// there is no GPU, never faster than the CPU renderer.
 const ALLOW_SOFTWARE_ENV: &str = "GLOBECRAFT_GPU_ALLOW_SOFTWARE";

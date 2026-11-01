@@ -27,6 +27,12 @@ const LOD_LAT_COS: f32 = __LOD_LAT_COS__;
 const LOD_INC_COS: f32 = __LOD_INC_COS__;
 const MIN_BLEND: f32 = __MIN_BLEND__;
 const TEXT_ZOOM_FADE_START: f32 = __TEXT_ZOOM_FADE_START__;
+const IMAGERY_ZOOM_FADE_START: f32 = __IMAGERY_ZOOM_FADE_START__;
+const FILTER_EXPONENT_MIN: f32 = __FILTER_EXPONENT_MIN__;
+const FILTER_EXPONENT_MAX: f32 = __FILTER_EXPONENT_MAX__;
+const MAX_SAMPLE_STRIDE: f32 = __MAX_SAMPLE_STRIDE__;
+// Texels one axis of an area sample can touch (the CPU's MAX_AREA_SPAN_TEXELS).
+const MAX_AREA_SPAN: i32 = 11;
 const TWILIGHT_OFFSET: f32 = __TWILIGHT_OFFSET__;
 const TWILIGHT_WIDTH: f32 = __TWILIGHT_WIDTH__;
 const NIGHT_BRIGHTNESS: f32 = __NIGHT_BRIGHTNESS__;
@@ -57,7 +63,44 @@ fn sample_tile(uv: vec2<f32>, layer: i32) -> vec3<f32> {
     let d = textureLoad(atlas, high, layer, 0).rgb * 255.0;
     return blend(blend(a,b,f.x),blend(c,d,f.x),f.y) / 255.0;
 }
-fn chain(zoom: u32, uv: vec2<f32>, distance: f32) -> vec3<f32> {
+// The CPU sampler's area average (`Tile::sample_area`): every texel under a
+// `stride`-wide box centred on the sample, weighted by its overlap, so minified
+// imagery does not alias on four bilinear taps.
+fn sample_area(uv: vec2<f32>, layer: i32, stride: f32) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(atlas));
+    let center = uv * size - vec2<f32>(0.5);
+    let lower = max(center - vec2<f32>(stride * 0.5), vec2<f32>(0.0));
+    let upper = min(center + vec2<f32>(stride * 0.5), size);
+    let lo = vec2<i32>(max(floor(lower + vec2<f32>(0.5)), vec2<f32>(0.0)));
+    let hi = min(vec2<i32>(floor(upper + vec2<f32>(0.5))) + vec2<i32>(1), vec2<i32>(size));
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var ty = lo.y; ty < min(hi.y, lo.y + MAX_AREA_SPAN); ty++) {
+        let wy = max(min(min(f32(ty) + 0.5, center.y + stride * 0.5), size.y)
+            - max(max(f32(ty) - 0.5, center.y - stride * 0.5), 0.0), 0.0);
+        if wy <= 0.0 { continue; }
+        for (var tx = lo.x; tx < min(hi.x, lo.x + MAX_AREA_SPAN); tx++) {
+            let wx = max(min(min(f32(tx) + 0.5, center.x + stride * 0.5), size.x)
+                - max(max(f32(tx) - 0.5, center.x - stride * 0.5), 0.0), 0.0);
+            sum += textureLoad(atlas, vec2<i32>(tx, ty), layer, 0).rgb * 255.0 * wx * wy;
+            total += wx * wy;
+        }
+    }
+    if total <= 0.0 {
+        let nearest = min(vec2<i32>(max(round(center), vec2<f32>(0.0))), vec2<i32>(size) - vec2<i32>(1));
+        return textureLoad(atlas, nearest, layer, 0).rgb;
+    }
+    return sum / total / 255.0;
+}
+// Texels per pixel at level `zz` for a pixel whose level band is `base` + `frac`,
+// as the CPU's `sample_chain` sizes its area samples (1: bilinear).
+fn stride_at(zz: i32, base: i32, frac: f32) -> f32 {
+    let exponent = f32(zz - base) + LOD_BIAS - frac;
+    if exponent <= FILTER_EXPONENT_MIN { return 1.0; }
+    if exponent >= FILTER_EXPONENT_MAX { return MAX_SAMPLE_STRIDE; }
+    return exp2(exponent);
+}
+fn chain(zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: f32) -> vec3<f32> {
     var z = i32(zoom);
     loop {
         let n = 1u << u32(z);
@@ -72,7 +115,12 @@ fn chain(zoom: u32, uv: vec2<f32>, distance: f32) -> vec3<f32> {
             if priority < atomicLoad(&needs[index]) { atomicMin(&needs[index],priority); }
         } else { atomicStore(&needs[view.limits.y],1u); }
         let layer = find_tile(u32(z),coord.x,coord.y);
-        if layer >= 0 { return sample_tile(uv * f32(n) - coordinate,layer); }
+        if layer >= 0 {
+            let local = uv * f32(n) - coordinate;
+            let stride = stride_at(z, i32(base), frac);
+            if stride <= 1.0 { return sample_tile(local,layer); }
+            return sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE));
+        }
         z -= 1;
         if z < 0 { break; }
     }
@@ -101,9 +149,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var zl = floor(lod); var fraction = lod - zl;
     let z = u32(clamp(zl,0.0,f32(view.raster.w)));
     if z >= view.raster.w { fraction = 0.0; }
-    // Imagery fades across the whole zoom band; text maps only over the last
-    // part of it, so labels stay sharp and the level change is a short fade.
-    var fade = fraction;
+    // As the CPU: imagery fades over the last 30% of the zoom band (its base is
+    // oversampled), text maps over the last 10%, so labels stay sharp.
+    var fade = clamp((fraction - IMAGERY_ZOOM_FADE_START) / (1.0 - IMAGERY_ZOOM_FADE_START), 0.0, 1.0);
     if view.raster.z == 0u { fade = clamp((fraction - TEXT_ZOOM_FADE_START) / (1.0 - TEXT_ZOOM_FADE_START), 0.0, 1.0); }
     let latc = clamp(lat,-MERCATOR_LIMIT_DEG * PI/180.0,MERCATOR_LIMIT_DEG * PI/180.0);
     let s = sin(latc);
@@ -120,12 +168,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if any(abs(scaled_uv-round(scaled_uv)) < vec2<f32>(TILE_SEAM_PRECISION_MARGIN)) { output[i] = 0u; return; }
     let offset = vec2<f32>(f32(x)-f32(width)/2.0,f32(y)-f32(height)/2.0);
     let distance = dot(offset,offset);
-    var color = chain(z,uv,distance);
+    var color = chain(z,uv,distance,z,fraction);
     if fade > MIN_BLEND {
         // Sample the finer level first so the miss is recorded as a need, then
         // only blend when that level is actually resident; a coarser fallback
         // blended on top would flash while tiles load.
-        let fine = chain(z+1u,uv,distance);
+        let fine = chain(z+1u,uv,distance,z,fraction);
         let n1 = 1u << (z+1u);
         let c1 = vec2<u32>(max(min(floor(uv*f32(n1)),vec2<f32>(f32(n1-1u))),vec2<f32>(0.0)));
         if find_tile(z+1u,c1.x,c1.y) >= 0 { color = blend(color,fine,fade); }

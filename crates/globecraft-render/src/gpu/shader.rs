@@ -16,6 +16,16 @@ pub(super) fn source() -> String {
         ("LOD_INC_COS", tuning::MIN_LOD_INCIDENCE_COSINE),
         ("MIN_BLEND", tuning::MIN_ZOOM_BLEND_FRACTION as f64),
         ("TEXT_ZOOM_FADE_START", tuning::TEXT_ZOOM_FADE_START as f64),
+        (
+            "IMAGERY_ZOOM_FADE_START",
+            tuning::IMAGERY_ZOOM_FADE_START as f64,
+        ),
+        ("FILTER_EXPONENT_MIN", tuning::TILE_FILTER_RATIO_EXONENT_MIN),
+        ("FILTER_EXPONENT_MAX", tuning::TILE_FILTER_RATIO_EXONENT_MAX),
+        (
+            "MAX_SAMPLE_STRIDE",
+            globecraft_data::tiles::Tile::MAX_SAMPLE_STRIDE,
+        ),
         ("TWILIGHT_OFFSET", tuning::TWILIGHT_OFFSET),
         ("TWILIGHT_WIDTH", tuning::TWILIGHT_WIDTH),
         ("NIGHT_BRIGHTNESS", tuning::NIGHT_BRIGHTNESS as f64),
