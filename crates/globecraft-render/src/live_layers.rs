@@ -16,6 +16,21 @@ pub use transport::{
 };
 pub use worker::LiveWorker;
 
+/// A layer that shows below an altitude fades in from there down to this fraction of
+/// it, then stays fully visible, as the state borders do.
+const FADE_FULL_RATIO: f64 = 0.5;
+
+/// Opacity of a layer shown below `max_altitude_km` at `altitude_km`: 0 at the limit,
+/// rising smoothly to 1 at `FADE_FULL_RATIO` of it.
+pub fn altitude_fade(max_altitude_km: f64, altitude_km: f64) -> f32 {
+    if max_altitude_km <= 0.0 {
+        return 0.0;
+    }
+    let t = ((max_altitude_km - altitude_km) / (max_altitude_km * (1.0 - FADE_FULL_RATIO)))
+        .clamp(0.0, 1.0);
+    (t * t * (3.0 - 2.0 * t)) as f32
+}
+
 const VESSEL_HEADING_PROBE_KM: f64 = 2.0;
 /// Dead reckoning moves a vessel along its course for at most this long after its
 /// last AIS report (reports come every few seconds to minutes; a ship that stops
@@ -52,7 +67,7 @@ impl LiveView {
     /// The same camera and viewport; relief generation is compared separately because
     /// it only moves points by a few pixels and must not blank a layer while the new
     /// heights are projected.
-    fn same_frame(self, other: Self) -> bool {
+    pub fn same_frame(&self, other: &Self) -> bool {
         self.basis == other.basis
             && self.rect == other.rect
             && self.altitude_km == other.altitude_km
@@ -107,7 +122,7 @@ impl LiveInput {
     /// on every tile that arrived). A layer that is turned off, or whose data is
     /// cleared, changes presence and is hidden at once instead of after projection.
     pub fn same_view(&self, other: &Self) -> bool {
-        self.view.same_frame(other.view)
+        self.view.same_frame(&other.view)
             && self.transport_layers == other.transport_layers
             && self.poi_layers == other.poi_layers
             && self.roads.is_some() == other.roads.is_some()
@@ -237,7 +252,7 @@ impl LivePreparer {
         let previous = self
             .latest
             .as_ref()
-            .filter(|old| old.input.view.same_frame(input.view));
+            .filter(|old| old.input.view.same_frame(&input.view));
         // Ground-following layers also need the same relief generation and altitude.
         let on_ground = self
             .latest

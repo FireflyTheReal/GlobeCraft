@@ -1,8 +1,9 @@
-//! Map style: colour, width and dash per border type, and name sizes.
+//! Map style: colour, width and dash per line type (borders, roads, transport, rivers
+//! and parks), and name sizes.
 use crate::app::App;
 use eframe::egui::{self, Color32};
 use globecraft_data::settings::map_style::{
-    DashStyle, LabelType, LineType, MAX_LABEL_SIZE_POINTS, MAX_LINE_WIDTH_POINTS,
+    DashStyle, LabelType, LineGroup, LineType, MAX_LABEL_SIZE_POINTS, MAX_LINE_WIDTH_POINTS,
     MIN_LABEL_SIZE_POINTS, MIN_LINE_WIDTH_POINTS, Rgba,
 };
 use serde_json::Value;
@@ -16,6 +17,28 @@ fn line_name(kind: LineType) -> &'static str {
         LineType::State => "settings-map-style-line-state",
         LineType::Municipal => "settings-map-style-line-municipal",
         LineType::Disputed => "settings-map-style-line-disputed",
+        LineType::MajorRoad => "settings-map-style-line-major-road",
+        LineType::MinorRoad => "settings-map-style-line-minor-road",
+        LineType::Roadworks => "settings-map-style-line-roadworks",
+        LineType::Railway => "settings-map-style-line-railway",
+        LineType::ServiceRail => "settings-map-style-line-service-rail",
+        LineType::Subway => "settings-map-style-line-subway",
+        LineType::Tram => "settings-map-style-line-tram",
+        LineType::Ferry => "settings-map-style-line-ferry",
+        LineType::Runway => "settings-map-style-line-runway",
+        LineType::Taxiway => "settings-map-style-line-taxiway",
+        LineType::River => "settings-map-style-line-river",
+        LineType::Canal => "settings-map-style-line-canal",
+        LineType::Park => "settings-map-style-line-park",
+    }
+}
+
+fn group_name(group: LineGroup) -> &'static str {
+    match group {
+        LineGroup::Borders => "settings-map-style-group-borders",
+        LineGroup::Roads => "settings-map-style-group-roads",
+        LineGroup::Transport => "settings-map-style-group-transport",
+        LineGroup::WaterAndParks => "settings-map-style-group-water-parks",
     }
 }
 
@@ -41,6 +64,22 @@ pub(super) const KEYWORDS: &[&str] = &[
     "settings-map-style-line-state",
     "settings-map-style-line-disputed",
     "settings-map-style-line-municipal",
+    "settings-map-style-line-major-road",
+    "settings-map-style-line-minor-road",
+    "settings-map-style-line-roadworks",
+    "settings-map-style-line-railway",
+    "settings-map-style-line-service-rail",
+    "settings-map-style-line-subway",
+    "settings-map-style-line-tram",
+    "settings-map-style-line-ferry",
+    "settings-map-style-line-runway",
+    "settings-map-style-line-taxiway",
+    "settings-map-style-line-river",
+    "settings-map-style-line-canal",
+    "settings-map-style-line-park",
+    "settings-map-style-group-roads",
+    "settings-map-style-group-transport",
+    "settings-map-style-group-water-parks",
     "settings-map-style-color-label",
     "settings-map-style-width-label",
     "settings-map-style-dash-label",
@@ -60,45 +99,15 @@ impl App {
                 ui.weak(lg.text("settings-map-style-width-label"));
                 ui.weak(lg.text("settings-map-style-dash-label"));
                 ui.end_row();
-                for kind in LineType::ALL {
-                    let style = self.settings.map_style.line_mut(kind);
-                    ui.label(lg.text(line_name(kind)));
-                    let [r, g, b, a] = style.color.0;
-                    let mut color = Color32::from_rgba_unmultiplied(r, g, b, a);
-                    if egui::color_picker::color_edit_button_srgba(
-                        ui,
-                        &mut color,
-                        egui::color_picker::Alpha::OnlyBlend,
-                    )
-                    .changed()
-                    {
-                        style.color = Rgba(color.to_srgba_unmultiplied());
-                    }
-                    ui.add(
-                        egui::Slider::new(
-                            &mut style.width_points,
-                            MIN_LINE_WIDTH_POINTS..=MAX_LINE_WIDTH_POINTS,
-                        )
-                        .step_by(WIDTH_STEP_POINTS)
-                        .suffix(" pt"),
-                    );
-                    egui::ComboBox::from_id_salt(("map_style_dash", kind.code()))
-                        .selected_text(lg.text(dash_name(style.dash)))
-                        .show_ui(ui, |ui| {
-                            super::super::selection::size_menu(
-                                ui,
-                                DashStyle::ALL.map(|dash| lg.text(dash_name(dash))),
-                            );
-                            for dash in DashStyle::ALL {
-                                super::super::selection::full_width_value(
-                                    ui,
-                                    &mut style.dash,
-                                    dash,
-                                    lg.text(dash_name(dash)),
-                                );
-                            }
-                        });
+                for group in LineGroup::ALL {
+                    ui.strong(lg.text(group_name(group)));
                     ui.end_row();
+                    for kind in LineType::ALL
+                        .into_iter()
+                        .filter(|kind| kind.group() == group)
+                    {
+                        line_row(ui, lg, self.settings.map_style.line_mut(kind), kind);
+                    }
                 }
             });
         ui.weak(lg.text("settings-map-style-line-help"));
@@ -138,4 +147,50 @@ impl App {
             self.run_reporting("style.reset", Value::Null);
         }
     }
+}
+
+/// One line type's colour, width and dash.
+fn line_row(
+    ui: &mut egui::Ui,
+    lg: globecraft_core::language::Lang,
+    style: &mut globecraft_data::settings::map_style::LineStyle,
+    kind: LineType,
+) {
+    ui.label(lg.text(line_name(kind)));
+    let [r, g, b, a] = style.color.0;
+    let mut color = Color32::from_rgba_unmultiplied(r, g, b, a);
+    if egui::color_picker::color_edit_button_srgba(
+        ui,
+        &mut color,
+        egui::color_picker::Alpha::OnlyBlend,
+    )
+    .changed()
+    {
+        style.color = Rgba(color.to_srgba_unmultiplied());
+    }
+    ui.add(
+        egui::Slider::new(
+            &mut style.width_points,
+            MIN_LINE_WIDTH_POINTS..=MAX_LINE_WIDTH_POINTS,
+        )
+        .step_by(WIDTH_STEP_POINTS)
+        .suffix(" pt"),
+    );
+    egui::ComboBox::from_id_salt(("map_style_dash", kind.code()))
+        .selected_text(lg.text(dash_name(style.dash)))
+        .show_ui(ui, |ui| {
+            super::super::selection::size_menu(
+                ui,
+                DashStyle::ALL.map(|dash| lg.text(dash_name(dash))),
+            );
+            for dash in DashStyle::ALL {
+                super::super::selection::full_width_value(
+                    ui,
+                    &mut style.dash,
+                    dash,
+                    lg.text(dash_name(dash)),
+                );
+            }
+        });
+    ui.end_row();
 }

@@ -648,6 +648,13 @@ fn compose(tiles: &HashMap<TileKey, Entry>, wanted: &[TileKey]) -> Vec<(TileKey,
     shown
 }
 
+/// The place names in one tile of GlobeCraft's zoom 13–14 place set, as the border
+/// tiles give them.
+pub(crate) fn place_labels(key: TileKey, bytes: &[u8]) -> Option<Vec<MapLabel>> {
+    let filtered = compact::Filtered::from_mvt(bytes)?;
+    Some(content::TileContent::from_filtered(key, &filtered).places)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

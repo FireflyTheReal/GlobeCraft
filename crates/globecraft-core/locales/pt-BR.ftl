@@ -951,6 +951,23 @@ settings-map-style-line-state = Limites de estados e províncias
 
 settings-map-style-line-municipal = Limites municipais
 settings-map-style-line-disputed = Fronteiras disputadas
+settings-map-style-group-borders = Fronteiras
+settings-map-style-group-roads = Estradas
+settings-map-style-group-transport = Ferrovias, balsas e aeroportos
+settings-map-style-group-water-parks = Rios e parques
+settings-map-style-line-major-road = Rodovias e vias principais
+settings-map-style-line-minor-road = Vias menores e ruas
+settings-map-style-line-roadworks = Obras na via
+settings-map-style-line-railway = Ferrovias
+settings-map-style-line-service-rail = Pátios e desvios
+settings-map-style-line-subway = Metrô
+settings-map-style-line-tram = Bondes e VLT
+settings-map-style-line-ferry = Balsas
+settings-map-style-line-runway = Pistas de pouso
+settings-map-style-line-taxiway = Pistas de táxi
+settings-map-style-line-river = Rios
+settings-map-style-line-canal = Canais
+settings-map-style-line-park = Parques e áreas protegidas
 
 settings-map-style-line-help = Limites municipais sobre uma divisa estadual usam o estilo dos estados, para que a troca de perto mantenha o mesmo visual.
 

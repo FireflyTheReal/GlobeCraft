@@ -504,8 +504,13 @@ impl App {
             if self.layer(MapLayer::Roads)
                 && let Some(geometry) = &live_geometry
             {
-                self.roads
-                    .draw(&painter, geometry, self.lang, self.settings.map_scale);
+                self.roads.draw(
+                    &painter,
+                    geometry,
+                    self.lang,
+                    self.settings.map_scale,
+                    &self.settings.map_style,
+                );
             }
             if self.layer(MapLayer::Traffic)
                 && let Some(geometry) = &live_geometry
@@ -513,23 +518,16 @@ impl App {
                 self.traffic.draw(&painter, geometry);
             }
             if let Some(geometry) = &live_geometry {
-                painter.extend(self.poi_shapes.lines(&painter, geometry).iter().cloned());
-                painter.extend(
-                    self.transport_shapes
-                        .lines(&painter, geometry)
-                        .iter()
-                        .cloned(),
-                );
+                let style = self.settings.map_style;
+                self.poi_shapes.draw_lines(&painter, geometry, &style);
+                self.transport_shapes.draw_lines(&painter, geometry, &style);
             }
             self.draw_overlays(&painter, &display_basis, rect, display_cam.alt);
             if let Some(geometry) = &live_geometry {
-                painter.extend(self.poi_shapes.labels(&painter, geometry).iter().cloned());
-                painter.extend(
-                    self.transport_shapes
-                        .airports(&painter, geometry)
-                        .iter()
-                        .cloned(),
-                );
+                let style = self.settings.map_style;
+                self.poi_shapes.draw_labels(&painter, geometry, &style);
+                self.transport_shapes
+                    .draw_airports(&painter, geometry, &style);
                 self.poi_shapes.hover(&painter, geometry, self.lang);
                 self.transport_shapes.hover(&painter, geometry, self.lang);
             }

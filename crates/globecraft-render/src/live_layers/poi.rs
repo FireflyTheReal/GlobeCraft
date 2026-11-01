@@ -36,6 +36,8 @@ impl PoiLayers {
 
 pub struct ProjectedPoiLine {
     pub kind: PoiLineKind,
+    /// The altitude fade of its kind (1 when fully shown).
+    pub opacity: f32,
     pub segments: Vec<Vec<Pos2>>,
 }
 
@@ -44,6 +46,8 @@ pub struct ProjectedPoiLabel {
     /// The point: tile `tile` of the snapshot, point `index` of that tile.
     pub tile: usize,
     pub index: usize,
+    /// The altitude fade of its kind (1 when fully shown).
+    pub opacity: f32,
 }
 
 #[derive(Default)]
@@ -52,32 +56,54 @@ pub struct ProjectedPoi {
     pub labels: Vec<ProjectedPoiLabel>,
 }
 
-fn line_shown(kind: PoiLineKind, layers: PoiLayers, altitude_km: f64) -> bool {
-    match kind {
-        PoiLineKind::River => layers.waters && altitude_km <= RIVER_MAX_ALTITUDE_KM,
-        PoiLineKind::Canal => layers.waters && altitude_km <= CANAL_MAX_ALTITUDE_KM,
-        PoiLineKind::Park => layers.parks && altitude_km <= PARK_OUTLINE_MAX_ALTITUDE_KM,
+/// How visible a kind of line is: 0 when its layer is off or the camera is above its
+/// altitude, fading in below that (`super::altitude_fade`).
+fn line_opacity(kind: PoiLineKind, layers: PoiLayers, altitude_km: f64) -> f32 {
+    let (on, max_altitude_km) = match kind {
+        PoiLineKind::River => (layers.waters, RIVER_MAX_ALTITUDE_KM),
+        PoiLineKind::Canal => (layers.waters, CANAL_MAX_ALTITUDE_KM),
+        PoiLineKind::Park => (layers.parks, PARK_OUTLINE_MAX_ALTITUDE_KM),
+    };
+    if on {
+        super::altitude_fade(max_altitude_km, altitude_km)
+    } else {
+        0.0
     }
 }
 
-/// Whether a point shows, and its priority (lower first).
+/// Whether a point shows: its priority (lower first) and opacity (its altitude fade).
 fn point_priority(
     point: &globecraft_data::poi::PoiPoint,
     layers: PoiLayers,
     altitude_km: f64,
-) -> Option<i64> {
+) -> Option<(i64, f32)> {
+    let fade = |on: bool, max_altitude_km: f64| {
+        let opacity = if on {
+            super::altitude_fade(max_altitude_km, altitude_km)
+        } else {
+            0.0
+        };
+        (opacity > 0.0).then_some(opacity)
+    };
     match point.kind {
         PointKind::Water => {
             let big = matches!(point.class.as_str(), "ocean" | "sea");
-            (layers.waters && (big || altitude_km <= SMALL_WATER_MAX_ALTITUDE_KM))
-                .then_some(if big { 0 } else { 1_000 })
+            if big {
+                layers.waters.then_some((0, 1.0))
+            } else {
+                fade(layers.waters, SMALL_WATER_MAX_ALTITUDE_KM).map(|opacity| (1_000, opacity))
+            }
         }
-        PointKind::Peak => (layers.peaks && altitude_km <= PEAK_MAX_ALTITUDE_KM)
-            .then(|| 2_000 - i64::from(point.elevation_m.unwrap_or(0)) / 10),
-        PointKind::Park => (layers.parks && altitude_km <= PARK_NAME_MAX_ALTITUDE_KM)
-            .then(|| 3_000 + i64::from(point.rank)),
-        PointKind::Poi => (layers.places && altitude_km <= POI_MAX_ALTITUDE_KM)
-            .then(|| 4_000 + i64::from(point.rank)),
+        PointKind::Peak => fade(layers.peaks, PEAK_MAX_ALTITUDE_KM).map(|opacity| {
+            (
+                2_000 - i64::from(point.elevation_m.unwrap_or(0)) / 10,
+                opacity,
+            )
+        }),
+        PointKind::Park => fade(layers.parks, PARK_NAME_MAX_ALTITUDE_KM)
+            .map(|opacity| (3_000 + i64::from(point.rank), opacity)),
+        PointKind::Poi => fade(layers.places, POI_MAX_ALTITUDE_KM)
+            .map(|opacity| (4_000 + i64::from(point.rank), opacity)),
     }
 }
 
@@ -97,7 +123,8 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
     let mut lines = Vec::new();
     for tile in &snapshot.tiles {
         for line in &tile.lines {
-            if !line_shown(line.kind, layers, view.altitude_km) {
+            let opacity = line_opacity(line.kind, layers, view.altitude_km);
+            if opacity <= 0.0 {
                 continue;
             }
             let mut segments: Vec<Vec<Pos2>> = Vec::new();
@@ -134,6 +161,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
             if !segments.is_empty() {
                 lines.push(ProjectedPoiLine {
                     kind: line.kind,
+                    opacity,
                     segments,
                 });
             }
@@ -157,7 +185,7 @@ fn labels(
     let mut found: Vec<(i64, ProjectedPoiLabel)> = Vec::new();
     for (tile_index, tile) in snapshot.tiles.iter().enumerate() {
         for (index, point) in tile.points.iter().enumerate() {
-            let Some(priority) = point_priority(point, layers, view.altitude_km) else {
+            let Some((priority, opacity)) = point_priority(point, layers, view.altitude_km) else {
                 continue;
             };
             // A coarser tile shown while a finer one loads may repeat a point.
@@ -187,6 +215,7 @@ fn labels(
                         position,
                         tile: tile_index,
                         index,
+                        opacity,
                     },
                 ));
             }

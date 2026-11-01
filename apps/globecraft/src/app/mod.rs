@@ -109,7 +109,14 @@ pub(crate) struct App {
     /// The imagery a running flight lands on, loaded while it flies (roadmap 1.4),
     /// with the destination it was listed for.
     arrival_warmup: Option<([u64; 5], TileWarmup)>,
+    /// The boundaries drawn: `boundary_source` with the close-up place names.
     boundaries: Arc<BoundaryData>,
+    /// The boundaries as the loader sent them.
+    boundary_source: Arc<BoundaryData>,
+    /// Zoom 13–14 place names around the view.
+    place_names: globecraft_data::boundaries::PlaceNameTiles,
+    /// The place-name snapshot `boundaries` was built with (its address; 0 for none).
+    place_names_shown: usize,
     overlay_cache: overlays::OverlayCache,
     boundaries_rx: BoundaryUpdates,
     boundary_log: StatusLog,
@@ -324,6 +331,9 @@ impl App {
             arrival_warmup: None,
             cache_controls: cache::CacheControls::default(),
             boundaries: Arc::new(BoundaryData::default()),
+            boundary_source: Arc::new(BoundaryData::default()),
+            place_names: Default::default(),
+            place_names_shown: 0,
             overlay_cache,
             boundaries_rx: BoundaryUpdates::new(boundaries_rx, {
                 let ctx = cc.egui_ctx.clone();
@@ -597,6 +607,14 @@ impl eframe::App for App {
             },
             move || poi_wake.request_repaint(),
         );
+        let place_wake = ctx.clone();
+        self.place_names.update(
+            &self.runtime,
+            earth && self.layer(MapLayer::PlaceLabels),
+            (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+            move || place_wake.request_repaint(),
+        );
+        self.refresh_place_names();
         let road_tile_wake = ctx.clone();
         self.roads.tiles.update(
             &self.runtime,

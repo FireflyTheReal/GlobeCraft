@@ -31,6 +31,8 @@ pub struct TransportLayers {
 pub struct ProjectedTransportLine {
     pub kind: LineKind,
     pub tunnel: bool,
+    /// The altitude fade of its kind (1 when fully shown).
+    pub opacity: f32,
     pub segments: Vec<Vec<Pos2>>,
 }
 
@@ -41,6 +43,8 @@ pub struct ProjectedAirport {
     pub index: usize,
     /// Whether it gets a name label (else only a marker).
     pub labelled: bool,
+    /// The altitude fade of its importance (1 when fully shown).
+    pub opacity: f32,
 }
 
 #[derive(Default)]
@@ -50,16 +54,30 @@ pub struct ProjectedTransport {
     pub airports: Vec<ProjectedAirport>,
 }
 
-fn shown(kind: LineKind, layers: TransportLayers, altitude_km: f64) -> bool {
-    match kind {
-        LineKind::Rail => layers.railways,
-        LineKind::RailService => layers.railways && altitude_km <= SERVICE_RAIL_MAX_ALTITUDE_KM,
-        LineKind::Subway | LineKind::Tram => {
-            layers.railways && altitude_km <= URBAN_RAIL_MAX_ALTITUDE_KM
-        }
-        LineKind::Ferry => layers.ferries,
-        LineKind::Runway => layers.airports && altitude_km <= RUNWAY_MAX_ALTITUDE_KM,
-        LineKind::Taxiway => layers.airports && altitude_km <= TAXIWAY_MAX_ALTITUDE_KM,
+/// How visible a kind of line is: 0 when its layer is off or the camera is above its
+/// altitude, fading in below that (`super::altitude_fade`).
+fn line_opacity(kind: LineKind, layers: TransportLayers, altitude_km: f64) -> f32 {
+    let (on, max_altitude_km) = match kind {
+        LineKind::Rail => (layers.railways, None),
+        LineKind::RailService => (layers.railways, Some(SERVICE_RAIL_MAX_ALTITUDE_KM)),
+        LineKind::Subway | LineKind::Tram => (layers.railways, Some(URBAN_RAIL_MAX_ALTITUDE_KM)),
+        LineKind::Ferry => (layers.ferries, None),
+        LineKind::Runway => (layers.airports, Some(RUNWAY_MAX_ALTITUDE_KM)),
+        LineKind::Taxiway => (layers.airports, Some(TAXIWAY_MAX_ALTITUDE_KM)),
+    };
+    match (on, max_altitude_km) {
+        (false, _) => 0.0,
+        (true, None) => 1.0,
+        (true, Some(max)) => super::altitude_fade(max, altitude_km),
+    }
+}
+
+/// The highest altitude an airport of this importance shows at (`None`: always).
+fn airport_max_altitude_km(importance: u8) -> Option<f64> {
+    match importance {
+        0..=1 => None,
+        2..=3 => Some(REGIONAL_AIRPORT_MAX_ALTITUDE_KM),
+        _ => Some(SMALL_AIRPORT_MAX_ALTITUDE_KM),
     }
 }
 
@@ -88,7 +106,8 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
     let mut lines = Vec::new();
     for tile in &snapshot.tiles {
         for line in &tile.lines {
-            if !shown(line.kind, layers, view.altitude_km) {
+            let opacity = line_opacity(line.kind, layers, view.altitude_km);
+            if opacity <= 0.0 {
                 continue;
             }
             let mut segments: Vec<Vec<Pos2>> = Vec::new();
@@ -126,6 +145,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
                 lines.push(ProjectedTransportLine {
                     kind: line.kind,
                     tunnel: line.tunnel,
+                    opacity,
                     segments,
                 });
             }
@@ -149,19 +169,14 @@ fn airports(
 ) -> Vec<ProjectedAirport> {
     let view = input.view;
     let visibility = TerrainVisibility::new(&view.basis, ground);
-    let max_importance = if view.altitude_km <= SMALL_AIRPORT_MAX_ALTITUDE_KM {
-        4
-    } else if view.altitude_km <= REGIONAL_AIRPORT_MAX_ALTITUDE_KM {
-        3
-    } else {
-        1
-    };
     let mut seen = HashSet::new();
     let mut found: Vec<(u8, ProjectedAirport)> = Vec::new();
     for (tile_index, tile) in snapshot.tiles.iter().enumerate() {
         for (index, airport) in tile.airports.iter().enumerate() {
             let importance = airport.importance();
-            if importance > max_importance {
+            let opacity = airport_max_altitude_km(importance)
+                .map_or(1.0, |max| super::altitude_fade(max, view.altitude_km));
+            if opacity <= 0.0 {
                 continue;
             }
             // A coarser tile shown while a finer one loads may repeat an airport.
@@ -194,6 +209,7 @@ fn airports(
                     tile: tile_index,
                     index,
                     labelled: false,
+                    opacity,
                 },
             ));
         }

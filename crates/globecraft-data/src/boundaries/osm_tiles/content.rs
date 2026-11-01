@@ -1,7 +1,10 @@
 //! What one OpenMapTiles tile holds for GlobeCraft: border lines by administrative
 //! level, and place names, in latitude/longitude and clipped to the tile.
 use super::super::{LabelKind, Line, MapLabel};
-use super::super::{PLACE_HAMLET_RANK, PLACE_TOWN_RANK, PLACE_VILLAGE_RANK};
+use super::super::{
+    PLACE_HAMLET_RANK, PLACE_LOCALITY_RANK, PLACE_NEIGHBOURHOOD_RANK, PLACE_SUBURB_RANK,
+    PLACE_TOWN_RANK, PLACE_VILLAGE_RANK,
+};
 use super::compact::{self, Filtered, PlaceClass};
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -102,6 +105,9 @@ fn place_rank(class: PlaceClass, importance: u8, z: u8) -> u8 {
         PlaceClass::Town => PLACE_TOWN_RANK,
         PlaceClass::Village => PLACE_VILLAGE_RANK,
         PlaceClass::Hamlet => PLACE_HAMLET_RANK,
+        PlaceClass::Suburb => PLACE_SUBURB_RANK,
+        PlaceClass::Neighbourhood => PLACE_NEIGHBOURHOOD_RANK,
+        PlaceClass::Locality => PLACE_LOCALITY_RANK,
         PlaceClass::Island if z <= ISLAND_TOWN_MAX_ZOOM => PLACE_TOWN_RANK,
         PlaceClass::Island if z <= ISLAND_VILLAGE_MAX_ZOOM => PLACE_VILLAGE_RANK,
         PlaceClass::Island | PlaceClass::State => PLACE_HAMLET_RANK,

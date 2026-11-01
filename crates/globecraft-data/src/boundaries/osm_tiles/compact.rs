@@ -36,16 +36,25 @@ pub(super) enum PlaceClass {
     Island,
     /// States and provinces.
     State,
+    Suburb,
+    /// Quarters and neighbourhoods.
+    Neighbourhood,
+    /// Named localities and isolated dwellings.
+    Locality,
 }
 
 impl PlaceClass {
-    const ALL: [Self; 6] = [
+    /// In the order of their codes in the compact format: new classes go at the end.
+    const ALL: [Self; 9] = [
         Self::City,
         Self::Town,
         Self::Village,
         Self::Hamlet,
         Self::Island,
         Self::State,
+        Self::Suburb,
+        Self::Neighbourhood,
+        Self::Locality,
     ];
     fn parse(class: &str) -> Option<Self> {
         Some(match class {
@@ -55,6 +64,9 @@ impl PlaceClass {
             "hamlet" => Self::Hamlet,
             "island" => Self::Island,
             "state" | "province" => Self::State,
+            "suburb" => Self::Suburb,
+            "quarter" | "neighbourhood" => Self::Neighbourhood,
+            "locality" | "isolated_dwelling" => Self::Locality,
             _ => return None,
         })
     }
@@ -435,7 +447,7 @@ mod tests {
                     },
                     TestFeature {
                         tags: vec![
-                            ("class", TestValue::Text("suburb")),
+                            ("class", TestValue::Text("continent")),
                             ("name", TestValue::Text("Not kept")),
                         ],
                         kind: 1,
@@ -515,6 +527,31 @@ mod tests {
         );
         let restored = Filtered::decode(&filtered.encode()).unwrap();
         assert_eq!(restored.places[0].class, PlaceClass::State);
+    }
+
+    /// The close-up place set's classes are kept, and survive the cache format, after
+    /// the classes stored before them.
+    #[test]
+    fn close_up_place_classes_are_kept() {
+        assert_eq!(PlaceClass::parse("suburb"), Some(PlaceClass::Suburb));
+        assert_eq!(
+            PlaceClass::parse("quarter"),
+            Some(PlaceClass::Neighbourhood)
+        );
+        assert_eq!(
+            PlaceClass::parse("neighbourhood"),
+            Some(PlaceClass::Neighbourhood)
+        );
+        assert_eq!(
+            PlaceClass::parse("isolated_dwelling"),
+            Some(PlaceClass::Locality)
+        );
+        assert_eq!(PlaceClass::parse("continent"), None);
+        assert_eq!(
+            PlaceClass::ALL[5],
+            PlaceClass::State,
+            "cached codes keep their meaning"
+        );
     }
 
     #[test]

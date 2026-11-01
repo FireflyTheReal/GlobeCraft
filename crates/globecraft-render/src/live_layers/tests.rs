@@ -424,3 +424,18 @@ fn poi_names_follow_their_layers_and_altitude() {
         (1, 0)
     );
 }
+
+#[test]
+fn layers_fade_in_below_their_altitude_like_the_state_borders() {
+    use super::altitude_fade;
+    assert_eq!(altitude_fade(100.0, 120.0), 0.0);
+    assert_eq!(altitude_fade(100.0, 100.0), 0.0);
+    assert_eq!(altitude_fade(100.0, 50.0), 1.0);
+    assert_eq!(altitude_fade(100.0, 1.0), 1.0);
+    let mut previous = 0.0;
+    for altitude in (50..=100).rev() {
+        let opacity = altitude_fade(100.0, f64::from(altitude));
+        assert!(opacity >= previous, "{altitude} km: {opacity} < {previous}");
+        previous = opacity;
+    }
+}

@@ -115,14 +115,37 @@ impl App {
 
     pub(super) fn merge_snapshot(&mut self, snapshot: BoundarySnapshot) {
         self.layer_arrivals
-            .observe(&self.boundaries, &snapshot.data, Instant::now());
-        self.boundaries = snapshot.data;
+            .observe(&self.boundary_source, &snapshot.data, Instant::now());
+        self.boundary_source = snapshot.data;
+        self.boundaries = self.with_place_names();
         if let Err(error) = self.local_search.update_shared(snapshot.names) {
             self.status = format!("Local prefix index failed: {error}");
         }
         // Data-only change: hold the previous overlay on screen until the
         // replacement is prepared instead of flashing the borders away.
         self.overlay_cache.merge_boundaries();
+    }
+
+    /// The loader's boundaries with the close-up place names on show.
+    fn with_place_names(&mut self) -> Arc<BoundaryData> {
+        let places = self.place_names.snapshot();
+        self.place_names_shown = places.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
+        match places {
+            Some(places) => Arc::new(self.boundary_source.with_place_names(Some(&places))),
+            None => self.boundary_source.clone(),
+        }
+    }
+
+    /// Rebuilds the drawn boundaries when the close-up place names change.
+    pub(super) fn refresh_place_names(&mut self) {
+        let shown = self
+            .place_names
+            .snapshot()
+            .map_or(0, |s| Arc::as_ptr(&s) as usize);
+        if shown != self.place_names_shown {
+            self.boundaries = self.with_place_names();
+            self.overlay_cache.merge_boundaries();
+        }
     }
 
     pub(super) fn draw_overlays(

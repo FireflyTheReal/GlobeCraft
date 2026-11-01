@@ -10,6 +10,8 @@ name: Map data
 #   roads      roads (`transportation` motorway to service and roadworks, with
 #              `transportation_name` for their names), z0-12; roads13 and roads14
 #              are the same for zoom 13 and zoom 14 alone (each a run of its own)
+#   places     place names (`place`) at z13-14, where the borders set stops: hamlets,
+#              suburbs, neighbourhoods and localities a street-level view names
 #   poi        points of interest (`poi`), peaks (`mountain_peak`), rivers and
 #              canals (`waterway`), water names (`water_name`) and parks (`park`),
 #              z0-14
@@ -23,7 +25,7 @@ on:
       set:
         description: 'Which tile set to build'
         type: choice
-        options: [borders, transport, roads, roads13, roads14, poi]
+        options: [borders, places, transport, roads, roads13, roads14, poi]
         default: borders
       version:
         description: 'OpenFreeMap planet version, e.g. 20261025_080012_pt (empty: the newest)'
@@ -101,6 +103,7 @@ jobs:
         run: |
           case '${{ inputs.set }}' in
             borders) zooms="0 12"; names="borders water" ;;
+            places) zooms="13 14"; names="places" ;;
             transport) zooms="0 14"; names="transport" ;;
             roads) zooms="0 12"; names="roads" ;;
             roads13) zooms="13 13"; names="roads13" ;;
@@ -240,6 +243,15 @@ jobs:
               ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=12 \
                 --layer=water --feature-filter='{"water":["==","class","ocean"]}' -A "$attribution" \
                 -n "GlobeCraft ocean" -o water.mbtiles planet.mbtiles
+              ;;
+            places)
+              # Every named place, with the spellings the app reads (English, the
+              # international form and Portuguese) and its class and rank.
+              ./tippecanoe/tile-join --force --no-tile-size-limit --maximum-zoom=14 \
+                --layer=place --feature-filter='{"place":["has","name"]}' \
+                $names -y name:en -y name_int -y name:pt -y class -y rank \
+                -A "$attribution" -n "GlobeCraft close-up place names" \
+                -o places.mbtiles planet.mbtiles
               ;;
             transport)
               # Rail (incl. narrow gauge, preserved, funicular), transit (subway, light

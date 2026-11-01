@@ -951,6 +951,23 @@ settings-map-style-line-state = State and province borders
 
 settings-map-style-line-municipal = Municipal borders
 settings-map-style-line-disputed = Disputed borders
+settings-map-style-group-borders = Borders
+settings-map-style-group-roads = Roads
+settings-map-style-group-transport = Railways, ferries and airports
+settings-map-style-group-water-parks = Rivers and parks
+settings-map-style-line-major-road = Motorways and main roads
+settings-map-style-line-minor-road = Smaller roads and streets
+settings-map-style-line-roadworks = Roadworks
+settings-map-style-line-railway = Railways
+settings-map-style-line-service-rail = Yards and sidings
+settings-map-style-line-subway = Subways
+settings-map-style-line-tram = Trams and light rail
+settings-map-style-line-ferry = Ferries
+settings-map-style-line-runway = Runways
+settings-map-style-line-taxiway = Taxiways
+settings-map-style-line-river = Rivers
+settings-map-style-line-canal = Canals
+settings-map-style-line-park = Parks and protected areas
 
 settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
 

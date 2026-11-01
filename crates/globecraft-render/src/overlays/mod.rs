@@ -150,10 +150,10 @@ pub struct BorderDashes {
 impl BorderDashes {
     pub fn of(style: &MapStyle) -> Self {
         Self {
-            country: dash_points(style.country.dash),
-            state: dash_points(style.state.dash),
-            municipal: dash_points(style.municipal.dash),
-            disputed: dash_points(style.disputed.dash),
+            country: dash_points(style.line(LineType::Country).dash),
+            state: dash_points(style.line(LineType::State).dash),
+            municipal: dash_points(style.line(LineType::Municipal).dash),
+            disputed: dash_points(style.line(LineType::Disputed).dash),
         }
     }
     fn of_kind(self, kind: BorderKind) -> Option<(f32, f32)> {
@@ -162,6 +162,7 @@ impl BorderDashes {
             LineType::State => self.state,
             LineType::Municipal => self.municipal,
             LineType::Disputed => self.disputed,
+            _ => None,
         }
     }
 }
@@ -695,8 +696,8 @@ mod tests {
         assert!(dashes.of_kind(BorderKind::State).is_some());
         assert!(dashes.of_kind(BorderKind::City).is_some());
         let mut style = MapStyle::default();
-        style.state.dash = DashStyle::Dotted;
-        style.municipal.dash = DashStyle::Solid;
+        style.line_mut(LineType::State).dash = DashStyle::Dotted;
+        style.line_mut(LineType::Municipal).dash = DashStyle::Solid;
         let dashes = BorderDashes::of(&style);
         assert_eq!(
             dashes.of_kind(BorderKind::StateBig),

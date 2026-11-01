@@ -1,10 +1,13 @@
 //! Railways, ferries and airports: styled once per projected geometry and kept as
 //! tessellated meshes, so a still view costs nothing per frame.
+use super::fade::{FadingShapes, styled_line};
 use eframe::egui::{self, Align2, Color32, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
+use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use globecraft_data::transport::{Airport, LineKind};
-use globecraft_render::live_layers::{LiveGeometry, ProjectedTransport};
+use globecraft_render::live_layers::{LiveGeometry, LiveView, ProjectedTransport};
 use std::sync::Arc;
+use std::time::Instant;
 
 const LABEL_FONT_POINTS: f32 = 11.0;
 const LABEL_OFFSET_POINTS: f32 = 8.0;
@@ -14,78 +17,93 @@ const AIRPORT_COLOR: Color32 = Color32::from_rgb(52, 120, 220);
 const LABEL_COLOR: Color32 = Color32::from_rgb(235, 242, 255);
 /// Opacity of lines in tunnels.
 const TUNNEL_OPACITY: f32 = 0.45;
-/// Below this the main railways get their white dashes (the classic map style).
+/// Below this the main railways get their white dashes (the classic map style), when
+/// their style is a solid line.
 const RAIL_DASH_MAX_ALTITUDE_KM: f64 = 250.0;
+const RAIL_DASH_COLOR: Color32 = Color32::from_rgb(238, 238, 240);
 
-/// Base stroke width (points), colour and, for dashed lines, dash and gap lengths.
-struct Style {
-    width: f32,
-    color: Color32,
-    dash: Option<(f32, f32)>,
-}
-
-fn style(kind: LineKind) -> Style {
-    let style = |width, (r, g, b), dash| Style {
-        width,
-        color: Color32::from_rgb(r, g, b),
-        dash,
-    };
+/// The user-styled line type a kind of line draws with.
+fn line_type(kind: LineKind) -> LineType {
     match kind {
-        LineKind::Rail => style(2.4, (58, 58, 66), None),
-        LineKind::RailService => style(1.0, (96, 96, 106), None),
-        LineKind::Subway => style(1.8, (150, 92, 210), None),
-        LineKind::Tram => style(1.3, (214, 112, 56), None),
-        LineKind::Ferry => style(1.5, (86, 178, 255), Some((6.0, 4.0))),
-        LineKind::Runway => style(3.5, (205, 205, 212), None),
-        LineKind::Taxiway => style(1.0, (226, 196, 84), None),
+        LineKind::Rail => LineType::Railway,
+        LineKind::RailService => LineType::ServiceRail,
+        LineKind::Subway => LineType::Subway,
+        LineKind::Tram => LineType::Tram,
+        LineKind::Ferry => LineType::Ferry,
+        LineKind::Runway => LineType::Runway,
+        LineKind::Taxiway => LineType::Taxiway,
     }
 }
 
 #[derive(Default)]
 pub(in crate::app) struct TransportShapes {
-    key: Option<(usize, usize)>,
-    lines: Vec<Shape>,
-    airports: Vec<Shape>,
+    /// What the shapes were built from: the projected geometry, scale and style.
+    key: Option<(usize, u32, MapStyle)>,
+    /// The view and data snapshot of the last build, to tell new tiles from a move.
+    source: Option<(LiveView, usize)>,
+    lines: FadingShapes,
+    airports: FadingShapes,
 }
 
 impl TransportShapes {
     pub(in crate::app) fn invalidate(&mut self) {
         self.key = None;
     }
-    fn refresh(&mut self, painter: &egui::Painter, geometry: &LiveGeometry) {
+    fn refresh(&mut self, painter: &egui::Painter, geometry: &LiveGeometry, style: &MapStyle) {
         let key = (
             Arc::as_ptr(&geometry.transport) as usize,
-            geometry.input.view.map_scale.to_bits() as usize,
+            geometry.input.view.map_scale.to_bits(),
+            *style,
         );
-        if self.key == Some(key) {
+        if self.key.as_ref() == Some(&key) {
             return;
         }
         self.key = Some(key);
-        let scale = geometry.input.view.map_scale;
-        self.lines = super::super::live_geometry::mesh_shapes(
-            painter,
-            lines(&geometry.transport, scale, geometry.input.view.altitude_km),
+        let view = geometry.input.view;
+        let data = geometry
+            .input
+            .transport
+            .as_ref()
+            .map_or(0, |snapshot| Arc::as_ptr(snapshot) as usize);
+        let new_data = self
+            .source
+            .is_some_and(|(old_view, old_data)| old_view.same_frame(&view) && old_data != data);
+        self.source = Some((view, data));
+        let now = Instant::now();
+        let scale = view.map_scale;
+        self.lines.replace(
+            super::super::live_geometry::mesh_shapes(
+                painter,
+                lines(&geometry.transport, style, scale, view.altitude_km),
+            ),
+            new_data,
+            now,
         );
-        self.airports =
-            super::super::live_geometry::mesh_shapes(painter, airports(painter, geometry, scale));
+        self.airports.replace(
+            super::super::live_geometry::mesh_shapes(painter, airports(painter, geometry, scale)),
+            new_data,
+            now,
+        );
     }
     /// The lines, drawn under the borders.
-    pub(in crate::app) fn lines(
+    pub(in crate::app) fn draw_lines(
         &mut self,
         painter: &egui::Painter,
         geometry: &LiveGeometry,
-    ) -> &[Shape] {
-        self.refresh(painter, geometry);
-        &self.lines
+        style: &MapStyle,
+    ) {
+        self.refresh(painter, geometry, style);
+        self.lines.draw(painter, Instant::now());
     }
     /// Airport markers and names, drawn over the borders.
-    pub(in crate::app) fn airports(
+    pub(in crate::app) fn draw_airports(
         &mut self,
         painter: &egui::Painter,
         geometry: &LiveGeometry,
-    ) -> &[Shape] {
-        self.refresh(painter, geometry);
-        &self.airports
+        style: &MapStyle,
+    ) {
+        self.refresh(painter, geometry, style);
+        self.airports.draw(painter, Instant::now());
     }
     /// The nearest airport under the pointer, with its codes and class.
     pub(in crate::app) fn hover(
@@ -142,26 +160,25 @@ fn tooltip(lang: Lang, airport: &Airport) -> String {
     )
 }
 
-fn lines(transport: &ProjectedTransport, scale: f32, altitude_km: f64) -> Vec<Shape> {
+fn lines(
+    transport: &ProjectedTransport,
+    style: &MapStyle,
+    scale: f32,
+    altitude_km: f64,
+) -> Vec<Shape> {
     let mut shapes = Vec::new();
     for line in &transport.lines {
-        let style = style(line.kind);
-        let opacity = if line.tunnel { TUNNEL_OPACITY } else { 1.0 };
-        let stroke = Stroke::new(style.width * scale, style.color.gamma_multiply(opacity));
+        let line_style = style.line(line_type(line.kind));
+        let opacity = line.opacity * if line.tunnel { TUNNEL_OPACITY } else { 1.0 };
         for segment in &line.segments {
-            match style.dash {
-                Some((dash, gap)) => shapes.extend(Shape::dashed_line(
-                    segment,
-                    stroke,
-                    dash * scale,
-                    gap * scale,
-                )),
-                None => shapes.push(Shape::line(segment.clone(), stroke)),
-            }
-            if line.kind == LineKind::Rail && altitude_km <= RAIL_DASH_MAX_ALTITUDE_KM {
+            styled_line(&mut shapes, segment, line_style, scale, opacity);
+            if line.kind == LineKind::Rail
+                && line_style.dash == DashStyle::Solid
+                && altitude_km <= RAIL_DASH_MAX_ALTITUDE_KM
+            {
                 let white = Stroke::new(
-                    style.width * 0.45 * scale,
-                    Color32::from_rgb(238, 238, 240).gamma_multiply(opacity),
+                    line_style.width_points * 0.45 * scale,
+                    RAIL_DASH_COLOR.gamma_multiply(opacity),
                 );
                 shapes.extend(Shape::dashed_line(segment, white, 5.0 * scale, 5.0 * scale));
             }
@@ -186,12 +203,17 @@ fn airports(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec
             continue;
         };
         let at = projected.position;
+        let opacity = projected.opacity;
         let radius = AIRPORT_MARKER_POINTS * scale;
-        markers.push(Shape::circle_filled(at, radius, AIRPORT_COLOR));
+        markers.push(Shape::circle_filled(
+            at,
+            radius,
+            AIRPORT_COLOR.gamma_multiply(opacity),
+        ));
         markers.push(Shape::circle_stroke(
             at,
             radius,
-            Stroke::new(1.2 * scale, Color32::WHITE),
+            Stroke::new(1.2 * scale, Color32::WHITE.gamma_multiply(opacity)),
         ));
         if !projected.labelled {
             continue;
@@ -210,15 +232,18 @@ fn airports(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec
             )
             .min;
         let shadow = painter.layout_no_wrap(text, font.clone(), Color32::BLACK);
-        labels.push(Shape::galley(
-            position + Vec2::splat(1.0),
-            shadow,
-            Color32::BLACK,
-        ));
-        labels.push(Shape::galley(position, galley, LABEL_COLOR));
+        labels.push(faded_text(position + Vec2::splat(1.0), shadow, opacity));
+        labels.push(faded_text(position, galley, opacity));
     }
     markers.extend(labels);
     markers
+}
+
+/// A name at `opacity` (the galley's colours are fixed when laid out).
+pub(super) fn faded_text(position: egui::Pos2, galley: Arc<egui::Galley>, opacity: f32) -> Shape {
+    Shape::Text(
+        egui::epaint::TextShape::new(position, galley, Color32::BLACK).with_opacity_factor(opacity),
+    )
 }
 
 #[cfg(test)]

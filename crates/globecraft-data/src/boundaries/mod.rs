@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 mod geojson;
 mod load;
 pub(crate) mod osm_tiles;
+mod place_names;
+pub use place_names::PlaceNameTiles;
 mod sources;
 mod updates;
 pub use geojson::dedupe_city_labels;
@@ -190,12 +192,20 @@ const OTHER_CITY_MAX_ALTITUDE_KM: f64 = 300.0;
 const PLACE_TOWN_MAX_ALTITUDE_KM: f64 = 150.0;
 const PLACE_VILLAGE_MAX_ALTITUDE_KM: f64 = 50.0;
 const PLACE_HAMLET_MAX_ALTITUDE_KM: f64 = 20.0;
+const PLACE_SUBURB_MAX_ALTITUDE_KM: f64 = 30.0;
+const PLACE_NEIGHBOURHOOD_MAX_ALTITUDE_KM: f64 = 12.0;
+const PLACE_LOCALITY_MAX_ALTITUDE_KM: f64 = 6.0;
 
 /// Label ranks of OpenStreetMap places: towns, villages, hamlets. Cities use the
 /// populated-place ranks 0–8 (from the tiles' own importance rank).
 pub const PLACE_TOWN_RANK: u8 = 11;
 pub(crate) const PLACE_VILLAGE_RANK: u8 = 12;
 pub(crate) const PLACE_HAMLET_RANK: u8 = 13;
+/// Suburbs, neighbourhoods and localities (isolated dwellings): the names the zoom 13
+/// and 14 place tiles add (`place_names`).
+pub(crate) const PLACE_SUBURB_RANK: u8 = 14;
+pub(crate) const PLACE_NEIGHBOURHOOD_RANK: u8 = 15;
+pub(crate) const PLACE_LOCALITY_RANK: u8 = 16;
 
 #[derive(Clone)]
 pub struct MapLabel {
@@ -250,7 +260,10 @@ impl MapLabel {
                             .min(municipal_detail_max_km * MUNICIPAL_DETAIL_FADE_FULL_RATIO)
                     }
                     PLACE_VILLAGE_RANK => PLACE_VILLAGE_MAX_ALTITUDE_KM,
-                    _ => PLACE_HAMLET_MAX_ALTITUDE_KM,
+                    PLACE_HAMLET_RANK => PLACE_HAMLET_MAX_ALTITUDE_KM,
+                    PLACE_SUBURB_RANK => PLACE_SUBURB_MAX_ALTITUDE_KM,
+                    PLACE_NEIGHBOURHOOD_RANK => PLACE_NEIGHBOURHOOD_MAX_ALTITUDE_KM,
+                    _ => PLACE_LOCALITY_MAX_ALTITUDE_KM,
                 }
             }
         }
