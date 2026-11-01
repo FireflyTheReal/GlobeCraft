@@ -57,13 +57,15 @@ impl MiniGlobe {
             match self.project(lat, lon) {
                 Some(p) => run.push(p),
                 None if run.len() >= 2 => {
-                    out.push(egui::Shape::line(std::mem::take(&mut run), stroke));
+                    for part in crate::app::live_layers::stroke_runs(&std::mem::take(&mut run)) {
+                        out.push(egui::Shape::line(part, stroke));
+                    }
                 }
                 None => run.clear(),
             }
         }
-        if run.len() >= 2 {
-            out.push(egui::Shape::line(run, stroke));
+        for part in crate::app::live_layers::stroke_runs(&run) {
+            out.push(egui::Shape::line(part, stroke));
         }
     }
 }

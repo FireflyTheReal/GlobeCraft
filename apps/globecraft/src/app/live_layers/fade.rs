@@ -82,18 +82,99 @@ pub(in crate::app) fn styled_line(
     let [r, g, b, a] = style.color.0;
     let color = egui::Color32::from_rgba_unmultiplied(r, g, b, a).gamma_multiply(opacity);
     let stroke = egui::Stroke::new(style.width_points * scale, color);
-    match globecraft_render::overlays::dash_points(style.dash) {
-        Some((on, off)) => {
-            shapes.extend(Shape::dashed_line(points, stroke, on * scale, off * scale))
+    for run in stroke_runs(points) {
+        match globecraft_render::overlays::dash_points(style.dash) {
+            Some((on, off)) => {
+                shapes.extend(Shape::dashed_line(&run, stroke, on * scale, off * scale))
+            }
+            None => shapes.push(Shape::line(run, stroke)),
         }
-        None => shapes.push(Shape::line(points.to_vec(), stroke)),
     }
+}
+
+/// Below this cosine between one step of a line and the next, the line turns back
+/// on itself (about 165°) and is drawn as two strokes.
+const REVERSAL_COSINE: f32 = -0.966;
+
+/// `points` as the polylines egui can stroke: repeated points dropped, and split
+/// where the line turns back on itself. egui's corner join for a line that doubles
+/// back divides by a length that rounds to nearly zero and throws a vertex thousands
+/// of points away along the line, which drew straight lines across the whole map at
+/// some camera positions (user report 2026-11-01). Tile clipping and simplification
+/// leave such back-and-forth steps in roads.
+pub(in crate::app) fn stroke_runs(points: &[egui::Pos2]) -> Vec<Vec<egui::Pos2>> {
+    let mut runs = Vec::new();
+    let mut run: Vec<egui::Pos2> = Vec::with_capacity(points.len());
+    for &point in points {
+        if run.last() == Some(&point) {
+            continue;
+        }
+        if let [.., before, last] = run[..] {
+            let (a, b) = ((last - before).normalized(), (point - last).normalized());
+            if a.dot(b) < REVERSAL_COSINE {
+                runs.push(std::mem::replace(&mut run, vec![last]));
+            }
+        }
+        run.push(point);
+    }
+    if run.len() >= 2 {
+        runs.push(run);
+    }
+    runs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn lines_that_turn_back_stay_near_their_points() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let painter = egui::Painter::new(ctx, egui::LayerId::background(), egui::Rect::EVERYTHING);
+        let style = LineStyle {
+            color: globecraft_data::settings::map_style::Rgba([200, 200, 200, 255]),
+            width_points: 3.0,
+            dash: globecraft_data::settings::map_style::DashStyle::Solid,
+        };
+        let p = egui::pos2;
+        // Lines out and partly back along themselves: egui alone throws some corner
+        // vertices thousands of points away along the line.
+        let far = |shapes: Vec<Shape>, near: egui::Pos2| {
+            super::super::super::live_geometry::mesh_shapes(&painter, shapes)
+                .iter()
+                .any(|shape| match shape {
+                    Shape::Mesh(mesh) => mesh
+                        .vertices
+                        .iter()
+                        .any(|v| !v.pos.is_finite() || (v.pos - near).length() > 600.0),
+                    _ => false,
+                })
+        };
+        let (mut raw_spikes, mut spikes) = (0, 0);
+        for i in 0..4000_u16 {
+            let f = f32::from(i);
+            let a = p(100.0 + (f * 7.31) % 400.0, 100.0 + (f * 3.17) % 400.0);
+            let b = p(100.0 + (f * 5.03) % 400.0, 100.0 + (f * 9.71) % 400.0);
+            let line = [a, b, a + (b - a) * ((f * 0.137) % 1.0)];
+            let raw = Shape::line(line.to_vec(), egui::Stroke::new(3.0, egui::Color32::WHITE));
+            raw_spikes += usize::from(far(vec![raw], b));
+            let mut shapes = Vec::new();
+            styled_line(&mut shapes, &line, &style, 1.0, 1.0);
+            spikes += usize::from(far(shapes, b));
+        }
+        assert!(
+            raw_spikes > 0,
+            "egui no longer spikes: the split may be unnecessary"
+        );
+        assert_eq!(spikes, 0);
+        // Repeats go, ordinary corners stay one stroke.
+        let runs = stroke_runs(&[p(0.0, 0.0), p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)]);
+        assert_eq!(runs, vec![vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)]]);
+    }
 
     #[test]
     fn shapes_group_by_the_fade_of_their_tile() {

@@ -18,9 +18,21 @@ const SIZE: egui::Vec2 = egui::vec2(1480.0, 900.0);
 fn harness(theme: ThemePreference) -> Harness<'static, App> {
     let mut settings = Settings::default();
     settings.appearance.theme = theme;
+    // GLOBECRAFT_SHOT_SIZE ("1190x775") and _PPP reproduce a user's window.
+    let size = std::env::var("GLOBECRAFT_SHOT_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some(egui::Vec2::new(w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or(SIZE);
+    let ppp = std::env::var("GLOBECRAFT_SHOT_PPP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.5);
     Harness::builder()
-        .with_size(SIZE)
-        .with_pixels_per_point(1.5)
+        .with_size(size)
+        .with_pixels_per_point(ppp)
         .with_step_dt(0.1)
         .renderer(WgpuTestRenderer::new())
         .build_eframe(move |cc| App::new(cc, settings, Arc::new(RestartRequest::default())))
@@ -273,7 +285,8 @@ fn map_data_close_up_screenshot() {
         json!({
             "lat": env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(48.137),
             "lon": env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(11.575),
-            "altitude_km": altitude
+            "altitude_km": altitude,
+            "heading_deg": env_f64("GLOBECRAFT_SHOT_HEADING").unwrap_or(0.0),
         }),
     );
     let mut waited = 0.0;

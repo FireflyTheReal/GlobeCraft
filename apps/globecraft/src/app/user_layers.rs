@@ -276,25 +276,25 @@ fn feature_shapes(
                 Some([a, b]) if run.last() == Some(&a) => run.push(b),
                 Some([a, b]) => {
                     if run.len() >= 2 {
-                        lines.push(Shape::line(
-                            std::mem::take(&mut run),
-                            Stroke::new(LINE_POINTS * scale, color),
-                        ));
+                        for part in super::live_layers::stroke_runs(&std::mem::take(&mut run)) {
+                            lines.push(Shape::line(part, Stroke::new(LINE_POINTS * scale, color)));
+                        }
                     }
                     run = vec![a, b];
                 }
                 None if run.len() >= 2 => {
-                    lines.push(Shape::line(
-                        std::mem::take(&mut run),
-                        Stroke::new(LINE_POINTS * scale, color),
-                    ));
+                    for part in super::live_layers::stroke_runs(&std::mem::take(&mut run)) {
+                        lines.push(Shape::line(part, Stroke::new(LINE_POINTS * scale, color)));
+                    }
                 }
                 None => run.clear(),
             }
             previous = current;
         }
         if run.len() >= 2 {
-            lines.push(Shape::line(run, Stroke::new(LINE_POINTS * scale, color)));
+            for part in super::live_layers::stroke_runs(&run) {
+                lines.push(Shape::line(part, Stroke::new(LINE_POINTS * scale, color)));
+            }
         }
     }
     let mut shapes = super::live_geometry::mesh_shapes(painter, lines);
