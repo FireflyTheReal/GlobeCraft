@@ -62,6 +62,11 @@ gtk3 = "*"
 "libudev.so.1()(64bit)" = "*"
 libX11 = "*"
 libxkbcommon = "*"
+# winit loads these at runtime under X11 (not linked, so not found automatically).
+libxkbcommon-x11 = "*"
+libXcursor = "*"
+libXrandr = "*"
+libXi = "*"
 wayland-libs = "*"
 xdg-utils = "*"
 
