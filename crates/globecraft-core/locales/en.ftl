@@ -260,6 +260,8 @@ statusbar-cursor-elevation = Elevation: { $distance }
 
 
 settings-uncap-fps-toggle = Uncap FPS (restart required)
+settings-gpu-globe-toggle = Draw the globe on the GPU (beta, restart required)
+settings-gpu-globe-help = Faster on Apple Silicon. Close views, the grid and any GPU problem still use the CPU renderer. Turn this off if the globe looks wrong.
 settings-frame-sync-help = By default, presentation synchronizes with the display refresh rate. G-SYNC/FreeSync is configured in your display and graphics driver.
 
 # Explorer / Visualização e novas camadas — conteúdo bilíngue

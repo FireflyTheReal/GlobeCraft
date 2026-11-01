@@ -15,9 +15,13 @@ coordinator, never on the UI thread.
 
 ## Selection and fallback
 
-CPU rendering is the default while reported Ubuntu GPU freezes remain under
-investigation. Experimental GPU rendering requires explicit opt-in; automatic GPU activation
-must not return until native cross-platform checks cover the reported failure.
+On Apple Silicon the GPU renderer is a beta and on by default (`auto`), since
+2026-11-01: on an M1 (Metal) the parity test matched the CPU with no channel more
+than one level off at 512×384 and 2000×1488, and warm 2000×1488 frames took 14 ms
+against 40 ms on the CPU. Settings → Graphics → "Draw the globe on the GPU" turns it
+off (read at startup). Everywhere else CPU rendering stays the default while
+reported Ubuntu GPU freezes remain under investigation, and GPU rendering is
+experimental and opt-in. `GLOBECRAFT_RENDERER` overrides both.
 
 `GLOBECRAFT_RENDERER=auto` opts into experimental GPU rendering for supported
 views with at least 262,144 pixels; small frames retain CPU rendering because

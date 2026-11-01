@@ -46,10 +46,14 @@ pub(super) struct Renderer {
 }
 
 impl Renderer {
-    pub(super) fn new(cache: Arc<globecraft_data::tiles::TileCache>, ctx: egui::Context) -> Self {
+    pub(super) fn new(
+        cache: Arc<globecraft_data::tiles::TileCache>,
+        ctx: egui::Context,
+        allow_gpu: bool,
+    ) -> Self {
         let admission_cache = cache.clone();
         let mut backend = globecraft_render::backend::FrameRenderer::new(
-            globecraft_render::backend::BackendPreference::from_environment(),
+            globecraft_render::backend::BackendPreference::from_environment(allow_gpu),
         );
         let mut overlay_preparer =
             globecraft_render::overlays::OverlayPreparer::with_elevation(cache.clone());

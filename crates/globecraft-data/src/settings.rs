@@ -77,6 +77,9 @@ pub struct Settings {
     /// Colour, width and dash of border lines; label sizes.
     pub map_style: map_style::MapStyle,
     pub uncap_fps: bool,
+    /// Lets the globe use the GPU renderer where it is on by default (Apple
+    /// Silicon, beta); off keeps the CPU renderer. Read at startup.
+    pub gpu_globe: bool,
     pub grid_numbers: bool,
     pub hide_navigation_controls: bool,
     /// Camera altitude (km) below which state/province lines and their names
@@ -122,6 +125,7 @@ impl Default for Settings {
             map_scale: 1.0,
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
+            gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
@@ -166,6 +170,8 @@ struct SettingsInput {
     user_layers: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     uncap_fps: Option<bool>,
+    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
+    gpu_globe: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     grid_numbers: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
@@ -239,6 +245,9 @@ impl Settings {
         }
         if let Some(uncap) = input.uncap_fps {
             self.uncap_fps = uncap;
+        }
+        if let Some(gpu) = input.gpu_globe {
+            self.gpu_globe = gpu;
         }
         if let Some(hide) = input.hide_navigation_controls {
             self.hide_navigation_controls = hide;
@@ -511,6 +520,7 @@ mod tests {
             map_scale: 1.0,
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
+            gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
@@ -549,6 +559,9 @@ mod tests {
         assert_eq!(json["kml_dir"], "custom");
         assert_eq!(json["uncap_fps"], true);
         assert_eq!(json["hide_navigation_controls"], true);
+        assert_eq!(json["gpu_globe"], true);
+        settings.apply_json(br#"{"gpu_globe":false}"#).unwrap();
+        assert!(!settings.gpu_globe);
         let mut restored = Settings::default();
         restored
             .apply_json(&serde_json::to_vec(&settings).unwrap())

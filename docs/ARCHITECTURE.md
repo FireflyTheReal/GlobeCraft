@@ -432,9 +432,10 @@ is an application FPS guarantee. See [contributing](../CONTRIBUTING.md),
 
 The Earth overview raster can be computed by the `globecraft-render` `backend`
 module with `wgpu` compute shaders (`gpu/`), then read back for the existing
-egui view. All GPU globe rendering is experimental on every platform; the CPU
-path remains the default and fallback. Set
-`GLOBECRAFT_RENDERER=auto` or `GLOBECRAFT_RENDERER=gpu` to enable an experimental GPU attempt.
+egui view. GPU globe rendering is a beta on Apple Silicon, where it is on by
+default (Settings → Graphics turns it off), and experimental elsewhere, where the CPU
+path is the default. The CPU path is always the fallback. Set
+`GLOBECRAFT_RENDERER=auto`, `gpu` or `cpu` to override the default.
 The Explorer, live meteorological/aircraft layers, moon and custom planet
 remain integrated in `apps/globecraft`. See [GPU_RENDERER.md](features/GPU_RENDERER.md)
 for hardware limits, performance and CPU-only build instructions.

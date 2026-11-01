@@ -626,3 +626,20 @@ tertiary from 11 and residential streets at 12; service roads are not in any
 level. Overpass now adds only service roads, living streets and roadworks below
 65 km. The planet estimate above (about 5 GiB to zoom 12) was high: these classes
 come to 2.5 GiB.
+
+## Apple M1 (Metal), 2026-11-01
+
+`Mac Checks.command` on macOS 27.0, Apple M1, release builds:
+
+| Check | Result |
+| --- | --- |
+| GPU parity, test pattern, all basemaps and four views | mean error 0.0000 levels, 0 channels over one level, no frame handed to the CPU |
+| Warm 512×384 | CPU median 3.2 ms; GPU with readback and sky repair 1.8 ms; max channel difference 1 |
+| Warm 2000×1488 | CPU median 40.4 ms; GPU 13.7 ms; max channel difference 1 |
+| Large decoded cache (597 tiles), three rotations | 0, 1 and 0 channels over one level (max 2) |
+| Tilted relief occlusion, 40,000 points | 39.9 ms → 11.0 ms (81,742 lookups instead of 692,840) |
+| Interface frame | median 0.15 ms |
+| Tilted relief frame (75°, 12 km, network) | median 0.96 ms, p95 3.6 ms, max 38 ms |
+
+The 2000×1488 differences of up to 161 levels seen before came from lavapipe, the
+software rasterizer on Linux CI; Metal matches the CPU.

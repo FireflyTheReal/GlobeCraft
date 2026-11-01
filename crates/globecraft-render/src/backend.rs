@@ -26,9 +26,33 @@ pub enum BackendPreference {
     Cpu,
     Gpu,
 }
+/// Whether this platform uses the GPU renderer unless told otherwise: Apple
+/// Silicon (Metal), where parity and frame times were checked on an M1
+/// (2026-11-01: no channel more than one level off; 2000×1488 frames in 14 ms
+/// against 40 ms on the CPU). Elsewhere it stays opt-in while the reported Ubuntu
+/// freezes are unexplained.
+pub const GPU_BY_DEFAULT: bool = cfg!(all(
+    feature = "gpu",
+    target_os = "macos",
+    target_arch = "aarch64"
+));
+
 impl BackendPreference {
-    pub fn from_environment() -> Self {
-        Self::from_setting(std::env::var("GLOBECRAFT_RENDERER").ok().as_deref())
+    /// `GLOBECRAFT_RENDERER` when set, else the platform default unless the user
+    /// turned the GPU off (`allow_gpu`, the `gpu_globe` setting).
+    pub fn from_environment(allow_gpu: bool) -> Self {
+        Self::resolve(
+            std::env::var("GLOBECRAFT_RENDERER").ok().as_deref(),
+            allow_gpu,
+            GPU_BY_DEFAULT,
+        )
+    }
+    fn resolve(setting: Option<&str>, allow_gpu: bool, gpu_by_default: bool) -> Self {
+        match setting {
+            None if allow_gpu && gpu_by_default => Self::Auto,
+            None => Self::Cpu,
+            setting => Self::from_setting(setting),
+        }
     }
     fn from_setting(setting: Option<&str>) -> Self {
         match setting {
@@ -153,6 +177,29 @@ impl FrameRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn apple_silicon_defaults_to_automatic_unless_turned_off_or_overridden() {
+        assert_eq!(
+            BackendPreference::resolve(None, true, true),
+            BackendPreference::Auto
+        );
+        assert_eq!(
+            BackendPreference::resolve(None, false, true),
+            BackendPreference::Cpu
+        );
+        assert_eq!(
+            BackendPreference::resolve(None, true, false),
+            BackendPreference::Cpu
+        );
+        assert_eq!(
+            BackendPreference::resolve(Some("cpu"), true, true),
+            BackendPreference::Cpu
+        );
+        assert_eq!(
+            BackendPreference::resolve(Some("gpu"), false, false),
+            BackendPreference::Gpu
+        );
+    }
     #[test]
     fn gpu_rendering_requires_explicit_opt_in() {
         assert_eq!(

@@ -284,7 +284,8 @@ impl App {
                 disk_bytes: settings.cache.disk_bytes(),
             },
         );
-        let renderer = rendering::Renderer::new(cache.clone(), cc.egui_ctx.clone());
+        let renderer =
+            rendering::Renderer::new(cache.clone(), cc.egui_ctx.clone(), settings.gpu_globe);
         let overlay_cache = overlays::OverlayCache::new(cc.egui_ctx.clone(), Some(cache.clone()));
         let (file_jobs, file_results) = globecraft_data::files::FileJobs::new(runtime.handle(), {
             let ctx = cc.egui_ctx.clone();

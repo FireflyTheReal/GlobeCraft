@@ -206,6 +206,13 @@ impl App {
             lg.text("settings-uncap-fps-toggle"),
         );
         ui.weak(lg.text("settings-frame-sync-help"));
+        if globecraft_render::backend::GPU_BY_DEFAULT {
+            ui.checkbox(
+                &mut self.settings.gpu_globe,
+                lg.text("settings-gpu-globe-toggle"),
+            )
+            .on_hover_text(lg.text("settings-gpu-globe-help"));
+        }
     }
     pub(super) fn settings_files(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
