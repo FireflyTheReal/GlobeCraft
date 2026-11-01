@@ -1,0 +1,55 @@
+name: GPU parity
+
+# Runs the experimental GPU globe renderer against the CPU renderer (every provider,
+# poles, dateline, sunlight, atmosphere, loaded/pending/missing imagery) and its warm
+# frame benchmark on each platform's runner adapter: Metal on macOS, Direct3D 12 on
+# Windows, Vulkan (lavapipe, a software rasterizer) on Linux. Software adapters are
+# accepted here with GLOBECRAFT_GPU_ALLOW_SOFTWARE and checked by error statistics.
+# Manual only; roadmap 8.2.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022, ubuntu-24.04]
+    env:
+      GLOBECRAFT_GPU_ALLOW_SOFTWARE: '1'
+      RAYON_NUM_THREADS: '4'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gpu-parity-${{ matrix.os }}
+      - name: Install Linux libraries and a Vulkan driver
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev mesa-vulkan-drivers
+      - name: Parity and frame time
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p globecraft-render --release --locked gpu_overview_matches_cpu \
+            -- --ignored --nocapture --test-threads=1 2>&1 | tee parity.txt
+          cargo test -p globecraft-render --release --locked warm_gpu_frame_time \
+            -- --ignored --nocapture --test-threads=1 2>&1 | tee -a parity.txt
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ matrix.os }}"
+            echo '```'
+            grep -E "GPU globe rendering enabled|^PARITY|^FALLBACK|median|max|panicked" parity.txt | head -40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

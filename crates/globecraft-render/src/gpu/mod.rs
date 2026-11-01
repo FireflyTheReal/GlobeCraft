@@ -32,7 +32,14 @@ pub(crate) struct GpuRenderer {
     slots: Vec<Option<Slot>>,
     preferred: Vec<TileKey>,
     failure: Arc<Mutex<Option<String>>>,
+    /// Whether the adapter is a software rasterizer (allowed only on request).
+    #[cfg_attr(not(test), allow(dead_code))]
+    software: bool,
 }
+/// Set to accept a software GPU adapter (lavapipe, WARP): for checking parity where
+/// there is no GPU, never faster than the CPU renderer.
+const ALLOW_SOFTWARE_ENV: &str = "GLOBECRAFT_GPU_ALLOW_SOFTWARE";
+
 impl GpuRenderer {
     #[cfg(test)]
     pub(crate) fn destroy_for_test(&self) {
@@ -68,7 +75,11 @@ impl GpuRenderer {
             })
             .await
             .map_err(|error| format!("No compatible GPU adapter: {error}"))?;
-        if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
+        // A software rasterizer is slower than the CPU renderer; it is used only when
+        // asked for, so the parity tests can run on machines without a GPU (CI).
+        if adapter.get_info().device_type == wgpu::DeviceType::Cpu
+            && std::env::var_os(ALLOW_SOFTWARE_ENV).is_none()
+        {
             return Err("Only a software GPU adapter is available".into());
         }
         let available = adapter.limits();
@@ -133,6 +144,7 @@ impl GpuRenderer {
             slots: (0..layers).map(|_| None).collect(),
             preferred: Vec::new(),
             failure,
+            software: adapter.get_info().device_type == wgpu::DeviceType::Cpu,
         })
     }
 
