@@ -747,6 +747,10 @@ impl App {
                 json!({"count": self.placemarks.len(), "items": places})
             }
             "info.ruler" => self.ruler_json(),
+            "info.here" => {
+                let (lat, lon) = position(p)?;
+                self.here_json(lat, lon)
+            }
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
             _ => return Err(format!("unknown command '{id}'")),
         };

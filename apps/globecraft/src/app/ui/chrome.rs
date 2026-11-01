@@ -13,6 +13,8 @@ use globecraft_core::commands::Tab;
 use serde_json::Value;
 
 pub(in crate::app) const HEADER_HEIGHT: f32 = 38.0;
+/// The elevation level asked for under the cursor when relief is off.
+const CURSOR_ELEVATION_ZOOM: u8 = 10;
 const HEADER_PAD: f32 = 10.0;
 /// The header pad on the right is omitted when drawn window controls reach the edge.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -225,16 +227,22 @@ impl App {
                         lang,
                     );
                     separator(ui, &t);
-                    // The ground height under the cursor while relief is drawn, from
-                    // the elevation tiles the view has loaded (roadmap 1.10); nothing is
-                    // requested for it. Padded so the readouts after it hold still.
-                    if self.terrain_active() {
+                    // The ground height under the cursor (roadmap 6.4). With relief on,
+                    // from the elevation tiles the view has loaded; without it, a coarse
+                    // elevation tile is requested under the cursor (about 40 km wide at
+                    // level 10, so moving the pointer loads few). Padded so the readouts
+                    // after it hold still.
+                    if self.explorer.active == globecraft_core::body::Body::Earth {
                         let metres = self.cursor.and_then(|(lat, lon)| {
-                            self.cache.loaded_elevation_m(
-                                lat,
-                                lon,
-                                globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
-                            )
+                            if self.terrain_active() {
+                                self.cache.loaded_elevation_m(
+                                    lat,
+                                    lon,
+                                    globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
+                                )
+                            } else {
+                                self.cache.elevation_m(lat, lon, CURSOR_ELEVATION_ZOOM)
+                            }
                         });
                         let value = metres.map_or_else(
                             || "—".to_owned(),
@@ -243,7 +251,10 @@ impl App {
                         ui.monospace(lang.format(
                             "statusbar-cursor-elevation",
                             &[("distance", format!("{value:>8}").into())],
-                        ));
+                        ))
+                        .on_hover_text(
+                            globecraft_data::tiles::Provider::TerrainDem.attribution(lang),
+                        );
                         separator(ui, &t);
                     }
                     match self

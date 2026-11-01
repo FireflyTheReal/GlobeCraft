@@ -114,17 +114,20 @@ async fn load_country_polygons(log: &StatusLog) -> Option<Patch> {
                 return;
             };
             let (_, rings) = collect_country_geometry(geometry);
+            let en = feature_name(f, &["NAME", "ADMIN", "name"]);
+            let pt = feature_name(f, &["NAME_PT", "name_pt", "NAME", "ADMIN"]);
             if let Some(iso3) = country_iso3(f)
                 && let Some(region) = CountryRegion::new(iso3, rings)
             {
-                out.regions.push(region);
+                out.regions.push(match (&en, &pt) {
+                    (Some(en), pt) => {
+                        region.with_names(en.clone(), pt.clone().unwrap_or_else(|| en.clone()))
+                    }
+                    _ => region,
+                });
             }
-            if let (Some(en), Some((lat, lon))) = (
-                feature_name(f, &["NAME", "ADMIN", "name"]),
-                label_center(geometry),
-            ) {
-                let pt = feature_name(f, &["NAME_PT", "name_pt", "NAME", "ADMIN"])
-                    .unwrap_or_else(|| en.clone());
+            if let (Some(en), Some((lat, lon))) = (en, label_center(geometry)) {
+                let pt = pt.unwrap_or_else(|| en.clone());
                 out.labels.push(MapLabel {
                     lat,
                     lon,

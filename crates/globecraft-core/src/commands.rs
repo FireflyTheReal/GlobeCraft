@@ -673,6 +673,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!("info.ruler", "info-ruler", "measure", Home, View, NO_PARAMS),
+    command!(
+        "info.here",
+        "info-here",
+        "identify",
+        Home,
+        View,
+        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"}},"required":["lat","lon"],"description":"What is known about a point: coordinates in every format, ground height, country, nearest named place, local times and the sun's height"}"#
+    ),
 ];
 
 /// The command with this id.

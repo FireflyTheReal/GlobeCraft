@@ -325,6 +325,27 @@ fn add_data_screenshots() {
     save(&mut h, &dir, "09-user-layer");
 }
 
+/// The "What's here?" card over Munich. Manual (needs network for the ground height).
+#[test]
+#[ignore = "manual: renders the What's here card"]
+fn whats_here_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 48.2, "lon": 11.6, "altitude_km": 400.0}),
+    );
+    h.state_mut().here_card = Some(super::here::HereCard {
+        lat: 48.1702,
+        lon: 11.6290,
+    });
+    settle(&mut h, 8.0);
+    save(&mut h, &dir, "10-whats-here");
+}
+
 /// Median CPU time of a whole interface frame (layout, widgets, overlays; no GPU work),
 /// stationary after startup. Manual, like `interface_screenshots`.
 #[test]

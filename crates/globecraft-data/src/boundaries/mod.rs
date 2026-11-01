@@ -92,6 +92,8 @@ impl CountryRing {
 #[derive(Clone)]
 pub(crate) struct CountryRegion {
     iso3: String,
+    /// The country's name in English and Portuguese, when the source gives one.
+    names: Option<(String, String)>,
     rings: Vec<CountryRing>,
     bounds: GeoBounds,
 }
@@ -103,9 +105,14 @@ impl CountryRegion {
             .reduce(GeoBounds::union)?;
         Some(Self {
             iso3,
+            names: None,
             rings,
             bounds,
         })
+    }
+    pub(super) fn with_names(mut self, en: String, pt: String) -> Self {
+        self.names = Some((en, pt));
+        self
     }
     fn contains(&self, lat: f64, lon: f64) -> bool {
         self.bounds.contains(lat, lon) && self.rings.iter().any(|ring| ring.contains(lat, lon))
@@ -132,6 +139,19 @@ impl BoundaryData {
             .iter()
             .find(|region| region.contains(lat, lon))
             .map(|region| region.iso3.as_str())
+    }
+    /// The name of the country containing the point, in `lang`.
+    pub fn country_name_at(&self, lat: f64, lon: f64, lang: Lang) -> Option<&str> {
+        let (en, pt) = self
+            .country_regions
+            .iter()
+            .find(|region| region.contains(lat, lon))?
+            .names
+            .as_ref()?;
+        Some(match lang {
+            Lang::En => en,
+            Lang::PtBr => pt,
+        })
     }
     /// Geographic bounds of the country containing the point, so a frontend can
     /// gate a country's name by its apparent size on screen.

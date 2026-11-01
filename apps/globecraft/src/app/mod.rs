@@ -42,6 +42,7 @@ const SKY_CLOCK_REPAINT_INTERVAL: Duration = Duration::from_secs(30);
 mod fonts;
 mod frame_timing;
 mod globe;
+mod here;
 mod live_geometry;
 mod live_layers;
 mod live_maps;
@@ -133,6 +134,8 @@ pub(crate) struct App {
     user_layers: user_layers::UserLayers,
     /// The Add Data window, while open.
     add_data: Option<ui::add_data::AddDataDialog>,
+    /// The "What's here?" card, while open.
+    here_card: Option<here::HereCard>,
     live_satellites: globecraft_data::satellites::LiveSatellites,
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
@@ -357,6 +360,7 @@ impl App {
             poi_shapes: live_layers::PoiShapes::default(),
             user_layers: Default::default(),
             add_data: None,
+            here_card: None,
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
@@ -734,6 +738,7 @@ impl eframe::App for App {
         self.explorer_window(ui);
         self.altitude_window(ui);
         self.add_data_window(ui);
+        self.here_window(ui);
         self.ruler_points_window(ui);
         self.command_search_window(ui);
         self.live_maps.update(

@@ -619,6 +619,18 @@ impl App {
                 ],
             );
         }
+        // Credits of the layers the user added, as their licences ask.
+        if self.explorer.active == globecraft_core::body::Body::Earth {
+            for layer in self
+                .settings
+                .user_layers
+                .iter()
+                .filter(|layer| layer.visible && !layer.attribution.is_empty())
+            {
+                attribution.push_str(" · ");
+                attribution.push_str(&layer.attribution);
+            }
+        }
         if self.renderer.displayed_sky {
             attribution = lg.format(
                 "sky-combined-credit",
@@ -685,7 +697,8 @@ impl App {
                     ("places", "globe-placemark-action", "places.add", at.clone()),
                     ("fly", "globe-fly-to-action", "camera.flyTo", fly),
                     ("measure", "globe-ruler-point-action", "ruler.addPoint", at.clone()),
-                    ("copy", "globe-copy-coordinates-action", "copy", at),
+                    ("copy", "globe-copy-coordinates-action", "copy", at.clone()),
+                    ("identify", "globe-whats-here-action", "here", at),
                 ] {
                     if super::ui::icons::button(ui, icon, lg.text(key)).clicked() {
                         chosen = Some((id, params));
@@ -703,6 +716,9 @@ impl App {
                     Ok(text) => ui.copy_text(text),
                     Err(error) => self.status = error.to_string(),
                 }
+            }
+            (Some(("here", _)), Some((lat, lon))) => {
+                self.here_card = Some(super::here::HereCard { lat, lon });
             }
             (Some((id, params)), _) => self.run_reporting(id, params),
             _ => {}
