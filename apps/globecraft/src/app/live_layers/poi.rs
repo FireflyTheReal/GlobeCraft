@@ -16,10 +16,11 @@ const LABEL_FONT_POINTS: f32 = 11.0;
 const WATER_FONT_POINTS: f32 = 12.0;
 const MARKER_POINTS: f32 = 3.2;
 const LABEL_OFFSET_POINTS: f32 = 7.0;
+/// Between a place's badge and its name.
+const BADGE_GAP_POINTS: f32 = 3.0;
 const PARK: Color32 = Color32::from_rgb(92, 180, 96);
 const PARK_LABEL: Color32 = Color32::from_rgb(190, 240, 190);
 const PEAK: Color32 = Color32::from_rgb(150, 105, 70);
-const POI: Color32 = Color32::from_rgb(226, 92, 76);
 const LABEL: Color32 = Color32::from_rgb(240, 244, 250);
 const WATER_LABEL: Color32 = Color32::from_rgb(150, 200, 255);
 
@@ -234,23 +235,20 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(
                 )
             }
             PointKind::Poi => {
-                markers.push((
-                    fade,
-                    Shape::circle_filled(at, r, POI.gamma_multiply(opacity)),
-                ));
-                markers.push((
-                    fade,
-                    Shape::circle_stroke(
-                        at,
-                        r,
-                        Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
-                    ),
-                ));
+                let mut badge = Vec::new();
+                super::poi_icons::badge(&mut badge, at, &point.class, scale, opacity);
+                markers.extend(badge.into_iter().map(|shape| (fade, shape)));
                 (point.name.clone(), LABEL, font.clone(), Align2::LEFT_CENTER)
             }
         };
         let offset = if anchor == Align2::CENTER_CENTER {
             Vec2::ZERO
+        } else if point.kind == PointKind::Poi {
+            // Beside the badge.
+            Vec2::new(
+                (super::poi_icons::BADGE_RADIUS_POINTS + BADGE_GAP_POINTS) * scale,
+                0.0,
+            )
         } else {
             Vec2::new(LABEL_OFFSET_POINTS * scale, 0.0)
         };
