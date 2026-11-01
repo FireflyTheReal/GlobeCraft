@@ -130,7 +130,20 @@ impl App {
     }
 }
 
+/// Lines and markers tessellated once into meshes, so a still view costs nothing per
+/// frame. Text stays text: a mesh holds glyph positions in the font atlas, which moves
+/// them when it grows (new names, sizes), and cached text meshes then showed pieces of
+/// other glyphs. Text goes after the meshes, as labels are drawn over their markers.
 pub(super) fn mesh_shapes(painter: &egui::Painter, shapes: Vec<egui::Shape>) -> Vec<egui::Shape> {
+    let (texts, shapes): (Vec<egui::Shape>, Vec<egui::Shape>) = shapes
+        .into_iter()
+        .partition(|shape| matches!(shape, egui::Shape::Text(_)));
+    let mut meshes = tessellate(painter, shapes);
+    meshes.extend(texts);
+    meshes
+}
+
+fn tessellate(painter: &egui::Painter, shapes: Vec<egui::Shape>) -> Vec<egui::Shape> {
     let clipped = shapes
         .into_iter()
         .map(|shape| egui::epaint::ClippedShape {

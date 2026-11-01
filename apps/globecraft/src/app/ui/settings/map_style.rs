@@ -55,6 +55,7 @@ fn label_name(kind: LabelType) -> &'static str {
         LabelType::Country => "settings-map-style-label-country",
         LabelType::State => "settings-map-style-label-state",
         LabelType::City => "settings-map-style-label-city",
+        LabelType::Road => "settings-map-style-label-road",
     }
 }
 
@@ -85,6 +86,7 @@ pub(super) const KEYWORDS: &[&str] = &[
     "settings-map-style-dash-label",
     "settings-map-style-labels-title",
     "settings-map-style-label-city",
+    "settings-map-style-label-road",
 ];
 
 impl App {

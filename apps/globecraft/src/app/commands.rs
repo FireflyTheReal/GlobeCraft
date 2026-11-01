@@ -709,7 +709,7 @@ impl App {
                 use globecraft_data::settings::map_style::{LabelType, clamp_label_size};
                 let label = str_param(p, "label")
                     .and_then(LabelType::from_code)
-                    .ok_or("label must be country, state or city")?;
+                    .ok_or("label must be country, state, city or road")?;
                 let size = clamp_label_size(required_f64(p, "size")?);
                 self.settings.map_style.labels.set(label, size);
                 json!({"label": label.code(), "size": size})

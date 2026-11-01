@@ -245,6 +245,37 @@ fn assistant_runs_commands_end_to_end() {
     );
 }
 
+/// Roads with their names, railways and place names close up over Munich, for
+/// checking the map-data layers by eye. Needs network; manual.
+#[test]
+#[ignore = "manual: needs network; renders the map-data layers close up"]
+fn map_data_close_up_screenshot() {
+    use globecraft_core::layers::MapLayer;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    for layer in [
+        MapLayer::Roads,
+        MapLayer::Railways,
+        MapLayer::Parks,
+        MapLayer::Waters,
+    ] {
+        h.state_mut().settings.set_layer_visible(layer, true);
+    }
+    let altitude = std::env::var("GLOBECRAFT_SHOT_ALT_KM")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(3.0);
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 48.137, "lon": 11.575, "altitude_km": altitude}),
+    );
+    settle(&mut h, 30.0);
+    save(&mut h, &dir, &format!("07-map-data-{altitude}km"));
+}
+
 /// Median CPU time of a whole interface frame (layout, widgets, overlays; no GPU work),
 /// stationary after startup. Manual, like `interface_screenshots`.
 #[test]

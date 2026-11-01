@@ -153,14 +153,17 @@ pub enum LabelType {
     Country,
     State,
     City,
+    /// Street and road names, written along the roads.
+    Road,
 }
 impl LabelType {
-    pub const ALL: [Self; 3] = [Self::Country, Self::State, Self::City];
+    pub const ALL: [Self; 4] = [Self::Country, Self::State, Self::City, Self::Road];
     pub fn code(self) -> &'static str {
         match self {
             Self::Country => "country",
             Self::State => "state",
             Self::City => "city",
+            Self::Road => "road",
         }
     }
     pub fn from_code(code: &str) -> Option<Self> {
@@ -255,6 +258,7 @@ pub struct LabelSizes {
     pub country_points: f32,
     pub state_points: f32,
     pub city_points: f32,
+    pub road_points: f32,
 }
 impl LabelSizes {
     pub fn get(self, kind: LabelType) -> f32 {
@@ -262,6 +266,7 @@ impl LabelSizes {
             LabelType::Country => self.country_points,
             LabelType::State => self.state_points,
             LabelType::City => self.city_points,
+            LabelType::Road => self.road_points,
         }
     }
     pub fn set(&mut self, kind: LabelType, size: f32) {
@@ -269,6 +274,7 @@ impl LabelSizes {
             LabelType::Country => &mut self.country_points,
             LabelType::State => &mut self.state_points,
             LabelType::City => &mut self.city_points,
+            LabelType::Road => &mut self.road_points,
         } = size;
     }
 }
@@ -294,6 +300,7 @@ impl Default for MapStyle {
                 country_points: 12.0,
                 state_points: 10.0,
                 city_points: 9.0,
+                road_points: 9.5,
             },
         }
     }

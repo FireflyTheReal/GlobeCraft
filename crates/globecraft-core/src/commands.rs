@@ -561,7 +561,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "label_properties",
         Settings,
         View,
-        r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
+        r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city","road"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
     ),
     command!(
         "style.reset",

@@ -18,6 +18,8 @@ pub(super) struct RoadOverlay {
     /// The view and road list of the last build, to tell new tiles from a move.
     source: Option<(globecraft_render::live_layers::LiveView, usize)>,
     shapes: super::live_layers::FadingShapes,
+    /// Street and road names along the lines.
+    names: super::live_layers::FadingShapes,
 }
 impl RoadOverlay {
     pub(super) fn invalidate_text(&mut self) {
@@ -62,14 +64,32 @@ impl RoadOverlay {
                     super::live_layers::styled_line(&mut shapes, line, line_style, scale, opacity);
                 }
             }
+            let now = Instant::now();
             self.shapes.replace(
                 super::live_geometry::mesh_shapes(painter, shapes),
                 new_data,
-                Instant::now(),
+                now,
+            );
+            let names = super::road_names::names(
+                painter,
+                roads,
+                &geometry.roads,
+                view.rect,
+                view.altitude_km,
+                style
+                    .labels
+                    .get(globecraft_data::settings::map_style::LabelType::Road),
+                scale,
+            );
+            self.names.replace(
+                super::live_geometry::mesh_shapes(painter, names),
+                new_data,
+                now,
             );
             self.projected = Some((geometry.roads.clone(), *style));
         }
         self.shapes.draw(painter, Instant::now());
+        self.names.draw(painter, Instant::now());
         let nearest = hover
             .and_then(|mouse| geometry.nearest_road(mouse, 12.0 * scale))
             .map(|(index, point)| (&roads[index], point));

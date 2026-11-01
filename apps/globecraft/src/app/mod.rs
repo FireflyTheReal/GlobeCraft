@@ -51,6 +51,7 @@ mod navigation;
 mod overlays;
 mod render_wake;
 mod rendering;
+mod road_names;
 mod roads;
 mod ruler_history;
 mod search;

@@ -990,6 +990,7 @@ settings-map-style-label-country = Countries
 settings-map-style-label-state = States and provinces
 
 settings-map-style-label-city = Cities and towns
+settings-map-style-label-road = Street names
 
 settings-map-style-reset-action = Reset map style
 

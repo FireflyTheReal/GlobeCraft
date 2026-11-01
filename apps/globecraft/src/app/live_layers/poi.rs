@@ -202,10 +202,16 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<S
         let opacity = label.opacity;
         let r = MARKER_POINTS * scale;
         let (text, color, font, anchor) = match point.kind {
+            // Seas and oceans in the larger type; lakes, ponds and fountains (also
+            // OpenMapTiles water names) as small as the other names.
             PointKind::Water => (
                 point.name.clone(),
                 WATER_LABEL,
-                water_font.clone(),
+                if matches!(point.class.as_str(), "ocean" | "sea" | "bay") {
+                    water_font.clone()
+                } else {
+                    font.clone()
+                },
                 Align2::CENTER_CENTER,
             ),
             PointKind::Peak => {
