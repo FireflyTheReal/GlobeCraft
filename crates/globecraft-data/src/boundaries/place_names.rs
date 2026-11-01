@@ -174,3 +174,54 @@ mod tests {
         assert_eq!(data.with_place_names(None).labels.len(), 3);
     }
 }
+
+#[cfg(test)]
+mod probe {
+    use crate::boundaries::osm_tiles::content::TileKey;
+
+    /// What the published zoom 13 and 14 place tiles name around a few places, by
+    /// label rank, against the border tiles' zoom 12.
+    #[tokio::test]
+    #[ignore = "network: reads GlobeCraft's published place tiles"]
+    async fn published_close_up_names() {
+        let places = [
+            ("Munich", 48.14, 11.56),
+            ("Lisbon", 38.72, -9.14),
+            ("Tokyo", 35.68, 139.76),
+        ];
+        for (set, zooms) in [("borders", [12u8].as_slice()), ("places", &[13, 14])] {
+            let template = crate::map_data::template(set).await.unwrap();
+            let archives = template
+                .strip_prefix(crate::map_data::PMTILES_PREFIX)
+                .unwrap()
+                .to_owned();
+            for &z in zooms {
+                let keys: Vec<TileKey> = places
+                    .iter()
+                    .map(|&(_, lat, lon)| TileKey::at(z, lat, lon))
+                    .collect();
+                let wanted: Vec<_> = keys.iter().map(|k| (k.z, k.x, k.y)).collect();
+                let parts = crate::map_data::tile_parts_many(&wanted, &archives)
+                    .await
+                    .unwrap();
+                for ((name, _, _), (key, parts)) in places.iter().zip(keys.into_iter().zip(parts)) {
+                    let mut bytes = Vec::new();
+                    for part in parts {
+                        bytes.extend(crate::map_data::gunzip_if_needed(part).unwrap());
+                    }
+                    let labels =
+                        crate::boundaries::osm_tiles::place_labels(key, &bytes).unwrap_or_default();
+                    let mut ranks = std::collections::BTreeMap::<u8, usize>::new();
+                    for label in &labels {
+                        *ranks.entry(label.rank).or_default() += 1;
+                    }
+                    let sample: Vec<&str> = labels.iter().take(6).map(|l| l.en.as_str()).collect();
+                    println!(
+                        "{set} z{z} {name}: {} names, by rank {ranks:?}, e.g. {sample:?}",
+                        labels.len()
+                    );
+                }
+            }
+        }
+    }
+}
