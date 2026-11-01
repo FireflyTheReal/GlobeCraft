@@ -746,3 +746,62 @@ fn a_screenshot_in_progress_does_not_freeze_the_view() {
     assert!(longest < 30, "the view froze for {longest} passes");
     assert_eq!(h.state().cam.tilt, 55.0, "zooming in keeps the tilt");
 }
+
+/// `data.search` finds library sources, and a GeoJSON, GPX or CSV file dropped on
+/// the window becomes a layer (roadmap 2.6 and 2.9). No rendering.
+#[test]
+fn data_search_and_dropped_feature_files() {
+    let mut h = Harness::builder()
+        .with_size(SIZE)
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let found = h
+        .state_mut()
+        .run("data.search", json!({"query": "ocean"}))
+        .expect("search");
+    let codes: Vec<&str> = found["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["preset"].as_str())
+        .collect();
+    assert!(
+        codes.contains(&"gebco") && !codes.contains(&"earthquakes"),
+        "{codes:?}"
+    );
+    let all = h.state_mut().run("data.search", json!({})).expect("search");
+    assert_eq!(
+        all["results"].as_array().unwrap().len(),
+        globecraft_data::user_data::presets::PRESETS.len()
+    );
+    let file = std::env::temp_dir().join("globecraft-drop-test.gpx");
+    std::fs::write(
+        &file,
+        "<gpx><wpt lat=\"1\" lon=\"2\"><name>A</name></wpt></gpx>",
+    )
+    .unwrap();
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+    h.input_mut()
+        .dropped_files
+        .push(Arc::new(Dropped(file.clone())));
+    h.step();
+    let layers = &h.state().settings.user_layers;
+    assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].name, "globecraft-drop-test");
+    assert!(matches!(
+        &layers[0].source,
+        globecraft_data::user_data::UserSource::Features {
+            format: globecraft_data::user_data::FeatureFormat::Gpx,
+            ..
+        }
+    ));
+    let _ = std::fs::remove_file(file);
+}

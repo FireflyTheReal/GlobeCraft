@@ -467,6 +467,45 @@ impl super::App {
                 let id = self.add_user_layer(layer);
                 json!({"id": id, "name": name})
             }
+            "data.search" => {
+                let words: Vec<String> = text("query")
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .map(str::to_lowercase)
+                    .collect();
+                let results: Vec<serde_json::Value> = presets::PRESETS
+                    .iter()
+                    .filter_map(|preset| {
+                        let name = self.lang.text(preset.name_key);
+                        let help = self.lang.text(preset.help_key);
+                        let category = self.lang.text(preset.category.label_key());
+                        let haystack = format!(
+                            "{} {name} {help} {category} {:?}",
+                            preset.code, preset.category
+                        )
+                        .to_lowercase();
+                        words
+                            .iter()
+                            .all(|word| haystack.contains(word.as_str()))
+                            .then(|| {
+                                json!({
+                                    "preset": preset.code,
+                                    "name": name,
+                                    "description": help,
+                                    "category": category,
+                                    "licence": preset.licence,
+                                    "commercial_use": preset.commercial_use,
+                                    "added": self
+                                        .settings
+                                        .user_layers
+                                        .iter()
+                                        .any(|layer| layer.preset.as_deref() == Some(preset.code)),
+                                })
+                            })
+                    })
+                    .collect();
+                json!({"results": results, "hint": "add one with data.add {\"preset\": …}"})
+            }
             "data.remove" => {
                 let index = self.user_layer_index(p)?;
                 let layer = self.settings.user_layers.remove(index);

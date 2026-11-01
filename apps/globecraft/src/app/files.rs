@@ -222,8 +222,35 @@ impl App {
                 .extension()
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| e.eq_ignore_ascii_case("kml") || e.eq_ignore_ascii_case("kmz"));
+            let format = path
+                .to_str()
+                .and_then(globecraft_data::user_data::FeatureFormat::guess);
             if is_kml {
                 self.load_kml_from(path);
+            } else if let (Some(format), Some(location)) = (format, path.to_str()) {
+                // GeoJSON, GPX and CSV become a layer, as from Add Data → File.
+                let name = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or(location)
+                    .to_owned();
+                self.add_user_layer(globecraft_data::user_data::UserLayer {
+                    id: 0,
+                    name: name.clone(),
+                    source: globecraft_data::user_data::UserSource::Features {
+                        location: location.to_owned(),
+                        format,
+                        refresh_minutes: 0,
+                    },
+                    visible: true,
+                    opacity: 1.0,
+                    attribution: String::new(),
+                    color: "#ffb000".into(),
+                    preset: None,
+                });
+                self.status = self
+                    .lang
+                    .format("add-data-added-status", &[("name", name.into())]);
             } else {
                 self.status = Lang::En.text("kml-drop-type-error").into();
             }

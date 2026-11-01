@@ -352,6 +352,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"preset":{"type":"string","enum":["gebco","emodnet_bathymetry","gibs_true_colour","forest_loss","earthquakes"],"description":"A library source: GEBCO seafloor, EMODnet European bathymetry, NASA GIBS yesterday's true colour, Global Forest Watch tree cover loss, USGS earthquakes of the past week"},"url":{"type":"string","description":"Instead of a preset: a web address. For tiles a template with {z}, {x} and {y}; for a WMS its service address; for features a GeoJSON, GPX or CSV file"},"kind":{"type":"string","enum":["tiles","wms","features"]},"layers":{"type":"string","description":"WMS layer names, comma-separated"},"format":{"type":"string","enum":["geojson","gpx","csv"]},"refresh_minutes":{"type":"integer","description":"Reload a feature URL this often; 0 loads it once"},"max_zoom":{"type":"integer"},"name":{"type":"string"},"attribution":{"type":"string"}}}"#
     ),
     command!(
+        "data.search",
+        "data-search",
+        "search",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"query":{"type":"string","description":"Words to look for in the library's names, descriptions and categories (ocean, earth, hazards); empty lists the whole library"}}}"#
+    ),
+    command!(
         "data.show",
         "data-show",
         "eye",

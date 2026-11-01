@@ -6,7 +6,7 @@ kml-save-dialog-title = Salvar KML ou KMZ como
 
 screenshot-empty-error = Nada para salvar ainda.
 
-kml-drop-type-error = Só é possível soltar arquivos .kml ou .kmz aqui.
+kml-drop-type-error = Só é possível soltar arquivos KML, KMZ, GeoJSON, GPX ou CSV aqui.
 
 globe-placemark-action = Adicionar local aqui
 
@@ -744,6 +744,8 @@ cmd-ui-add-data = Adicionar dados
 cmd-ui-add-data-help = Adiciona um mapa da web, pontos e linhas de um arquivo ou URL, ou uma fonte da biblioteca.
 cmd-data-add = Adicionar camada de dados
 cmd-data-add-help = Adiciona como camada uma fonte da biblioteca, um mapa da web ou um feed GeoJSON, GPX ou CSV.
+cmd-data-search = Pesquisar biblioteca de dados
+cmd-data-search-help = Encontra fontes na biblioteca de Adicionar dados por nome, descrição ou categoria.
 cmd-data-show = Mostrar camada do usuário
 cmd-data-show-help = Mostra ou oculta uma camada que você adicionou.
 cmd-data-opacity = Opacidade da camada do usuário
