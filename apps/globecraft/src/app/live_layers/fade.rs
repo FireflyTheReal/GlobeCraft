@@ -58,12 +58,32 @@ fn extend_with_opacity(painter: &egui::Painter, shapes: &[Shape], opacity: f32) 
     if opacity <= 0.0 || shapes.is_empty() {
         return;
     }
+    // Collected first: `extend` holds the context's lock that layout needs.
+    let shapes: Vec<Shape> = shapes
+        .iter()
+        .map(|shape| fresh_text(painter, shape))
+        .collect();
     if opacity >= 1.0 {
-        painter.extend(shapes.iter().cloned());
+        painter.extend(shapes);
     } else {
         let mut faded = painter.clone();
         faded.multiply_opacity(opacity);
-        faded.extend(shapes.iter().cloned());
+        faded.extend(shapes);
+    }
+}
+
+/// A kept shape for this frame; text is laid out again. A galley holds the places
+/// of its glyphs in the font atlas, and egui rebuilds the atlas when it fills up
+/// (many different names on screen), so galleys kept from an earlier frame drew
+/// other glyphs: garbled names. egui caches layouts, so this is cheap.
+fn fresh_text(painter: &egui::Painter, shape: &Shape) -> Shape {
+    match shape {
+        Shape::Text(text) => {
+            let mut text = text.clone();
+            text.galley = painter.layout_job((*text.galley.job).clone());
+            Shape::Text(text)
+        }
+        shape => shape.clone(),
     }
 }
 

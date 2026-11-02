@@ -1,7 +1,7 @@
 //! Places of interest, peaks, waters and parks: rivers and park outlines under the
 //! borders, names over them, styled once per projected geometry.
 use super::fade::{TiledShapes, styled_line};
-use eframe::egui::{self, Align2, Color32, FontId, Shape, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
 use globecraft_data::settings::map_style::{LineType, MapStyle};
@@ -18,6 +18,8 @@ const MARKER_POINTS: f32 = 3.2;
 const LABEL_OFFSET_POINTS: f32 = 7.0;
 /// Between a place's badge and its name.
 const BADGE_GAP_POINTS: f32 = 3.0;
+/// Free room kept around each marker and name, map points.
+const LABEL_PADDING_POINTS: f32 = 2.0;
 const PARK: Color32 = Color32::from_rgb(92, 180, 96);
 const PARK_LABEL: Color32 = Color32::from_rgb(190, 240, 190);
 const PEAK: Color32 = Color32::from_rgb(150, 105, 70);
@@ -170,12 +172,18 @@ fn lines(geometry: &LiveGeometry, style: &MapStyle, scale: f32) -> Vec<(TileFade
     shapes
 }
 
+/// Markers and names. Labels come in priority order; each takes the room it
+/// covers on screen, so a later one whose name would overlap an earlier marker or
+/// name tries the other side of its marker, and else shows its marker alone (or
+/// nothing when even that is covered) — as map apps thin out busy streets.
 fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(TileFade, Shape)> {
     let Some(snapshot) = &geometry.input.poi else {
         return Vec::new();
     };
     let font = crate::app::fonts::map_font(painter.ctx(), LABEL_FONT_POINTS * scale);
     let water_font = FontId::new(WATER_FONT_POINTS * scale, font.family.clone());
+    let padding = LABEL_PADDING_POINTS * scale;
+    let mut placed: Vec<Rect> = Vec::new();
     let mut markers = Vec::new();
     let mut texts = Vec::new();
     for label in &geometry.poi.labels {
@@ -190,7 +198,8 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(
         let at = label.position;
         let opacity = label.opacity;
         let r = MARKER_POINTS * scale;
-        let (text, color, font, anchor) = match point.kind {
+        let mut marker = Vec::new();
+        let (text, color, font, beside) = match point.kind {
             // Seas and oceans in the larger type; lakes, ponds and fountains (also
             // OpenMapTiles water names) as small as the other names.
             PointKind::Water => (
@@ -201,59 +210,75 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(
                 } else {
                     font.clone()
                 },
-                Align2::CENTER_CENTER,
+                None,
             ),
             PointKind::Peak => {
-                markers.push((
-                    fade,
-                    Shape::convex_polygon(
-                        vec![
-                            at + Vec2::new(0.0, -r * 1.4),
-                            at + Vec2::new(r * 1.3, r),
-                            at + Vec2::new(-r * 1.3, r),
-                        ],
-                        PEAK.gamma_multiply(opacity),
-                        Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
-                    ),
+                marker.push(Shape::convex_polygon(
+                    vec![
+                        at + Vec2::new(0.0, -r * 1.4),
+                        at + Vec2::new(r * 1.3, r),
+                        at + Vec2::new(-r * 1.3, r),
+                    ],
+                    PEAK.gamma_multiply(opacity),
+                    Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
                 ));
                 let text = match point.elevation_m {
                     Some(metres) => format!("{} {metres} m", point.name),
                     None => point.name.clone(),
                 };
-                (text, LABEL, font.clone(), Align2::LEFT_CENTER)
+                (text, LABEL, font.clone(), Some(LABEL_OFFSET_POINTS * scale))
             }
             PointKind::Park => {
-                markers.push((
-                    fade,
-                    Shape::circle_filled(at, r, PARK.gamma_multiply(opacity)),
-                ));
+                marker.push(Shape::circle_filled(at, r, PARK.gamma_multiply(opacity)));
                 (
                     point.name.clone(),
                     PARK_LABEL,
                     font.clone(),
-                    Align2::LEFT_CENTER,
+                    Some(LABEL_OFFSET_POINTS * scale),
                 )
             }
             PointKind::Poi => {
-                let mut badge = Vec::new();
-                super::poi_icons::badge(&mut badge, at, &point.class, scale, opacity);
-                markers.extend(badge.into_iter().map(|shape| (fade, shape)));
-                (point.name.clone(), LABEL, font.clone(), Align2::LEFT_CENTER)
+                super::poi_icons::badge(&mut marker, at, &point.class, scale, opacity);
+                (
+                    point.name.clone(),
+                    LABEL,
+                    font.clone(),
+                    Some((super::poi_icons::BADGE_RADIUS_POINTS + BADGE_GAP_POINTS) * scale),
+                )
             }
         };
-        let offset = if anchor == Align2::CENTER_CENTER {
-            Vec2::ZERO
-        } else if point.kind == PointKind::Poi {
-            // Beside the badge.
-            Vec2::new(
-                (super::poi_icons::BADGE_RADIUS_POINTS + BADGE_GAP_POINTS) * scale,
-                0.0,
-            )
-        } else {
-            Vec2::new(LABEL_OFFSET_POINTS * scale, 0.0)
-        };
+        let marker_rect = Shape::Vec(marker.clone())
+            .visual_bounding_rect()
+            .expand(padding);
+        if marker_rect.is_positive() && placed.iter().any(|other| other.intersects(marker_rect)) {
+            continue;
+        }
         let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
-        let position = anchor.anchor_size(at + offset, galley.size()).min;
+        let size = galley.size();
+        // Right of the marker, else left of it; centred names have one place.
+        let candidates: Vec<egui::Pos2> = match beside {
+            None => vec![Align2::CENTER_CENTER.anchor_size(at, size).min],
+            Some(offset) => vec![
+                Align2::LEFT_CENTER
+                    .anchor_size(at + Vec2::new(offset, 0.0), size)
+                    .min,
+                Align2::RIGHT_CENTER
+                    .anchor_size(at - Vec2::new(offset, 0.0), size)
+                    .min,
+            ],
+        };
+        let position = candidates.into_iter().find(|min| {
+            let rect = Rect::from_min_size(*min, size).expand(padding);
+            !placed.iter().any(|other| other.intersects(rect))
+        });
+        if marker_rect.is_positive() {
+            placed.push(marker_rect);
+            markers.extend(marker.into_iter().map(|shape| (fade, shape)));
+        }
+        let Some(position) = position else {
+            continue;
+        };
+        placed.push(Rect::from_min_size(position, size).expand(padding));
         let shadow = painter.layout_no_wrap(text, font, Color32::BLACK);
         texts.push((
             fade,

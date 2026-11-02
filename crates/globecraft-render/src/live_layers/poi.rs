@@ -16,8 +16,10 @@ const RIVER_MAX_ALTITUDE_KM: f64 = 1_500.0;
 const CANAL_MAX_ALTITUDE_KM: f64 = 100.0;
 /// Lake and bay names below this; seas and oceans at every shown altitude.
 const SMALL_WATER_MAX_ALTITUDE_KM: f64 = 400.0;
-const MAX_LABELS: usize = 120;
-const LABEL_SEPARATION_POINTS: f32 = 60.0;
+const MAX_LABELS: usize = 200;
+/// The least distance between two markers. Names are kept apart by the app, which
+/// measures them, so this only thins out the candidates.
+const LABEL_SEPARATION_POINTS: f32 = 24.0;
 
 /// Which of the layers are on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
