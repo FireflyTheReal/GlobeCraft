@@ -7,9 +7,13 @@ alongside the CPU renderer.
 The experimental renderer ray-casts the overview globe, calculates Mercator coordinates and LOD, samples
 imagery, blends zoom levels, and applies sunlight and atmosphere on the GPU.
 The render crate owns it; the egui presentation backend stays in the app.
-The desktop uses eframe's default wgpu presentation independently of globe
-computation, including in CPU-only globe builds. Upstream graphics backend
-fallbacks remain enabled. This UI backend does not accelerate CPU globe calculations.
+The desktop uses eframe's wgpu presentation independently of globe
+computation, including in CPU-only globe builds. On Linux and the BSDs it uses
+Vulkan only (`WGPU_BACKEND` overrides): wgpu's OpenGL backend opens EGL as soon as
+the instance is created, and a driver that returns no display without an error
+panics inside `khronos-egl` (issue #1). When wgpu cannot start, the app starts
+again with eframe's glow (OpenGL) renderer. Elsewhere eframe's default backends
+remain. The compute renderer uses Vulkan, Metal or DX12 only. This UI backend does not accelerate CPU globe calculations.
 Adapter/device creation, texture uploads, execution and readback run on the frame
 coordinator, never on the UI thread.
 

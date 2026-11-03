@@ -29,6 +29,7 @@ fn main() -> Result<(), eframe::Error> {
     // Downloads of the border pipeline removed on 2026-10-25.
     std::thread::spawn(globecraft_data::remove_retired_caches);
     let restart = Arc::new(RestartRequest::default());
+    let mut renderer = eframe::Renderer::Wgpu;
     loop {
         let settings = globecraft_data::settings::Settings::load();
         let mut viewport = egui::ViewportBuilder::default()
@@ -56,15 +57,24 @@ fn main() -> Result<(), eframe::Error> {
         }
         let options = eframe::NativeOptions {
             viewport,
+            renderer,
             wgpu_options: presentation::configuration(settings.uncap_fps),
             ..Default::default()
         };
         let app_restart = restart.clone();
-        eframe::run_native(
+        let result = eframe::run_native(
             WINDOW_TITLE,
             options,
             Box::new(move |cc| Ok(Box::new(App::new(cc, settings, app_restart)))),
-        )?;
+        );
+        if let Err(error) = &result
+            && presentation::retry_with_glow(renderer, error)
+        {
+            eprintln!("The wgpu interface renderer could not start ({error}); using OpenGL");
+            renderer = eframe::Renderer::Glow;
+            continue;
+        }
+        result?;
         // run_native has closed the window and dropped App, flushing preferences and
         // stopping its workers before the updated executable replaces this process.
         if !restart.requested.swap(false, Ordering::AcqRel) {

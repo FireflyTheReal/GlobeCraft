@@ -1,6 +1,7 @@
 """Coordinate native Linux packaging tools and preserve release asset names."""
 
 import argparse
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -60,12 +61,38 @@ def native_package(version, target, binary, archive, temporary, format_name):
     extension = "AppImage" if format_name == "appimage" else "deb"
     shutil.copy2(tools.artifact(output, extension), archive)
     if format_name == "appimage":
+        libraries = bundled_libraries(archive)
+        print(f"{archive.name} bundles: {' '.join(libraries)}")
+        check_bundled_libraries(libraries, config["appimage"]["excludedLibs"])
         # Generate against the final filename so Filename/URL headers and release
         # links agree, independently of cargo-packager's internal output names.
         delta = archive.with_suffix(".AppImage.zsync")
         subprocess.run(["zsyncmake", "-o", str(delta), "-f", archive.name,
                         "-u", archive.name, str(archive)], check=True)
         release.write_checksum(delta)
+
+
+def bundled_libraries(appimage):
+    """Names of the shared libraries inside an AppImage, sorted."""
+    with tempfile.TemporaryDirectory() as directory:
+        subprocess.run([str(appimage.resolve()), "--appimage-extract"], cwd=directory,
+                       check=True, stdout=subprocess.DEVNULL)
+        lib = Path(directory) / "squashfs-root/usr/lib"
+        return sorted({path.name for path in lib.rglob("*.so*")})
+
+
+def check_bundled_libraries(libraries, excluded):
+    """Fails when the AppImage carries a library that must come from the system.
+
+    Wayland, xkbcommon and the GL/EGL/Vulkan/DRM stack are loaded by the system's
+    graphics drivers too; an older bundled copy made Mesa's EGL fail and the app
+    crash at start (issue #1). linuxdeploy's GTK plugin deploys libraries in a
+    second pass that does not see cargo-packager's exclusions, so check the result.
+    """
+    bundled = [name for name in libraries
+               if any(fnmatch.fnmatch(name, pattern) for pattern in excluded)]
+    if bundled:
+        raise ValueError(f"AppImage bundles system libraries: {', '.join(bundled)}")
 
 
 def rpm(version, target, binary, archive):

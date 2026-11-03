@@ -14,7 +14,8 @@
   "appimage": {
     "linuxdeployPlugins": {
       "gtk": "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
-    }
+    },
+    "excludedLibs": ["libwayland-*", "libxkbcommon*", "libEGL*", "libGL*", "libOpenGL*", "libvulkan*", "libdrm*", "libgbm*"]
   },
   "macos": {"minimumSystemVersion": "11.0"},
   "windows": {"allowDowngrades": false}

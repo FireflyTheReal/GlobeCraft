@@ -78,7 +78,13 @@ impl GpuRenderer {
         pollster::block_on(Self::initialize())
     }
     async fn initialize() -> Result<Self, String> {
-        let instance = wgpu::Instance::default();
+        // Vulkan, Metal or DX12 only: wgpu's OpenGL backend lacks what this compute
+        // renderer needs, and starting it opens EGL, which can panic on a broken
+        // driver (issue #1).
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,

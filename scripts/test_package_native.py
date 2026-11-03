@@ -1,5 +1,6 @@
 """Offline release-contract and native-tool integration regression checks."""
 
+import fnmatch
 import hashlib
 import json
 from pathlib import Path
@@ -73,6 +74,9 @@ class NativePackagingTests(unittest.TestCase):
                     self.assertEqual(desktop.stem, launcher.stem)
                     self.assertIn(f"Icon={tools.APP_ID}", desktop.read_text())
                     self.assertEqual(config["appimage"]["linuxdeployPlugins"].keys(), {"gtk"})
+                    for library in ("libwayland-client.so.0", "libwayland-egl.so.1", "libxkbcommon.so.0", "libEGL.so.1"):
+                        self.assertTrue(any(fnmatch.fnmatch(library, pattern)
+                                            for pattern in config["appimage"]["excludedLibs"]), library)
                     for source, destination in config["appimage"]["files"].items():
                         if destination.endswith(".appdata.xml"):
                             component = ET.parse(source)
@@ -89,11 +93,21 @@ class NativePackagingTests(unittest.TestCase):
                     self.assertEqual(Path(command[-1]).read_bytes(), b"packaged fixture")
                     Path(command[command.index("-o") + 1]).write_bytes(b"delta fixture")
 
-                with mock.patch.object(tools, "run", side_effect=package), mock.patch.object(linux.subprocess, "run", side_effect=zsync):
+                bundled = mock.patch.object(linux, "bundled_libraries",
+                                            return_value=["libgtk-3.so.0", "libpango-1.0.so.0"])
+                with mock.patch.object(tools, "run", side_effect=package), mock.patch.object(linux.subprocess, "run", side_effect=zsync), bundled as listed:
                     linux.native_package("0.1.0", target, binary, archive, root, "appimage")
+                listed.assert_called_once_with(archive)
                 delta = archive.with_suffix(".AppImage.zsync")
                 self.assertEqual(delta.with_suffix(".zsync.sha256").read_text(),
                                  f"{hashlib.sha256(delta.read_bytes()).hexdigest()}  {delta.name}\n")
+
+    def test_appimage_with_system_graphics_libraries_fails(self):
+        excluded = ["libwayland-*", "libxkbcommon*"]
+        linux.check_bundled_libraries(["libgtk-3.so.0", "libXi.so.6"], excluded)
+        with self.assertRaisesRegex(ValueError, "libwayland-client.so.0, libxkbcommon.so.0"):
+            linux.check_bundled_libraries(
+                ["libgtk-3.so.0", "libwayland-client.so.0", "libxkbcommon.so.0"], excluded)
 
     def test_windows_installer_keeps_target_and_portable_binary(self):
         version = release.workspace_version()

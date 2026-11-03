@@ -21,7 +21,8 @@ globecraft-data.workspace = true
 globecraft-render.workspace = true
 globecraft-assistant.workspace = true
 serde_json.workspace = true
-eframe.workspace = true
+# glow: the OpenGL interface renderer, used when wgpu cannot start (issue #1).
+eframe = { workspace = true, features = ["glow"] }
 glam.workspace = true
 egui-wgpu.workspace = true
 wgpu.workspace = true

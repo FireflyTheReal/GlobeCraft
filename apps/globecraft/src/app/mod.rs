@@ -498,7 +498,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn on_exit(&mut self) {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let restarting = self
             .update_restart
             .request
