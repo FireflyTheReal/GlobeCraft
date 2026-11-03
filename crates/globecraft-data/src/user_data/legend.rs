@@ -5,6 +5,9 @@ use image::RgbaImage;
 /// The largest legend read, and the largest side kept.
 const MAX_LEGEND_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_LEGEND_SIDE_PX: u32 = 2048;
+/// Legends smaller than this on either side hold nothing to read (GEBCO answers
+/// with a 35×5 strip) and are not shown.
+const MIN_LEGEND_SIDE_PX: u32 = 8;
 /// Query keys of a GetMap request that do not carry over to GetLegendGraphic.
 const GET_MAP_KEYS: [&str; 12] = [
     "service",
@@ -70,6 +73,14 @@ pub async fn legend_image(url: String) -> Result<RgbaImage, crate::Error> {
         super::raster::decode(&bytes)
     })
     .await?;
+    if image.width() < MIN_LEGEND_SIDE_PX || image.height() < MIN_LEGEND_SIDE_PX {
+        return Err(format!(
+            "the legend is {}×{} pixels, too small to show",
+            image.width(),
+            image.height()
+        )
+        .into());
+    }
     if image.width() > MAX_LEGEND_SIDE_PX || image.height() > MAX_LEGEND_SIDE_PX {
         return Err(format!(
             "the legend is {}×{} pixels, larger than {MAX_LEGEND_SIDE_PX}",
@@ -126,11 +137,14 @@ mod tests {
             let Some(url) = wms_legend_url(&template) else {
                 continue;
             };
-            let image = legend_image(url.clone())
-                .await
-                .unwrap_or_else(|error| panic!("{}: {url}: {error}", preset.code));
-            println!("{}: {}×{}", preset.code, image.width(), image.height());
-            assert!(image.width() > 0 && image.height() > 0);
+            // A legend may be too small to show (GEBCO's is); it must still answer.
+            match legend_image(url.clone()).await {
+                Ok(image) => println!("{}: {}×{}", preset.code, image.width(), image.height()),
+                Err(error) if error.to_string().contains("too small") => {
+                    println!("{}: {error}", preset.code);
+                }
+                Err(error) => panic!("{}: {url}: {error}", preset.code),
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ mod fade;
 pub(super) use fade::{TiledShapes, stroke_runs, styled_line};
 mod poi;
 mod poi_icons;
+mod poi_memory;
 mod shapes;
 mod transport;
 pub(super) use poi::PoiShapes;

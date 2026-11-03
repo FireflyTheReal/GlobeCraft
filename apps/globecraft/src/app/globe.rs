@@ -508,11 +508,12 @@ impl App {
             } else {
                 None
             };
-            // All map names share one screen, placed in priority order: the markers of
-            // the user's data, place names, the user's point names, street names,
-            // airports, then places of interest. Each layer places its
-            // names where the ones before it left room; painting keeps its own order.
-            // The markers of the user's data are always drawn, so they come first.
+            // All map names share one screen, placed in priority order, each layer
+            // where the ones before it left room (painting keeps its own order):
+            // the markers of the user's data (always drawn), places of interest
+            // already on screen (a name once drawn stays while the view zooms),
+            // place names, the user's point names, street names, airports, then
+            // new places of interest.
             self.user_layers.prepare_features(
                 &painter,
                 &display_basis,
@@ -522,6 +523,10 @@ impl App {
             );
             let mut taken = LabelSpace::default();
             taken.add(self.user_layers.markers());
+            if let Some(geometry) = &live_geometry {
+                self.poi_shapes.prepare_shown(&painter, geometry, &taken);
+                taken.add(self.poi_shapes.shown_placed());
+            }
             self.prepare_overlays(&painter, &display_basis, rect, display_cam.alt, &taken);
             taken.add(&self.overlay_cache.placed());
             self.user_layers

@@ -125,6 +125,7 @@ impl App {
             transport_layers: self.transport_layers(),
             poi: self.poi_tiles.shared_snapshot(),
             poi_layers: self.poi_layers(),
+            poi_shown: Some(self.poi_shapes.shown()),
             unix_secs: now_unix(),
         }
     }
@@ -197,6 +198,7 @@ mod tests {
             transport_layers: Default::default(),
             poi: None,
             poi_layers: Default::default(),
+            poi_shown: None,
             unix_secs: 1_700_000_000.0,
         };
         let geometry =
@@ -259,6 +261,7 @@ mod tests {
             transport_layers: Default::default(),
             poi: None,
             poi_layers: Default::default(),
+            poi_shown: None,
             unix_secs: 1_700_000_000.0,
         };
         let geometry =

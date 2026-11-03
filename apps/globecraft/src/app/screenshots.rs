@@ -403,6 +403,88 @@ fn add_data_screenshots() {
     save(&mut h, &dir, "12-layers-ribbon-advanced");
 }
 
+/// Zooms in over Berlin Mitte with places of interest on, as in the user's recording
+/// of 2026-11-03, and counts names that were drawn and then vanished or changed side
+/// while their point stayed well inside the view. Saves a frame per step. Manual.
+#[test]
+#[ignore = "manual: needs network; zooms in with places of interest on"]
+fn poi_zoom_stability() {
+    use globecraft_core::layers::MapLayer;
+    use std::collections::HashMap;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let place_names = std::env::var_os("GLOBECRAFT_SHOT_NO_PLACES").is_none();
+    h.state_mut()
+        .settings
+        .set_layer_visible(MapLayer::PointsOfInterest, true);
+    h.state_mut()
+        .settings
+        .set_layer_visible(MapLayer::PlaceLabels, place_names);
+    let at = |h: &mut Harness<'static, App>, altitude_km: f64| {
+        let _ = h.state_mut().run(
+            "camera.set",
+            json!({"lat": 52.5206, "lon": 13.3942, "altitude_km": altitude_km, "heading_deg": 0.0}),
+        );
+    };
+    at(&mut h, 6.0);
+    settle(&mut h, 20.0);
+    // Each drawn name's side and point, and the inner part of the view, last step.
+    let mut previous: HashMap<String, (Option<usize>, egui::Pos2)> = HashMap::new();
+    let mut previous_inner = egui::Rect::NOTHING;
+    let (mut vanished, mut moved, mut drawn_total) = (0, 0, 0);
+    for step in 0..30 {
+        at(&mut h, 6.0 * 0.96f64.powi(step + 1));
+        settle(&mut h, 0.4);
+        let drawn: Vec<_> = h.state().poi_shapes.drawn().to_vec();
+        let now: HashMap<String, (Option<usize>, egui::Pos2)> = drawn
+            .iter()
+            .filter(|(_, side, _)| side.is_some())
+            .map(|(key, side, point)| (format!("{key:?}"), (*side, *point)))
+            .collect();
+        // A name well inside the view a step ago is still in view after zooming in
+        // 4 %: it should still be drawn, on the same side.
+        for (key, (side, point)) in &previous {
+            if !previous_inner.contains(*point) {
+                continue;
+            }
+            match now.get(key) {
+                None => {
+                    vanished += 1;
+                    let reason = match drawn.iter().find(|(k, _, _)| format!("{k:?}") == *key) {
+                        Some(_) => "name blocked",
+                        None if h
+                            .state()
+                            .poi_shapes
+                            .blocked()
+                            .iter()
+                            .any(|k| format!("{k:?}") == *key) =>
+                        {
+                            "marker blocked"
+                        }
+                        None => "not projected",
+                    };
+                    println!("vanished at step {step}: {key} ({reason})");
+                }
+                Some((new, _)) if new != side => moved += 1,
+                _ => {}
+            }
+        }
+        // The area the points cover, less a fifth at each side.
+        let covered =
+            egui::Rect::from_points(&drawn.iter().map(|(_, _, p)| *p).collect::<Vec<_>>());
+        previous_inner = covered.shrink2(covered.size() * 0.2);
+        drawn_total += now.len();
+        previous = now;
+        save(&mut h, &dir, &format!("14-poi-zoom-{step:02}"));
+    }
+    println!(
+        "POI zoom: {drawn_total} names drawn over 30 steps, {vanished} vanished, {moved} changed side"
+    );
+}
+
 /// A WMS layer's legend in the Layers pane. `GLOBECRAFT_SHOT_WMS` is the service's
 /// address (a local server answering any request with a legend image will do).
 #[test]

@@ -1,13 +1,14 @@
 //! Places of interest, peaks, waters and parks: rivers and park outlines under the
 //! borders, names over them, styled once per projected geometry.
 use super::fade::{TiledShapes, styled_line};
+use super::poi_memory::PoiMemory;
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
 use globecraft_data::settings::map_style::{LineType, MapStyle};
 use globecraft_data::vector_tiles::TileFade;
-use globecraft_render::live_layers::LiveGeometry;
-use globecraft_render::overlays::{LabelSpace, LabelSpaceKey};
+use globecraft_render::live_layers::{LiveGeometry, PoiKey, PoiShown};
+use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -27,17 +28,99 @@ const WATER_LABEL: Color32 = Color32::from_rgb(150, 200, 255);
 pub(in crate::app) struct PoiShapes {
     /// What the lines were built from: the projected geometry, scale and style.
     key: Option<(usize, u32, MapStyle)>,
-    /// What the names were placed for: the projected geometry, scale and the room
-    /// names of higher priority took.
+    /// What the names already on screen were placed for: the projected geometry,
+    /// scale and the room names of higher priority took.
+    shown_key: Option<(usize, u32, LabelSpaceKey)>,
+    /// The same for the names newly shown.
     labels_key: Option<(usize, u32, LabelSpaceKey)>,
     lines: TiledShapes,
+    /// Names already on screen: placed before the street names, so a name once
+    /// drawn is not pushed out by one that appears later.
+    shown_labels: TiledShapes,
+    shown_pass: Vec<Drawn>,
+    shown_placed: PlacedLabels,
+    /// Names newly shown, placed last.
     labels: TiledShapes,
+    /// The names on screen, which keep their places.
+    memory: PoiMemory,
+}
+
+/// A place a pass drew: its key, the side its name took (`None`: marker only), and
+/// its point on screen.
+type Drawn = (PoiKey, Option<usize>, egui::Pos2);
+
+/// Which names a placement pass takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// Those on screen already.
+    Shown,
+    /// The others.
+    New,
+}
+
+/// What one placement pass made.
+struct Placement {
+    shapes: Vec<(TileFade, Shape)>,
+    drawn: Vec<Drawn>,
+    /// The room its markers and names take.
+    rects: Vec<Rect>,
 }
 
 impl PoiShapes {
     pub(in crate::app) fn invalidate(&mut self) {
         self.key = None;
+        self.shown_key = None;
         self.labels_key = None;
+        self.memory.clear();
+    }
+    /// Places the names already on screen, where `taken` (place names and the
+    /// user's data) is free; `shown_placed` is their room for the layers after.
+    pub(in crate::app) fn prepare_shown(
+        &mut self,
+        painter: &egui::Painter,
+        geometry: &LiveGeometry,
+        taken: &LabelSpace,
+    ) {
+        let source = Arc::as_ptr(&geometry.poi) as usize;
+        let scale = geometry.input.view.map_scale;
+        let key = (source, scale.to_bits(), taken.key());
+        if self.shown_key.as_ref() == Some(&key) {
+            return;
+        }
+        #[cfg(test)]
+        self.memory.blocked.clear();
+        let placement = labels(
+            painter,
+            geometry,
+            scale,
+            taken,
+            &mut self.memory,
+            Pass::Shown,
+        );
+        self.shown_labels = TiledShapes::build(painter, placement.shapes);
+        self.shown_pass = placement.drawn;
+        self.shown_placed.replace(placement.rects);
+        self.shown_key = Some(key);
+        // The new names place around these again.
+        self.labels_key = None;
+    }
+    /// The room the names already on screen take.
+    pub(in crate::app) fn shown_placed(&self) -> &PlacedLabels {
+        &self.shown_placed
+    }
+    /// What the last placement drew: each name's key, side and point.
+    #[cfg(test)]
+    pub(in crate::app) fn drawn(&self) -> &[(PoiKey, Option<usize>, egui::Pos2)] {
+        self.memory.last()
+    }
+    /// Names whose marker had no room in the last placement.
+    #[cfg(test)]
+    pub(in crate::app) fn blocked(&self) -> &[PoiKey] {
+        &self.memory.blocked
+    }
+    /// The names on screen, for the projection to keep first.
+    pub(in crate::app) fn shown(&self) -> Arc<PoiShown> {
+        self.memory.shown()
     }
     /// Brings the shapes up to date; markers and names go only where `taken` is
     /// free (the names of every other map layer come first).
@@ -53,7 +136,11 @@ impl PoiShapes {
         let scale = geometry.input.view.map_scale;
         let labels_key = (source, scale_bits, taken.key());
         if self.labels_key.as_ref() != Some(&labels_key) {
-            self.labels = TiledShapes::build(painter, labels(painter, geometry, scale, taken));
+            let placement = labels(painter, geometry, scale, taken, &mut self.memory, Pass::New);
+            self.labels = TiledShapes::build(painter, placement.shapes);
+            let mut drawn = self.shown_pass.clone();
+            drawn.extend(placement.drawn);
+            self.memory.finish(Instant::now(), drawn);
             self.labels_key = Some(labels_key);
         }
         let key = (source, scale_bits, *style);
@@ -68,7 +155,9 @@ impl PoiShapes {
     }
     /// Markers and names, drawn over the borders.
     pub(in crate::app) fn draw_labels(&self, painter: &egui::Painter) {
-        self.labels.draw(painter, Instant::now());
+        let now = Instant::now();
+        self.shown_labels.draw(painter, now);
+        self.labels.draw(painter, now);
     }
     /// The nearest name under the pointer, with its class or elevation.
     pub(in crate::app) fn hover(
@@ -170,19 +259,27 @@ fn lines(geometry: &LiveGeometry, style: &MapStyle, scale: f32) -> Vec<(TileFade
     shapes
 }
 
-/// Markers and names. Labels come in priority order; each takes the room it
-/// covers on screen, so a later one whose name would overlap an earlier marker or
-/// name (or a name of another layer, in `taken`) tries the other side of its
-/// marker, and else shows its marker alone (or nothing when even that is covered)
-/// — as map apps thin out busy streets.
+/// Markers and names. Labels come in priority order, names already on screen first
+/// (`memory`); each takes the room it covers on screen, so a later one whose name
+/// would overlap an earlier marker or name (or a name of another layer, in `taken`)
+/// tries the other side of its marker, and else shows its marker alone (or nothing
+/// when even that is covered) — as map apps thin out busy streets. A name on screen
+/// tries its side first and keeps fading from when it first showed, whichever tile
+/// carries it now, so zooming in neither moves nor refades it.
 fn labels(
     painter: &egui::Painter,
     geometry: &LiveGeometry,
     scale: f32,
     taken: &LabelSpace,
-) -> Vec<(TileFade, Shape)> {
+    memory: &mut PoiMemory,
+    pass: Pass,
+) -> Placement {
     let Some(snapshot) = &geometry.input.poi else {
-        return Vec::new();
+        return Placement {
+            shapes: Vec::new(),
+            drawn: Vec::new(),
+            rects: Vec::new(),
+        };
     };
     let font = crate::app::fonts::map_font(painter.ctx(), LABEL_FONT_POINTS * scale);
     let water_font = FontId::new(WATER_FONT_POINTS * scale, font.family.clone());
@@ -190,7 +287,22 @@ fn labels(
     let mut placed: Vec<Rect> = Vec::new();
     let mut markers = Vec::new();
     let mut texts = Vec::new();
-    for label in &geometry.poi.labels {
+    let now = Instant::now();
+    let mut shown: Vec<Drawn> = Vec::new();
+    // Names already on screen go in the order `PoiMemory::tier` gives (stable, so
+    // priority order holds within each tier).
+    let mut order: Vec<_> = geometry.poi.labels.iter().collect();
+    if pass == Pass::Shown {
+        order.sort_by_key(|label| {
+            snapshot
+                .tiles
+                .get(label.tile)
+                .and_then(|tile| tile.points.get(label.index))
+                .and_then(|point| memory.get(&PoiKey::of(point)))
+                .map_or(u8::MAX, |entry| memory.tier(entry))
+        });
+    }
+    for label in order {
         let Some(point) = snapshot
             .tiles
             .get(label.tile)
@@ -198,7 +310,15 @@ fn labels(
         else {
             continue;
         };
-        let fade = snapshot.fade(label.tile);
+        let key = PoiKey::of(point);
+        let remembered = memory.get(&key);
+        if remembered.is_some() != (pass == Pass::Shown) {
+            continue;
+        }
+        let fade = TileFade {
+            shown: Some(remembered.map_or(now, |entry| entry.since)),
+            retired: snapshot.fade(label.tile).retired,
+        };
         let at = label.position;
         let opacity = label.opacity;
         let mut marker = Vec::new();
@@ -230,6 +350,8 @@ fn labels(
             && (placed.iter().any(|other| other.intersects(marker_rect))
                 || !taken.is_free(marker_rect))
         {
+            #[cfg(test)]
+            memory.blocked.push(key.clone());
             continue;
         }
         let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
@@ -246,15 +368,19 @@ fn labels(
                     .min,
             ],
         };
-        let position = candidates.into_iter().find(|min| {
-            let rect = Rect::from_min_size(*min, size).expand(padding);
+        // The side it had first.
+        let first = remembered.and_then(|entry| entry.side).unwrap_or(0);
+        let order = std::iter::once(first).chain((0..candidates.len()).filter(|&i| i != first));
+        let side = order.filter(|&i| i < candidates.len()).find(|&i| {
+            let rect = Rect::from_min_size(candidates[i], size).expand(padding);
             !placed.iter().any(|other| other.intersects(rect)) && taken.is_free(rect)
         });
         if marker_rect.is_positive() {
             placed.push(marker_rect);
             markers.extend(marker.into_iter().map(|shape| (fade, shape)));
         }
-        let Some(position) = position else {
+        shown.push((key, side, at));
+        let Some(position) = side.map(|i| candidates[i]) else {
             continue;
         };
         placed.push(Rect::from_min_size(position, size).expand(padding));
@@ -269,7 +395,11 @@ fn labels(
         ));
     }
     markers.extend(texts);
-    markers
+    Placement {
+        shapes: markers,
+        drawn: shown,
+        rects: placed,
+    }
 }
 
 #[cfg(test)]

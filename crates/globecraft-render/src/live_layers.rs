@@ -9,7 +9,7 @@ use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
     roads::Road, satellites::Satellite, tiles::TileCache, traffic::TrafficTiles, vessels::Vessel,
 };
-pub use poi::{PoiLayers, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
+pub use poi::{PoiKey, PoiLayers, PoiShown, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
 use std::sync::Arc;
 pub use transport::{
     ProjectedAirport, ProjectedTransport, ProjectedTransportLine, TransportLayers,
@@ -105,6 +105,8 @@ pub struct LiveInput {
     /// Places of interest, peaks, waters and parks, and which of them are on.
     pub poi: Option<Arc<globecraft_data::poi::PoiSnapshot>>,
     pub poi_layers: PoiLayers,
+    /// The place names on screen, which keep their places (`poi::PoiShown`).
+    pub poi_shown: Option<Arc<poi::PoiShown>>,
     pub unix_secs: f64,
 }
 fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
@@ -157,6 +159,7 @@ impl LiveInput {
             && self.transport_layers == other.transport_layers
             && same(&self.poi, &other.poi)
             && self.poi_layers == other.poi_layers
+            && same(&self.poi_shown, &other.poi_shown)
     }
     fn same_vessel_time(&self, other: &Self) -> bool {
         let step = self.view.vessel_step();

@@ -4,8 +4,8 @@
 use super::LiveInput;
 use crate::overlays::{Ground, TerrainVisibility, ground_position};
 use emath::Pos2;
-use globecraft_data::poi::{PoiLineKind, PoiSnapshot, PointKind};
-use std::collections::HashSet;
+use globecraft_data::poi::{PoiLineKind, PoiPoint, PoiSnapshot, PointKind};
+use std::collections::{HashMap, HashSet};
 
 /// Below these altitudes (km) each kind shows.
 const POI_MAX_ALTITUDE_KM: f64 = 15.0;
@@ -20,6 +20,31 @@ const MAX_LABELS: usize = 200;
 /// The least distance between two markers. Names are kept apart by the app, which
 /// measures them, so this only thins out the candidates.
 const LABEL_SEPARATION_POINTS: f32 = 24.0;
+/// Lifts names already on screen above every other priority (all are below it).
+const SHOWN_FIRST: i64 = 1_000_000;
+
+/// One name on the map, whichever tile carries it: the same place in a coarser and
+/// a finer tile has the same key (its name, and its position to about 100 m).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PoiKey {
+    name: String,
+    lat_mdeg: i64,
+    lon_mdeg: i64,
+}
+
+impl PoiKey {
+    pub fn of(point: &PoiPoint) -> Self {
+        Self {
+            name: point.name.clone(),
+            lat_mdeg: (point.lat * 1_000.0).round() as i64,
+            lon_mdeg: (point.lon * 1_000.0).round() as i64,
+        }
+    }
+}
+
+/// The names on screen now (and for a moment after they left), which keep their
+/// places: they come first and are never thinned out for a newly arrived one.
+pub type PoiShown = HashSet<PoiKey>;
 
 /// Which of the layers are on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -186,20 +211,25 @@ fn labels(
 ) -> Vec<ProjectedPoiLabel> {
     let view = input.view;
     let visibility = TerrainVisibility::new(&view.basis, ground);
-    let mut seen = HashSet::new();
+    let shown = input.poi_shown.as_deref();
+    // Each name once: the index in `found`, and whether its tile is being retired.
+    let mut seen: HashMap<PoiKey, (usize, bool)> = HashMap::new();
     let mut found: Vec<(i64, ProjectedPoiLabel)> = Vec::new();
     for (tile_index, tile) in snapshot.tiles.iter().enumerate() {
+        let retiring = snapshot.fade(tile_index).retired.is_some();
         for (index, point) in tile.points.iter().enumerate() {
             let Some((priority, opacity)) = point_priority(point, layers, view.altitude_km) else {
                 continue;
             };
-            // A coarser tile shown while a finer one loads may repeat a point.
-            let identity = (
-                point.name.clone(),
-                (point.lat * 1_000.0).round() as i64,
-                (point.lon * 1_000.0).round() as i64,
-            );
-            if !seen.insert(identity) {
+            // A coarser tile shown while a finer one loads may repeat a point: keep
+            // the copy whose tile stays, so the name does not leave with the old tile.
+            let key = PoiKey::of(point);
+            if let Some(&(at, was_retiring)) = seen.get(&key) {
+                if was_retiring && !retiring {
+                    found[at].1.tile = tile_index;
+                    found[at].1.index = index;
+                    seen.insert(key, (at, false));
+                }
                 continue;
             }
             let Some(position) = view.basis.project(
@@ -214,6 +244,13 @@ fn labels(
                     .as_ref()
                     .is_none_or(|visibility| visibility.visible(point.lat, point.lon))
             {
+                // Names on screen keep their places: before every new one.
+                let priority = if shown.is_some_and(|shown| shown.contains(&key)) {
+                    priority - SHOWN_FIRST
+                } else {
+                    priority
+                };
+                seen.insert(key, (found.len(), retiring));
                 found.push((
                     priority,
                     ProjectedPoiLabel {
@@ -229,13 +266,14 @@ fn labels(
     found.sort_by_key(|(priority, _)| *priority);
     let separation = LABEL_SEPARATION_POINTS * view.map_scale;
     let mut kept: Vec<ProjectedPoiLabel> = Vec::new();
-    for (_, label) in found {
+    for (priority, label) in found {
         if kept.len() == MAX_LABELS {
             break;
         }
-        if kept
-            .iter()
-            .all(|other| other.position.distance(label.position) >= separation)
+        if priority < 0
+            || kept
+                .iter()
+                .all(|other| other.position.distance(label.position) >= separation)
         {
             kept.push(label);
         }
