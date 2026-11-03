@@ -390,6 +390,17 @@ fn add_data_screenshots() {
     let _ = app.run("ui.pane.data", Value::Null);
     settle(&mut h, 1.0);
     save(&mut h, &dir, "10-data-pane");
+    // The Layers ribbon at both experience levels: Basic leaves out the Earth models.
+    let app = h.state_mut();
+    app.settings.workspace.ribbon_tab = Tab::Layers;
+    let _ = app.run("settings.experience", json!({"level": "basic"}));
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "11-layers-ribbon-basic");
+    let _ = h
+        .state_mut()
+        .run("settings.experience", json!({"level": "advanced"}));
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "12-layers-ribbon-advanced");
 }
 
 /// The "What's here?" card over Munich. Manual (needs network for the ground height).

@@ -3,6 +3,7 @@ pub mod assistant;
 pub mod cache;
 pub mod controllers;
 mod coordinates;
+pub mod experience;
 pub mod layers;
 pub mod map_style;
 pub mod navigation;
@@ -94,6 +95,8 @@ pub struct Settings {
     pub user_layers: Vec<crate::user_data::UserLayer>,
     /// Starred and recently added sources (the Browser pane).
     pub saved_sources: crate::user_data::SavedSources,
+    /// How much of the interface shows (Basic or Advanced).
+    pub experience: experience::ExperienceLevel,
 }
 fn serialize_earth_model<S: serde::Serializer>(
     model: &EarthModel,
@@ -136,6 +139,7 @@ impl Default for Settings {
             ruler_unit: RulerUnit::Automatic,
             user_layers: Vec::new(),
             saved_sources: Default::default(),
+            experience: Default::default(),
         }
     }
 }
@@ -188,10 +192,18 @@ struct SettingsInput {
     earth_model: Option<String>,
     #[serde(default, deserialize_with = "crate::json_fields::string")]
     ruler_unit: Option<String>,
+    #[serde(default, deserialize_with = "crate::json_fields::string")]
+    experience: Option<String>,
 }
 impl Settings {
     fn apply_json(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
         let input: SettingsInput = serde_json::from_slice(bytes)?;
+        // A file without a level was written before it existed: show everything.
+        self.experience = input
+            .experience
+            .as_deref()
+            .and_then(experience::ExperienceLevel::from_code)
+            .unwrap_or(experience::ExperienceLevel::Advanced);
         if let Some(value) = input.sky {
             self.sky.apply(&value);
         }
@@ -321,6 +333,66 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every value a v0.3.0 settings file holds survives loading and saving it with
+    /// this version. The fixture was written by the v0.3.0 code itself (customised
+    /// theme, navigator, cache, sidebar, folders, text sizes, line style and layers).
+    #[test]
+    fn settings_written_by_v0_3_0_keep_every_value() {
+        use serde_json::Value;
+        fn leaves(path: &str, value: &Value, out: &mut Vec<(String, Value)>) {
+            match value {
+                Value::Object(map) => {
+                    for (key, value) in map {
+                        leaves(&format!("{path}/{key}"), value, out);
+                    }
+                }
+                // Lists hold sets (visible layers, open panes): order is not meaning.
+                Value::Array(items) => {
+                    let mut items: Vec<String> = items.iter().map(Value::to_string).collect();
+                    items.sort();
+                    out.push((path.to_owned(), Value::from(items)));
+                }
+                _ => out.push((path.to_owned(), value.clone())),
+            }
+        }
+        let old_bytes = include_bytes!("../tests/fixtures/settings-v0.3.0.json");
+        let old: Value = serde_json::from_slice(old_bytes).unwrap();
+        let mut settings = Settings::default();
+        settings.apply_json(old_bytes).unwrap();
+        // Through text, as the settings writer stores it (f32 values print as written).
+        let saved: Value = serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
+        let mut old_leaves = Vec::new();
+        leaves("", &old, &mut old_leaves);
+        let mut new_leaves = Vec::new();
+        leaves("", &saved, &mut new_leaves);
+        let new_leaves: std::collections::HashMap<_, _> = new_leaves.into_iter().collect();
+        let lost: Vec<String> = old_leaves
+            .iter()
+            .filter(|(path, value)| new_leaves.get(path) != Some(value))
+            .map(|(path, value)| format!("{path}: {value} -> {:?}", new_leaves.get(path)))
+            .collect();
+        assert!(
+            lost.is_empty(),
+            "values changed or lost:\n{}",
+            lost.join("\n")
+        );
+    }
+    #[test]
+    fn new_installs_start_basic_and_earlier_settings_load_advanced() {
+        use experience::ExperienceLevel;
+        assert_eq!(Settings::default().experience, ExperienceLevel::Basic);
+        let mut upgraded = Settings::default();
+        upgraded
+            .apply_json(include_bytes!("../tests/fixtures/settings-v0.3.0.json"))
+            .unwrap();
+        assert_eq!(upgraded.experience, ExperienceLevel::Advanced);
+        let mut restored = Settings::default();
+        restored
+            .apply_json(&serde_json::to_vec(&Settings::default()).unwrap())
+            .unwrap();
+        assert_eq!(restored.experience, ExperienceLevel::Basic);
+    }
     #[test]
     fn layer_visibility_uses_one_field_per_layer() {
         use globecraft_core::layers::MapLayer;
@@ -536,6 +608,7 @@ mod tests {
             ruler_unit: RulerUnit::Automatic,
             user_layers: Vec::new(),
             saved_sources: Default::default(),
+            experience: experience::ExperienceLevel::Basic,
         };
         settings
             .apply_json(

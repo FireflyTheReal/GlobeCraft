@@ -605,6 +605,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"units":{"type":"string","enum":["system","metric","imperial"]}},"required":["units"]}"#
     ),
     command!(
+        "settings.experience",
+        "settings-experience",
+        "settings",
+        Settings,
+        View,
+        r#"{"type":"object","properties":{"level":{"type":"string","enum":["basic","advanced"]}},"required":["level"]}"#
+    ),
+    command!(
         "settings.coordinateFormat",
         "settings-coordinate-format",
         "goto_xy",

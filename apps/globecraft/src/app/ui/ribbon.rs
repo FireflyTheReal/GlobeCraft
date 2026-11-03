@@ -15,6 +15,7 @@ use globecraft_core::{
     commands::Tab, coordinates::CoordinateFormat, language::LanguagePreference, layers::MapLayer,
     units::RulerUnit,
 };
+use globecraft_data::settings::experience::ExperienceLevel;
 use serde_json::{Value, json};
 
 const SCROLL_BUTTON_W: f32 = 18.0;
@@ -369,6 +370,17 @@ impl App {
                 self.layer_small(ui, MapLayer::GridLabels);
             });
         });
+        if self.settings.experience.is_advanced() {
+            self.earth_model_group(ui);
+        }
+        group(ui, lang.text("ribbon-group-pane"), |ui| {
+            big(ui, self, "ui.pane.layers", Value::Null);
+        });
+    }
+
+    /// The Earth models (Advanced only).
+    fn earth_model_group(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
         group(ui, lang.text("cmd-world-earth-model"), |ui| {
             col(ui, |ui| {
                 for model in globecraft_core::earth_model::EarthModel::ALL {
@@ -385,9 +397,6 @@ impl App {
                     );
                 }
             });
-        });
-        group(ui, lang.text("ribbon-group-pane"), |ui| {
-            big(ui, self, "ui.pane.layers", Value::Null);
         });
     }
 
@@ -552,6 +561,14 @@ impl App {
     }
 
     fn view_tab(&mut self, ui: &mut Ui) {
+        if self.settings.experience.is_advanced() {
+            self.worlds_group(ui);
+        }
+        self.view_tab_rest(ui);
+    }
+
+    /// The Moon, custom planets and the Explorer (Advanced only).
+    fn worlds_group(&mut self, ui: &mut Ui) {
         let lang = self.lang;
         group(ui, lang.text("ribbon-group-worlds"), |ui| {
             for (body, icon, key) in [
@@ -573,6 +590,10 @@ impl App {
             }
             big(ui, self, "ui.explorer", Value::Null);
         });
+    }
+
+    fn view_tab_rest(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
         group(ui, lang.text("sidebar-sky-title"), |ui| {
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::Atmosphere);
@@ -646,6 +667,22 @@ impl App {
         let lang = self.lang;
         group(ui, lang.text("ribbon-group-preferences"), |ui| {
             big(ui, self, "ui.settings", Value::Null);
+            col(ui, |ui| {
+                for level in ExperienceLevel::ALL {
+                    small_with(
+                        ui,
+                        self,
+                        "settings.experience",
+                        json!({"level": level.code()}),
+                        Look {
+                            icon: Some("settings"),
+                            label: Some(lang.text(level.label_id())),
+                            help: Some(lang.text("cmd-settings-experience-help")),
+                            ..Look::default()
+                        },
+                    );
+                }
+            });
         });
         group(ui, lang.text("cmd-settings-units"), |ui| {
             col(ui, |ui| {

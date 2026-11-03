@@ -2,6 +2,7 @@ use super::MAX_UI_SLIDER_SCALE;
 use crate::app::App;
 use eframe::egui;
 use globecraft_core::language::{Lang, LanguagePreference};
+use globecraft_data::settings::experience::ExperienceLevel;
 use globecraft_data::settings::{MAX_MAP_SCALE, MIN_MAP_SCALE, MIN_UI_SCALE, UnitPreference};
 
 impl App {
@@ -32,6 +33,27 @@ impl App {
                     }
                 });
         });
+        ui.horizontal(|ui| {
+            ui.label(lg.text("settings-experience-label"));
+            let levels = ExperienceLevel::ALL;
+            egui::ComboBox::from_id_salt("settings_experience")
+                .selected_text(lg.text(self.settings.experience.label_id()))
+                .show_ui(ui, |ui| {
+                    super::super::selection::size_menu(
+                        ui,
+                        levels.map(|level| lg.text(level.label_id())),
+                    );
+                    for level in levels {
+                        super::super::selection::full_width_value(
+                            ui,
+                            &mut self.settings.experience,
+                            level,
+                            lg.text(level.label_id()),
+                        );
+                    }
+                });
+        });
+        ui.weak(lg.text("cmd-settings-experience-help"));
     }
     pub(super) fn settings_appearance(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;

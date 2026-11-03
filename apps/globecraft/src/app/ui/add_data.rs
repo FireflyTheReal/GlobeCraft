@@ -266,6 +266,7 @@ impl AddDataDialog {
         lang: Lang,
         runtime: &globecraft_data::runtime::ServiceRuntime,
         added_presets: &[String],
+        advanced: bool,
     ) -> Action {
         self.wms_layers.poll();
         self.web_test.poll();
@@ -279,15 +280,21 @@ impl AddDataDialog {
             .resizable(true)
             .default_width(560.0)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for (tab, key) in [
-                        (Tab::Library, "add-data-tab-library"),
-                        (Tab::WebMap, "add-data-tab-web"),
-                        (Tab::Features, "add-data-tab-features"),
-                    ] {
-                        ui.selectable_value(&mut self.tab, tab, lang.text(key));
-                    }
-                });
+                // Basic (Settings) offers the library; the forms stay reachable
+                // when a command opened one.
+                if advanced || self.tab != Tab::Library {
+                    ui.horizontal(|ui| {
+                        for (tab, key) in [
+                            (Tab::Library, "add-data-tab-library"),
+                            (Tab::WebMap, "add-data-tab-web"),
+                            (Tab::Features, "add-data-tab-features"),
+                        ] {
+                            ui.selectable_value(&mut self.tab, tab, lang.text(key));
+                        }
+                    });
+                } else {
+                    ui.weak(lang.text("add-data-advanced-hint"));
+                }
                 ui.separator();
                 match self.tab {
                     Tab::Library => self.library(ui, lang, added_presets, &mut action),
@@ -659,7 +666,8 @@ impl App {
             .iter()
             .filter_map(|layer| layer.preset.clone())
             .collect();
-        match dialog.show(ctx, self.lang, &self.runtime, &added) {
+        let advanced = self.settings.experience.is_advanced();
+        match dialog.show(ctx, self.lang, &self.runtime, &added, advanced) {
             Action::None => {}
             Action::Close => self.add_data = None,
             Action::Add(layer) => {

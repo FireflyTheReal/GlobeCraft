@@ -12,6 +12,7 @@ use globecraft_core::{
     placemark::{PlaceItem, PlaceNode, Placemark},
     units::RulerUnit,
 };
+use globecraft_data::settings::experience::ExperienceLevel;
 use globecraft_data::settings::screenshot::ScreenshotQuality;
 use globecraft_data::settings::{
     UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
@@ -652,6 +653,12 @@ impl App {
                 };
                 json!({})
             }
+            "settings.experience" => {
+                self.settings.experience = str_param(p, "level")
+                    .and_then(ExperienceLevel::from_code)
+                    .ok_or("level must be basic or advanced")?;
+                json!({})
+            }
             "settings.coordinateFormat" => {
                 let format = str_param(p, "format")
                     .and_then(CoordinateFormat::from_code)
@@ -870,6 +877,8 @@ impl App {
                 Some("imperial") => self.settings.distance_units == UnitPreference::Imperial,
                 _ => false,
             }),
+            "settings.experience" => on(str_param(params, "level")
+                .is_some_and(|level| level == self.settings.experience.code())),
             "settings.coordinateFormat" => on(str_param(params, "format")
                 .is_some_and(|f| f == self.settings.coordinate_display.format.code())),
             "settings.language" => {
