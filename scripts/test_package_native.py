@@ -82,6 +82,8 @@ class NativePackagingTests(unittest.TestCase):
                             component = ET.parse(source)
                             self.assertEqual(component.findtext("id"), Path(destination).name.removesuffix(".appdata.xml"))
                             self.assertEqual(component.findtext("launchable"), desktop.name)
+                    self.assertEqual(env["LINUXDEPLOY_EXCLUDED_LIBRARIES"].split(";"),
+                                     config["appimage"]["excludedLibs"])
                     self.assertTrue(env["LDAI_UPDATE_INFORMATION"].endswith(f"{release.TARGETS[target]}.AppImage.zsync"))
                     output = Path(config["outDir"])
                     output.mkdir()

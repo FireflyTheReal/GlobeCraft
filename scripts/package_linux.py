@@ -55,6 +55,9 @@ def native_package(version, target, binary, archive, temporary, format_name):
             str(metadata): f"usr/share/metainfo/{metadata.name}",
             str(release.ROOT / "LICENSE"): "usr/share/licenses/globecraft/LICENSE",
         }
+        # cargo-packager passes `excludedLibs` as linuxdeploy flags, which the GTK
+        # plugin's own linuxdeploy pass does not receive; this variable reaches both.
+        env["LINUXDEPLOY_EXCLUDED_LIBRARIES"] = ";".join(config["appimage"]["excludedLibs"])
         env.update(APPIMAGE_EXTRACT_AND_RUN="1",
                    LDAI_UPDATE_INFORMATION=f"gh-releases-zsync|FireflyTheReal|GlobeCraft|latest|globecraft-*-{release.TARGETS[target]}.AppImage.zsync")
     tools.run(config, env)
