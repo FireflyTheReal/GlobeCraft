@@ -253,7 +253,7 @@ async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
     crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes)).await
 }
 
-fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
+pub(super) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
     // A WMS answers an error as XML with status 200.
     if bytes.starts_with(b"<") || bytes.starts_with(b"\xef\xbb\xbf<") {
         let text = String::from_utf8_lossy(&bytes[..bytes.len().min(400)]);

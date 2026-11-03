@@ -198,6 +198,20 @@ fn feature_legend(
     });
 }
 
+/// A web map's legend image (from its WMS), at most as wide as the pane allows
+/// and `MAX_LEGEND_HEIGHT` tall, never enlarged.
+fn image_legend(ui: &mut Ui, texture: &egui::TextureHandle) {
+    const MAX_LEGEND_HEIGHT: f32 = 220.0;
+    ui.horizontal(|ui| {
+        ui.add_space(INDENT + 24.0);
+        // Legends are drawn for 96 dpi screens: one pixel to one point.
+        let size = texture.size_vec2();
+        let room = vec2((ui.available_width() - 4.0).max(1.0), MAX_LEGEND_HEIGHT);
+        let fit = (room.x / size.x).min(room.y / size.y).min(1.0);
+        ui.image((texture.id(), size * fit));
+    });
+}
+
 /// A note with a spinner before it, for something still loading.
 fn loading_note(ui: &mut Ui, t: &Tokens, text: &str) {
     egui::Frame::NONE
@@ -423,6 +437,14 @@ impl App {
             });
             if feature && let Some((points, lines)) = self.user_layers.feature_counts(layer.id) {
                 feature_legend(ui, t, layer.rgb(), points, lines, lang);
+            }
+            if !feature
+                && let Some(texture) = self
+                    .user_layers
+                    .legends
+                    .get(ui.ctx(), &self.runtime, &layer)
+            {
+                image_legend(ui, &texture);
             }
             if !layer.attribution.is_empty() {
                 note(ui, t, &layer.attribution);

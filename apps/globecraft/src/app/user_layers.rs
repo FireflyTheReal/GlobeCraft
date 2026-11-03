@@ -10,6 +10,7 @@ use globecraft_data::user_data::{
 use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
 use std::collections::HashMap;
 use std::sync::Arc;
+mod legend;
 
 /// Point markers and their names (points).
 const MARKER_POINTS: f32 = 4.0;
@@ -54,6 +55,8 @@ type RasterKey = (Basis, usize, usize, Vec<(u64, usize, u32)>);
 #[derive(Default)]
 pub(super) struct UserLayers {
     loaded: HashMap<u64, Loaded>,
+    /// WMS legend images, for the Layers pane.
+    pub(super) legends: legend::Legends,
     texture: Option<TextureHandle>,
     texture_for: Option<RasterKey>,
     /// The visible feature layers' lines and markers for the view.
@@ -91,6 +94,7 @@ impl UserLayers {
                 .iter()
                 .any(|l| l.id == *id && l.source == loaded.source)
         });
+        self.legends.retain(layers);
         for layer in layers {
             let loaded = self.loaded.entry(layer.id).or_insert_with(|| Loaded {
                 source: layer.source.clone(),

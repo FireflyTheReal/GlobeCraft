@@ -403,6 +403,38 @@ fn add_data_screenshots() {
     save(&mut h, &dir, "12-layers-ribbon-advanced");
 }
 
+/// A WMS layer's legend in the Layers pane. `GLOBECRAFT_SHOT_WMS` is the service's
+/// address (a local server answering any request with a legend image will do).
+#[test]
+#[ignore = "manual: renders a WMS layer's legend; needs GLOBECRAFT_SHOT_WMS"]
+fn wms_legend_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let base = std::env::var("GLOBECRAFT_SHOT_WMS").expect("GLOBECRAFT_SHOT_WMS");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.add_user_layer(globecraft_data::user_data::UserLayer {
+        id: 0,
+        name: "Water depth".into(),
+        source: globecraft_data::user_data::UserSource::Tiles {
+            template: globecraft_data::user_data::wms_template(&base, "depth"),
+            min_zoom: 0,
+            max_zoom: 18,
+            tile_px: 256,
+        },
+        visible: true,
+        opacity: 1.0,
+        attribution: "Local test service".into(),
+        color: "#4aa3ff".into(),
+        preset: None,
+    });
+    let _ = app.run("ui.pane.layers", Value::Null);
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "13-wms-legend");
+}
+
 /// The "What's here?" card over Munich. Manual (needs network for the ground height).
 #[test]
 #[ignore = "manual: renders the What's here card"]

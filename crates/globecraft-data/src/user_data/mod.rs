@@ -4,12 +4,14 @@
 //! user layer with its own visibility, opacity and place in the order, saved in the
 //! settings. KML and KMZ keep their own path: they open into My Places.
 mod capabilities;
+mod legend;
 pub mod presets;
 mod raster;
 mod saved;
 mod vector;
 
 pub use capabilities::{WmsLayer, wms_layers};
+pub use legend::{legend_image, wms_legend_url};
 pub use raster::{RasterSnapshot, RasterTiles, test_tile};
 pub use saved::{SavedSources, export_sources, import_sources};
 pub use vector::{FeatureSet, NamedPoint, VectorLayer, load as load_features, parse_features};
