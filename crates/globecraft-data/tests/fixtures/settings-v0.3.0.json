@@ -1,0 +1,109 @@
+{
+  "sky": {
+    "enabled": false,
+    "cinematic": false,
+    "stars": true
+  },
+  "controllers": {
+    "enabled": true,
+    "selected": "",
+    "profiles": {}
+  },
+  "appearance": {
+    "theme": "light",
+    "ui_font": "",
+    "map_font": ""
+  },
+  "navigation": {
+    "pan_sensitivity": 1.0,
+    "zoom_sensitivity": 1.7,
+    "rotation_sensitivity": 1.0,
+    "invert_scroll": true,
+    "navigator": "classic",
+    "startup": {
+      "latitude": -15.0,
+      "longitude": -50.0,
+      "altitude_km": 14000.0,
+      "heading_deg": 0.0
+    }
+  },
+  "cache": {
+    "decoded_mib": 256,
+    "disk_mib": 2048,
+    "borders_mib": 64
+  },
+  "sidebar": {
+    "panel": "explore",
+    "open": false,
+    "places_pinned": false,
+    "width_points": 333.0,
+    "pinned_places_height_points": 300.0
+  },
+  "workspace": {
+    "ribbon_tab": "home",
+    "ribbon_minimized": false,
+    "right_pane": null,
+    "right_open": [],
+    "right_width_points": 340.0
+  },
+  "layers": {
+    "visible": [
+      "state_borders",
+      "place_labels",
+      "terrain",
+      "grid",
+      "atmosphere"
+    ],
+    "basemap": "satellite",
+    "terrain_exaggeration": 1.0
+  },
+  "assistant": {
+    "provider": "anthropic",
+    "models": {},
+    "base_urls": {},
+    "remember_keys": true
+  },
+  "coordinate_display": {
+    "format": "dms",
+    "precision": 2
+  },
+  "screenshot_dir": "/Users/test/Shots",
+  "screenshot_quality": "normal",
+  "kml_dir": "/Users/test/KML",
+  "ui_scale": 1.25,
+  "map_scale": 1.4,
+  "map_style": {
+    "country": {
+      "color": "#fffffff5",
+      "width_points": 2.5,
+      "dash": "solid"
+    },
+    "state": {
+      "color": "#96cdf0e1",
+      "width_points": 1.0,
+      "dash": "dashed"
+    },
+    "municipal": {
+      "color": "#96cdf0e1",
+      "width_points": 1.0,
+      "dash": "dashed"
+    },
+    "disputed": {
+      "color": "#fffffff5",
+      "width_points": 1.6,
+      "dash": "dashed"
+    },
+    "labels": {
+      "country_points": 12.0,
+      "state_points": 10.0,
+      "city_points": 15.0
+    }
+  },
+  "uncap_fps": true,
+  "grid_numbers": true,
+  "hide_navigation_controls": true,
+  "state_max_altitude_km": 1234.0,
+  "distance_units": "system",
+  "earth_model": "wgs84_g2296",
+  "ruler_unit": "automatic"
+}
