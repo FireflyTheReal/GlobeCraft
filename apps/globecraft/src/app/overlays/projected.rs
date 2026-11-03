@@ -13,7 +13,7 @@ use globecraft_data::boundaries::{
     STATE_VISIBLE_MAX_ALTITUDE_KM,
 };
 use globecraft_data::settings::map_style::MapStyle;
-use globecraft_render::overlays::{BorderKind, LabelIndex, MAX_VISIBLE_LABELS};
+use globecraft_render::overlays::{BorderKind, LabelIndex, LabelSpace, MAX_VISIBLE_LABELS};
 const LABEL_PADDING_POINTS: f32 = 2.0;
 const LABEL_HIGHLIGHT_OFFSET_POINTS: f32 = -0.5;
 const GRID_LABEL_FONT_POINTS: f32 = 12.0;
@@ -70,6 +70,7 @@ pub(super) fn build(
                 style,
                 viewport: view.rect,
                 policy,
+                taken: &LabelSpace::default(),
             },
             &mut galleys,
             &grid_labels,
@@ -98,6 +99,7 @@ pub(super) fn build_prepared(
     fading_out: Option<&PreparedOverlay>,
     galleys: &mut LabelGalleys,
     style: OverlayStyle,
+    taken: &LabelSpace,
 ) -> BuiltOverlay {
     let geometry = &prepared.geometry;
     let policy = FadePolicy {
@@ -154,6 +156,7 @@ pub(super) fn build_prepared(
             style,
             viewport: geometry.view.rect,
             policy,
+            taken,
         },
         galleys,
         &geometry.grid_labels,
@@ -280,19 +283,22 @@ struct LabelPass<'p> {
     style: OverlayStyle,
     viewport: Rect,
     policy: FadePolicy,
+    /// Room taken before these names (the markers of the user's data).
+    taken: &'p LabelSpace,
 }
 
-/// Appends label shapes in priority order, and the room each takes to `taken`.
+/// Appends label shapes in priority order, and the room each takes to `rects`.
 /// Returns false when the layout budget ran out: the remaining (lower-priority)
 /// names are left for the next rebuild.
 fn build_labels<'a>(
     shapes: &mut Vec<Shape>,
-    taken: &mut Vec<Rect>,
+    rects: &mut Vec<Rect>,
     LabelPass {
         painter,
         style,
         viewport,
         policy,
+        taken,
     }: LabelPass<'_>,
     galleys: &mut LabelGalleys,
     grid_labels: &[globecraft_render::overlays::grid::GridLabel],
@@ -340,10 +346,10 @@ fn build_labels<'a>(
                 break;
             };
             let area = Rect::from_center_size(pos, galley.size()).expand(LABEL_PADDING_POINTS);
-            if !placed.try_insert(area) {
+            if !taken.is_free(area) || !placed.try_insert(area) {
                 continue;
             }
-            taken.push(area);
+            rects.push(area);
             if galley.is_empty() {
                 continue;
             }
@@ -411,10 +417,10 @@ fn build_labels<'a>(
             ),
         );
         let area = Rect::from_center_size(position, galley.size()).expand(LABEL_PADDING_POINTS);
-        if !viewport.contains_rect(area) || !placed.try_insert(area) {
+        if !viewport.contains_rect(area) || !taken.is_free(area) || !placed.try_insert(area) {
             continue;
         }
-        taken.push(area);
+        rects.push(area);
         shapes.push(Shape::rect_filled(
             area,
             LABEL_PADDING_POINTS,

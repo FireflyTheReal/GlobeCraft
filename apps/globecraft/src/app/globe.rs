@@ -508,12 +508,25 @@ impl App {
             } else {
                 None
             };
-            // All map names share one screen, placed in priority order: place names,
-            // street names, airports, then places of interest. Each layer places its
+            // All map names share one screen, placed in priority order: the markers of
+            // the user's data, place names, the user's point names, street names,
+            // airports, then places of interest. Each layer places its
             // names where the ones before it left room; painting keeps its own order.
-            self.prepare_overlays(&painter, &display_basis, rect, display_cam.alt);
+            // The markers of the user's data are always drawn, so they come first.
+            self.user_layers.prepare_features(
+                &painter,
+                &display_basis,
+                rect,
+                &self.settings.user_layers,
+                self.settings.map_scale,
+            );
             let mut taken = LabelSpace::default();
+            taken.add(self.user_layers.markers());
+            self.prepare_overlays(&painter, &display_basis, rect, display_cam.alt, &taken);
             taken.add(&self.overlay_cache.placed());
+            self.user_layers
+                .prepare_names(&painter, self.settings.map_scale, &taken);
+            taken.add(self.user_layers.placed());
             if self.layer(MapLayer::Roads)
                 && let Some(geometry) = &live_geometry
             {
@@ -547,13 +560,7 @@ impl App {
                 self.poi_shapes.hover(&painter, geometry, self.lang);
                 self.transport_shapes.hover(&painter, geometry, self.lang);
             }
-            self.user_layers.draw_features(
-                &painter,
-                &display_basis,
-                rect,
-                &self.settings.user_layers,
-                self.settings.map_scale,
-            );
+            self.user_layers.paint_features(&painter);
             self.draw_live_layers(
                 &painter,
                 &display_basis,

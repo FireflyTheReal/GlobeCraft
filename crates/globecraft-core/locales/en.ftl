@@ -1092,6 +1092,13 @@ add-data-features-test-ok = Read { $points } points and { $lines } lines or outl
 add-data-kml-help = KML and KMZ open into My Places.
 add-data-kml-action = Open KML…
 add-data-added-status = Added “{ $name }” to your layers.
+layers-user-legend = { $points ->
+        [one] 1 point
+       *[other] { $points } points
+    } · { $lines ->
+        [one] 1 line or outline
+       *[other] { $lines } lines or outlines
+    }
 layers-user-title = My data
 layers-user-empty = Nothing added yet.
 layers-user-add-action = Add Data…

@@ -7,6 +7,7 @@ use globecraft_core::camera::Basis;
 use globecraft_data::user_data::{
     FeatureSet, RasterSnapshot, RasterTiles, UserLayer, UserSource, VectorLayer,
 };
+use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,6 +18,9 @@ const LABEL_POINTS: f32 = 11.0;
 /// The most names one layer writes in a view.
 const MAX_NAMES: usize = 150;
 const NAME_SEPARATION_POINTS: f32 = 70.0;
+/// Free room kept around each marker and name, map points. Less than half the gap
+/// between a marker and its name (4 points), so a name never touches its own marker.
+const LABEL_PADDING_POINTS: f32 = 1.5;
 
 enum Stream {
     Raster {
@@ -34,6 +38,7 @@ struct Loaded {
 /// What a layer's feature shapes were built from.
 #[derive(PartialEq)]
 struct FeatureKey {
+    id: u64,
     basis: Basis,
     rect: Rect,
     revision: u64,
@@ -51,7 +56,16 @@ pub(super) struct UserLayers {
     loaded: HashMap<u64, Loaded>,
     texture: Option<TextureHandle>,
     texture_for: Option<RasterKey>,
-    features: HashMap<u64, (FeatureKey, Vec<Shape>)>,
+    /// The visible feature layers' lines and markers for the view.
+    features: Option<BuiltFeatures>,
+    /// Counts feature rebuilds.
+    generation: u64,
+    /// The room the markers take.
+    markers: PlacedLabels,
+    /// The point names, and the feature build and room they were placed for.
+    names: Option<((u64, LabelSpaceKey), Vec<Shape>)>,
+    /// The room the names take.
+    placed: PlacedLabels,
 }
 
 /// A layer's state for the Layers pane.
@@ -77,8 +91,6 @@ impl UserLayers {
                 .iter()
                 .any(|l| l.id == *id && l.source == loaded.source)
         });
-        self.features
-            .retain(|id, _| layers.iter().any(|l| l.id == *id && l.visible));
         for layer in layers {
             let loaded = self.loaded.entry(layer.id).or_insert_with(|| Loaded {
                 source: layer.source.clone(),
@@ -211,7 +223,10 @@ impl UserLayers {
     }
 
     /// The visible feature layers: lines, then points and their names.
-    pub(super) fn draw_features(
+    /// Lines, outlines and point markers of the visible feature layers. Markers are
+    /// always drawn, so they take their room before any name is placed
+    /// (`markers`); `prepare_names` places the points' names afterwards.
+    pub(super) fn prepare_features(
         &mut self,
         painter: &egui::Painter,
         basis: &Basis,
@@ -219,45 +234,188 @@ impl UserLayers {
         layers: &[UserLayer],
         scale: f32,
     ) {
-        for layer in layers.iter().filter(|l| l.visible && l.opacity > 0.0) {
-            let Some(Loaded {
-                stream: Stream::Vector(vector),
-                ..
-            }) = self.loaded.get(&layer.id)
-            else {
-                continue;
-            };
-            let Some((features, revision)) = vector.features() else {
-                continue;
-            };
-            let key = FeatureKey {
-                basis: *basis,
-                rect,
-                revision,
-                opacity: layer.opacity.to_bits(),
-                color: layer.rgb(),
-                scale: scale.to_bits(),
-            };
-            let cached = self.features.get(&layer.id);
-            if cached.is_none_or(|(built, _)| *built != key) {
-                let shapes = feature_shapes(painter, basis, rect, &features, layer, scale);
-                self.features.insert(layer.id, (key, shapes));
+        let visible: Vec<(&UserLayer, Arc<FeatureSet>, FeatureKey)> = layers
+            .iter()
+            .filter(|l| l.visible && l.opacity > 0.0)
+            .filter_map(|layer| {
+                let Some(Loaded {
+                    stream: Stream::Vector(vector),
+                    ..
+                }) = self.loaded.get(&layer.id)
+                else {
+                    return None;
+                };
+                let (features, revision) = vector.features()?;
+                let key = FeatureKey {
+                    id: layer.id,
+                    basis: *basis,
+                    rect,
+                    revision,
+                    opacity: layer.opacity.to_bits(),
+                    color: layer.rgb(),
+                    scale: scale.to_bits(),
+                };
+                Some((layer, features, key))
+            })
+            .collect();
+        if self
+            .features
+            .as_ref()
+            .is_some_and(|built| built.keys.iter().eq(visible.iter().map(|(_, _, key)| key)))
+        {
+            return;
+        }
+        let mut shapes = Vec::new();
+        let mut markers = Vec::new();
+        let mut named = Vec::new();
+        // Bottom layer first; names are placed top layer first.
+        for (layer, features, _) in &visible {
+            let built = feature_geometry(painter, basis, rect, features, layer, scale);
+            shapes.extend(built.shapes);
+            markers.extend(built.markers);
+            named.push(built.named);
+        }
+        named.reverse();
+        self.markers.replace(markers);
+        self.generation += 1;
+        self.features = Some(BuiltFeatures {
+            keys: visible.into_iter().map(|(_, _, key)| key).collect(),
+            shapes,
+            named,
+            generation: self.generation,
+        });
+    }
+
+    /// The room the markers of `prepare_features` take.
+    pub(super) fn markers(&self) -> &PlacedLabels {
+        &self.markers
+    }
+
+    /// Names of the points, where `taken` (place names and every marker) is free.
+    pub(super) fn prepare_names(
+        &mut self,
+        painter: &egui::Painter,
+        scale: f32,
+        taken: &LabelSpace,
+    ) {
+        let Some(built) = &self.features else {
+            self.names = None;
+            self.placed.clear();
+            return;
+        };
+        let key = (built.generation, taken.key());
+        if self.names.as_ref().is_some_and(|(done, _)| *done == key) {
+            return;
+        }
+        let font = crate::app::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
+        let separation = NAME_SEPARATION_POINTS * scale;
+        let padding = LABEL_PADDING_POINTS * scale;
+        let mut placed = Vec::new();
+        let mut texts = Vec::new();
+        for layer in &built.named {
+            let mut written: Vec<Pos2> = Vec::new();
+            for point in layer {
+                if written.len() >= MAX_NAMES
+                    || written
+                        .iter()
+                        .any(|other| other.distance(point.at) < separation)
+                {
+                    continue;
+                }
+                let position = point.at + Vec2::new(point.offset, 0.0);
+                let galley =
+                    painter.layout_no_wrap(point.name.clone(), font.clone(), Color32::WHITE);
+                let top_left = egui::Align2::LEFT_CENTER
+                    .anchor_size(position, galley.size())
+                    .min;
+                let area = Rect::from_min_size(top_left, galley.size()).expand(padding);
+                if !taken.is_free(area) || placed.iter().any(|other: &Rect| other.intersects(area))
+                {
+                    continue;
+                }
+                written.push(point.at);
+                placed.push(area);
+                let shadow =
+                    painter.layout_no_wrap(point.name.clone(), font.clone(), Color32::BLACK);
+                texts.push(Shape::Text(
+                    egui::epaint::TextShape::new(
+                        top_left + Vec2::splat(1.0),
+                        shadow,
+                        Color32::BLACK,
+                    )
+                    .with_opacity_factor(point.opacity),
+                ));
+                texts.push(Shape::Text(
+                    egui::epaint::TextShape::new(top_left, galley, Color32::WHITE)
+                        .with_opacity_factor(point.opacity),
+                ));
             }
-            if let Some((_, shapes)) = self.features.get(&layer.id) {
-                painter.extend(shapes.iter().cloned());
+        }
+        self.placed.replace(placed);
+        self.names = Some((key, texts));
+    }
+
+    pub(super) fn paint_features(&self, painter: &egui::Painter) {
+        if let Some(built) = &self.features {
+            painter.extend(built.shapes.iter().cloned());
+        }
+        if let Some((_, texts)) = &self.names {
+            painter.extend(texts.iter().cloned());
+        }
+    }
+
+    /// The room the point names drawn last take.
+    pub(super) fn placed(&self) -> &PlacedLabels {
+        &self.placed
+    }
+
+    /// How many points and lines (or outlines) a loaded feature layer holds.
+    pub(super) fn feature_counts(&self, id: u64) -> Option<(usize, usize)> {
+        match &self.loaded.get(&id)?.stream {
+            Stream::Vector(vector) => {
+                let (features, _) = vector.features()?;
+                Some((features.points.len(), features.lines.len()))
             }
+            Stream::Raster { .. } => None,
         }
     }
 }
 
-fn feature_shapes(
+/// A point on screen that has a name to place.
+struct NamedPoint {
+    at: Pos2,
+    /// From the point to the start of its name, points.
+    offset: f32,
+    name: String,
+    opacity: f32,
+}
+
+/// The visible feature layers, drawn for one view.
+struct BuiltFeatures {
+    keys: Vec<FeatureKey>,
+    /// Lines, outlines and markers, bottom layer first.
+    shapes: Vec<Shape>,
+    /// Each layer's named points, top layer first.
+    named: Vec<Vec<NamedPoint>>,
+    /// Changes with every rebuild, so the names know to follow.
+    generation: u64,
+}
+
+/// One layer's lines and markers, the room the markers take and the named points.
+struct LayerGeometry {
+    shapes: Vec<Shape>,
+    markers: Vec<Rect>,
+    named: Vec<NamedPoint>,
+}
+
+fn feature_geometry(
     painter: &egui::Painter,
     basis: &Basis,
     rect: Rect,
     features: &FeatureSet,
     layer: &UserLayer,
     scale: f32,
-) -> Vec<Shape> {
+) -> LayerGeometry {
     let [r, g, b] = layer.rgb();
     let color = Color32::from_rgb(r, g, b).gamma_multiply(layer.opacity);
     let outline = Color32::from_rgb(20, 24, 30).gamma_multiply(layer.opacity);
@@ -298,12 +456,11 @@ fn feature_shapes(
         }
     }
     let mut shapes = super::live_geometry::mesh_shapes(painter, lines);
-    let font = crate::app::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
-    let separation = NAME_SEPARATION_POINTS * scale;
     let radius = MARKER_POINTS * scale;
+    let padding = LABEL_PADDING_POINTS * scale;
     let mut markers = Vec::new();
-    let mut named: Vec<Pos2> = Vec::new();
-    let mut texts = Vec::new();
+    let mut rooms = Vec::new();
+    let mut named = Vec::new();
     for point in &features.points {
         let Some(at) = basis.project(
             globecraft_render::overlays::ground_position(basis, None, point.lat, point.lon),
@@ -314,37 +471,28 @@ fn feature_shapes(
         if !rect.contains(at) {
             continue;
         }
+        rooms.push(Rect::from_center_size(at, Vec2::splat(2.0 * radius)).expand(padding));
         markers.push(Shape::circle_filled(at, radius, color));
         markers.push(Shape::circle_stroke(
             at,
             radius,
             Stroke::new(1.0 * scale, outline),
         ));
-        if point.name.is_empty()
-            || named.len() >= MAX_NAMES
-            || named.iter().any(|other| other.distance(at) < separation)
-        {
-            continue;
+        if !point.name.is_empty() {
+            named.push(NamedPoint {
+                at,
+                offset: radius + 4.0 * scale,
+                name: point.name.clone(),
+                opacity: layer.opacity,
+            });
         }
-        named.push(at);
-        let position = at + Vec2::new(radius + 4.0 * scale, 0.0);
-        let galley = painter.layout_no_wrap(point.name.clone(), font.clone(), Color32::WHITE);
-        let shadow = painter.layout_no_wrap(point.name.clone(), font.clone(), Color32::BLACK);
-        let top_left = egui::Align2::LEFT_CENTER
-            .anchor_size(position, galley.size())
-            .min;
-        texts.push(Shape::Text(
-            egui::epaint::TextShape::new(top_left + Vec2::splat(1.0), shadow, Color32::BLACK)
-                .with_opacity_factor(layer.opacity),
-        ));
-        texts.push(Shape::Text(
-            egui::epaint::TextShape::new(top_left, galley, Color32::WHITE)
-                .with_opacity_factor(layer.opacity),
-        ));
     }
     shapes.extend(super::live_geometry::mesh_shapes(painter, markers));
-    shapes.extend(texts);
-    shapes
+    LayerGeometry {
+        shapes,
+        markers: rooms,
+        named,
+    }
 }
 
 /// The highest altitude a fly to a layer's area ends at, and the lowest.

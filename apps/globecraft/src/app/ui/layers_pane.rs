@@ -158,6 +158,46 @@ fn note(ui: &mut Ui, t: &Tokens, text: &str) {
         });
 }
 
+/// A feature layer's legend: its marker and line in the layer colour, and how many
+/// points and lines it holds.
+fn feature_legend(
+    ui: &mut Ui,
+    t: &Tokens,
+    [r, g, b]: [u8; 3],
+    points: usize,
+    lines: usize,
+    lang: globecraft_core::language::Lang,
+) {
+    const SWATCH: egui::Vec2 = vec2(26.0, 12.0);
+    ui.horizontal(|ui| {
+        ui.add_space(INDENT + 24.0);
+        let (swatch, _) = ui.allocate_exact_size(SWATCH, Sense::hover());
+        let color = egui::Color32::from_rgb(r, g, b);
+        let painter = ui.painter();
+        if lines > 0 {
+            painter.line_segment(
+                [
+                    swatch.left_center() + vec2(1.0, 3.0),
+                    swatch.right_center() + vec2(-1.0, -3.0),
+                ],
+                Stroke::new(2.0, color),
+            );
+        }
+        if points > 0 {
+            painter.circle_filled(swatch.center(), 4.0, color);
+            painter.circle_stroke(swatch.center(), 4.0, Stroke::new(1.0, t.text_dim));
+        }
+        ui.label(
+            egui::RichText::new(lang.format(
+                "layers-user-legend",
+                &[("points", points.into()), ("lines", lines.into())],
+            ))
+            .size(11.0)
+            .color(t.text_dim),
+        );
+    });
+}
+
 /// A note with a spinner before it, for something still loading.
 fn loading_note(ui: &mut Ui, t: &Tokens, text: &str) {
     egui::Frame::NONE
@@ -381,6 +421,9 @@ impl App {
                     self.run_reporting("data.remove", json!({"id": layer.id}));
                 }
             });
+            if feature && let Some((points, lines)) = self.user_layers.feature_counts(layer.id) {
+                feature_legend(ui, t, layer.rgb(), points, lines, lang);
+            }
             if !layer.attribution.is_empty() {
                 note(ui, t, &layer.attribution);
             }

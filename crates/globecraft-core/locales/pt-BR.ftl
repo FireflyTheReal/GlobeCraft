@@ -1092,6 +1092,13 @@ add-data-features-test-ok = Foram lidos { $points } pontos e { $lines } linhas o
 add-data-kml-help = KML e KMZ abrem em Meus lugares.
 add-data-kml-action = Abrir KML…
 add-data-added-status = “{ $name }” foi adicionada às suas camadas.
+layers-user-legend = { $points ->
+        [one] 1 ponto
+       *[other] { $points } pontos
+    } · { $lines ->
+        [one] 1 linha ou contorno
+       *[other] { $lines } linhas ou contornos
+    }
 layers-user-title = Meus dados
 layers-user-empty = Nada adicionado ainda.
 layers-user-add-action = Adicionar dados…

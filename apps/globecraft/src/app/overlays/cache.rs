@@ -6,7 +6,7 @@ use eframe::egui::{self, Rect, Shape};
 use globecraft_core::{camera::Basis, language::Lang};
 use globecraft_data::boundaries::BoundaryData;
 use globecraft_data::settings::map_style::MapStyle;
-use globecraft_render::overlays::{OverlayWorker, PlacedLabels};
+use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, OverlayWorker, PlacedLabels};
 use std::sync::Arc;
 
 pub(super) use globecraft_render::overlays::OverlayLayers;
@@ -84,6 +84,8 @@ pub(in crate::app) struct OverlayCache {
     placed: PlacedLabels,
     /// `prepare` decided `shapes` belong on screen this frame.
     show: bool,
+    /// The room taken before these names when `shapes` were built.
+    taken: LabelSpaceKey,
 }
 
 impl OverlayCache {
@@ -126,6 +128,7 @@ impl OverlayCache {
             labels_pending: false,
             placed: PlacedLabels::default(),
             show: false,
+            taken: LabelSpaceKey::default(),
             worker: OverlayWorker::with_finish(
                 {
                     let ctx = ctx.clone();
@@ -172,8 +175,15 @@ impl OverlayCache {
         view: OverlayView,
         boundaries: &Arc<BoundaryData>,
         style: OverlayStyle,
+        taken: &LabelSpace,
     ) {
-        self.show = self.prepare_shapes(painter, view, boundaries, style);
+        let space = taken.key();
+        if space != self.taken {
+            // Same view, other room: lay the names out again.
+            self.taken = space;
+            self.key = None;
+        }
+        self.show = self.prepare_shapes(painter, view, boundaries, style, taken);
     }
 
     #[cfg(test)]
@@ -184,7 +194,7 @@ impl OverlayCache {
         boundaries: &Arc<BoundaryData>,
         style: OverlayStyle,
     ) {
-        self.prepare(painter, view, boundaries, style);
+        self.prepare(painter, view, boundaries, style, &LabelSpace::default());
         self.paint(painter);
     }
 
@@ -211,6 +221,7 @@ impl OverlayCache {
         view: OverlayView,
         boundaries: &Arc<BoundaryData>,
         style: OverlayStyle,
+        taken: &LabelSpace,
     ) -> bool {
         let current = DrawKey { view, style };
         if std::mem::take(&mut self.labels_pending) && self.key == Some(current) {
@@ -257,6 +268,7 @@ impl OverlayCache {
                     outgoing,
                     &mut self.galleys,
                     style,
+                    taken,
                 );
                 self.shapes = built.shapes;
                 self.placed.replace(built.label_rects);

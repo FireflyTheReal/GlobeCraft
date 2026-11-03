@@ -156,6 +156,7 @@ impl App {
         basis: &Basis,
         rect: Rect,
         altitude_km: f64,
+        taken: &globecraft_render::overlays::LabelSpace,
     ) {
         let arrival = self.layer_arrivals.fade(Instant::now());
         if !arrival.is_settled() {
@@ -186,6 +187,7 @@ impl App {
             },
             &self.boundaries,
             style,
+            taken,
         );
     }
 
