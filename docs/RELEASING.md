@@ -14,7 +14,7 @@ separate from development checks. An initial run still compiles dependencies;
 compatible later runs can reuse them. Caching does not reuse previously published
 application binaries: every release still builds and packages its tagged source.
 
-| Platform | Release files (prefix `globecraft-0.3.0-`) |
+| Platform | Release files (prefix `globecraft-0.4.0-`) |
 | --- | --- |
 | Linux x86-64 | `linux-x64.tar.gz`, `linux-x64.deb`, `linux-x64.rpm`, `linux-x64.AppImage`, `linux-x64.AppImage.zsync`, `linux-x64.flatpak`, `linux-x64.snap` |
 | Linux ARM64 | `linux-arm64.tar.gz`, `linux-arm64.deb`, `linux-arm64.rpm`, `linux-arm64.AppImage`, `linux-arm64.AppImage.zsync`, `linux-arm64.flatpak`, `linux-arm64.snap` |
@@ -324,6 +324,14 @@ Before consolidating checksum sidecars, validate a complete downloaded artifact 
 ```sh
 python3 scripts/package_release.py verify --version 0.3.0 --output /tmp/globecraft-release
 ```
+
+## v0.4.0 scope
+
+Map data from GlobeCraft's own `map-data` tiles (place names to street level,
+roads with street names, railways, ferries and airports, places of interest with
+symbols), one shared space for every map name, Add Data with a source library,
+legends and the Data pane, experience levels, and the AppImage fix for issue #1.
+See [v0.4.0 notes](releases/v0.4.0.md) for details and known limits.
 
 ## v0.3.0 scope
 
