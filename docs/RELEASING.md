@@ -33,8 +33,10 @@ GTK 3, libudev and a working graphics driver. AppImage bundles include GTK libra
 resources through linuxdeploy's GTK plugin, but never Wayland, xkbcommon or the
 GL/EGL/Vulkan/DRM stack (`excludedLibs` in `packaging/cargo-packager.json`): those
 must match the system's graphics drivers, and bundled copies from Ubuntu 22.04 crashed
-the app on newer distributions (issue #1). `package_linux.py` lists the libraries in
-each AppImage it builds and fails if one of these is inside. FreeBSD builds run in a FreeBSD 14.5
+the app on newer distributions (issue #1). linuxdeploy's GTK plugin deploys them anyway
+in its own pass, so `package_linux.py` extracts each AppImage, removes them, repacks it
+with appimagetool 1.9.0 (`APPIMAGETOOL`, installed by the release workflow) and the same
+update information, then lists the libraries inside and fails if one of these remains. FreeBSD builds run in a FreeBSD 14.5
 VM and require GTK 3, libxkbcommon, libudev-devd, libinotify and a working graphics driver at runtime.
 macOS bundles target macOS 11 or newer and are ad-hoc signed, without a
 Developer ID certificate or notarization. The ARM64 build packages `GlobeCraft.app`

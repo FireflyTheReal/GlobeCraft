@@ -55,18 +55,20 @@ def native_package(version, target, binary, archive, temporary, format_name):
             str(metadata): f"usr/share/metainfo/{metadata.name}",
             str(release.ROOT / "LICENSE"): "usr/share/licenses/globecraft/LICENSE",
         }
-        # cargo-packager passes `excludedLibs` as linuxdeploy flags, which the GTK
-        # plugin's own linuxdeploy pass does not receive; this variable reaches both.
-        env["LINUXDEPLOY_EXCLUDED_LIBRARIES"] = ";".join(config["appimage"]["excludedLibs"])
         env.update(APPIMAGE_EXTRACT_AND_RUN="1",
                    LDAI_UPDATE_INFORMATION=f"gh-releases-zsync|FireflyTheReal|GlobeCraft|latest|globecraft-*-{release.TARGETS[target]}.AppImage.zsync")
     tools.run(config, env)
     extension = "AppImage" if format_name == "appimage" else "deb"
     shutil.copy2(tools.artifact(output, extension), archive)
     if format_name == "appimage":
+        excluded = config["appimage"]["excludedLibs"]
+        removed = strip_system_libraries(archive, excluded, ARCHITECTURES[target][1],
+                                         env["LDAI_UPDATE_INFORMATION"])
+        if removed:
+            print(f"Removed from {archive.name}: {' '.join(removed)}")
         libraries = bundled_libraries(archive)
         print(f"{archive.name} bundles: {' '.join(libraries)}")
-        check_bundled_libraries(libraries, config["appimage"]["excludedLibs"])
+        check_bundled_libraries(libraries, excluded)
         # Generate against the final filename so Filename/URL headers and release
         # links agree, independently of cargo-packager's internal output names.
         delta = archive.with_suffix(".AppImage.zsync")
@@ -84,13 +86,41 @@ def bundled_libraries(appimage):
         return sorted({path.name for path in lib.rglob("*.so*")})
 
 
+def strip_system_libraries(appimage, excluded, arch, update_information):
+    """Removes libraries matching `excluded` from an AppImage and repacks it.
+
+    cargo-packager hands `excludedLibs` to linuxdeploy, but the GTK plugin deploys
+    its libraries in a second linuxdeploy pass without them, which brings Wayland
+    and xkbcommon back (Release runs 41690027494 and 41692851212). The repack uses
+    appimagetool (`APPIMAGETOOL`) with the same update information. Returns the
+    names removed; the AppImage is left untouched when there are none.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        subprocess.run([str(appimage.resolve()), "--appimage-extract"], cwd=directory,
+                       check=True, stdout=subprocess.DEVNULL)
+        appdir = Path(directory) / "squashfs-root"
+        found = [path for path in (appdir / "usr/lib").rglob("*.so*")
+                 if any(fnmatch.fnmatch(path.name, pattern) for pattern in excluded)]
+        if not found:
+            return []
+        for path in found:
+            path.unlink()
+        repacked = Path(directory) / appimage.name
+        tool = os.environ.get("APPIMAGETOOL", "appimagetool")
+        subprocess.run([tool, "--no-appstream", "-u", update_information, str(appdir),
+                        str(repacked)],
+                       check=True, env=dict(os.environ, ARCH=arch, APPIMAGE_EXTRACT_AND_RUN="1"))
+        shutil.move(repacked, appimage)
+        appimage.chmod(0o755)
+        return sorted(path.name for path in found)
+
+
 def check_bundled_libraries(libraries, excluded):
     """Fails when the AppImage carries a library that must come from the system.
 
     Wayland, xkbcommon and the GL/EGL/Vulkan/DRM stack are loaded by the system's
     graphics drivers too; an older bundled copy made Mesa's EGL fail and the app
-    crash at start (issue #1). linuxdeploy's GTK plugin deploys libraries in a
-    second pass that does not see cargo-packager's exclusions, so check the result.
+    crash at start (issue #1). Checked on the final AppImage, after the repack.
     """
     bundled = [name for name in libraries
                if any(fnmatch.fnmatch(name, pattern) for pattern in excluded)]

@@ -82,8 +82,6 @@ class NativePackagingTests(unittest.TestCase):
                             component = ET.parse(source)
                             self.assertEqual(component.findtext("id"), Path(destination).name.removesuffix(".appdata.xml"))
                             self.assertEqual(component.findtext("launchable"), desktop.name)
-                    self.assertEqual(env["LINUXDEPLOY_EXCLUDED_LIBRARIES"].split(";"),
-                                     config["appimage"]["excludedLibs"])
                     self.assertTrue(env["LDAI_UPDATE_INFORMATION"].endswith(f"{release.TARGETS[target]}.AppImage.zsync"))
                     output = Path(config["outDir"])
                     output.mkdir()
@@ -97,12 +95,49 @@ class NativePackagingTests(unittest.TestCase):
 
                 bundled = mock.patch.object(linux, "bundled_libraries",
                                             return_value=["libgtk-3.so.0", "libpango-1.0.so.0"])
-                with mock.patch.object(tools, "run", side_effect=package), mock.patch.object(linux.subprocess, "run", side_effect=zsync), bundled as listed:
+                stripped = mock.patch.object(linux, "strip_system_libraries", return_value=[])
+                with mock.patch.object(tools, "run", side_effect=package), mock.patch.object(linux.subprocess, "run", side_effect=zsync), bundled as listed, stripped as strip:
                     linux.native_package("0.1.0", target, binary, archive, root, "appimage")
                 listed.assert_called_once_with(archive)
+                (path, excluded, arch, update), _ = strip.call_args
+                self.assertEqual(path, archive)
+                self.assertIn("libwayland-*", excluded)
+                self.assertEqual(arch, linux.ARCHITECTURES[target][1])
+                self.assertTrue(update.endswith(f"{release.TARGETS[target]}.AppImage.zsync"))
                 delta = archive.with_suffix(".AppImage.zsync")
                 self.assertEqual(delta.with_suffix(".zsync.sha256").read_text(),
                                  f"{hashlib.sha256(delta.read_bytes()).hexdigest()}  {delta.name}\n")
+
+    def test_system_libraries_are_removed_and_the_appimage_repacked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            appimage = root / "globecraft-0.1.0-linux-x64.AppImage"
+            appimage.write_bytes(b"original")
+            calls = []
+
+            def run(command, cwd=None, env=None, **options):
+                calls.append(command)
+                if command[1] == "--appimage-extract":
+                    lib = Path(cwd) / "squashfs-root/usr/lib"
+                    (lib / "gtk-3.0").mkdir(parents=True)
+                    for name in ("libgtk-3.so.0", "libwayland-client.so.0", "libxkbcommon.so.0"):
+                        (lib / name).write_bytes(b"lib")
+                    (lib / "gtk-3.0/im-wayland.so").write_bytes(b"module")
+                else:
+                    self.assertEqual(command[:4], ["/tools/appimagetool", "--no-appstream", "-u", "zsync|info"])
+                    self.assertEqual(env["ARCH"], "x86_64")
+                    appdir = Path(command[4])
+                    self.assertEqual(sorted(p.name for p in (appdir / "usr/lib").rglob("*.so*")),
+                                     ["im-wayland.so", "libgtk-3.so.0"])
+                    Path(command[5]).write_bytes(b"repacked")
+
+            with mock.patch.dict(linux.os.environ, {"APPIMAGETOOL": "/tools/appimagetool"}), \
+                    mock.patch.object(linux.subprocess, "run", side_effect=run):
+                removed = linux.strip_system_libraries(
+                    appimage, ["libwayland-*", "libxkbcommon*"], "x86_64", "zsync|info")
+            self.assertEqual(removed, ["libwayland-client.so.0", "libxkbcommon.so.0"])
+            self.assertEqual(appimage.read_bytes(), b"repacked")
+            self.assertEqual(len(calls), 2)
 
     def test_appimage_with_system_graphics_libraries_fails(self):
         excluded = ["libwayland-*", "libxkbcommon*"]
