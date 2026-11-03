@@ -12,6 +12,7 @@ use globecraft_core::camera::Basis;
 use globecraft_data::roads::Road;
 use globecraft_data::vector_tiles::TileFade;
 use globecraft_render::live_layers::ProjectedRoad;
+use globecraft_render::overlays::LabelSpace;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -74,11 +75,24 @@ fn middle(points: &[(f64, f64)]) -> Option<(f64, f64)> {
 /// stretch that holds it, as close as possible to `preferred` (by default the middle
 /// of the line), and the angle (radians) of the stretch, turned so the text reads
 /// left to right.
+#[cfg(test)]
 pub(super) fn anchor(
     line: &[Pos2],
     width: f32,
     height: f32,
     preferred: Option<Pos2>,
+) -> Option<(Pos2, f32)> {
+    anchor_where(line, width, height, preferred, |_, _| true)
+}
+
+/// `anchor`, skipping places where `fits(centre, angle)` is false (taken by other
+/// names), so a name moves along its road around them.
+fn anchor_where(
+    line: &[Pos2],
+    width: f32,
+    height: f32,
+    preferred: Option<Pos2>,
+    fits: impl Fn(Pos2, f32) -> bool,
 ) -> Option<(Pos2, f32)> {
     if line.len() < 2 {
         return None;
@@ -148,6 +162,9 @@ pub(super) fn anchor(
         } else if angle < -std::f32::consts::FRAC_PI_2 {
             angle += std::f32::consts::PI;
         }
+        if !fits(at(centre), angle) {
+            continue;
+        }
         return Some((at(centre), angle));
     }
     None
@@ -193,14 +210,16 @@ pub(super) struct NameView<'a> {
     pub scale: f32,
 }
 
-/// The name shapes for the roads on screen, each with its fade.
+/// The name shapes for the roads on screen, each with its fade, and the room they
+/// take. Names go only where `taken` (names of higher priority) is free.
 pub(super) fn names(
     painter: &egui::Painter,
     roads: &[Road],
     projected: &[ProjectedRoad],
     view: &NameView<'_>,
+    taken: &LabelSpace,
     memory: &mut NameMemory,
-) -> Vec<(TileFade, Shape)> {
+) -> (Vec<(TileFade, Shape)>, Vec<Rect>) {
     let NameView {
         basis,
         viewport,
@@ -251,22 +270,24 @@ pub(super) fn names(
             .and_then(|(lat, lon)| basis.project(basis.surface_position(lat, lon), viewport));
         let galley = painter.layout_no_wrap(road.name.clone(), font.clone(), TEXT_COLOR);
         let size = galley.size();
-        for line in &projected.segments {
-            let Some((centre, angle)) = anchor(line, size.x + 2.0 * margin, size.y, preferred)
-            else {
-                continue;
-            };
-            if !viewport.shrink(margin).contains(centre)
-                || written
+        let boxed = size + Vec2::splat(2.0 * margin);
+        // A place is free when it is on screen, away from the same name written
+        // before, and clear of the names placed so far by every layer.
+        let fits = |centre: Pos2, angle: f32| {
+            let bounds = turned_bounds(centre, boxed, angle);
+            viewport.shrink(margin).contains(centre)
+                && !written
                     .iter()
                     .any(|(name, at)| *name == road.name && at.distance(centre) < repeat)
-            {
-                continue;
-            }
-            let bounds = turned_bounds(centre, size + Vec2::splat(2.0 * margin), angle);
-            if placed.iter().any(|other| other.intersects(bounds)) {
-                continue;
-            }
+                && !placed.iter().any(|other| other.intersects(bounds))
+                && taken.is_free(bounds)
+        };
+        let found = projected
+            .segments
+            .iter()
+            .find_map(|line| anchor_where(line, size.x + 2.0 * margin, size.y, preferred, fits));
+        if let Some((centre, angle)) = found {
+            let bounds = turned_bounds(centre, boxed, angle);
             // A new name fades in; the road's own tile fade applies too.
             let since = *memory.shown.get(&road.name).unwrap_or(&now);
             shown.insert(road.name.clone(), since);
@@ -285,11 +306,10 @@ pub(super) fn names(
             shapes.push((fade, turned_text(centre, galley.clone(), angle, opacity)));
             placed.push(bounds);
             written.push((road.name.as_str(), centre));
-            break;
         }
     }
     memory.shown = shown;
-    shapes
+    (shapes, placed)
 }
 
 #[cfg(test)]
@@ -347,6 +367,73 @@ mod tests {
         let clipped = [Pos2::new(200.0, 100.0), Pos2::new(1000.0, 100.0)];
         let (centre, _) = anchor(&clipped, 100.0, 12.0, Some(Pos2::new(300.0, 90.0))).unwrap();
         assert_eq!(centre, Pos2::new(300.0, 100.0));
+    }
+
+    #[test]
+    fn street_names_keep_off_the_room_other_names_took() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let painter = egui::Painter::new(ctx, egui::LayerId::background(), Rect::EVERYTHING);
+        let viewport = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+        let basis = globecraft_core::camera::Cam {
+            lat: 0.0,
+            lon: 0.0,
+            heading: 0.0,
+            alt: 2.0,
+            tilt: 0.0,
+        }
+        .basis(f64::from(viewport.aspect_ratio()));
+        let roads = [Road {
+            name: "Main Street".into(),
+            kind: "residential".into(),
+            restricted: false,
+            points: vec![(0.0, -0.01), (0.0, 0.01)],
+            fade: TileFade::default(),
+        }];
+        let projected = [ProjectedRoad {
+            source_index: 0,
+            segments: vec![vec![Pos2::new(40.0, 300.0), Pos2::new(760.0, 300.0)]],
+        }];
+        let view = NameView {
+            basis: &basis,
+            viewport,
+            altitude_km: 2.0,
+            size_points: 12.0,
+            scale: 1.0,
+        };
+        let place = |taken: &LabelSpace| {
+            names(
+                &painter,
+                &roads,
+                &projected,
+                &view,
+                taken,
+                &mut NameMemory::default(),
+            )
+            .1
+        };
+        // On a free screen the name sits at the middle of the road.
+        let free = place(&LabelSpace::default());
+        assert_eq!(free.len(), 1);
+        assert!(free[0].contains(Pos2::new(400.0, 300.0)), "{free:?}");
+
+        // A place name over the middle: the street name moves along its road.
+        let mut places = globecraft_render::overlays::PlacedLabels::default();
+        let city = Rect::from_center_size(Pos2::new(400.0, 300.0), Vec2::new(80.0, 20.0));
+        places.replace(vec![city]);
+        let mut taken = LabelSpace::default();
+        taken.add(&places);
+        let moved = place(&taken);
+        assert_eq!(moved.len(), 1);
+        assert!(!moved[0].intersects(city), "{moved:?}");
+
+        // No room anywhere along the road: no name.
+        places.replace(vec![viewport]);
+        let mut full = LabelSpace::default();
+        full.add(&places);
+        assert!(place(&full).is_empty());
     }
 
     #[test]

@@ -45,3 +45,39 @@ fn indexed_decisions_match_egui_intersection_for_sparse_and_dense_rectangles() {
         assert_eq!(index.len(), accepted.len());
     }
 }
+
+#[test]
+fn label_space_answers_across_layers_and_its_key_changes_only_with_the_rectangles() {
+    let city = Rect::from_min_size(pos2(0.0, 0.0), vec2(40.0, 12.0));
+    let street = Rect::from_min_size(pos2(100.0, 0.0), vec2(60.0, 10.0));
+    let mut places = PlacedLabels::default();
+    let mut streets = PlacedLabels::default();
+    places.replace(vec![city]);
+    streets.replace(vec![street]);
+    let mut space = LabelSpace::default();
+    space.add(&places);
+    let after_places = space.key();
+    assert!(!space.is_free(Rect::from_min_size(pos2(30.0, 5.0), vec2(20.0, 10.0))));
+    assert!(space.is_free(Rect::from_min_size(pos2(110.0, 2.0), vec2(5.0, 5.0))));
+    space.add(&streets);
+    assert!(!space.is_free(Rect::from_min_size(pos2(110.0, 2.0), vec2(5.0, 5.0))));
+    // Touching edges overlap, as in `LabelIndex`.
+    assert!(!space.is_free(Rect::from_min_size(pos2(40.0, 0.0), vec2(5.0, 5.0))));
+    assert!(space.is_free(Rect::from_min_size(pos2(41.0, 0.0), vec2(5.0, 5.0))));
+
+    // Rebuilding a layer with the same names keeps the key; other names change it.
+    let before = space.key();
+    places.replace(vec![city]);
+    let mut again = LabelSpace::default();
+    again.add(&places);
+    again.add(&streets);
+    assert_eq!(again.key(), before);
+    places.replace(vec![city, street]);
+    let mut moved = LabelSpace::default();
+    moved.add(&places);
+    assert_ne!(moved.key(), after_places);
+    places.clear();
+    let mut empty = LabelSpace::default();
+    empty.add(&places);
+    assert!(empty.is_free(city));
+}

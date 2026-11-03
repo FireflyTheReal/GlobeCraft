@@ -148,7 +148,9 @@ impl App {
         }
     }
 
-    pub(super) fn draw_overlays(
+    /// Brings the borders and place names up to date for the displayed view, before
+    /// the other name layers place theirs around these names.
+    pub(super) fn prepare_overlays(
         &mut self,
         painter: &egui::Painter,
         basis: &Basis,
@@ -167,7 +169,7 @@ impl App {
             map_style: self.settings.map_style,
         };
         meshes::BorderWidths::of(&style.map_style).publish(painter.ctx());
-        self.overlay_cache.draw(
+        self.overlay_cache.prepare(
             painter,
             OverlayView {
                 basis: *basis,
@@ -185,6 +187,11 @@ impl App {
             &self.boundaries,
             style,
         );
+    }
+
+    /// Paints what `prepare_overlays` prepared, then the ruler and placemarks.
+    pub(super) fn draw_overlays(&mut self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
+        self.overlay_cache.paint(painter);
         let ms = self.settings.map_scale;
         // The ruler and placemarks sit on the relief, where they are picked.
         let source = self.ground_source();

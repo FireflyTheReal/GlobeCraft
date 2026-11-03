@@ -6,7 +6,7 @@ use eframe::egui::{self, Rect, Shape};
 use globecraft_core::{camera::Basis, language::Lang};
 use globecraft_data::boundaries::BoundaryData;
 use globecraft_data::settings::map_style::MapStyle;
-use globecraft_render::overlays::OverlayWorker;
+use globecraft_render::overlays::{OverlayWorker, PlacedLabels};
 use std::sync::Arc;
 
 pub(super) use globecraft_render::overlays::OverlayLayers;
@@ -80,6 +80,10 @@ pub(in crate::app) struct OverlayCache {
     galleys: LabelGalleys,
     /// The current shapes lack names that had no layout budget left.
     labels_pending: bool,
+    /// The room the names of `shapes` take on screen.
+    placed: PlacedLabels,
+    /// `prepare` decided `shapes` belong on screen this frame.
+    show: bool,
 }
 
 impl OverlayCache {
@@ -120,6 +124,8 @@ impl OverlayCache {
             requested: None,
             galleys: LabelGalleys::default(),
             labels_pending: false,
+            placed: PlacedLabels::default(),
+            show: false,
             worker: OverlayWorker::with_finish(
                 {
                     let ctx = ctx.clone();
@@ -140,6 +146,8 @@ impl OverlayCache {
         self.fading_out = None;
         self.requested = None;
         self.galleys.clear();
+        self.placed.clear();
+        self.show = false;
     }
 
     /// The boundary dataset was replaced but the displayed camera, layers and
@@ -155,6 +163,20 @@ impl OverlayCache {
         }
     }
 
+    /// Brings the shapes up to date for this view and decides whether they are shown;
+    /// `paint` draws them. Split so the name layers placed after these names know
+    /// their room before anything is painted.
+    pub(super) fn prepare(
+        &mut self,
+        painter: &egui::Painter,
+        view: OverlayView,
+        boundaries: &Arc<BoundaryData>,
+        style: OverlayStyle,
+    ) {
+        self.show = self.prepare_shapes(painter, view, boundaries, style);
+    }
+
+    #[cfg(test)]
     pub(super) fn draw(
         &mut self,
         painter: &egui::Painter,
@@ -162,6 +184,34 @@ impl OverlayCache {
         boundaries: &Arc<BoundaryData>,
         style: OverlayStyle,
     ) {
+        self.prepare(painter, view, boundaries, style);
+        self.paint(painter);
+    }
+
+    /// The shapes `prepare` kept for this frame.
+    pub(super) fn paint(&self, painter: &egui::Painter) {
+        if self.show {
+            painter.extend(self.shapes.iter().cloned());
+        }
+    }
+
+    /// The room the names on screen take; empty when nothing is shown.
+    pub(in crate::app) fn placed(&self) -> PlacedLabels {
+        if self.show {
+            self.placed.clone()
+        } else {
+            PlacedLabels::default()
+        }
+    }
+
+    /// Returns whether `shapes` belong on screen.
+    fn prepare_shapes(
+        &mut self,
+        painter: &egui::Painter,
+        view: OverlayView,
+        boundaries: &Arc<BoundaryData>,
+        style: OverlayStyle,
+    ) -> bool {
         let current = DrawKey { view, style };
         if std::mem::take(&mut self.labels_pending) && self.key == Some(current) {
             // Same view and geometry: rebuild in place to add the remaining names.
@@ -209,6 +259,7 @@ impl OverlayCache {
                     style,
                 );
                 self.shapes = built.shapes;
+                self.placed.replace(built.label_rects);
                 if built.labels_pending {
                     // Rebuild next frame to lay out the names left over (cheap: the
                     // rest of the view is cached).
@@ -218,8 +269,7 @@ impl OverlayCache {
                 self.stale = Some(current);
                 if current_data {
                     self.key = Some(current);
-                    painter.extend(self.shapes.iter().cloned());
-                    return;
+                    return true;
                 }
                 self.key = None;
                 let request = (geometry_view, Arc::as_ptr(boundaries) as usize);
@@ -228,8 +278,7 @@ impl OverlayCache {
                     self.requested = Some(request);
                 }
                 painter.ctx().request_repaint();
-                painter.extend(self.shapes.iter().cloned());
-                return;
+                return true;
             } else {
                 let request = (geometry_view, Arc::as_ptr(boundaries) as usize);
                 if self.requested != Some(request) {
@@ -240,16 +289,11 @@ impl OverlayCache {
                 // the replacement, but only when they were projected for
                 // exactly this camera and layer set; a moved camera must never
                 // paint geometry from another view.
-                if self.stale == Some(current) {
-                    painter.extend(self.shapes.iter().cloned());
-                }
-                return;
+                return self.stale == Some(current);
             }
         }
         // Never paint shapes projected for a different displayed camera or layer set.
-        if self.key == Some(current) {
-            painter.extend(self.shapes.iter().cloned());
-        }
+        self.key == Some(current)
     }
 }
 

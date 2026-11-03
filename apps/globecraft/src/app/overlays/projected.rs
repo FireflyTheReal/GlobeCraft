@@ -64,6 +64,7 @@ pub(super) fn build(
         galleys.begin(painter.ctx());
         let complete = build_labels(
             &mut shapes,
+            &mut Vec::new(),
             LabelPass {
                 painter,
                 style,
@@ -84,6 +85,8 @@ pub(super) fn build(
 /// (bounded per rebuild); the view should be rebuilt next frame to add them.
 pub(super) struct BuiltOverlay {
     pub shapes: Vec<Shape>,
+    /// The room the names and grid labels take on screen.
+    pub label_rects: Vec<Rect>,
     pub labels_pending: bool,
 }
 
@@ -142,8 +145,10 @@ pub(super) fn build_prepared(
         shapes.push(Shape::mesh(mesh));
     }
     galleys.begin(painter.ctx());
+    let mut label_rects = Vec::new();
     let complete = build_labels(
         &mut shapes,
+        &mut label_rects,
         LabelPass {
             painter,
             style,
@@ -159,6 +164,7 @@ pub(super) fn build_prepared(
     );
     BuiltOverlay {
         shapes,
+        label_rects,
         labels_pending: !complete,
     }
 }
@@ -276,10 +282,12 @@ struct LabelPass<'p> {
     policy: FadePolicy,
 }
 
-/// Appends label shapes in priority order. Returns false when the layout budget ran
-/// out: the remaining (lower-priority) names are left for the next rebuild.
+/// Appends label shapes in priority order, and the room each takes to `taken`.
+/// Returns false when the layout budget ran out: the remaining (lower-priority)
+/// names are left for the next rebuild.
 fn build_labels<'a>(
     shapes: &mut Vec<Shape>,
+    taken: &mut Vec<Rect>,
     LabelPass {
         painter,
         style,
@@ -335,6 +343,7 @@ fn build_labels<'a>(
             if !placed.try_insert(area) {
                 continue;
             }
+            taken.push(area);
             if galley.is_empty() {
                 continue;
             }
@@ -405,6 +414,7 @@ fn build_labels<'a>(
         if !viewport.contains_rect(area) || !placed.try_insert(area) {
             continue;
         }
+        taken.push(area);
         shapes.push(Shape::rect_filled(
             area,
             LABEL_PADDING_POINTS,

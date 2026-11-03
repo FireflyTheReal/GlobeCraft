@@ -1,12 +1,13 @@
 //! Railways, ferries and airports: styled once per projected geometry and kept as
 //! tessellated meshes, so a still view costs nothing per frame.
 use super::fade::{TiledShapes, styled_line};
-use eframe::egui::{self, Align2, Color32, Shape, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, Rect, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use globecraft_data::transport::{Airport, LineKind};
 use globecraft_data::vector_tiles::TileFade;
 use globecraft_render::live_layers::{LiveGeometry, ProjectedTransport};
+use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,6 +15,8 @@ const LABEL_FONT_POINTS: f32 = 11.0;
 const LABEL_OFFSET_POINTS: f32 = 8.0;
 const AIRPORT_MARKER_POINTS: f32 = 4.0;
 const HOVER_RADIUS_POINTS: f32 = 12.0;
+/// Free room kept around each airport marker and name, map points.
+const LABEL_PADDING_POINTS: f32 = 2.0;
 const AIRPORT_COLOR: Color32 = Color32::from_rgb(52, 120, 220);
 const LABEL_COLOR: Color32 = Color32::from_rgb(235, 242, 255);
 /// Opacity of lines in tunnels.
@@ -38,22 +41,44 @@ fn line_type(kind: LineKind) -> LineType {
 
 #[derive(Default)]
 pub(in crate::app) struct TransportShapes {
-    /// What the shapes were built from: the projected geometry, scale and style.
+    /// What the lines were built from: the projected geometry, scale and style.
     key: Option<(usize, u32, MapStyle)>,
+    /// What the airports were placed for: the same, and the room names of higher
+    /// priority took.
+    airports_key: Option<(usize, u32, LabelSpaceKey)>,
     lines: TiledShapes,
     airports: TiledShapes,
+    /// The room the airport markers and names take.
+    placed: PlacedLabels,
 }
 
 impl TransportShapes {
     pub(in crate::app) fn invalidate(&mut self) {
         self.key = None;
+        self.airports_key = None;
     }
-    fn refresh(&mut self, painter: &egui::Painter, geometry: &LiveGeometry, style: &MapStyle) {
-        let key = (
-            Arc::as_ptr(&geometry.transport) as usize,
-            geometry.input.view.map_scale.to_bits(),
-            *style,
-        );
+    /// The room the airports drawn last take.
+    pub(in crate::app) fn placed(&self) -> &PlacedLabels {
+        &self.placed
+    }
+    /// Brings the shapes up to date; airport names go only where `taken` is free.
+    pub(in crate::app) fn prepare(
+        &mut self,
+        painter: &egui::Painter,
+        geometry: &LiveGeometry,
+        style: &MapStyle,
+        taken: &LabelSpace,
+    ) {
+        let source = Arc::as_ptr(&geometry.transport) as usize;
+        let scale = geometry.input.view.map_scale.to_bits();
+        let airports_key = (source, scale, taken.key());
+        if self.airports_key.as_ref() != Some(&airports_key) {
+            let (shapes, rects) = airports(painter, geometry, taken);
+            self.airports = TiledShapes::build(painter, shapes);
+            self.placed.replace(rects);
+            self.airports_key = Some(airports_key);
+        }
+        let key = (source, scale, *style);
         if self.key.as_ref() == Some(&key) {
             return;
         }
@@ -76,26 +101,13 @@ impl TransportShapes {
                 &fade,
             ),
         );
-        self.airports = TiledShapes::build(painter, airports(painter, geometry, view.map_scale));
     }
     /// The lines, drawn under the borders.
-    pub(in crate::app) fn draw_lines(
-        &mut self,
-        painter: &egui::Painter,
-        geometry: &LiveGeometry,
-        style: &MapStyle,
-    ) {
-        self.refresh(painter, geometry, style);
+    pub(in crate::app) fn draw_lines(&self, painter: &egui::Painter) {
         self.lines.draw(painter, Instant::now());
     }
     /// Airport markers and names, drawn over the borders.
-    pub(in crate::app) fn draw_airports(
-        &mut self,
-        painter: &egui::Painter,
-        geometry: &LiveGeometry,
-        style: &MapStyle,
-    ) {
-        self.refresh(painter, geometry, style);
+    pub(in crate::app) fn draw_airports(&self, painter: &egui::Painter) {
         self.airports.draw(painter, Instant::now());
     }
     /// The nearest airport under the pointer, with its codes and class.
@@ -184,15 +196,20 @@ fn lines(
     shapes
 }
 
+/// Airport markers, and the names that fit where `taken` is free; with the room
+/// both take.
 fn airports(
     painter: &egui::Painter,
     geometry: &LiveGeometry,
-    scale: f32,
-) -> Vec<(TileFade, Shape)> {
+    taken: &LabelSpace,
+) -> (Vec<(TileFade, Shape)>, Vec<Rect>) {
     let Some(snapshot) = &geometry.input.transport else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
+    let scale = geometry.input.view.map_scale;
     let font = crate::app::fonts::map_font(painter.ctx(), LABEL_FONT_POINTS * scale);
+    let padding = LABEL_PADDING_POINTS * scale;
+    let mut placed = Vec::new();
     let mut markers = Vec::new();
     let mut labels = Vec::new();
     for projected in &geometry.transport.airports {
@@ -207,6 +224,7 @@ fn airports(
         let at = projected.position;
         let opacity = projected.opacity;
         let radius = AIRPORT_MARKER_POINTS * scale;
+        placed.push(Rect::from_center_size(at, Vec2::splat(2.0 * radius)).expand(padding));
         markers.push((
             fade,
             Shape::circle_filled(at, radius, AIRPORT_COLOR.gamma_multiply(opacity)),
@@ -235,6 +253,11 @@ fn airports(
                 galley.size(),
             )
             .min;
+        let area = Rect::from_min_size(position, galley.size()).expand(padding);
+        if !taken.is_free(area) {
+            continue;
+        }
+        placed.push(area);
         let shadow = painter.layout_no_wrap(text, font.clone(), Color32::BLACK);
         labels.push((
             fade,
@@ -243,7 +266,7 @@ fn airports(
         labels.push((fade, faded_text(position, galley, opacity)));
     }
     markers.extend(labels);
-    markers
+    (markers, placed)
 }
 
 /// A name at `opacity` (the galley's colours are fixed when laid out).

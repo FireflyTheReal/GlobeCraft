@@ -7,6 +7,7 @@ use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
 use globecraft_data::settings::map_style::{LineType, MapStyle};
 use globecraft_data::vector_tiles::TileFade;
 use globecraft_render::live_layers::LiveGeometry;
+use globecraft_render::overlays::{LabelSpace, LabelSpaceKey};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -28,8 +29,11 @@ const WATER_LABEL: Color32 = Color32::from_rgb(150, 200, 255);
 
 #[derive(Default)]
 pub(in crate::app) struct PoiShapes {
-    /// What the shapes were built from: the projected geometry, scale and style.
+    /// What the lines were built from: the projected geometry, scale and style.
     key: Option<(usize, u32, MapStyle)>,
+    /// What the names were placed for: the projected geometry, scale and the room
+    /// names of higher priority took.
+    labels_key: Option<(usize, u32, LabelSpaceKey)>,
     lines: TiledShapes,
     labels: TiledShapes,
 }
@@ -37,39 +41,37 @@ pub(in crate::app) struct PoiShapes {
 impl PoiShapes {
     pub(in crate::app) fn invalidate(&mut self) {
         self.key = None;
+        self.labels_key = None;
     }
-    fn refresh(&mut self, painter: &egui::Painter, geometry: &LiveGeometry, style: &MapStyle) {
-        let key = (
-            Arc::as_ptr(&geometry.poi) as usize,
-            geometry.input.view.map_scale.to_bits(),
-            *style,
-        );
-        if self.key.as_ref() == Some(&key) {
-            return;
-        }
-        self.key = Some(key);
-        let scale = geometry.input.view.map_scale;
-        self.lines = TiledShapes::build(painter, lines(geometry, style, scale));
-        self.labels = TiledShapes::build(painter, labels(painter, geometry, scale));
-    }
-    /// Rivers, canals and park outlines, drawn under the borders.
-    pub(in crate::app) fn draw_lines(
+    /// Brings the shapes up to date; markers and names go only where `taken` is
+    /// free (the names of every other map layer come first).
+    pub(in crate::app) fn prepare(
         &mut self,
         painter: &egui::Painter,
         geometry: &LiveGeometry,
         style: &MapStyle,
+        taken: &LabelSpace,
     ) {
-        self.refresh(painter, geometry, style);
+        let source = Arc::as_ptr(&geometry.poi) as usize;
+        let scale_bits = geometry.input.view.map_scale.to_bits();
+        let scale = geometry.input.view.map_scale;
+        let labels_key = (source, scale_bits, taken.key());
+        if self.labels_key.as_ref() != Some(&labels_key) {
+            self.labels = TiledShapes::build(painter, labels(painter, geometry, scale, taken));
+            self.labels_key = Some(labels_key);
+        }
+        let key = (source, scale_bits, *style);
+        if self.key.as_ref() != Some(&key) {
+            self.lines = TiledShapes::build(painter, lines(geometry, style, scale));
+            self.key = Some(key);
+        }
+    }
+    /// Rivers, canals and park outlines, drawn under the borders.
+    pub(in crate::app) fn draw_lines(&self, painter: &egui::Painter) {
         self.lines.draw(painter, Instant::now());
     }
     /// Markers and names, drawn over the borders.
-    pub(in crate::app) fn draw_labels(
-        &mut self,
-        painter: &egui::Painter,
-        geometry: &LiveGeometry,
-        style: &MapStyle,
-    ) {
-        self.refresh(painter, geometry, style);
+    pub(in crate::app) fn draw_labels(&self, painter: &egui::Painter) {
         self.labels.draw(painter, Instant::now());
     }
     /// The nearest name under the pointer, with its class or elevation.
@@ -174,9 +176,15 @@ fn lines(geometry: &LiveGeometry, style: &MapStyle, scale: f32) -> Vec<(TileFade
 
 /// Markers and names. Labels come in priority order; each takes the room it
 /// covers on screen, so a later one whose name would overlap an earlier marker or
-/// name tries the other side of its marker, and else shows its marker alone (or
-/// nothing when even that is covered) — as map apps thin out busy streets.
-fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(TileFade, Shape)> {
+/// name (or a name of another layer, in `taken`) tries the other side of its
+/// marker, and else shows its marker alone (or nothing when even that is covered)
+/// — as map apps thin out busy streets.
+fn labels(
+    painter: &egui::Painter,
+    geometry: &LiveGeometry,
+    scale: f32,
+    taken: &LabelSpace,
+) -> Vec<(TileFade, Shape)> {
     let Some(snapshot) = &geometry.input.poi else {
         return Vec::new();
     };
@@ -250,7 +258,10 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(
         let marker_rect = Shape::Vec(marker.clone())
             .visual_bounding_rect()
             .expand(padding);
-        if marker_rect.is_positive() && placed.iter().any(|other| other.intersects(marker_rect)) {
+        if marker_rect.is_positive()
+            && (placed.iter().any(|other| other.intersects(marker_rect))
+                || !taken.is_free(marker_rect))
+        {
             continue;
         }
         let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
@@ -269,7 +280,7 @@ fn labels(painter: &egui::Painter, geometry: &LiveGeometry, scale: f32) -> Vec<(
         };
         let position = candidates.into_iter().find(|min| {
             let rect = Rect::from_min_size(*min, size).expand(padding);
-            !placed.iter().any(|other| other.intersects(rect))
+            !placed.iter().any(|other| other.intersects(rect)) && taken.is_free(rect)
         });
         if marker_rect.is_positive() {
             placed.push(marker_rect);

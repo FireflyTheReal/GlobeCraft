@@ -9,6 +9,7 @@ use eframe::egui::{
 use globecraft_core::layers::MapLayer;
 use globecraft_core::math::{now_unix, wrap_lon};
 use globecraft_data::tiles::Provider;
+use globecraft_render::overlays::LabelSpace;
 use std::time::{Duration, Instant};
 mod ruler_input;
 
@@ -507,6 +508,12 @@ impl App {
             } else {
                 None
             };
+            // All map names share one screen, placed in priority order: place names,
+            // street names, airports, then places of interest. Each layer places its
+            // names where the ones before it left room; painting keeps its own order.
+            self.prepare_overlays(&painter, &display_basis, rect, display_cam.alt);
+            let mut taken = LabelSpace::default();
+            taken.add(&self.overlay_cache.placed());
             if self.layer(MapLayer::Roads)
                 && let Some(geometry) = &live_geometry
             {
@@ -515,7 +522,9 @@ impl App {
                     geometry,
                     self.settings.map_scale,
                     &self.settings.map_style,
+                    &taken,
                 );
+                taken.add(self.roads.placed());
             }
             if self.layer(MapLayer::Traffic)
                 && let Some(geometry) = &live_geometry
@@ -524,15 +533,17 @@ impl App {
             }
             if let Some(geometry) = &live_geometry {
                 let style = self.settings.map_style;
-                self.poi_shapes.draw_lines(&painter, geometry, &style);
-                self.transport_shapes.draw_lines(&painter, geometry, &style);
-            }
-            self.draw_overlays(&painter, &display_basis, rect, display_cam.alt);
-            if let Some(geometry) = &live_geometry {
-                let style = self.settings.map_style;
-                self.poi_shapes.draw_labels(&painter, geometry, &style);
                 self.transport_shapes
-                    .draw_airports(&painter, geometry, &style);
+                    .prepare(&painter, geometry, &style, &taken);
+                taken.add(self.transport_shapes.placed());
+                self.poi_shapes.prepare(&painter, geometry, &style, &taken);
+                self.poi_shapes.draw_lines(&painter);
+                self.transport_shapes.draw_lines(&painter);
+            }
+            self.draw_overlays(&painter, &display_basis, rect);
+            if let Some(geometry) = &live_geometry {
+                self.poi_shapes.draw_labels(&painter);
+                self.transport_shapes.draw_airports(&painter);
                 self.poi_shapes.hover(&painter, geometry, self.lang);
                 self.transport_shapes.hover(&painter, geometry, self.lang);
             }

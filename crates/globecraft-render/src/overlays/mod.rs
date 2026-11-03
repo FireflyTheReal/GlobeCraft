@@ -16,7 +16,7 @@ pub use picking::pick_on_ground;
 mod spatial;
 mod worker;
 use globecraft_data::tiles::TileCache;
-pub use labels::LabelIndex;
+pub use labels::{LabelIndex, LabelSpace, LabelSpaceKey, PlacedLabels};
 pub use spatial::{BoundaryIndex, VisibleBoundaries};
 pub use worker::{
     OverlayGeometry, OverlayGround, OverlayInput, OverlayPreparer, OverlayView, OverlayWorker,
