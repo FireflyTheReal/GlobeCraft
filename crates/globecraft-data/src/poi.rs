@@ -44,6 +44,9 @@ pub struct PoiPoint {
     pub name: String,
     /// OpenMapTiles `class` (for places of interest: shop, museum, railway…).
     pub class: String,
+    /// OpenMapTiles `subclass`, the OpenStreetMap value the class groups (books,
+    /// marina, bus_stop…); empty when absent.
+    pub subclass: String,
     /// OpenMapTiles `rank`: 1 most important (0 when absent).
     pub rank: u32,
     /// Peaks: height in metres.
@@ -80,7 +83,10 @@ fn size_bytes(tile: &PoiTile) -> usize {
         .points
         .iter()
         .map(|point| {
-            std::mem::size_of::<PoiPoint>() + point.name.capacity() + point.class.capacity()
+            std::mem::size_of::<PoiPoint>()
+                + point.name.capacity()
+                + point.class.capacity()
+                + point.subclass.capacity()
         })
         .sum();
     let lines: usize = tile
@@ -190,6 +196,7 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<PoiTile> {
                 .or_else(|| text("name:latin"))
                 .or_else(|| text("name"));
             let class = text("class").unwrap_or_default();
+            let subclass = text("subclass").unwrap_or_default();
             let point_kind = match layer.name.as_str() {
                 "poi" => Some(PointKind::Poi),
                 "mountain_peak" => Some(PointKind::Peak),
@@ -210,6 +217,7 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<PoiTile> {
                             lon,
                             name: name.clone(),
                             class: class.clone(),
+                            subclass: subclass.clone(),
                             rank: number("rank").map_or(0, |rank| rank.max(0.0) as u32),
                             elevation_m: number("ele").map(|ele| ele.round() as i32),
                         });
@@ -234,6 +242,7 @@ fn decode(key: TileKey, bytes: &[u8]) -> Option<PoiTile> {
                                     lon,
                                     name,
                                     class,
+                                    subclass,
                                     rank: 0,
                                     elevation_m: None,
                                 });
@@ -285,6 +294,7 @@ mod tests {
                         vec![
                             ("name", TestValue::Text("Deutsches Museum")),
                             ("class", TestValue::Text("museum")),
+                            ("subclass", TestValue::Text("museum")),
                             ("rank", TestValue::Int(3)),
                         ],
                         1,
@@ -358,6 +368,8 @@ mod tests {
             ]
         );
         assert_eq!(tile.points[0].rank, 3);
+        assert_eq!(tile.points[0].subclass, "museum");
+        assert_eq!(tile.points[1].subclass, "", "peaks without a subclass");
         assert_eq!(tile.lines.len(), 1);
         assert_eq!(tile.lines[0].kind, PoiLineKind::River);
         assert_eq!(tile.lines[0].name.as_deref(), Some("Isar"));

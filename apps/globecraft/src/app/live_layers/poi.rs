@@ -1,7 +1,7 @@
 //! Places of interest, peaks, waters and parks: rivers and park outlines under the
 //! borders, names over them, styled once per projected geometry.
 use super::fade::{TiledShapes, styled_line};
-use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
 use globecraft_data::settings::map_style::{LineType, MapStyle};
@@ -15,15 +15,11 @@ const HOVER_RADIUS_POINTS: f32 = 12.0;
 
 const LABEL_FONT_POINTS: f32 = 11.0;
 const WATER_FONT_POINTS: f32 = 12.0;
-const MARKER_POINTS: f32 = 3.2;
-const LABEL_OFFSET_POINTS: f32 = 7.0;
 /// Between a place's badge and its name.
 const BADGE_GAP_POINTS: f32 = 3.0;
 /// Free room kept around each marker and name, map points.
 const LABEL_PADDING_POINTS: f32 = 2.0;
-const PARK: Color32 = Color32::from_rgb(92, 180, 96);
 const PARK_LABEL: Color32 = Color32::from_rgb(190, 240, 190);
-const PEAK: Color32 = Color32::from_rgb(150, 105, 70);
 const LABEL: Color32 = Color32::from_rgb(240, 244, 250);
 const WATER_LABEL: Color32 = Color32::from_rgb(150, 200, 255);
 
@@ -118,11 +114,11 @@ fn tooltip(lang: Lang, point: &PoiPoint) -> String {
     } else {
         &point.name
     };
-    let class = if point.class.is_empty() {
-        "—"
-    } else {
-        &point.class
-    };
+    // The subclass names the place more exactly (books rather than library).
+    let class = [&point.subclass, &point.class]
+        .into_iter()
+        .find(|text| !text.is_empty())
+        .map_or("—", |text| text.as_str());
     match point.kind {
         PointKind::Poi => lang.format(
             "poi-hover-place",
@@ -205,56 +201,28 @@ fn labels(
         let fade = snapshot.fade(label.tile);
         let at = label.position;
         let opacity = label.opacity;
-        let r = MARKER_POINTS * scale;
         let mut marker = Vec::new();
-        let (text, color, font, beside) = match point.kind {
+        let badge = super::poi_icons::point_badge(point);
+        if let Some(badge) = badge {
+            super::poi_icons::badge(&mut marker, at, badge, scale, opacity);
+        }
+        let text = match (point.kind, point.elevation_m) {
+            (PointKind::Peak, Some(metres)) => format!("{} {metres} m", point.name),
+            _ => point.name.clone(),
+        };
+        let (color, font) = match point.kind {
             // Seas and oceans in the larger type; lakes, ponds and fountains (also
             // OpenMapTiles water names) as small as the other names.
-            PointKind::Water => (
-                point.name.clone(),
-                WATER_LABEL,
-                if matches!(point.class.as_str(), "ocean" | "sea" | "bay") {
-                    water_font.clone()
-                } else {
-                    font.clone()
-                },
-                None,
-            ),
-            PointKind::Peak => {
-                marker.push(Shape::convex_polygon(
-                    vec![
-                        at + Vec2::new(0.0, -r * 1.4),
-                        at + Vec2::new(r * 1.3, r),
-                        at + Vec2::new(-r * 1.3, r),
-                    ],
-                    PEAK.gamma_multiply(opacity),
-                    Stroke::new(1.0 * scale, Color32::WHITE.gamma_multiply(opacity)),
-                ));
-                let text = match point.elevation_m {
-                    Some(metres) => format!("{} {metres} m", point.name),
-                    None => point.name.clone(),
-                };
-                (text, LABEL, font.clone(), Some(LABEL_OFFSET_POINTS * scale))
+            PointKind::Water if super::poi_icons::is_open_water(&point.class) => {
+                (WATER_LABEL, water_font.clone())
             }
-            PointKind::Park => {
-                marker.push(Shape::circle_filled(at, r, PARK.gamma_multiply(opacity)));
-                (
-                    point.name.clone(),
-                    PARK_LABEL,
-                    font.clone(),
-                    Some(LABEL_OFFSET_POINTS * scale),
-                )
-            }
-            PointKind::Poi => {
-                super::poi_icons::badge(&mut marker, at, &point.class, scale, opacity);
-                (
-                    point.name.clone(),
-                    LABEL,
-                    font.clone(),
-                    Some((super::poi_icons::BADGE_RADIUS_POINTS + BADGE_GAP_POINTS) * scale),
-                )
-            }
+            PointKind::Water => (WATER_LABEL, font.clone()),
+            PointKind::Park => (PARK_LABEL, font.clone()),
+            PointKind::Peak | PointKind::Poi => (LABEL, font.clone()),
         };
+        // Names with a badge go beside it; the others are centred on their point.
+        let beside =
+            badge.map(|_| (super::poi_icons::BADGE_RADIUS_POINTS + BADGE_GAP_POINTS) * scale);
         let marker_rect = Shape::Vec(marker.clone())
             .visual_bounding_rect()
             .expand(padding);
@@ -314,7 +282,8 @@ mod tests {
             lat: 0.0,
             lon: 0.0,
             name: "Feature".into(),
-            class: "museum".into(),
+            class: "library".into(),
+            subclass: "books".into(),
             rank: 1,
             elevation_m: None,
         }
@@ -324,7 +293,8 @@ mod tests {
     fn hover_names_the_feature_class_and_peak_elevation() {
         let place = tooltip(Lang::En, &point(PointKind::Poi));
         assert!(place.contains("Feature"), "{place}");
-        assert!(place.contains("Place of interest • museum"), "{place}");
+        // The subclass says what the place is when there is one.
+        assert!(place.contains("Place of interest • books"), "{place}");
         let peak = tooltip(
             Lang::En,
             &PoiPoint {
@@ -336,6 +306,6 @@ mod tests {
         );
         assert!(peak.contains("Peak • 1234 m"), "{peak}");
         let park = tooltip(Lang::PtBr, &point(PointKind::Park));
-        assert!(park.contains("Parque ou área protegida • museum"), "{park}");
+        assert!(park.contains("Parque ou área protegida • books"), "{park}");
     }
 }

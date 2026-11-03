@@ -366,6 +366,7 @@ fn poi_names_follow_their_layers_and_altitude() {
         lon,
         name: name.into(),
         class: String::new(),
+        subclass: String::new(),
         rank: 1,
         elevation_m: None,
     };
