@@ -107,11 +107,11 @@ fn crossings(ring: &[(f64, f64)], lat: f64, lon: f64) -> usize {
 #[derive(Debug, Default)]
 pub struct TimeZones {
     pub zones: Vec<Zone>,
-    /// Where the clock changes (latitude, longitude): the borders between zones on
-    /// different clocks, without coasts.
+    /// Where the standard time changes (latitude, longitude): the ocean's 15° zones
+    /// between their meridians, and borders between zones on different standard
+    /// times, sea and land alike.
     pub lines: Vec<Vec<(f64, f64)>>,
-    /// One label per group of zones on the same clock: where, and its offsets
-    /// (`UTC+1/+2`).
+    /// The zones off the whole hour: where, and their standard time (`+5:30`).
     pub labels: Vec<(f64, f64, Box<str>)>,
 }
 

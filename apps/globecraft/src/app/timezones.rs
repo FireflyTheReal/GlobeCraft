@@ -12,6 +12,13 @@ const BORDER_POINTS: f32 = 1.2;
 const LABEL: Color32 = Color32::from_rgb(255, 205, 110);
 const LABEL_HALO: Color32 = Color32::from_rgba_premultiplied(10, 12, 16, 220);
 const LABEL_POINTS: f32 = 12.0;
+/// The row of whole-hour labels sits this far above the bottom of the view…
+const ROW_INSET_POINTS: f32 = 70.0;
+/// …or, when the globe does not reach the bottom, this share of the view's height
+/// above its rim.
+const ROW_ABOVE_RIM: f32 = 0.1;
+const ROW_SEARCH_STEP_POINTS: f32 = 10.0;
+const ROW_MAX_LAT_DEG: f64 = 70.0;
 
 /// What the borders were drawn for: the view, the zones and the map scale.
 type BordersKey = (Basis, Rect, usize, u32);
@@ -116,8 +123,36 @@ fn line_bounds(line: &[(f64, f64)]) -> [f64; 4] {
 /// A clock's label is not repeated closer than this to itself.
 const SAME_LABEL_APART_POINTS: f32 = 260.0;
 
-/// The lines where the clock changes, on screen, cut where they leave the view or
-/// the visible side of the globe, and each clock's label. `view`: the camera's
+/// The label of a whole-hour zone: `0`, `+1`, `−1`, … and `±12` on the date line.
+fn hour_label(hour: i32) -> String {
+    match hour {
+        0 => "0".into(),
+        12 => "±12".into(),
+        hour if hour > 0 => format!("+{hour}"),
+        hour => format!("\u{2212}{}", -hour),
+    }
+}
+
+/// Where the row of whole-hour labels runs: the latitude of the ground a little
+/// above the bottom of the view, or of the lower part of the globe from far away.
+fn row_latitude(basis: &Basis, rect: Rect, scale: f32) -> Option<f64> {
+    let x = rect.center().x;
+    let mut y = rect.bottom() - ROW_INSET_POINTS * scale;
+    while y > rect.top() {
+        if let Some((lat, _)) = basis.pick(rect, Pos2::new(x, y)) {
+            // From far away the first ground is the globe's rim, where the
+            // meridians crowd; a little higher they spread out.
+            let higher = Pos2::new(x, y - ROW_ABOVE_RIM * rect.height());
+            let lat = basis.pick(rect, higher).map_or(lat, |(lat, _)| lat);
+            return Some(lat.clamp(-ROW_MAX_LAT_DEG, ROW_MAX_LAT_DEG));
+        }
+        y -= ROW_SEARCH_STEP_POINTS;
+    }
+    None
+}
+
+/// The lines where the standard time changes, on screen, cut where they leave the view or
+/// the visible side of the globe, and the labels. `view`: the camera's
 /// latitude, longitude and altitude.
 fn borders(
     painter: &egui::Painter,
@@ -161,12 +196,26 @@ fn borders(
         }
         flush(&mut run);
     }
-    // The offsets, one per group of zones on the same clock, kept apart.
+    // The whole hours in a row across the lower part of the view, as along the
+    // bottom of a time zone map, then the zones off the whole hour where they are
+    // (the file lists the largest first, so they keep their label).
     let font = super::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
     let mut taken: Vec<Rect> = Vec::new();
     let mut placed: Vec<(Pos2, &str)> = Vec::new();
-    // The file lists the largest areas first, so they keep their label.
-    for (lat, lon, text) in &zones.labels {
+    let row = row_latitude(basis, rect, scale)
+        .map(|lat| {
+            (-11..=12)
+                .map(|hour| {
+                    (
+                        lat,
+                        f64::from(hour) * 15.0,
+                        hour_label(hour).into_boxed_str(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for (lat, lon, text) in row.iter().chain(&zones.labels) {
         let Some(at) =
             globecraft_render::overlays::project_unhidden(basis, rect, None, None, *lat, *lon)
                 .map(|p| Pos2::new(p.x as f32, p.y as f32))
