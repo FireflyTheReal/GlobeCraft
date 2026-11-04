@@ -1082,3 +1082,37 @@ fn data_search_and_dropped_feature_files() {
     ));
     let _ = std::fs::remove_file(file);
 }
+
+/// Interface frames while the time plays, against a still time (roadmap 4.H). Manual.
+#[test]
+#[ignore = "manual: measures frames while the timeline plays"]
+fn timeline_play_frames() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    app.run("ui.timeline", Value::Null).expect("timeline");
+    settle(&mut h, 3.0);
+    let measure = |h: &mut Harness<'static, App>, label: &str| {
+        let mut times = Vec::new();
+        for _ in 0..60 {
+            let start = std::time::Instant::now();
+            h.step();
+            times.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "TIMELINE {label}: median {:.2} ms, p95 {:.2} ms, max {:.2} ms",
+            times[30], times[57], times[59]
+        );
+    };
+    measure(&mut h, "still");
+    h.state_mut()
+        .run("time.play", json!({"hours_per_second": 1}))
+        .expect("play");
+    measure(&mut h, "playing 1 h/s");
+    h.state_mut()
+        .run("time.play", json!({"hours_per_second": 24}))
+        .expect("play");
+    measure(&mut h, "playing 1 day/s");
+}

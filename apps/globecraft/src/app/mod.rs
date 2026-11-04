@@ -215,6 +215,9 @@ pub(crate) struct App {
     wayback_started: bool,
     /// The day of the app's time the Wayback release was last picked for.
     wayback_time_date: Option<String>,
+    /// The moment dated imagery shows, and when it last moved (it trails a playing
+    /// time, so tiles of each day can arrive).
+    imagery_time: (f64, Instant),
     wayback_err: Option<String>,
 
     suggestions: Vec<Suggestion>,
@@ -442,6 +445,7 @@ impl App {
             wayback_rx: None,
             wayback_started: false,
             wayback_time_date: None,
+            imagery_time: (0.0, Instant::now()),
             wayback_err: None,
             suggestions: vec![],
             remote_sugg: vec![],
@@ -633,7 +637,7 @@ impl eframe::App for App {
             },
             move || poi_wake.request_repaint(),
         );
-        let scene = self.scene_unix();
+        let scene = self.imagery_time();
         self.user_layers.update(
             ctx,
             &self.runtime,

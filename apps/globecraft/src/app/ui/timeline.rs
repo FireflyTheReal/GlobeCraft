@@ -15,6 +15,8 @@ const BOTTOM_INSET: f32 = 40.0;
 const ICON: f32 = 24.0;
 /// Narrower globes leave out the time-of-day slider.
 const SLIDER_MIN_GLOBE_WIDTH: f32 = 720.0;
+/// The widest the clock gets.
+const CLOCK_WIDEST: &str = "8888-88-88 88:88 UTC";
 
 impl App {
     pub(in crate::app) fn timeline_bar(&mut self, ctx: &egui::Context, globe: Rect) {
@@ -41,9 +43,20 @@ impl App {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                            // Date and time, or Live.
-                            let text = format_utc(unix);
-                            ui.label(egui::RichText::new(text).font(semibold(13.0)).color(t.text));
+                            // Date and time, or Live, in a fixed width: a bar that
+                            // changed width as the clock ran would move its centre, and
+                            // every button with it.
+                            let font = semibold(13.0);
+                            let clock_w = super::widgets::text_w(ui, CLOCK_WIDEST, font.clone());
+                            let (clock, _) =
+                                ui.allocate_exact_size(vec2(clock_w, ICON), Sense::hover());
+                            ui.painter().text(
+                                clock.left_center(),
+                                Align2::LEFT_CENTER,
+                                format_utc(unix),
+                                font,
+                                t.text,
+                            );
                             if live {
                                 live_badge(ui, &t, lang.text("timeline-live"));
                             }
@@ -82,24 +95,28 @@ impl App {
                                 .iter()
                                 .find(|(s, _)| *s == self.timeline_speed)
                                 .map_or("timeline-speed-hour", |(_, k)| k);
-                            ui.menu_button(lang.text(speed_key), |ui| {
-                                ui.label(
-                                    egui::RichText::new(lang.text("timeline-speed-label"))
-                                        .color(t.text_dim),
-                                );
-                                for (speed, key) in SPEEDS {
-                                    let on = speed == self.timeline_speed;
-                                    if ui.radio(on, lang.text(key)).clicked() {
-                                        run = Some((
-                                            "time.play",
-                                            json!({"hours_per_second": speed / HOUR_SECS}),
-                                        ));
-                                        ui.close();
+                            let speed_w = widest(ui, SPEEDS.iter().map(|(_, k)| lang.text(k)));
+                            let speed_button = egui::Button::new(lang.text(speed_key))
+                                .min_size(vec2(speed_w, 0.0));
+                            egui::containers::menu::MenuButton::from_button(speed_button)
+                                .ui(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(lang.text("timeline-speed-label"))
+                                            .color(t.text_dim),
+                                    );
+                                    for (speed, key) in SPEEDS {
+                                        let on = speed == self.timeline_speed;
+                                        if ui.radio(on, lang.text(key)).clicked() {
+                                            run = Some((
+                                                "time.speed",
+                                                json!({"hours_per_second": speed / HOUR_SECS}),
+                                            ));
+                                            ui.close();
+                                        }
                                     }
-                                }
-                            })
-                            .response
-                            .on_hover_text(lang.text("timeline-speed-label"));
+                                })
+                                .0
+                                .on_hover_text(lang.text("timeline-speed-label"));
                             if ui
                                 .add_enabled(
                                     !live,
@@ -133,21 +150,30 @@ impl App {
                                 .iter()
                                 .find(|(h, _)| *h == window_hours)
                                 .map_or("timeline-window-all", |(_, k)| k);
-                            let label = format!(
-                                "{}: {}",
-                                lang.text("timeline-window-label"),
-                                lang.text(window_key)
-                            );
-                            ui.menu_button(label, |ui| {
-                                for (hours, key) in WINDOWS {
-                                    if ui.radio(hours == window_hours, lang.text(key)).clicked() {
-                                        run = Some(("time.window", json!({"hours": hours})));
-                                        ui.close();
+                            let window_label = |key: &str| {
+                                format!(
+                                    "{}: {}",
+                                    lang.text("timeline-window-label"),
+                                    lang.text(key)
+                                )
+                            };
+                            let labels: Vec<String> =
+                                WINDOWS.iter().map(|(_, k)| window_label(k)).collect();
+                            let window_w = widest(ui, labels.iter().map(String::as_str));
+                            let window_button = egui::Button::new(window_label(window_key))
+                                .min_size(vec2(window_w, 0.0));
+                            egui::containers::menu::MenuButton::from_button(window_button)
+                                .ui(ui, |ui| {
+                                    for (hours, key) in WINDOWS {
+                                        if ui.radio(hours == window_hours, lang.text(key)).clicked()
+                                        {
+                                            run = Some(("time.window", json!({"hours": hours})));
+                                            ui.close();
+                                        }
                                     }
-                                }
-                            })
-                            .response
-                            .on_hover_text(lang.text("cmd-time-window-help"));
+                                })
+                                .0
+                                .on_hover_text(lang.text("cmd-time-window-help"));
                             if icon_button(ui, &t, "close", lang.text("cmd-ui-timeline"), false) {
                                 run = Some(("ui.timeline", json!({"visible": false})));
                             }
@@ -155,10 +181,21 @@ impl App {
                     });
             });
         if let Some((id, params)) = run {
+            // A changed time renders like a moving camera until it settles.
+            self.touch();
             self.run_reporting(id, params);
             ctx.request_repaint();
         }
     }
+}
+
+/// The widest of some button texts, plus the button's padding.
+fn widest<'a>(ui: &Ui, texts: impl Iterator<Item = &'a str>) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    texts
+        .map(|text| super::widgets::text_w(ui, text, font.clone()))
+        .fold(0.0, f32::max)
+        + 2.0 * ui.spacing().button_padding.x
 }
 
 fn icon_button(ui: &mut Ui, t: &Tokens, icon: &str, help: &str, checked: bool) -> bool {

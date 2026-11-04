@@ -41,6 +41,10 @@ struct Shared {
     /// The last download error, for the layer's status.
     error: Option<String>,
     loaded_any: bool,
+    /// Bumped when the day changes: downloads for an earlier day are dropped.
+    day: u64,
+    /// The tiles of earlier days, shown where the current day's have not arrived.
+    previous: HashMap<TileKey, Arc<RgbaImage>>,
 }
 
 /// The loaded tiles of one view, read without locking while the overlay is drawn.
@@ -121,7 +125,21 @@ impl RasterTiles {
         self.date = date;
         if self.template.contains("{date}") {
             if let Ok(mut shared) = self.shared.lock() {
-                shared.tiles.clear();
+                let shared = &mut *shared;
+                shared.day += 1;
+                let loaded: Vec<(TileKey, Arc<RgbaImage>)> = shared
+                    .tiles
+                    .drain()
+                    .filter_map(|(key, entry)| match entry {
+                        Entry::Loaded { image, .. } => Some((key, image)),
+                        _ => None,
+                    })
+                    .collect();
+                // The newest tile of each place stays until the new day's arrives.
+                if shared.previous.len() + loaded.len() > MAX_TILES {
+                    shared.previous.clear();
+                }
+                shared.previous.extend(loaded);
             }
             self.snapshot = None;
         }
@@ -175,9 +193,14 @@ impl RasterTiles {
             inflight += 1;
             let url = super::tile_url(&self.template, key.z, key.x, key.y, &self.date);
             let (state, key, repaint) = (self.shared.clone(), *key, repaint.clone());
+            let day = shared.day;
             runtime.spawn(async move {
                 let result = fetch_tile(url).await;
                 if let Ok(mut shared) = state.lock() {
+                    if shared.day != day {
+                        // Another day is showing by now.
+                        return;
+                    }
                     match result {
                         Ok(image) => {
                             shared.tiles.insert(
@@ -210,8 +233,16 @@ impl RasterTiles {
         {
             return Some(snapshot.clone());
         }
-        // The wanted tiles and every loaded ancestor of them, for the fallback.
+        // The wanted tiles and every loaded ancestor of them, for the fallback; an
+        // earlier day's tile where this day's has not arrived.
         let mut tiles = HashMap::new();
+        for key in &wanted {
+            if !matches!(shared.tiles.get(key), Some(Entry::Loaded { .. }))
+                && let Some(image) = shared.previous.get(key)
+            {
+                tiles.insert(*key, image.clone());
+            }
+        }
         for key in &wanted {
             let mut at = Some(*key);
             while let Some(k) = at {
@@ -315,6 +346,34 @@ mod tests {
         assert_eq!(snapshot.sample(40.0, -90.0), Some([200; 4]));
         assert_eq!(snapshot.sample(-40.0, 90.0), Some([10; 4]));
         assert_eq!(snapshot.sample(89.0, 0.0), None);
+    }
+
+    #[test]
+    fn another_day_keeps_the_earlier_tiles_until_its_own_arrive() {
+        let mut layer = RasterTiles::new("https://gibs.example/{date}/{z}/{y}/{x}.jpg", 0, 9, 256);
+        layer.set_date("2026-11-01".into());
+        let key = TileKey { z: 1, x: 0, y: 0 };
+        {
+            let mut shared = layer.shared.lock().unwrap();
+            shared.tiles.insert(
+                key,
+                Entry::Loaded {
+                    image: Arc::new(RgbaImage::new(1, 1)),
+                    used: Instant::now(),
+                },
+            );
+            shared
+                .tiles
+                .insert(TileKey { z: 1, x: 1, y: 0 }, Entry::Loading);
+        }
+        let day = layer.shared.lock().unwrap().day;
+        layer.set_date("2026-11-02".into());
+        let shared = layer.shared.lock().unwrap();
+        // Nothing of the earlier day counts as this day's, its downloads are dropped,
+        // and its loaded tile stands in.
+        assert!(shared.tiles.is_empty());
+        assert_eq!(shared.day, day + 1);
+        assert!(shared.previous.contains_key(&key));
     }
 
     #[test]

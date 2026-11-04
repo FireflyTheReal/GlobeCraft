@@ -4,6 +4,9 @@ use globecraft_core::math::now_unix;
 use globecraft_core::time::{HOUR_SECS, parse_iso};
 use serde_json::{Value, json};
 
+/// A playing time moves dated imagery on at most this often.
+const IMAGERY_STEP: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// The play speeds the timeline offers, scene seconds per second.
 pub(super) const SPEEDS: [(f64, &str); 4] = [
     (60.0, "timeline-speed-minute"),
@@ -24,6 +27,17 @@ impl App {
     /// The moment the globe shows (seconds since 1970).
     pub(super) fn scene_unix(&self) -> f64 {
         self.time.now(now_unix())
+    }
+
+    /// The moment dated imagery (`{date}` tiles) shows: the app's time, moved at most
+    /// every `IMAGERY_STEP` while the time plays.
+    pub(super) fn imagery_time(&mut self) -> f64 {
+        let scene = self.scene_unix();
+        let (shown, moved) = self.imagery_time;
+        if self.time.speed() == 0.0 || moved.elapsed() >= IMAGERY_STEP || shown == 0.0 {
+            self.imagery_time = (scene, std::time::Instant::now());
+        }
+        self.imagery_time.0
     }
 
     /// Runs a `time.*` command.
@@ -65,6 +79,17 @@ impl App {
                 self.time.play(speed, wall);
             }
             "time.pause" => self.time.play(0.0, wall),
+            "time.speed" => {
+                let hours = p
+                    .get("hours_per_second")
+                    .and_then(Value::as_f64)
+                    .filter(|h| h.is_finite() && *h != 0.0)
+                    .ok_or("hours_per_second must be a number other than 0")?;
+                self.timeline_speed = hours * HOUR_SECS;
+                if self.time.speed() != 0.0 {
+                    self.time.play(self.timeline_speed, wall);
+                }
+            }
             "time.window" => {
                 let hours = p
                     .get("hours")

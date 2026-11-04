@@ -203,7 +203,10 @@ impl App {
 
         let basis = self.view_basis(aspect);
         // ── rendering
-        let idle = self.last_interact.elapsed() > IDLE_RENDER_DELAY && !resp.dragged();
+        // A playing time moves the sun every frame: it renders like a moving camera.
+        let idle = self.last_interact.elapsed() > IDLE_RENDER_DELAY
+            && !resp.dragged()
+            && self.time.speed() == 0.0;
         let render_aspect = (viewport.width() / viewport.height()) as f64;
         let relief = self.terrain_active();
         let (w, h) = globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief);

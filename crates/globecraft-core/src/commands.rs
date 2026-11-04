@@ -579,6 +579,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "time.speed",
+        "time-speed",
+        "history",
+        View,
+        View,
+        r#"{"type":"object","properties":{"hours_per_second":{"type":"number","description":"How fast the time runs when it plays; a playing time takes it at once"}},"required":["hours_per_second"]}"#
+    ),
+    command!(
         "time.window",
         "time-window",
         "history",
