@@ -17,6 +17,7 @@ fn flight(hex: &str, observed: f64, latitude: f64) -> Aircraft {
         speed_knots: Some(400.0),
         altitude_feet: None,
         vertical_rate_fpm: None,
+        turn_rate_deg_s: None,
         observed_unix: observed,
     }
 }

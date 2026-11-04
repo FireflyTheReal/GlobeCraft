@@ -5,6 +5,8 @@ use std::sync::Arc;
 const GLOBAL_RESPONSE_LIMIT: u64 = 20 * 1024 * 1024;
 const LOCAL_RESPONSE_LIMIT: u64 = 8 * 1024 * 1024;
 const ADSB_LOCAL_RADIUS_NM: u32 = 250;
+/// Faster turns are bad data: airliners turn at 3°/s at most, fighters at ~25°/s.
+const MAX_TURN_RATE_DEG_S: f64 = 30.0;
 const FEET_PER_METER: f64 = 3.28084;
 const KNOTS_PER_METER_PER_SECOND: f64 = 1.94384449;
 async fn response(request: reqwest::RequestBuilder, limit: u64) -> Result<Vec<u8>, crate::Error> {
@@ -97,12 +99,15 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 speed_knots,
                 altitude_feet,
                 vertical_rate_fpm,
+                // OpenSky has no turn rate.
+                turn_rate_deg_s: None,
                 observed_unix: observed,
             })
         })
         .collect()
 }
-fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
+/// The aircraft of an ADSB.lol answer (`ac`), in the air with a recent position.
+pub(super) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
     json.get("ac")
         .and_then(|v| v.as_array())
         .into_iter()
@@ -136,6 +141,8 @@ fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 altitude_feet: number(v.get("alt_baro")).or_else(|| number(v.get("alt_geom"))),
                 vertical_rate_fpm: number(v.get("baro_rate"))
                     .or_else(|| number(v.get("geom_rate"))),
+                turn_rate_deg_s: number(v.get("track_rate"))
+                    .filter(|rate| rate.abs() <= MAX_TURN_RATE_DEG_S),
                 observed_unix: now - age,
             })
         })

@@ -10,9 +10,11 @@ use std::{
 use tokio::{sync::watch, task::JoinHandle};
 
 const GLOBAL_REFRESH: Duration = Duration::from_secs(17 * 60);
-const LOCAL_REFRESH: Duration = Duration::from_secs(90);
+/// ADSB.lol's own map asks every second; every 10 s keeps planes close to where
+/// they are without leaning on the service.
+const LOCAL_REFRESH: Duration = Duration::from_secs(10);
 const FAILURE_RETRY: Duration = Duration::from_secs(3 * 60);
-const MOVE_RETRY_MIN: Duration = Duration::from_secs(30);
+const MOVE_RETRY_MIN: Duration = Duration::from_secs(10);
 const MOVE_REFRESH_KM: f64 = 140.0;
 const LOCAL_MAX_CAMERA_ALT_KM: f64 = 1800.0;
 
@@ -29,7 +31,10 @@ mod tests {
         assert_eq!(provider.deadline(now, LOCAL_REFRESH), now + LOCAL_REFRESH);
         provider.samples.status.error = Some(Arc::new("fixture error".into()));
         assert_eq!(provider.deadline(now, GLOBAL_REFRESH), now + FAILURE_RETRY);
-        assert_eq!(provider.deadline(now, LOCAL_REFRESH), now + FAILURE_RETRY);
+        assert_eq!(
+            provider.deadline(now, LOCAL_REFRESH),
+            now + LOCAL_REFRESH * 3
+        );
         assert!(haversine_km((0.0, 179.8), (0.0, -179.8)) < MOVE_REFRESH_KM);
     }
 }
@@ -59,7 +64,8 @@ impl Provider {
             last + if self.samples.status.error.is_none() {
                 interval
             } else {
-                FAILURE_RETRY
+                // A failed frequent source tries again sooner than a slow one.
+                FAILURE_RETRY.min(interval * 3)
             }
         })
     }

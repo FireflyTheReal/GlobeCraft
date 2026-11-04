@@ -19,12 +19,18 @@ const WING_WIDTH_RATIO: f32 = 0.4;
 /// kept for 20), so planes never stand still between reports.
 const EXTRAPOLATION_MAX_SECS: f64 = 20.0 * 60.0;
 /// Reports up to this old are drawn at full opacity: the local feed near the camera
-/// refreshes every 90 seconds.
+/// refreshes every 10 seconds, the global one far less often.
 const FRESH_SECS: f64 = 120.0;
 const EXTRAPOLATION_MAX_SPEED_KNOTS: f64 = 1200.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
 const SECONDS_PER_HOUR: f64 = 3600.0;
 const HEADING_PROBE_KM: f64 = 3.0;
+/// A plane reported turning keeps turning for at most this long (a standard-rate
+/// turn takes 30 s for 90°), then flies straight: turns end, and the next report
+/// comes long before.
+const TURN_MAX_SECS: f64 = 40.0;
+/// Turns are followed in steps this long.
+const TURN_STEP_SECS: f64 = 4.0;
 const WING_REAR_OFFSET_RATIO: f32 = 0.25;
 const TAIL_OFFSET_RATIO: f32 = 0.85;
 const TRAIL_START_RATIO: f32 = 0.5;
@@ -59,11 +65,13 @@ pub fn project_flights(
                 .clamp(0.0, EXTRAPOLATION_MAX_SPEED_KNOTS)
                 * KM_PER_NAUTICAL_MILE
                 / SECONDS_PER_HOUR;
-            let displacement = speed_km_s * age.min(EXTRAPOLATION_MAX_SECS);
-            let (lat, lon) = basis.model.destination(
+            let ((lat, lon), heading_deg) = fly(
+                basis.model,
                 (flight.latitude, flight.longitude),
                 flight.heading_deg,
-                displacement,
+                flight.turn_rate_deg_s.unwrap_or(0.0),
+                speed_km_s,
+                age.min(EXTRAPOLATION_MAX_SECS),
             );
             let screen = basis.project(basis.surface_position(lat, lon), rect)?;
             if !rect.contains(screen) {
@@ -74,7 +82,7 @@ pub fn project_flights(
             let (ahead_lat, ahead_lon) =
                 basis
                     .model
-                    .destination((lat, lon), flight.heading_deg, HEADING_PROBE_KM);
+                    .destination((lat, lon), heading_deg, HEADING_PROBE_KM);
             let heading = basis
                 .project(basis.surface_position(ahead_lat, ahead_lon), rect)
                 .map(|ahead| (ahead.y - screen.y).atan2(ahead.x - screen.x))
@@ -101,9 +109,72 @@ pub fn project_flights(
         .collect()
 }
 
+/// Where a plane is after `secs`, and its track there: turning at `turn_rate` (°/s,
+/// positive to the right) for up to [`TURN_MAX_SECS`], then straight on.
+pub fn fly(
+    model: globecraft_core::earth_model::EarthModel,
+    start: (f64, f64),
+    heading_deg: f64,
+    turn_rate: f64,
+    speed_km_s: f64,
+    secs: f64,
+) -> ((f64, f64), f64) {
+    let (mut at, mut heading) = (start, heading_deg);
+    let mut left = secs.max(0.0);
+    if turn_rate.abs() > 0.05 {
+        let mut turning = left.min(TURN_MAX_SECS);
+        left -= turning;
+        while turning > 0.0 {
+            let step = turning.min(TURN_STEP_SECS);
+            // Each step flies the heading of its middle.
+            at = model.destination(at, heading + turn_rate * step / 2.0, speed_km_s * step);
+            heading += turn_rate * step;
+            turning -= step;
+        }
+    }
+    if left > 0.0 {
+        at = model.destination(at, heading, speed_km_s * left);
+    }
+    (at, heading.rem_euclid(360.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use globecraft_core::earth_model::EarthModel;
+
+    #[test]
+    fn a_turning_plane_follows_its_turn_then_flies_straight() {
+        let speed = 0.2; // km/s, about 390 kn
+        // Straight: same as one great-circle step.
+        let (at, heading) = fly(
+            EarthModel::PerfectSphere,
+            (0.0, 0.0),
+            90.0,
+            0.0,
+            speed,
+            60.0,
+        );
+        assert!((heading - 90.0).abs() < 1e-9);
+        assert!((at.1 - destination(0.0, 0.0, 90.0, 12.0).1).abs() < 1e-9);
+        // Turning right at 3°/s from north: after 30 s it heads east, having moved
+        // along a quarter circle (radius 0.2 * 30 * 2 / π ≈ 3.8 km) to the north-east.
+        let (at, heading) = fly(EarthModel::PerfectSphere, (0.0, 0.0), 0.0, 3.0, speed, 30.0);
+        assert!((heading - 90.0).abs() < 1e-9);
+        let radius_deg = (0.2 * 30.0 * 2.0 / std::f64::consts::PI) / 111.195;
+        assert!((at.0 - radius_deg).abs() < radius_deg * 0.02, "{at:?}");
+        assert!((at.1 - radius_deg).abs() < radius_deg * 0.02, "{at:?}");
+        // The turn stops after TURN_MAX_SECS: a 10-minute extrapolation is no circle.
+        let (_, heading) = fly(
+            EarthModel::PerfectSphere,
+            (0.0, 0.0),
+            0.0,
+            3.0,
+            speed,
+            600.0,
+        );
+        assert!((heading - 3.0 * TURN_MAX_SECS).abs() < 1e-9);
+    }
     #[test]
     fn eastbound_plane_moves_east_and_westbound_wraps_dateline() {
         let (lat, lon) = destination(0.0, 0.0, 90.0, 110.0);

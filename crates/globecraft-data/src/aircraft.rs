@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod benchmarks;
 mod decode;
+pub mod route;
 mod snapshot;
 #[cfg(test)]
 mod tests;
@@ -22,6 +23,8 @@ pub struct Aircraft {
     pub altitude_feet: Option<f64>,
     /// Climb (positive) or descent (negative), in feet per minute.
     pub vertical_rate_fpm: Option<f64>,
+    /// How fast its track turns, degrees per second (positive: right).
+    pub turn_rate_deg_s: Option<f64>,
     pub observed_unix: f64,
 }
 

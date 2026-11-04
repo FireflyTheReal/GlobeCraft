@@ -32,6 +32,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
                 speed_knots: Some(400.0),
                 altitude_feet: Some(30_000.0),
                 vertical_rate_fpm: None,
+                turn_rate_deg_s: None,
                 observed_unix: 1000.0,
             }]
             .into(),
@@ -110,6 +111,7 @@ fn aircraft_mesh_repaint_cost() {
             speed_knots: Some(440.0),
             altitude_feet: Some(35_000.0),
             vertical_rate_fpm: None,
+            turn_rate_deg_s: None,
             observed_unix: 1000.0,
         })
         .collect();
@@ -202,6 +204,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                     speed_knots: Some(400.0),
                     altitude_feet: Some(30_000.0),
                     vertical_rate_fpm: None,
+                    turn_rate_deg_s: None,
                     observed_unix: 1000.0,
                 }]
                 .into(),
