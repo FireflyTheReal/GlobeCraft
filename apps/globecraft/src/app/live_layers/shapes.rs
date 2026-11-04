@@ -15,6 +15,10 @@ const AIRPLANE_FILL: Color32 = Color32::from_rgb(243, 250, 255);
 const AIRPLANE_OUTLINE: Color32 = Color32::from_rgb(22, 52, 72);
 const LABEL_COLOR: Color32 = Color32::from_rgb(227, 245, 255);
 const TRAIL_RGBA: [u8; 4] = [114, 211, 249, 90];
+/// The selected plane: amber, a third larger, drawn above everything else.
+const SELECTED_FILL: Color32 = Color32::from_rgb(255, 196, 61);
+const SELECTED_OUTLINE: Color32 = Color32::from_rgb(46, 28, 0);
+const SELECTED_SCALE: f32 = 1.35;
 
 struct SvgAirplane {
     // Each SVG polygon is convex, allowing efficient, indexed triangle fans.
@@ -55,11 +59,28 @@ fn airplane_symbol() -> &'static SvgAirplane {
     })
 }
 
+/// The selected plane, in its own colours above the others.
+pub(super) fn selected_plane(flight: &ProjectedFlight, map_scale: f32) -> Shape {
+    let mut mesh = egui::Mesh::default();
+    let size = map_scale * SELECTED_SCALE;
+    add_airplane_mesh(
+        &mut mesh,
+        flight,
+        size,
+        airplane_symbol(),
+        (SELECTED_FILL, SELECTED_OUTLINE),
+        1.0,
+    );
+    Shape::mesh(mesh)
+}
+
 fn add_airplane_mesh(
     mesh: &mut egui::Mesh,
     flight: &ProjectedFlight,
     map_scale: f32,
     symbol: &SvgAirplane,
+    (fill, outline): (Color32, Color32),
+    opacity: f32,
 ) {
     // Existing projection already computes the direction of the aircraft on screen.
     // Reuse it so the SVG turns as the camera/globe turns, even near the poles.
@@ -69,10 +90,7 @@ fn add_airplane_mesh(
 
     // Draw the dark silhouette beneath all SVG parts, then the light silhouette.
     // This creates an exterior outline without outlines between overlapping wings.
-    for (scale, color) in [
-        (AIRPLANE_OUTLINE_SCALE, AIRPLANE_OUTLINE),
-        (1.0, AIRPLANE_FILL),
-    ] {
+    for (scale, color) in [(AIRPLANE_OUTLINE_SCALE, outline), (1.0, fill)] {
         for polygon in &symbol.polygons {
             let base = mesh.vertices.len() as u32;
             for point in polygon {
@@ -80,7 +98,7 @@ fn add_airplane_mesh(
                 let dy = (SVG_CENTER_POINTS - point.y) * icon_size * scale;
                 mesh.colored_vertex(
                     flight.position + right * dx + forward * dy,
-                    color.gamma_multiply(flight.opacity),
+                    color.gamma_multiply(opacity),
                 );
             }
             for i in 1..polygon.len() - 1 {
@@ -115,7 +133,14 @@ pub(super) fn build(painter: &egui::Painter, geometry: &AircraftGeometry) -> Vec
             trail_stroke.color.gamma_multiply(flight.opacity),
         );
         trails.push(Shape::line_segment(flight.trail, stroke));
-        add_airplane_mesh(&mut planes, flight, ms, symbol);
+        add_airplane_mesh(
+            &mut planes,
+            flight,
+            ms,
+            symbol,
+            (AIRPLANE_FILL, AIRPLANE_OUTLINE),
+            flight.opacity,
+        );
         if labels.peek() == Some(&index) {
             labels.next();
             flush_icons(painter, &mut trails, &mut planes, &mut output);

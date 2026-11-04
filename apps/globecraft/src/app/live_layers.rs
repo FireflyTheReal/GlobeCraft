@@ -31,6 +31,8 @@ use std::{sync::Arc, time::Duration};
 /// repaint at their motion step.
 pub(super) const FLIGHT_REPAINT_INTERVAL: Duration = Duration::from_secs(1);
 const HOVER_RADIUS_POINTS: f32 = 15.0;
+/// The other planes' opacity while a flight is selected.
+const OTHER_PLANES_OPACITY: f32 = 0.55;
 const HOVER_FONT_POINTS: f32 = 12.0;
 const HOVER_OFFSET_POINTS: Vec2 = Vec2::new(18.0, 12.0);
 const HOVER_EDGE_MARGIN_POINTS: f32 = 16.0;
@@ -47,6 +49,8 @@ pub(super) struct AircraftOverlay {
     worker: AircraftWorker,
     shapes: Vec<egui::Shape>,
     shape_key: Option<(usize, Lang)>,
+    /// The projection drawn this frame, for the hover card and the selected plane.
+    drawn: Option<Arc<AircraftGeometry>>,
 }
 impl AircraftOverlay {
     pub(super) fn invalidate_text(&mut self) {
@@ -60,6 +64,7 @@ impl AircraftOverlay {
                 .expect("start aircraft projection"),
             shapes: Vec::new(),
             shape_key: None,
+            drawn: None,
         }
     }
     /// The plane drawn under `point`, if any.
@@ -90,7 +95,9 @@ impl AircraftOverlay {
         self.geometry = Some(geometry);
         self.shape_key = None;
     }
-    fn draw(&mut self, painter: &egui::Painter, input: ProjectionInput, lang: Lang) {
+    /// Draws the planes, at `opacity` (dimmed while a flight is selected).
+    fn draw(&mut self, painter: &egui::Painter, input: ProjectionInput, lang: Lang, opacity: f32) {
+        self.drawn = None;
         // A projection for this view is shown even if a newer list came meanwhile.
         if let Some(completed) = self.worker.take_completed()
             && completed.view == input.view
@@ -116,16 +123,35 @@ impl AircraftOverlay {
             self.worker.submit(input.clone());
             self.requested = Some(input.clone());
         }
-        let Some(geometry) = current else {
+        let Some(geometry) = current.cloned() else {
             return;
         };
-        let key = (Arc::as_ptr(geometry) as usize, lang);
+        let key = (Arc::as_ptr(&geometry) as usize, lang);
         if self.shape_key != Some(key) {
-            self.shapes = shapes::build(painter, geometry);
+            self.shapes = shapes::build(painter, &geometry);
             self.shape_key = Some(key);
         }
-        painter.extend(self.shapes.iter().cloned());
-        draw_hover(painter, geometry, lang);
+        let mut faded = painter.clone();
+        faded.multiply_opacity(opacity);
+        faded.extend(self.shapes.iter().cloned());
+        self.drawn = Some(geometry);
+    }
+
+    /// The hover card of the plane under the pointer, above everything else.
+    fn hover(&self, painter: &egui::Painter, lang: Lang) {
+        if let Some(geometry) = &self.drawn {
+            draw_hover(painter, geometry, lang);
+        }
+    }
+
+    /// The plane with this address as drawn this frame, in the selected colours.
+    pub(super) fn selected_plane(&self, hex: &str) -> Option<egui::Shape> {
+        let geometry = self.drawn.as_ref()?;
+        let flight = geometry
+            .flights
+            .iter()
+            .find(|flight| &*geometry.data.aircraft[flight.source_index].hex == hex)?;
+        Some(shapes::selected_plane(flight, geometry.view.map_scale))
     }
 }
 
@@ -161,8 +187,14 @@ impl App {
             let input =
                 self.aircraft_input(*basis, rect, altitude_km, painter.ctx().pixels_per_point());
             let step = input.view.motion_step();
+            // A selected flight's track, route and plane go above the other planes,
+            // which are dimmed so they stand out; the hover card goes above all.
+            let selected = self.flight_selection.selected().is_some();
+            let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 };
+            self.aircraft_overlay
+                .draw(painter, input, self.lang, opacity);
             self.paint_selected_flight(painter, basis, rect);
-            self.aircraft_overlay.draw(painter, input, self.lang);
+            self.aircraft_overlay.hover(painter, self.lang);
             painter
                 .ctx()
                 .request_repaint_after(motion::repaint_after(step));

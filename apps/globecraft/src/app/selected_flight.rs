@@ -13,9 +13,16 @@ use globecraft_render::overlays::{SEGMENT_CLIP_MARGIN_POINTS, clip_segment, proj
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-const TRACK_POINTS: f32 = 2.5;
-const REMAINING_POINTS: f32 = 1.6;
+const TRACK_POINTS: f32 = 3.0;
+/// The dark casing under the track and the route, this much wider in all.
+const CASING_POINTS: f32 = 2.5;
+const CASING: Color32 = Color32::from_rgba_premultiplied(8, 12, 20, 210);
+/// The track's colour steps every this many feet.
+const ALTITUDE_BAND_FEET: f64 = 1000.0;
+const REMAINING_POINTS: f32 = 2.0;
 const REMAINING: Color32 = Color32::from_rgb(235, 235, 235);
+const DASH_POINTS: f32 = 8.0;
+const GAP_POINTS: f32 = 6.0;
 const AIRPORT_POINTS: f32 = 5.0;
 const AIRPORT_FILL: Color32 = Color32::from_rgb(255, 205, 110);
 const HALO: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 200);
@@ -276,8 +283,11 @@ impl App {
                 .into_iter()
                 .map(globecraft_core::math::v3_to_ll);
             let stroke = Stroke::new(REMAINING_POINTS * scale, REMAINING);
+            let casing = Stroke::new((REMAINING_POINTS + CASING_POINTS) * scale, CASING);
+            let (dash, gap) = (DASH_POINTS * scale, GAP_POINTS * scale);
             for run in screen_runs(basis, rect, line) {
-                shapes.extend(Shape::dashed_line(&run, stroke, 7.0 * scale, 5.0 * scale));
+                shapes.extend(Shape::dashed_line(&run, casing, dash, gap));
+                shapes.extend(Shape::dashed_line(&run, stroke, dash, gap));
             }
         }
         if let Some(route) = &flight.route {
@@ -308,6 +318,8 @@ impl App {
                 );
             }
         }
+        // The plane itself, in amber, above its track.
+        shapes.extend(self.aircraft_overlay.selected_plane(&flight.hex));
         painter.extend(shapes);
     }
 
@@ -352,6 +364,8 @@ impl App {
     }
 }
 
+/// The track so far: a dark casing under lines coloured by altitude, joined into
+/// runs (one per altitude band) so their corners stay round.
 fn track_shapes(
     shapes: &mut Vec<Shape>,
     basis: &Basis,
@@ -361,7 +375,8 @@ fn track_shapes(
     scale: f32,
 ) {
     let clip = rect.expand(SEGMENT_CLIP_MARGIN_POINTS);
-    let width = TRACK_POINTS * scale;
+    let mut casing: Vec<Vec<Pos2>> = Vec::new();
+    let mut coloured: Vec<(Color32, Vec<Pos2>)> = Vec::new();
     let mut previous: Option<(glam::DVec2, Option<f64>)> = None;
     let last_altitude = track.last().and_then(|p| p.altitude_feet);
     let points = track
@@ -371,15 +386,33 @@ fn track_shapes(
     for (lat, lon, altitude) in points {
         let here = project_unhidden(basis, rect, None, None, lat, lon);
         if let (Some((a, altitude_a)), Some(b)) = (previous, here)
-            && let Some(segment) = clip_segment([a, b], clip)
+            && let Some([a, b]) = clip_segment([a, b], clip)
         {
-            shapes.push(Shape::line_segment(
-                segment,
-                Stroke::new(width, altitude_color(altitude_a)),
-            ));
+            match casing.last_mut() {
+                Some(run) if run.last() == Some(&a) => run.push(b),
+                _ => casing.push(vec![a, b]),
+            }
+            let band =
+                altitude_a.map(|feet| (feet / ALTITUDE_BAND_FEET).round() * ALTITUDE_BAND_FEET);
+            let color = altitude_color(band);
+            match coloured.last_mut() {
+                Some((last, run)) if *last == color && run.last() == Some(&a) => run.push(b),
+                _ => coloured.push((color, vec![a, b])),
+            }
         }
         previous = here.map(|at| (at, altitude));
     }
+    let width = TRACK_POINTS * scale;
+    shapes.extend(
+        casing
+            .into_iter()
+            .map(|run| Shape::line(run, Stroke::new(width + CASING_POINTS * scale, CASING))),
+    );
+    shapes.extend(
+        coloured
+            .into_iter()
+            .map(|(color, run)| Shape::line(run, Stroke::new(width, color))),
+    );
 }
 
 #[cfg(test)]
