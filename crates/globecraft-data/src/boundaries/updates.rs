@@ -17,7 +17,6 @@ fn apply(data: &mut BoundaryData, patch: Patch) {
         Layer::Countries => {
             data.countries = patch.lines;
             data.country_regions = patch.regions;
-            data.countries_loaded = true;
             data.labels.retain(|label| label.kind != LabelKind::Country);
         }
         Layer::Cities => data
@@ -148,7 +147,6 @@ mod tests {
         assert_eq!(first.data.labels[0].en, "First");
         assert_eq!(second.data.labels.len(), 1);
         assert_eq!(second.names[0].en, "Second");
-        assert!(second.data.has_countries());
     }
 
     #[test]

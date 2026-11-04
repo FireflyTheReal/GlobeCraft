@@ -18,12 +18,6 @@ impl std::fmt::Display for CoordinateError {
 }
 impl std::error::Error for CoordinateError {}
 
-/// Parse a latitude/longitude query separated by commas, semicolons or whitespace.
-/// Commas separate coordinates here; decimal commas are supported only by the
-/// separate-field parser below, where they are unambiguous.
-pub fn parse_latlon(query: &str) -> Option<(f64, f64)> {
-    parse_coordinate_query(query).ok().flatten()
-}
 fn parse_decimal_pair(query: &str) -> Option<(f64, f64)> {
     let cleaned = query.replace([',', ';'], " ");
     let mut parts = cleaned.split_whitespace();
@@ -145,13 +139,23 @@ mod tests {
     #[test]
     fn coordinates_accept_existing_separators_and_bounds() {
         for input in ["-15, -50", "-15; -50", " -15  -50 ", "-15°, -50°"] {
-            assert_eq!(parse_latlon(input), Some((-15.0, -50.0)));
+            assert_eq!(
+                parse_coordinate_query(input).ok().flatten(),
+                Some((-15.0, -50.0))
+            );
         }
-        assert_eq!(parse_latlon("90, 180"), Some((90.0, 180.0)));
+        assert_eq!(
+            parse_coordinate_query("90, 180").ok().flatten(),
+            Some((90.0, 180.0))
+        );
         for input in [
             "91, 0", "0, 181", "NaN, 0", "inf, 0", "one, two", "1, 2, 3", "", "1",
         ] {
-            assert_eq!(parse_latlon(input), None, "{input}");
+            assert_eq!(
+                parse_coordinate_query(input).ok().flatten(),
+                None,
+                "{input}"
+            );
         }
     }
 }

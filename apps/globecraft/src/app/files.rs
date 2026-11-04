@@ -136,7 +136,6 @@ impl App {
                     }
                     self.placemarks.extend(placemarks);
                 }
-                Ok(FileOutcome::ScreenshotSaved { path }) => self.screenshot_saved(path),
                 Ok(FileOutcome::SourcesSaved { path, count }) => {
                     self.status = self.lang.format(
                         "data-pane-export-success",
@@ -170,7 +169,6 @@ impl App {
                     let id = match kind {
                         FileKind::OpenKml | FileKind::RestoreKml => "kml-open-error",
                         FileKind::SaveKml => "kml-save-error",
-                        FileKind::Screenshot => "screenshot-save-error",
                         FileKind::OpenSources => "kml-open-error",
                         FileKind::SaveSources => "kml-save-error",
                         FileKind::Image(globecraft_data::files::ImageTarget::FlatEarth) => {

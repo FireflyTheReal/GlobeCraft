@@ -4,22 +4,6 @@ use std::{
     time::Duration,
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
-#[test]
-fn screenshot_submission_retains_pixels_without_copying() {
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(PENDING_FILE_JOBS);
-    let jobs = FileJobs {
-        sender,
-        outstanding: Arc::new(AtomicUsize::new(0)),
-    };
-    let pixels = Arc::new(vec![10, 20, 30, 255]);
-    jobs.screenshot(PathBuf::from("shot.png"), 1, 1, &pixels)
-        .unwrap();
-    assert!(jobs.is_busy());
-    let Job::Screenshot(_, _, _, retained) = receiver.try_recv().unwrap() else {
-        panic!("screenshot job");
-    };
-    assert!(Arc::ptr_eq(&pixels, &retained));
-}
 struct Fixture(PathBuf);
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -80,21 +64,6 @@ fn jobs_preserve_order_snapshot_inputs_and_wake_after_success_and_failure() {
         wakes.recv_timeout(Duration::from_secs(10)).unwrap();
     }
     assert!(!jobs.is_busy());
-    let pixels = Arc::new(vec![10, 20, 30, 255]);
-    jobs.screenshot(fixture.0.join("shot.png"), 1, 1, &pixels)
-        .unwrap();
-    drop(pixels);
-    assert!(matches!(
-        results
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap()
-            .result,
-        Ok(FileOutcome::ScreenshotSaved { .. })
-    ));
-    wakes.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(!jobs.is_busy());
-    let image = image::open(fixture.0.join("shot.png")).unwrap().to_rgba8();
-    assert_eq!(image.as_raw(), &[10, 20, 30, 255]);
 }
 
 fn fixture() -> Fixture {
@@ -108,45 +77,25 @@ fn fixture() -> Fixture {
 }
 
 #[test]
-fn repeated_screenshots_never_overwrite_and_preserve_png_pixels_and_encoding() {
+fn repeated_screenshots_never_overwrite_and_keep_their_pixels() {
     let fixture = fixture();
     let requested = fixture.0.join("new-folder/globecraft_123.png");
     std::fs::create_dir_all(requested.parent().unwrap()).unwrap();
     std::fs::write(&requested, b"existing screenshot").unwrap();
     let occupied = requested.with_file_name("globecraft_123_1.png");
     std::fs::write(&occupied, b"another existing screenshot").unwrap();
-    let runtime = crate::runtime::ServiceRuntime::new().unwrap();
-    let (wake_tx, wakes) = mpsc::channel();
-    let (jobs, results) = FileJobs::new(runtime.handle(), move || {
-        let _ = wake_tx.send(());
-    });
-    let pixels = Arc::new(vec![10, 20, 30, 255, 40, 50, 60, 128]);
-    let reference = fixture.0.join("reference.png");
-    image::save_buffer(&reference, &pixels, 2, 1, image::ColorType::Rgba8).unwrap();
-    for _ in 0..2 {
-        jobs.screenshot(requested.clone(), 2, 1, &pixels).unwrap();
-    }
+    let pixels = [10, 20, 30, 255, 40, 50, 60, 128];
     for suffix in [2, 3] {
-        let FileOutcome::ScreenshotSaved { path } = results
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap()
-            .result
-            .unwrap()
-        else {
-            panic!("saved screenshot");
-        };
+        let mut strips = PngStrips::create(&requested, 2, 1, "Credits").unwrap();
+        strips.write_rows(&pixels).unwrap();
+        let path = strips.finish().unwrap();
         assert_eq!(
             path,
             requested.with_file_name(format!("globecraft_123_{suffix}.png"))
         );
         let image = image::open(&path).unwrap().to_rgba8();
         assert_eq!(image.dimensions(), (2, 1));
-        assert_eq!(image.as_raw(), pixels.as_ref());
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            std::fs::read(&reference).unwrap()
-        );
-        wakes.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(image.as_raw(), &pixels);
     }
     assert_eq!(std::fs::read(&requested).unwrap(), b"existing screenshot");
     assert_eq!(
@@ -154,13 +103,10 @@ fn repeated_screenshots_never_overwrite_and_preserve_png_pixels_and_encoding() {
         b"another existing screenshot"
     );
     // A file cannot serve as the destination directory; report the I/O failure.
-    jobs.screenshot(occupied.join("shot.png"), 2, 1, &pixels)
-        .unwrap();
-    let completion = results.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert_eq!(completion.kind, FileKind::Screenshot);
-    assert!(matches!(completion.result, Err(crate::Error::Io(_))));
-    wakes.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(!jobs.is_busy());
+    assert!(matches!(
+        PngStrips::create(&occupied.join("shot.png"), 2, 1, "Credits"),
+        Err(crate::Error::Io(_))
+    ));
 }
 
 #[test]
@@ -355,28 +301,15 @@ fn image_jobs_queue_without_waiting_for_the_file_worker_and_wake_on_failure() {
 }
 
 #[test]
-fn screenshot_credits_are_captured_with_the_submitted_pixels() {
+fn screenshot_credits_are_written_as_the_source_text() {
     let fixture = fixture();
-    let runtime = crate::runtime::ServiceRuntime::new().unwrap();
-    let (jobs, results) = FileJobs::new(runtime.handle(), || {});
-    let pixels = Arc::new(vec![10, 20, 30, 255]);
     let path = fixture.0.join("credited.png");
-    let mut credits = crate::sky::CREDIT.to_string();
-    jobs.screenshot_with_credits(path.clone(), 1, 1, &pixels, credits.clone())
+    let mut strips = PngStrips::create(&path, 1, 1, crate::sky::CREDIT).unwrap();
+    strips.write_rows(&[10, 20, 30, 255]).unwrap();
+    strips.finish().unwrap();
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&path).unwrap()))
+        .read_info()
         .unwrap();
-    credits.clear();
-    results
-        .recv_timeout(Duration::from_secs(10))
-        .unwrap()
-        .result
-        .unwrap();
-    let mut decoder =
-        png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&path).unwrap()))
-            .read_info()
-            .unwrap();
-    let mut buffer = vec![0; decoder.output_buffer_size().unwrap()];
-    decoder.next_frame(&mut buffer).unwrap();
-    assert_eq!(buffer, *pixels);
     let metadata = &decoder.info().utf8_text;
     assert_eq!(metadata[0].keyword, "Source");
     assert_eq!(metadata[0].get_text().unwrap(), crate::sky::CREDIT);

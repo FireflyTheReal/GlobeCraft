@@ -130,7 +130,6 @@ pub struct BoundaryData {
     /// start to hold municipal lines, at the view's latitude).
     pub municipal_detail_max_km: f64,
     country_regions: Vec<CountryRegion>,
-    countries_loaded: bool,
 }
 impl BoundaryData {
     /// ISO3 of the country containing the point, from Natural Earth outer rings.
@@ -166,9 +165,6 @@ impl BoundaryData {
             max_lat: region.bounds.max_lat,
             max_lon: region.bounds.max_lon,
         })
-    }
-    pub fn has_countries(&self) -> bool {
-        self.countries_loaded
     }
     /// Whether the country at the point has its provinces shown from far out.
     fn in_big_country(&self, lat: f64, lon: f64) -> bool {

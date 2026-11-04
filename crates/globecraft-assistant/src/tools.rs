@@ -25,9 +25,6 @@ pub trait Host {
 pub const DEFAULT_OUTPUT_TOKENS: usize = 10_000;
 /// Absolute per-tool ceiling.
 pub const MAX_OUTPUT_TOKENS: usize = 24_000;
-/// Default byte budget, estimating one token per four UTF-8 bytes.
-pub const MAX_RESULT: usize = DEFAULT_OUTPUT_TOKENS * 4;
-
 /// A requested token estimate as a clamped byte budget.
 pub fn output_bytes(tokens: usize) -> usize {
     tokens.clamp(1, MAX_OUTPUT_TOKENS) * 4

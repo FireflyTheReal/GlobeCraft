@@ -1,42 +1,10 @@
-//! Screenshots saved under a free name, never overwriting: whole pictures on the file
-//! worker, and large ones streamed strip by strip from where they are rendered.
-use super::FileOutcome;
+//! Screenshots saved under a free name, never overwriting, streamed strip by strip
+//! from where they are rendered.
 use std::{
     fs::{File, OpenOptions},
     io::{BufWriter, ErrorKind, Write},
     path::{Path, PathBuf},
 };
-
-pub(super) fn save(
-    path: PathBuf,
-    width: u32,
-    height: u32,
-    pixels: &[u8],
-    credits: Option<&str>,
-) -> Result<FileOutcome, crate::Error> {
-    let (file, candidate) = create_unique(&path)?;
-    let mut writer = BufWriter::new(file);
-    if let Some(credits) = credits {
-        let mut encoder = png::Encoder::new(&mut writer, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.add_itxt_chunk("Source".into(), credits.into())?;
-        let mut png = encoder.write_header()?;
-        png.write_image_data(pixels)?;
-        png.finish()?;
-    } else {
-        image::write_buffer_with_format(
-            &mut writer,
-            pixels,
-            width,
-            height,
-            image::ColorType::Rgba8,
-            image::ImageFormat::Png,
-        )?;
-    }
-    writer.flush()?;
-    Ok(FileOutcome::ScreenshotSaved { path: candidate })
-}
 
 /// Creates `path`, or `path` with `_1`, `_2`… before the extension when it exists:
 /// a screenshot never overwrites another.

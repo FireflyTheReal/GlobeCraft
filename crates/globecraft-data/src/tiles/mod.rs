@@ -55,10 +55,6 @@ impl Provider {
     pub fn from_code(code: &str) -> Option<Self> {
         Self::basemaps().find(|provider| provider.code() == code)
     }
-    /// Any source with this code.
-    pub fn from_any_code(code: &str) -> Option<Self> {
-        Self::all().find(|provider| provider.code() == code)
-    }
     pub fn id(self) -> u64 {
         u64::from(self.0)
     }

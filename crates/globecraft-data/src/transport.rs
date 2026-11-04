@@ -49,18 +49,6 @@ pub enum LineKind {
     Taxiway,
 }
 
-impl LineKind {
-    pub fn is_rail(self) -> bool {
-        matches!(
-            self,
-            Self::Rail | Self::RailService | Self::Subway | Self::Tram
-        )
-    }
-    pub fn is_airport(self) -> bool {
-        matches!(self, Self::Runway | Self::Taxiway)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransportLine {
     pub kind: LineKind,

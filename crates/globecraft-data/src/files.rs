@@ -27,9 +27,6 @@ pub enum FileOutcome {
     KmlSaved {
         path: PathBuf,
     },
-    ScreenshotSaved {
-        path: PathBuf,
-    },
     ImageLoaded {
         target: ImageTarget,
         image: LoadedImage,
@@ -55,7 +52,6 @@ pub enum FileKind {
     RestoreKml,
     OpenKml,
     SaveKml,
-    Screenshot,
     Image(ImageTarget),
     OpenPlanet,
     SavePlanet,
@@ -70,8 +66,6 @@ enum Job {
     Restore(PathBuf, Lang),
     Open(PathBuf, Lang),
     Save(PathBuf, Places),
-    Screenshot(PathBuf, u32, u32, Arc<Vec<u8>>),
-    ScreenshotWithCredits(PathBuf, u32, u32, Arc<Vec<u8>>, String),
     Image(ImageTarget, ImageSource),
     OpenPlanet(PathBuf),
     SavePlanet(PlanetSave),
@@ -84,7 +78,6 @@ impl Job {
             Self::Restore(..) => FileKind::RestoreKml,
             Self::Open(..) => FileKind::OpenKml,
             Self::Save(..) => FileKind::SaveKml,
-            Self::Screenshot(..) | Self::ScreenshotWithCredits(..) => FileKind::Screenshot,
             Self::Image(target, _) => FileKind::Image(*target),
             Self::OpenPlanet(..) => FileKind::OpenPlanet,
             Self::SavePlanet(..) => FileKind::SavePlanet,
@@ -107,12 +100,6 @@ impl Job {
                 }
                 crate::kml::save_kml(&path.to_string_lossy(), &marks)?;
                 Ok(FileOutcome::KmlSaved { path })
-            }
-            Self::Screenshot(path, width, height, pixels) => {
-                screenshot::save(path, width, height, &pixels, None)
-            }
-            Self::ScreenshotWithCredits(path, width, height, pixels, credits) => {
-                screenshot::save(path, width, height, &pixels, Some(&credits))
             }
             Self::Image(target, source) => {
                 let encoded = source.read()?;
@@ -221,31 +208,6 @@ impl FileJobs {
     }
     pub fn save_kml(&self, path: PathBuf, marks: &Places) -> Result<(), crate::Error> {
         self.submit(Job::Save(path, marks.clone()))
-    }
-    pub fn screenshot(
-        &self,
-        path: PathBuf,
-        width: u32,
-        height: u32,
-        pixels: &Arc<Vec<u8>>,
-    ) -> Result<(), crate::Error> {
-        self.submit(Job::Screenshot(path, width, height, pixels.clone()))
-    }
-    pub fn screenshot_with_credits(
-        &self,
-        path: PathBuf,
-        width: u32,
-        height: u32,
-        pixels: &Arc<Vec<u8>>,
-        credits: String,
-    ) -> Result<(), crate::Error> {
-        self.submit(Job::ScreenshotWithCredits(
-            path,
-            width,
-            height,
-            pixels.clone(),
-            credits,
-        ))
     }
     pub fn load_image(&self, target: ImageTarget, source: ImageSource) -> Result<(), crate::Error> {
         self.submit(Job::Image(target, source))
