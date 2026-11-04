@@ -185,7 +185,8 @@ impl MapLayer {
     /// Icon name in the desktop icon set.
     pub fn icon(self) -> &'static str {
         match self {
-            Self::CountryBorders | Self::StateBorders => "borders",
+            Self::CountryBorders => "borders",
+            Self::StateBorders => "borders_states",
             Self::MunicipalBorders => "borders_fine",
             Self::PlaceLabels => "label",
             Self::Terrain => "terrain",

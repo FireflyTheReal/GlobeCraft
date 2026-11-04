@@ -5,6 +5,7 @@
 //! live-layer and GlobeCraft icons at the end are GlobeCraft's own. See CREDITS.md.
 
 use eframe::egui::{self, Color32, Painter, Pos2, Rect, Shape, Stroke, pos2};
+use std::f32::consts::{PI, TAU};
 
 struct P<'a> {
     p: &'a Painter,
@@ -435,6 +436,212 @@ pub(in crate::app) fn button(
     response
 }
 
+// Colours and shapes of GlobeCraft's own icons.
+const GREEN: Color32 = Color32::from_rgb(0x16, 0x9A, 0x5A);
+const RED: Color32 = Color32::from_rgb(0xD1, 0x3C, 0x3C);
+const AMBER: Color32 = Color32::from_rgb(0xE5, 0x9E, 0x1A);
+const SKY: Color32 = Color32::from_rgb(0x3B, 0x9C, 0xE8);
+const SEA: Color32 = Color32::from_rgb(0x2F, 0x6F, 0xD6);
+const LAND: Color32 = Color32::from_rgb(0x3C, 0xA8, 0x5C);
+const W: Color32 = Color32::WHITE;
+
+impl P<'_> {
+    /// A star-shaped polygon, filled as a fan from its centre.
+    fn poly(&self, pts: &[(f32, f32)], c: Color32) {
+        let n = pts.len() as f32;
+        let (cx, cy) = pts
+            .iter()
+            .fold((0.0, 0.0), |(x, y), (px, py)| (x + px / n, y + py / n));
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(self.pt(cx, cy), c);
+        for &(x, y) in pts {
+            mesh.colored_vertex(self.pt(x, y), c);
+        }
+        let k = pts.len() as u32;
+        for i in 0..k {
+            mesh.add_triangle(0, 1 + i, 1 + (i + 1) % k);
+        }
+        self.p.add(Shape::mesh(mesh));
+    }
+    fn head(&self, x: f32, y: f32, angle_deg: f32, size: f32, c: Color32) {
+        let a = angle_deg.to_radians();
+        let (dx, dy) = (a.cos(), a.sin());
+        let (nx, ny) = (-dy, dx);
+        self.fill(
+            &[
+                (x + dx * size, y + dy * size),
+                (x + nx * size * 0.8, y + ny * size * 0.8),
+                (x - nx * size * 0.8, y - ny * size * 0.8),
+            ],
+            c,
+        );
+    }
+    fn star5(&self, cx: f32, cy: f32, r: f32, c: Color32, outline: Option<f32>) {
+        let pts: Vec<(f32, f32)> = (0..10)
+            .map(|i| {
+                let a = -PI / 2.0 + i as f32 * PI / 5.0;
+                let rr = if i % 2 == 0 { r } else { r * 0.45 };
+                (cx + rr * a.cos(), cy + rr * a.sin())
+            })
+            .collect();
+        match outline {
+            Some(w) => self.closed(&pts, w, c),
+            None => self.poly(&pts, c),
+        }
+    }
+    fn pin_shape(
+        &self,
+        cx: f32,
+        top: f32,
+        r: f32,
+        fill: Option<Color32>,
+        stroke: Option<(f32, Color32)>,
+    ) {
+        let cy = top + r;
+        let tip = cy + r * 2.0;
+        // Over the top of the head, from lower right round to lower left.
+        let mut pts: Vec<(f32, f32)> = (0..=24)
+            .map(|i| {
+                let a = (-35.0 + 250.0 * i as f32 / 24.0).to_radians();
+                (cx + r * a.cos(), cy - r * a.sin())
+            })
+            .collect();
+        pts.push((cx, tip));
+        if let Some(f) = fill {
+            self.poly(&pts, f);
+        }
+        if let Some((w, c)) = stroke {
+            self.closed(&pts, w, c);
+        }
+    }
+    fn folder_shape(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        fill: Option<Color32>,
+        stroke: Option<(f32, Color32)>,
+    ) {
+        let tab = [
+            (x, y + 2.0),
+            (x, y),
+            (x + w * 0.4, y),
+            (x + w * 0.5, y + 2.0),
+        ];
+        let body = [(x, y + 2.0), (x + w, y + 2.0), (x + w, y + h), (x, y + h)];
+        if let Some(f) = fill {
+            self.fill(&tab, f);
+            self.fill(&body, f);
+        }
+        if let Some((sw, c)) = stroke {
+            self.line(
+                &[
+                    (x, y + h),
+                    (x, y),
+                    (x + w * 0.4, y),
+                    (x + w * 0.5, y + 2.0),
+                    (x + w, y + 2.0),
+                    (x + w, y + h),
+                    (x, y + h),
+                ],
+                sw,
+                c,
+            );
+        }
+    }
+    fn cloud_shape(
+        &self,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        fill: Option<Color32>,
+        stroke: Option<(f32, Color32)>,
+    ) {
+        let parts = [(-4.0, 1.5, 3.5), (0.5, -1.0, 5.0), (4.5, 1.8, 3.2)];
+        if let Some(f) = fill {
+            for (dx, dy, r) in parts {
+                self.circle(cx + dx * s, cy + dy * s, r * s, Some(f), None);
+            }
+            self.rect(
+                cx - 4.0 * s,
+                cy + 1.0 * s,
+                8.5 * s,
+                4.0 * s,
+                Some(f),
+                None,
+                0.0,
+            );
+        }
+        if let Some((w, c)) = stroke {
+            self.arc(cx - 4.0 * s, cy + 1.5 * s, 3.5 * s, 90.0, 250.0, w, c);
+            self.arc(cx + 0.5 * s, cy - 1.0 * s, 5.0 * s, 195.0, 345.0, w, c);
+            self.arc(cx + 4.5 * s, cy + 1.8 * s, 3.2 * s, 270.0, 450.0, w, c);
+            self.line(
+                &[(cx - 4.0 * s, cy + 5.0 * s), (cx + 4.5 * s, cy + 5.0 * s)],
+                w,
+                c,
+            );
+        }
+    }
+    fn gear_shape(
+        &self,
+        cx: f32,
+        cy: f32,
+        r: f32,
+        teeth: usize,
+        fill: Option<Color32>,
+        stroke: Option<(f32, Color32)>,
+    ) {
+        let n = teeth * 4;
+        let pts: Vec<(f32, f32)> = (0..n)
+            .map(|i| {
+                let a = i as f32 / n as f32 * TAU;
+                let rr = if (i / 2) % 2 == 0 { r } else { r * 0.78 };
+                (cx + rr * a.cos(), cy + rr * a.sin())
+            })
+            .collect();
+        if let Some(f) = fill {
+            self.poly(&pts, f);
+        }
+        if let Some((w, c)) = stroke {
+            self.closed(&pts, w, c);
+        }
+    }
+    fn wave(&self, x0: f32, x1: f32, y: f32, amp: f32, w: f32, c: Color32) {
+        let pts: Vec<(f32, f32)> = (0..=24)
+            .map(|i| {
+                let x = x0 + (x1 - x0) * i as f32 / 24.0;
+                (x, y + amp * ((x - x0) / (x1 - x0) * TAU * 1.5).sin())
+            })
+            .collect();
+        self.line(&pts, w, c);
+    }
+    fn earth_disc(&self, cx: f32, cy: f32, r: f32) {
+        self.circle(cx, cy, r, Some(SEA), None);
+        let k = r / 8.0;
+        self.poly(
+            &[
+                (cx - 5.0 * k, cy - 4.0 * k),
+                (cx - 1.0 * k, cy - 6.0 * k),
+                (cx + 1.0 * k, cy - 2.0 * k),
+                (cx - 2.0 * k, cy + 1.0 * k),
+                (cx - 5.5 * k, cy - 1.0 * k),
+            ],
+            LAND,
+        );
+        self.poly(
+            &[
+                (cx + 2.0 * k, cy + 1.0 * k),
+                (cx + 6.0 * k, cy),
+                (cx + 5.0 * k, cy + 5.0 * k),
+                (cx + 2.5 * k, cy + 6.0 * k),
+            ],
+            LAND,
+        );
+    }
+}
+
 /// Paints icon `name` into `r`. `ink` draws outlines, `accent` the colour parts.
 pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32, accent: Color32) {
     let p = P {
@@ -448,6 +655,264 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
     let amber = Color32::from_rgb(0xE5, 0x9E, 0x1A);
     let teal = Color32::from_rgb(0x0E, 0x93, 0x84);
     match name {
+        "logo" => {
+            p.earth_disc(11.0, 13.0, 8.5);
+            p.pin_shape(17.0, 1.5, 3.8, Some(RED), Some((1.0, W)));
+            p.circle(17.0, 5.3, 1.3, Some(W), None);
+        }
+        "settings" => {
+            p.gear_shape(12.0, 12.0, 9.5, 8, None, Some((1.4, ink)));
+            p.circle(12.0, 12.0, 3.0, None, Some((1.4, accent)));
+        }
+        "fullscreen" => {
+            for (x, y, dx, dy) in [
+                (3.0, 3.0, 1.0, 1.0),
+                (21.0, 3.0, -1.0, 1.0),
+                (3.0, 21.0, 1.0, -1.0),
+                (21.0, 21.0, -1.0, -1.0),
+            ] {
+                p.line(&[(x, y + 5.0 * dy), (x, y), (x + 5.0 * dx, y)], 1.4, ink);
+            }
+        }
+        "nav_controls" => {
+            p.circle(12.0, 12.0, 10.0, Some(p.tint(40)), Some((1.2, ink)));
+            for a in [-90.0f32, 0.0, 90.0, 180.0] {
+                let r = a.to_radians();
+                p.head(12.0 + 5.5 * r.cos(), 12.0 + 5.5 * r.sin(), a, 2.6, ink);
+            }
+            p.circle(12.0, 12.0, 1.6, Some(accent), None);
+        }
+        "satellite" => {
+            p.rect(
+                9.0,
+                9.0,
+                6.0,
+                6.0,
+                Some(Color32::from_gray(200)),
+                Some((1.2, ink)),
+                1.0,
+            );
+            p.rect(1.5, 9.5, 6.0, 5.0, Some(SEA), Some((0.8, ink)), 0.5);
+            p.rect(16.5, 9.5, 6.0, 5.0, Some(SEA), Some((0.8, ink)), 0.5);
+            p.line(&[(7.5, 12.0), (9.0, 12.0)], 1.0, ink);
+            p.line(&[(15.0, 12.0), (16.5, 12.0)], 1.0, ink);
+            p.arc(12.0, 5.0, 2.5, 200.0, 340.0, 1.0, AMBER);
+            p.line(&[(12.0, 9.0), (12.0, 6.0)], 1.0, ink);
+        }
+        "plane" => {
+            p.fill(
+                &[
+                    (12.0, 2.0),
+                    (13.6, 5.0),
+                    (13.6, 19.0),
+                    (12.0, 21.5),
+                    (10.4, 19.0),
+                    (10.4, 5.0),
+                ],
+                accent,
+            );
+            p.fill(
+                &[(13.6, 9.0), (22.0, 14.0), (22.0, 15.5), (13.6, 13.5)],
+                accent,
+            );
+            p.fill(
+                &[(10.4, 9.0), (2.0, 14.0), (2.0, 15.5), (10.4, 13.5)],
+                accent,
+            );
+            p.fill(
+                &[(13.0, 17.5), (17.0, 20.5), (17.0, 21.5), (12.5, 20.5)],
+                accent,
+            );
+            p.fill(
+                &[(11.0, 17.5), (7.0, 20.5), (7.0, 21.5), (11.5, 20.5)],
+                accent,
+            );
+        }
+        "cloud" => {
+            p.cloud_shape(
+                12.0,
+                10.0,
+                1.1,
+                Some(Color32::from_gray(225)),
+                Some((1.2, ink)),
+            );
+        }
+        "sun" => {
+            for i in 0..8 {
+                let a = (i as f32 * 45.0).to_radians();
+                p.line(
+                    &[
+                        (12.0 + 7.0 * a.cos(), 12.0 + 7.0 * a.sin()),
+                        (12.0 + 10.5 * a.cos(), 12.0 + 10.5 * a.sin()),
+                    ],
+                    2.0,
+                    AMBER,
+                );
+            }
+            p.circle(12.0, 12.0, 5.0, Some(AMBER), None);
+        }
+        "atmosphere" => {
+            p.circle(12.0, 12.0, 10.5, Some(SKY.gamma_multiply(0.25)), None);
+            p.circle(12.0, 12.0, 9.0, Some(SKY.gamma_multiply(0.45)), None);
+            p.earth_disc(12.0, 12.0, 7.0);
+        }
+        "river" => {
+            for y in [7.0, 12.0, 17.0] {
+                p.wave(3.0, 21.0, y, 1.5, 1.4, if y == 12.0 { accent } else { ink });
+            }
+        }
+        "peak" => {
+            p.fill(
+                &[(2.0, 21.0), (12.0, 7.0), (22.0, 21.0)],
+                ink.gamma_multiply(0.75),
+            );
+            p.line(&[(12.0, 7.0), (12.0, 1.5)], 1.3, ink);
+            p.fill(&[(12.0, 1.8), (17.5, 3.3), (12.0, 4.8)], RED);
+        }
+        "poi" => {
+            p.pin_shape(12.0, 1.5, 7.0, Some(RED), None);
+            p.star5(12.0, 8.5, 3.8, W, None);
+        }
+        "borders" => {
+            p.poly(
+                &[
+                    (2.0, 5.0),
+                    (12.0, 3.0),
+                    (13.0, 12.0),
+                    (10.0, 21.0),
+                    (3.0, 18.0),
+                ],
+                p.tint(60),
+            );
+            p.poly(
+                &[
+                    (12.0, 3.0),
+                    (22.0, 6.0),
+                    (21.0, 19.0),
+                    (10.0, 21.0),
+                    (13.0, 12.0),
+                ],
+                p.tint(25),
+            );
+            p.line(&[(12.0, 3.0), (13.0, 12.0), (10.0, 21.0)], 1.8, RED);
+            p.closed(
+                &[
+                    (2.0, 5.0),
+                    (12.0, 3.0),
+                    (22.0, 6.0),
+                    (21.0, 19.0),
+                    (10.0, 21.0),
+                    (3.0, 18.0),
+                ],
+                1.2,
+                ink,
+            );
+        }
+        "borders_fine" => {
+            p.poly(
+                &[
+                    (2.0, 5.0),
+                    (12.0, 3.0),
+                    (22.0, 6.0),
+                    (21.0, 19.0),
+                    (10.0, 21.0),
+                    (3.0, 18.0),
+                ],
+                p.tint(40),
+            );
+            for line in [
+                [(7.0, 4.0), (8.0, 11.0), (3.0, 12.0)],
+                [(8.0, 11.0), (14.0, 12.0), (17.0, 5.0)],
+                [(14.0, 12.0), (15.0, 20.0), (15.0, 20.0)],
+                [(8.0, 11.0), (9.0, 20.5), (9.0, 20.5)],
+                [(14.0, 12.0), (21.5, 13.0), (21.5, 13.0)],
+            ] {
+                p.line(&line, 0.9, RED);
+            }
+            p.closed(
+                &[
+                    (2.0, 5.0),
+                    (12.0, 3.0),
+                    (22.0, 6.0),
+                    (21.0, 19.0),
+                    (10.0, 21.0),
+                    (3.0, 18.0),
+                ],
+                1.4,
+                ink,
+            );
+        }
+        "catalog" => {
+            for (x, y, c) in [
+                (3.0, 3.0, SEA),
+                (13.0, 3.0, AMBER),
+                (3.0, 13.0, GREEN),
+                (13.0, 13.0, RED),
+            ] {
+                p.rect(x, y, 8.0, 8.0, Some(c), None, 2.5);
+            }
+        }
+        "contents" => {
+            for (i, c) in [SEA, GREEN, AMBER].into_iter().enumerate() {
+                let y = 5.0 + i as f32 * 7.0;
+                p.rect(2.5, y - 2.0, 4.0, 4.0, Some(c), None, 1.0);
+                p.line(&[(9.0, y), (21.0, y)], 2.0, ink);
+            }
+        }
+        "open" => {
+            p.folder_shape(2.0, 4.0, 18.0, 15.0, Some(AMBER.gamma_multiply(0.7)), None);
+            p.fill(
+                &[(5.0, 10.0), (22.5, 10.0), (19.5, 19.0), (2.0, 19.0)],
+                AMBER,
+            );
+        }
+        "add_folder" => {
+            p.folder_shape(2.0, 5.0, 17.0, 13.0, Some(AMBER), None);
+            p.plus_badge(18.0, 17.0);
+        }
+        "pin_add" => {
+            p.pin_shape(11.0, 2.0, 6.5, Some(RED), None);
+            p.circle(11.0, 8.5, 2.4, Some(W), None);
+            p.plus_badge(17.5, 17.0);
+        }
+        "north" => {
+            p.circle(12.0, 12.0, 9.5, Some(p.tint(30)), Some((1.3, ink)));
+            p.fill(&[(12.0, 3.5), (15.0, 12.0), (9.0, 12.0)], red);
+            p.fill(&[(12.0, 20.5), (15.0, 12.0), (9.0, 12.0)], ink);
+        }
+        "rotate" => {
+            p.globe(12.0, 12.0, 6.0);
+            p.arc(12.0, 12.0, 10.0, 200.0, 330.0, 1.6, accent);
+            // The head continues the arc: at its end, along the circle.
+            let end = 330f32.to_radians();
+            p.head(
+                12.0 + 10.0 * end.cos(),
+                12.0 + 10.0 * end.sin(),
+                60.0,
+                3.0,
+                accent,
+            );
+        }
+        "goto_xy" => {
+            p.pin_shape(11.0, 2.0, 6.5, Some(accent), None);
+            p.circle(11.0, 8.5, 2.4, Some(W), None);
+            p.text(19.5, 19.5, "XY", 6.5, ink);
+        }
+        "places" => {
+            // A folder holding a pin.
+            p.folder_shape(2.0, 4.0, 20.0, 16.0, Some(AMBER), None);
+            p.pin_shape(12.0, 7.0, 3.6, Some(RED), None);
+            p.circle(12.0, 10.6, 1.3, Some(W), None);
+        }
+        "ship" => {
+            p.fill(
+                &[(2.5, 13.0), (21.5, 13.0), (18.5, 19.0), (5.5, 19.0)],
+                accent,
+            );
+            p.rect(7.0, 8.0, 9.0, 5.0, Some(p.tint(60)), Some((1.2, ink)), 1.0);
+            p.rect(10.0, 4.0, 2.5, 4.0, Some(red), None, 0.5);
+            p.wave(2.0, 22.0, 21.5, 0.8, 1.1, SKY);
+        }
         "directions" => {
             // A road sign: a diamond with a turning arrow.
             p.fill(
@@ -557,7 +1022,7 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                 );
             }
         }
-        "goto_xy" | "locate" => {
+        "locate" => {
             p.circle(
                 12.0,
                 9.0,
@@ -623,32 +1088,6 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
         "web_data" => {
             p.globe(10.0, 10.0, 7.5);
             p.plus_badge(18.0, 17.5);
-        }
-        "add_folder" | "open" => {
-            p.fill(
-                &[
-                    (2.0, 6.0),
-                    (9.0, 6.0),
-                    (11.0, 8.0),
-                    (22.0, 8.0),
-                    (22.0, 19.0),
-                    (2.0, 19.0),
-                ],
-                amber,
-            );
-            p.closed(
-                &[
-                    (2.0, 5.0),
-                    (9.0, 5.0),
-                    (11.0, 7.5),
-                    (22.0, 7.5),
-                    (22.0, 19.0),
-                    (2.0, 19.0),
-                ],
-                1.3,
-                ink,
-            );
-            p.line(&[(2.0, 10.0), (22.0, 10.0)], 1.0, ink);
         }
         "select" => {
             p.dashed_rect(3.0, 3.0, 14.0, 12.0, accent);
@@ -936,7 +1375,7 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.rect(6.5, 5.0, 4.0, 14.0, Some(ink), None, 1.0);
             p.rect(13.5, 5.0, 4.0, 14.0, Some(ink), None, 1.0);
         }
-        "environments" | "settings" => {
+        "environments" => {
             for i in 0..8 {
                 let a = (i as f32 * 45.0).to_radians();
                 p.line(
@@ -1228,19 +1667,6 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             );
             p.line(&[(3.0, 7.0), (12.0, 11.0), (21.0, 7.0)], 1.1, ink);
             p.line(&[(12.0, 11.0), (12.0, 21.0)], 1.1, ink);
-        }
-        "contents" => {
-            for (i, c) in [accent, green, amber].iter().enumerate() {
-                let y = 4.0 + i as f32 * 6.0;
-                p.rect(3.0, y, 4.0, 4.0, Some(*c), Some((1.0, ink)), 0.5);
-                p.line(&[(9.5, y + 2.0), (21.0, y + 2.0)], 1.5, ink);
-            }
-        }
-        "catalog" => {
-            p.rect(3.0, 3.0, 7.5, 7.5, Some(p.tint(150)), Some((1.2, ink)), 1.0);
-            p.rect(13.5, 3.0, 7.5, 7.5, Some(amber), Some((1.2, ink)), 1.0);
-            p.rect(3.0, 13.5, 7.5, 7.5, Some(green), Some((1.2, ink)), 1.0);
-            p.rect(13.5, 13.5, 7.5, 7.5, Some(red), Some((1.2, ink)), 1.0);
         }
         "symbology" => {
             p.circle(
@@ -2130,86 +2556,21 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             }
         }
         // ── GlobeCraft: globe, live layers and application icons ──
-        "logo" => {
-            // The globe with an orbit, in the brand colour. Used by About, not the
-            // header (the merged header starts with File).
-            let brand = super::theme::BRAND;
-            p.circle(12.0, 12.0, 9.5, Some(brand), None);
-            p.circle(9.0, 9.0, 4.5, Some(Color32::from_white_alpha(60)), None);
-            let w = Color32::from_white_alpha(220);
-            p.line(&[(2.5, 12.0), (21.5, 12.0)], 1.0, w);
-            let mer: Vec<(f32, f32)> = (0..=16)
-                .map(|i| {
-                    let a = (-90.0 + 180.0 * i as f32 / 16.0f32).to_radians();
-                    (12.0 + 4.2 * a.cos(), 12.0 + 9.5 * a.sin())
-                })
-                .collect();
-            p.line(&mer, 1.0, w);
-            let orbit: Vec<(f32, f32)> = (0..=24)
-                .map(|i| {
-                    let a = (i as f32 * 15.0).to_radians();
-                    (12.0 + 11.5 * a.cos(), 12.0 + 3.4 * a.sin() - 2.2 * a.cos())
-                })
-                .collect();
-            p.line(&orbit, 1.3, amber);
-        }
         "fly" => {
             // A globe and a flight arc ending in an arrowhead.
             p.globe(9.0, 15.0, 6.5);
             p.arc(13.0, 15.0, 9.0, 200.0, 315.0, 1.6, accent);
             p.fill(&[(19.8, 6.0), (20.6, 10.6), (16.6, 8.8)], accent);
         }
-        "north" => {
-            p.circle(12.0, 12.0, 9.5, Some(p.tint(30)), Some((1.3, ink)));
-            p.fill(&[(12.0, 3.5), (15.0, 12.0), (9.0, 12.0)], red);
-            p.fill(&[(12.0, 20.5), (15.0, 12.0), (9.0, 12.0)], ink);
-            p.text(12.0, 12.5, "N", 5.5, Color32::WHITE);
-        }
         "compass" => {
             p.circle(12.0, 12.0, 9.5, Some(p.tint(30)), Some((1.3, ink)));
             p.fill(&[(12.0, 4.0), (14.5, 12.0), (9.5, 12.0)], red);
             p.fill(&[(12.0, 20.0), (14.5, 12.0), (9.5, 12.0)], ink);
         }
-        "rotate" => {
-            p.globe(12.0, 12.0, 6.0);
-            p.arc(12.0, 12.0, 10.0, 200.0, 340.0, 1.6, accent);
-            p.fill(&[(21.6, 9.2), (21.0, 14.0), (17.4, 10.8)], accent);
-        }
-        "pin" | "pin_add" => {
+        "pin" => {
             p.fill(&[(12.0, 22.0), (6.2, 13.0), (17.8, 13.0)], red);
             p.circle(12.0, 9.5, 6.5, Some(red), None);
             p.circle(12.0, 9.5, 2.4, Some(Color32::WHITE), None);
-            if name == "pin_add" {
-                p.plus_badge(15.0, 13.0);
-            }
-        }
-        "places" => {
-            // A folder holding a pin.
-            p.fill(
-                &[
-                    (2.5, 7.0),
-                    (9.0, 7.0),
-                    (11.0, 9.0),
-                    (21.5, 9.0),
-                    (21.5, 20.0),
-                    (2.5, 20.0),
-                ],
-                amber.gamma_multiply(0.85),
-            );
-            p.closed(
-                &[
-                    (2.5, 5.0),
-                    (9.0, 5.0),
-                    (11.0, 7.0),
-                    (21.5, 7.0),
-                    (21.5, 20.0),
-                    (2.5, 20.0),
-                ],
-                1.3,
-                ink,
-            );
-            p.circle(12.0, 12.5, 3.0, Some(red), None);
-            p.fill(&[(12.0, 18.0), (9.6, 13.5), (14.4, 13.5)], red);
         }
         "clear_all" => {
             p.rect(
@@ -2230,42 +2591,6 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             for x in [9.5, 12.0, 14.5] {
                 p.line(&[(x, 10.0), (x, 18.0)], 1.2, red);
             }
-        }
-        "nav_controls" => {
-            p.circle(9.0, 9.0, 6.5, Some(p.tint(40)), Some((1.3, ink)));
-            for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
-                let (tx, ty) = (9.0 + dx * 5.0, 9.0 + dy * 5.0);
-                let (bx, by) = (9.0 + dx * 2.5, 9.0 + dy * 2.5);
-                p.fill(
-                    &[
-                        (tx, ty),
-                        (bx - dy * 2.0, by + dx * 2.0),
-                        (bx + dy * 2.0, by - dx * 2.0),
-                    ],
-                    accent,
-                );
-            }
-            p.rect(
-                18.0,
-                4.0,
-                4.0,
-                16.0,
-                Some(p.tint(40)),
-                Some((1.2, ink)),
-                2.0,
-            );
-            p.line(&[(18.8, 12.0), (21.2, 12.0)], 1.4, ink);
-        }
-        "fullscreen" => {
-            for (x, y, dx, dy) in [
-                (3.0, 3.0, 1.0, 1.0),
-                (21.0, 3.0, -1.0, 1.0),
-                (3.0, 21.0, 1.0, -1.0),
-                (21.0, 21.0, -1.0, -1.0),
-            ] {
-                p.line(&[(x, y + 6.0 * dy), (x, y), (x + 6.0 * dx, y)], 1.8, ink);
-            }
-            p.rect(8.0, 8.0, 8.0, 8.0, Some(p.tint(50)), None, 1.0);
         }
         "minimize" => {
             p.rect(
@@ -2336,7 +2661,7 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.fill(&[(9.0, 7.0), (10.9, 10.5), (7.1, 10.5)], Color32::WHITE);
             p.line(&[(2.0, 20.0), (22.0, 20.0)], 1.3, ink);
         }
-        "borders" | "borders_fine" => {
+        "borders_states" => {
             p.polygon_shape(
                 &[
                     (3.0, 6.0),
@@ -2348,34 +2673,9 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                 ],
                 40,
             );
-            let w = if name == "borders" { 1.6 } else { 1.0 };
+            let w = 1.6;
             p.line(&[(11.0, 3.0), (12.5, 11.0), (21.0, 12.0)], w, red);
             p.line(&[(12.5, 11.0), (8.0, 19.5)], w, red);
-        }
-        "atmosphere" => {
-            p.circle(12.0, 12.0, 10.0, Some(accent.gamma_multiply(0.25)), None);
-            p.circle(
-                12.0,
-                12.0,
-                7.5,
-                Some(teal.gamma_multiply(0.85)),
-                Some((1.2, ink)),
-            );
-            p.circle(9.5, 9.5, 2.8, Some(Color32::from_white_alpha(80)), None);
-        }
-        "sun" => {
-            p.circle(12.0, 12.0, 4.6, Some(amber), Some((1.2, ink)));
-            for k in 0..8 {
-                let a = (k as f32 * 45.0).to_radians();
-                p.line(
-                    &[
-                        (12.0 + 7.0 * a.cos(), 12.0 + 7.0 * a.sin()),
-                        (12.0 + 10.0 * a.cos(), 12.0 + 10.0 * a.sin()),
-                    ],
-                    1.6,
-                    amber,
-                );
-            }
         }
         "stars" => {
             let star = |cx: f32, cy: f32, r: f32| {
@@ -2452,127 +2752,6 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                 ],
                 ink,
             );
-        }
-        "cloud" => {
-            let fill = p.tint(70);
-            p.circle(9.0, 13.0, 4.5, Some(fill), Some((1.2, ink)));
-            p.circle(14.0, 10.5, 5.5, Some(fill), Some((1.2, ink)));
-            p.circle(18.0, 14.5, 4.0, Some(fill), Some((1.2, ink)));
-            p.rect(6.5, 13.0, 12.5, 5.5, Some(p.paper()), None, 0.0);
-            p.circle(9.0, 13.0, 3.3, Some(p.paper()), None);
-            p.circle(14.0, 10.5, 4.3, Some(p.paper()), None);
-            p.circle(18.0, 14.5, 2.8, Some(p.paper()), None);
-            p.line(&[(5.0, 18.5), (21.0, 18.5)], 1.2, ink);
-        }
-        "plane" => {
-            p.fill(
-                &[
-                    (12.0, 2.0),
-                    (13.6, 6.0),
-                    (13.6, 18.0),
-                    (12.0, 20.5),
-                    (10.4, 18.0),
-                    (10.4, 6.0),
-                ],
-                accent,
-            );
-            p.fill(
-                &[(10.4, 9.0), (2.5, 14.0), (2.5, 15.5), (10.4, 13.0)],
-                accent,
-            );
-            p.fill(
-                &[(13.6, 9.0), (21.5, 14.0), (21.5, 15.5), (13.6, 13.0)],
-                accent,
-            );
-            p.fill(&[(10.6, 17.0), (7.5, 20.5), (7.5, 21.5), (12.0, 19.8)], ink);
-            p.fill(
-                &[(13.4, 17.0), (16.5, 20.5), (16.5, 21.5), (12.0, 19.8)],
-                ink,
-            );
-        }
-        "ship" => {
-            p.fill(
-                &[(2.5, 13.0), (21.5, 13.0), (18.5, 19.0), (5.5, 19.0)],
-                accent,
-            );
-            p.rect(7.0, 8.0, 9.0, 5.0, Some(p.tint(60)), Some((1.2, ink)), 1.0);
-            p.rect(10.0, 4.0, 2.5, 4.0, Some(red), None, 0.5);
-            p.line(
-                &[
-                    (2.0, 21.0),
-                    (6.0, 20.0),
-                    (10.0, 21.0),
-                    (14.0, 20.0),
-                    (18.0, 21.0),
-                    (22.0, 20.0),
-                ],
-                1.2,
-                teal,
-            );
-        }
-        "satellite" => {
-            p.rect(9.0, 9.0, 6.0, 6.0, Some(ink), None, 1.0);
-            p.rect(1.5, 9.5, 6.0, 5.0, Some(accent), Some((1.0, ink)), 0.5);
-            p.rect(16.5, 9.5, 6.0, 5.0, Some(accent), Some((1.0, ink)), 0.5);
-            p.line(&[(7.5, 12.0), (9.0, 12.0)], 1.2, ink);
-            p.line(&[(15.0, 12.0), (16.5, 12.0)], 1.2, ink);
-            p.arc(12.0, 4.0, 3.0, 20.0, 160.0, 1.2, amber);
-            p.line(&[(12.0, 9.0), (12.0, 6.5)], 1.2, ink);
-        }
-        "poi" => {
-            // A map pin.
-            p.fill(
-                &[
-                    (12.0, 22.0),
-                    (6.5, 12.5),
-                    (6.0, 9.0),
-                    (8.0, 4.5),
-                    (12.0, 2.5),
-                    (16.0, 4.5),
-                    (18.0, 9.0),
-                    (17.5, 12.5),
-                ],
-                red,
-            );
-            p.circle(12.0, 9.0, 2.6, Some(p.paper()), None);
-        }
-        "peak" => {
-            p.fill(
-                &[
-                    (2.0, 21.0),
-                    (10.0, 6.0),
-                    (14.0, 12.0),
-                    (16.5, 9.0),
-                    (22.0, 21.0),
-                ],
-                ink.gamma_multiply(0.75),
-            );
-            p.fill(
-                &[
-                    (8.2, 9.5),
-                    (10.0, 6.0),
-                    (11.8, 9.0),
-                    (10.6, 8.6),
-                    (9.4, 9.8),
-                ],
-                p.paper(),
-            );
-        }
-        "river" => {
-            for (y, w) in [(7.0, 1.8), (13.0, 2.2), (19.0, 1.8)] {
-                p.line(
-                    &[
-                        (2.0, y),
-                        (6.0, y - 2.0),
-                        (10.0, y),
-                        (14.0, y + 2.0),
-                        (18.0, y),
-                        (22.0, y - 2.0),
-                    ],
-                    w,
-                    teal,
-                );
-            }
         }
         "park" => {
             p.circle(12.0, 9.0, 6.5, Some(green), None);

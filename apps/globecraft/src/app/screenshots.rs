@@ -1183,3 +1183,119 @@ fn aurora_screenshot() {
     settle(&mut h, 2.0);
     save(&mut h, &dir, "24-aurora-without-sunlight");
 }
+
+/// Every icon the ribbon, the Layers pane and the timeline show, with drafts beside
+/// each (`name~a`, `~b`, `~c` when drawn). `GLOBECRAFT_ICON_NAMES` lists the names,
+/// `GLOBECRAFT_ICON_DRAFTS=1` adds the drafts. Manual.
+#[test]
+#[ignore = "manual: renders an icon sheet"]
+fn icon_sheet() {
+    use egui_kittest::Harness;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let names: Vec<String> = std::env::var("GLOBECRAFT_ICON_NAMES")
+        .expect("GLOBECRAFT_ICON_NAMES")
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    let drafts = std::env::var("GLOBECRAFT_ICON_DRAFTS").is_ok();
+    let variants: Vec<&str> = if drafts {
+        vec!["", "~a", "~b", "~c"]
+    } else {
+        vec![""]
+    };
+    let per_row = if drafts { 3 } else { 8 };
+    let cell_w = 70.0 * variants.len() as f32 + 20.0;
+    let cell_h = 112.0;
+    let rows = names.len().div_ceil(per_row);
+    let size = egui::Vec2::new(cell_w * per_row as f32 + 20.0, cell_h * rows as f32 + 20.0);
+    for (theme, dark) in [("dark", true), ("light", false)] {
+        let (names, variants) = (names.clone(), variants.clone());
+        let mut fonts_set = false;
+        let mut h = Harness::builder()
+            .with_size(size)
+            .with_pixels_per_point(1.5)
+            .renderer(WgpuTestRenderer::new())
+            .build_ui(move |ui| {
+                // The interface's fonts arrive with the next frame; draw from then.
+                if !fonts_set {
+                    ui.ctx().set_fonts(super::fonts::base_definitions());
+                    fonts_set = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                let (bg, card, ink, text) = if dark {
+                    (
+                        egui::Color32::from_rgb(24, 26, 30),
+                        egui::Color32::from_rgb(36, 39, 44),
+                        egui::Color32::from_rgb(220, 224, 230),
+                        egui::Color32::from_rgb(200, 204, 210),
+                    )
+                } else {
+                    (
+                        egui::Color32::from_rgb(232, 234, 238),
+                        egui::Color32::from_rgb(250, 251, 252),
+                        egui::Color32::from_rgb(40, 44, 52),
+                        egui::Color32::from_rgb(60, 64, 72),
+                    )
+                };
+                let accent = egui::Color32::from_rgb(0x2B, 0x7B, 0xE4);
+                let painter = ui.painter();
+                painter.rect_filled(ui.max_rect(), 0.0, bg);
+                for (n, name) in names.iter().enumerate() {
+                    let origin = egui::pos2(
+                        10.0 + (n % per_row) as f32 * cell_w,
+                        10.0 + (n / per_row) as f32 * cell_h,
+                    );
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(origin, egui::vec2(cell_w - 8.0, cell_h - 8.0)),
+                        8.0,
+                        card,
+                    );
+                    painter.text(
+                        origin + egui::vec2(10.0, 6.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("{} {name}", n + 1),
+                        egui::FontId::proportional(12.0),
+                        text,
+                    );
+                    for (v, variant) in variants.iter().enumerate() {
+                        let x = origin.x + 10.0 + v as f32 * 70.0;
+                        let big = egui::Rect::from_min_size(
+                            egui::pos2(x, origin.y + 26.0),
+                            egui::Vec2::splat(44.0),
+                        );
+                        let full = format!("{name}{variant}");
+                        super::ui::icons::paint(painter, big, &full, ink, accent);
+                        let small = egui::Rect::from_min_size(
+                            egui::pos2(x + 48.0, origin.y + 46.0),
+                            egui::Vec2::splat(20.0),
+                        );
+                        super::ui::icons::paint(painter, small, &full, ink, accent);
+                        let caption = match *variant {
+                            "" => "now",
+                            "~a" => "A",
+                            "~b" => "B",
+                            _ => "C",
+                        };
+                        painter.text(
+                            egui::pos2(x + 22.0, origin.y + 84.0),
+                            egui::Align2::CENTER_CENTER,
+                            caption,
+                            egui::FontId::proportional(12.0),
+                            text,
+                        );
+                    }
+                }
+            });
+        h.run();
+        h.run();
+        let image = h.render().expect("render");
+        let suffix = if drafts { "-drafts" } else { "" };
+        image
+            .save(dir.join(format!("icons{suffix}-{theme}.png")))
+            .expect("save");
+    }
+}
