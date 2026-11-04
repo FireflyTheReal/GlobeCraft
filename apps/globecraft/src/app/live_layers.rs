@@ -3,7 +3,7 @@ use globecraft_core::layers::MapLayer;
 mod aurora;
 pub(super) use aurora::AuroraShapes;
 mod fade;
-pub(super) use fade::{TiledShapes, stroke_runs, styled_line};
+pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
 mod poi;
 mod poi_icons;
 mod poi_memory;

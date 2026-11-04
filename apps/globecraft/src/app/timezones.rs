@@ -36,7 +36,15 @@ impl TimeZoneShapes {
             self.built = Some((key, borders(painter, basis, rect, zones, scale, view)));
         }
         if let Some((_, shapes)) = &self.built {
-            painter.extend(shapes.iter().cloned());
+            // Labels are laid out again: kept galleys go stale when the font atlas
+            // is rebuilt (garbled offsets).
+            // (Collected first: laying out text inside `extend` would wait on the
+            // painter's own lock.)
+            let fresh: Vec<Shape> = shapes
+                .iter()
+                .map(|shape| super::live_layers::fresh_text(painter, shape))
+                .collect();
+            painter.extend(fresh);
         }
     }
 }
@@ -105,6 +113,9 @@ fn line_bounds(line: &[(f64, f64)]) -> [f64; 4] {
     )
 }
 
+/// A clock's label is not repeated closer than this to itself.
+const SAME_LABEL_APART_POINTS: f32 = 260.0;
+
 /// The lines where the clock changes, on screen, cut where they leave the view or
 /// the visible side of the globe, and each clock's label. `view`: the camera's
 /// latitude, longitude and altitude.
@@ -153,6 +164,8 @@ fn borders(
     // The offsets, one per group of zones on the same clock, kept apart.
     let font = super::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
     let mut taken: Vec<Rect> = Vec::new();
+    let mut placed: Vec<(Pos2, &str)> = Vec::new();
+    // The file lists the largest areas first, so they keep their label.
     for (lat, lon, text) in &zones.labels {
         let Some(at) =
             globecraft_render::overlays::project_unhidden(basis, rect, None, None, *lat, *lon)
@@ -165,10 +178,14 @@ fn borders(
         }
         let galley = painter.layout_no_wrap(text.to_string(), font.clone(), LABEL);
         let bounds = Rect::from_center_size(at, galley.size()).expand(4.0 * scale);
-        if taken.iter().any(|other| other.intersects(bounds)) {
+        let repeated = placed.iter().any(|(other, label)| {
+            *label == &**text && other.distance(at) < SAME_LABEL_APART_POINTS * scale
+        });
+        if repeated || taken.iter().any(|other| other.intersects(bounds)) {
             continue;
         }
         taken.push(bounds);
+        placed.push((at, text));
         let corner = at - galley.size() / 2.0;
         let halo = painter.layout_no_wrap(text.to_string(), font.clone(), LABEL_HALO);
         for offset in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, -1.0)] {

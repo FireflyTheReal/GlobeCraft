@@ -6,10 +6,11 @@ name: Time zones
 # zone, with the ocean zones so every point has one; not the `-now` file, which
 # merges zones whose clocks agree today and so gets past dates wrong), built from
 # OpenStreetMap, ODbL. Features by `kind`: `zone` (a (multi)polygon with its IANA
-# name in `tzid`, for the zone under the cursor), `line` (where the clock changes:
-# the borders between zones whose offsets differ in January or July; coasts and
-# borders between zones on the same clock are left out) and `label` (one point per
-# group of zones on the same clock, with its offsets, e.g. `UTC+1/+2`).
+# name in `tzid`, for the zone under the cursor, at sea too), `line` (where the
+# clock changes on land: the borders between land zones whose offsets differ in
+# January or July; coasts, the ocean zones' meridians and borders between zones on
+# the same clock are left out) and `label` (one point in each sizeable area of land
+# on the same clock, with its offsets, e.g. `UTC+1/+2`).
 on:
   workflow_dispatch:
     inputs:
@@ -78,14 +79,21 @@ jobs:
           set -euo pipefail
           # A distance tolerance (no point moves more than 500 m) keeps every corner;
           # a share of the points would cut them, and the ocean zones' long meridian
-          # sides would cross the globe.
-          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i keyed.json \
+          # sides would cross the globe. Lines and labels come from the land zones
+          # only: the ocean zones (Etc/…) keep no summer time, so every coast would be
+          # a line, and their 15° strips would fan out from the poles. A label goes in
+          # every area of a clock larger than 100,000 km² (Iceland, Nepal…), largest first.
+          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i keyed.json name=zones \
             -simplify dp interval=500 keep-shapes \
             -filter-fields tzid,key,label \
             -o zones.json format=geojson precision=0.001 \
-            -dissolve key copy-fields=label + name=regions \
-            -innerlines + name=lines \
+            -filter 'tzid.indexOf("Etc/") !== 0' + name=land \
+            -dissolve key copy-fields=label target=land + name=regions \
+            -innerlines target=regions + name=lines \
             -o lines.json target=lines format=geojson precision=0.001 \
+            -explode target=regions \
+            -filter 'this.area > 1e11' target=regions \
+            -sort 'this.area' descending target=regions \
             -points inner target=regions + name=labels \
             -o labels.json target=labels format=geojson precision=0.01
           python3 - <<'PY'
@@ -99,7 +107,12 @@ jobs:
           for needed in ("Europe/Berlin", "America/New_York", "Asia/Kolkata", "Etc/GMT-12"):
               if needed not in names:
                   sys.exit(f"missing {needed}")
-          if len(names) < 300 or len(lines) < 20 or len(labels) < 20:
+          # No line may run along a coast: none reaches the poles' ocean.
+          if any(abs(lat) > 89.0 for g in lines for part in
+                 (g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]])
+                 for _, lat in part):
+              sys.exit("a line reaches a pole: ocean zones got in?")
+          if len(names) < 300 or len(lines) < 20 or len(labels) < 30:
               sys.exit("too few zones, lines or labels: the source changed?")
           features = [
               {"type": "Feature", "properties": {"kind": "zone", "tzid": f["properties"]["tzid"]},

@@ -76,7 +76,7 @@ fn extend_with_opacity(painter: &egui::Painter, shapes: &[Shape], opacity: f32) 
 /// of its glyphs in the font atlas, and egui rebuilds the atlas when it fills up
 /// (many different names on screen), so galleys kept from an earlier frame drew
 /// other glyphs: garbled names. egui caches layouts, so this is cheap.
-fn fresh_text(painter: &egui::Painter, shape: &Shape) -> Shape {
+pub(in crate::app) fn fresh_text(painter: &egui::Painter, shape: &Shape) -> Shape {
     match shape {
         Shape::Text(text) => {
             let mut text = text.clone();

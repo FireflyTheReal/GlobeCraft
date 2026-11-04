@@ -1421,9 +1421,16 @@ fn time_zones_screenshot() {
             "geometry": {"type": "Point", "coordinates": [f64::from(i) * 15.0, 20.0]}
         }));
     }
-    let zones = globecraft_data::timezones::TimeZones::parse(&json!({
-        "type": "FeatureCollection", "features": features
-    }))
+    // The published file instead, when given.
+    let real = std::env::var("GLOBECRAFT_TIMEZONES_FILE").ok();
+    let zones = match &real {
+        Some(path) => globecraft_data::timezones::TimeZones::from_gzip(
+            &std::fs::read(path).expect("time zones file"),
+        ),
+        None => globecraft_data::timezones::TimeZones::parse(&json!({
+            "type": "FeatureCollection", "features": features
+        })),
+    }
     .expect("zones");
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
@@ -1449,9 +1456,33 @@ fn time_zones_screenshot() {
         h.step();
     }
     settle(&mut h, 1.0);
-    save(&mut h, &dir, "28-time-zones");
+    save(
+        &mut h,
+        &dir,
+        if real.is_some() {
+            "28-time-zones-published"
+        } else {
+            "28-time-zones"
+        },
+    );
     let cursor = h.state().cursor.expect("pointer over the globe");
     assert!((2.5..17.5).contains(&cursor.1), "{cursor:?}");
     let local = h.state().cursor_local_time().expect("local time");
     assert_eq!(local, "14:00 CEST (UTC+2)");
+    if real.is_some() {
+        // The Americas, and the whole Earth from far away.
+        for (name, lat, lon, altitude) in [
+            ("28-time-zones-americas", 25.0, -90.0, 9000.0),
+            ("28-time-zones-asia", 30.0, 95.0, 9000.0),
+        ] {
+            h.state_mut()
+                .run(
+                    "camera.set",
+                    json!({"lat": lat, "lon": lon, "altitude_km": altitude}),
+                )
+                .expect("camera");
+            settle(&mut h, 3.0);
+            save(&mut h, &dir, name);
+        }
+    }
 }
