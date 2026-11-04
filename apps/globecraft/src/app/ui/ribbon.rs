@@ -524,6 +524,7 @@ impl App {
         group(ui, lang.text("sidebar-weather-title"), |ui| {
             self.layer_big(ui, MapLayer::Radar);
             self.layer_big(ui, MapLayer::Clouds);
+            self.layer_big(ui, MapLayer::Aurora);
         });
         group(ui, lang.text("sidebar-live-objects-title"), |ui| {
             self.layer_big(ui, MapLayer::Flights);
@@ -874,6 +875,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::CinematicSky => "ribbon-layer-cinematic",
         MapLayer::Radar => "ribbon-layer-radar",
         MapLayer::Clouds => "ribbon-layer-clouds",
+        MapLayer::Aurora => "ribbon-layer-aurora",
         MapLayer::Flights => "ribbon-layer-flights",
         MapLayer::Vessels => "ribbon-layer-vessels",
         MapLayer::Satellites => "ribbon-layer-satellites",

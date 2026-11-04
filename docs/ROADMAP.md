@@ -234,7 +234,7 @@ and timeline (H) and the point-layer engine (I).
 **Quick wins (S each once I and H exist):**
 
 - USGS earthquakes, with magnitude-scaled pulses (`HAZ-04`) **Done 2026-11-04:** timed points from the day before the app's time send out two rings, reaching 3.5× the marker's radius (so larger magnitudes reach further) and fading with the point's age; at most 40, the largest first; redrawn about 30 times a second while any pulse
-- NOAA aurora oval, drawn on the night side (`HAZ-01`)
+- NOAA aurora oval, drawn on the night side (`HAZ-01`) **Done 2026-11-04:** the Aurora layer (Live → Weather) loads NOAA SWPC's OVATION forecast (`ovation_aurora_latest.json`, the chance of aurora on a 1° grid, every 10 minutes while on) and draws it as a green glow, smooth between grid nodes, brighter with the chance, fading out across the day–night line when Sunlight is on; shown only while the app's time is within 3 h of the forecast. Checked with a synthetic oval (`aurora_screenshot`); the live feed is checked by an ignored network test (`the_live_forecast_parses`), as neither the build container nor the Mac shell reaches SWPC
 - OurAirports (`TRK-02`), which also lets flight hover show origin and destination guesses
 - Natural Earth urban areas as a low-altitude glow (`REF-04`)
 - Time zones, as a toggle with the local time under the cursor (`REF-05`, `tzf-rs`)

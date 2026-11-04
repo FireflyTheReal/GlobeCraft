@@ -721,6 +721,14 @@ impl App {
                     "https://www.digitraffic.fi/en/marine-traffic/",
                 );
             }
+            MapLayer::Aurora => {
+                note(ui, t, &self.live_aurora.status(lang));
+                credit(
+                    ui,
+                    lang.text("aurora-source"),
+                    "https://www.swpc.noaa.gov/products/aurora-30-minute-forecast",
+                );
+            }
             MapLayer::Satellites => {
                 note(ui, t, &self.live_satellites.status(lang));
                 credit(ui, "CelesTrak", "https://celestrak.org/");

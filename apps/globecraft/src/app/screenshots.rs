@@ -1116,3 +1116,70 @@ fn timeline_play_frames() {
         .expect("play");
     measure(&mut h, "playing 1 day/s");
 }
+
+/// The aurora layer (roadmap 5, `HAZ-01`) with a forecast of the usual shape: a ring
+/// about 20° around each geomagnetic pole, strongest on its night side. Manual.
+#[test]
+#[ignore = "manual: renders the aurora oval on the night side"]
+fn aurora_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let moment = "2026-11-04T04:00:00Z";
+    let unix = globecraft_core::time::parse_iso(moment).unwrap();
+    let (sun_lat, sun_lon) = globecraft_core::math::subsolar(unix);
+    let sun = globecraft_core::math::ll_to_v3(sun_lat, sun_lon);
+    let mut rows = Vec::new();
+    for lon in 0..360 {
+        for lat in -90..=90 {
+            let here = globecraft_core::math::ll_to_v3(f64::from(lat), f64::from(lon));
+            let mut chance: f64 = 0.0;
+            for pole in [(80.7, -72.7), (-80.7, 107.3)] {
+                let pole = globecraft_core::math::ll_to_v3(pole.0, pole.1);
+                let distance = here.dot(pole).clamp(-1.0, 1.0).acos().to_degrees();
+                // Wider and stronger on the night side, as OVATION's ovals are.
+                let night = (0.5 - 0.5 * here.dot(sun)).clamp(0.0, 1.0);
+                let width = 3.0 + 3.0 * night;
+                chance = chance
+                    .max((25.0 + 50.0 * night) * (-((distance - 20.0) / width).powi(2)).exp());
+            }
+            rows.push(json!([lon, lat, chance.round()]));
+        }
+    }
+    let grid = globecraft_data::aurora::AuroraGrid::parse(&json!({
+        "Observation Time": moment,
+        "Forecast Time": moment,
+        "coordinates": rows,
+    }))
+    .expect("aurora sample");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.live_aurora.set_grid(grid);
+    app.run("layer.show", json!({"layer": "aurora", "visible": true}))
+        .expect("aurora");
+    app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    app.run("time.set", json!({"time": moment})).expect("time");
+    app.run(
+        "camera.set",
+        json!({"lat": 62.0, "lon": -95.0, "altitude_km": 9000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "22-aurora-north-america");
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": 85.0, "lon": 0.0, "altitude_km": 14000.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "23-aurora-over-the-pole");
+    // Sunlight off: the whole oval.
+    h.state_mut()
+        .run("layer.show", json!({"layer": "sunlight", "visible": false}))
+        .expect("sunlight");
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "24-aurora-without-sunlight");
+}

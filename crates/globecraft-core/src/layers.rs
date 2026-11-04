@@ -40,6 +40,9 @@ pub enum MapLayer {
     Waters,
     /// Parks, nature reserves and protected areas.
     Parks,
+    /// NOAA's aurora forecast, glowing on the night side. Last, so the bits of saved
+    /// layer sets keep their meaning.
+    Aurora,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -76,7 +79,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -91,6 +94,7 @@ impl MapLayer {
         Self::CinematicSky,
         Self::Radar,
         Self::Clouds,
+        Self::Aurora,
         Self::Flights,
         Self::Vessels,
         Self::Satellites,
@@ -123,6 +127,7 @@ impl MapLayer {
             Self::CinematicSky => "cinematic_sky",
             Self::Radar => "radar",
             Self::Clouds => "clouds",
+            Self::Aurora => "aurora",
             Self::Flights => "flights",
             Self::Vessels => "vessels",
             Self::Satellites => "satellites",
@@ -160,6 +165,7 @@ impl MapLayer {
             Self::CinematicSky => "sky-cinematic",
             Self::Radar => "layers-weather-toggle",
             Self::Clouds => "layers-clouds-toggle",
+            Self::Aurora => "layers-aurora-toggle",
             Self::Flights => "layers-flights-toggle",
             Self::Vessels => "layers-vessels-toggle",
             Self::Satellites => "layers-satellites-toggle",
@@ -190,6 +196,7 @@ impl MapLayer {
             Self::MilkyWay => "planet",
             Self::Radar => "radar",
             Self::Clouds => "cloud",
+            Self::Aurora => "aurora",
             Self::Flights => "plane",
             Self::Vessels => "ship",
             Self::Satellites => "satellite",
@@ -223,7 +230,7 @@ impl MapLayer {
             | Self::Stars
             | Self::MilkyWay
             | Self::CinematicSky => LayerGroup::Sky,
-            Self::Radar | Self::Clouds => LayerGroup::Weather,
+            Self::Radar | Self::Clouds | Self::Aurora => LayerGroup::Weather,
             Self::Flights | Self::Vessels | Self::Satellites => LayerGroup::LiveObjects,
             Self::Roads | Self::Traffic | Self::Railways | Self::Ferries | Self::Airports => {
                 LayerGroup::Transport
@@ -246,6 +253,7 @@ impl MapLayer {
             self,
             Self::Radar
                 | Self::Clouds
+                | Self::Aurora
                 | Self::Flights
                 | Self::Vessels
                 | Self::Satellites

@@ -1,5 +1,7 @@
 //! Aircraft geometry is prepared in render; styled shapes and hover stay in egui.
 use globecraft_core::layers::MapLayer;
+mod aurora;
+pub(super) use aurora::AuroraShapes;
 mod fade;
 pub(super) use fade::{TiledShapes, stroke_runs, styled_line};
 mod poi;
@@ -349,4 +351,24 @@ pub(super) fn hover_label(
         Color32::from_rgba_unmultiplied(12, 22, 36, 236),
     );
     painter.galley(pos, galley, Color32::WHITE);
+}
+
+impl App {
+    /// The aurora glow, under every line and name, while the app's time is near the
+    /// forecast's moment.
+    pub(super) fn paint_aurora(&mut self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
+        if !self.layer(MapLayer::Aurora) {
+            return;
+        }
+        let Some(grid) = self.live_aurora.grid() else {
+            return;
+        };
+        let scene = self.scene_unix();
+        if !self.time.is_live() && (scene - grid.forecast).abs() > aurora::SHOWN_WITHIN_SECS {
+            return;
+        }
+        let sunlight = self.layer(MapLayer::Sunlight);
+        self.aurora_shapes
+            .paint(painter, basis, rect, &grid, scene, sunlight);
+    }
 }

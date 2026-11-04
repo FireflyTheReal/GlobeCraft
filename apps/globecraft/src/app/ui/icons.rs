@@ -2404,6 +2404,24 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.line(&[(12.0, 12.0), (19.0, 5.5)], 1.5, green);
             p.circle(15.5, 15.0, 1.4, Some(green), None);
         }
+        "aurora" => {
+            // Three curtains of light hanging over a dark horizon.
+            for (x, height, glow) in [(6.0, 11.0, 0.5), (12.0, 14.0, 0.8), (18.0, 10.0, 0.6)] {
+                let top = 17.0 - height;
+                p.fill(
+                    &[
+                        (x - 2.5, 17.0),
+                        (x - 1.0, top),
+                        (x + 1.5, top + 1.5),
+                        (x + 2.5, 17.0),
+                    ],
+                    green.gamma_multiply(glow * 0.45),
+                );
+                p.line(&[(x - 1.0, top), (x + 1.5, top + 1.5)], 1.2, green);
+            }
+            p.line(&[(3.0, 17.0), (21.0, 17.0)], 1.3, ink);
+            p.line(&[(3.0, 20.0), (21.0, 20.0)], 1.0, ink.gamma_multiply(0.5));
+        }
         "cloud" => {
             let fill = p.tint(70);
             p.circle(9.0, 13.0, 4.5, Some(fill), Some((1.2, ink)));
