@@ -770,8 +770,8 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.fill(&[(12.0, 1.8), (17.5, 3.3), (12.0, 4.8)], RED);
         }
         "poi" => {
-            p.pin_shape(12.0, 1.5, 7.0, Some(RED), None);
-            p.star5(12.0, 8.5, 3.8, W, None);
+            p.pin_shape(12.0, 2.0, 6.5, Some(RED), None);
+            p.star5(12.0, 8.6, 3.6, W, None);
         }
         "borders" => {
             p.poly(
@@ -860,20 +860,20 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             }
         }
         "open" => {
-            p.folder_shape(2.0, 4.0, 18.0, 15.0, Some(AMBER.gamma_multiply(0.7)), None);
+            p.folder_shape(2.0, 4.0, 20.0, 16.0, Some(AMBER.gamma_multiply(0.7)), None);
             p.fill(
-                &[(5.0, 10.0), (22.5, 10.0), (19.5, 19.0), (2.0, 19.0)],
+                &[(5.5, 10.0), (23.0, 10.0), (20.0, 20.0), (2.0, 20.0)],
                 AMBER,
             );
         }
         "add_folder" => {
-            p.folder_shape(2.0, 5.0, 17.0, 13.0, Some(AMBER), None);
-            p.plus_badge(18.0, 17.0);
+            p.folder_shape(2.0, 4.0, 20.0, 16.0, Some(AMBER), None);
+            p.plus_badge(18.5, 18.0);
         }
         "pin_add" => {
-            p.pin_shape(11.0, 2.0, 6.5, Some(RED), None);
-            p.circle(11.0, 8.5, 2.4, Some(W), None);
-            p.plus_badge(17.5, 17.0);
+            p.pin_shape(12.0, 2.0, 6.5, Some(RED), None);
+            p.circle(12.0, 8.5, 2.4, Some(W), None);
+            p.plus_badge(18.0, 17.5);
         }
         "north" => {
             p.circle(12.0, 12.0, 9.5, Some(p.tint(30)), Some((1.3, ink)));
@@ -894,8 +894,8 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             );
         }
         "goto_xy" => {
-            p.pin_shape(11.0, 2.0, 6.5, Some(accent), None);
-            p.circle(11.0, 8.5, 2.4, Some(W), None);
+            p.pin_shape(12.0, 2.0, 6.5, Some(accent), None);
+            p.circle(12.0, 8.5, 2.4, Some(W), None);
             p.text(19.5, 19.5, "XY", 6.5, ink);
         }
         "places" => {
@@ -1020,24 +1020,6 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                     ],
                     white,
                 );
-            }
-        }
-        "locate" => {
-            p.circle(
-                12.0,
-                9.0,
-                6.0,
-                Some(if name == "locate" { red } else { accent }),
-                Some((1.4, ink)),
-            );
-            p.fill(
-                &[(7.0, 11.5), (17.0, 11.5), (12.0, 21.0)],
-                if name == "locate" { red } else { accent },
-            );
-            p.line(&[(7.0, 11.5), (12.0, 21.0), (17.0, 11.5)], 1.4, ink);
-            p.circle(12.0, 9.0, 2.3, Some(Color32::WHITE), None);
-            if name == "goto_xy" {
-                p.text(20.0, 19.5, "XY", 6.5, ink);
             }
         }
         "basemap" => {
@@ -1374,21 +1356,6 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
         "time_pause" => {
             p.rect(6.5, 5.0, 4.0, 14.0, Some(ink), None, 1.0);
             p.rect(13.5, 5.0, 4.0, 14.0, Some(ink), None, 1.0);
-        }
-        "environments" => {
-            for i in 0..8 {
-                let a = (i as f32 * 45.0).to_radians();
-                p.line(
-                    &[
-                        (12.0 + 6.5 * a.cos(), 12.0 + 6.5 * a.sin()),
-                        (12.0 + 9.5 * a.cos(), 12.0 + 9.5 * a.sin()),
-                    ],
-                    2.8,
-                    ink,
-                );
-            }
-            p.circle(12.0, 12.0, 7.0, Some(p.tint(110)), Some((1.4, ink)));
-            p.circle(12.0, 12.0, 2.6, Some(Color32::WHITE), Some((1.2, ink)));
         }
         "buffer" => {
             p.circle(12.0, 12.0, 9.5, Some(p.tint(40)), Some((1.0, ink)));
@@ -2568,9 +2535,8 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.fill(&[(12.0, 20.0), (14.5, 12.0), (9.5, 12.0)], ink);
         }
         "pin" => {
-            p.fill(&[(12.0, 22.0), (6.2, 13.0), (17.8, 13.0)], red);
-            p.circle(12.0, 9.5, 6.5, Some(red), None);
-            p.circle(12.0, 9.5, 2.4, Some(Color32::WHITE), None);
+            p.pin_shape(12.0, 2.0, 6.5, Some(red), None);
+            p.circle(12.0, 8.5, 2.4, Some(W), None);
         }
         "clear_all" => {
             p.rect(
