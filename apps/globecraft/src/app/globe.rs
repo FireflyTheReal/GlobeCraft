@@ -275,6 +275,13 @@ impl App {
             );
         } else if !ruler_captured
             && resp.clicked()
+            && !self.ruler
+            && self.flight_selection.selected().is_some()
+        {
+            // A click beside the planes closes the selected flight.
+            self.run_reporting("flight.clear", serde_json::json!({}));
+        } else if !ruler_captured
+            && resp.clicked()
             && self.ruler
             && let Some(pt) = resp
                 .interact_pointer_pos()

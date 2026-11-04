@@ -1,7 +1,8 @@
 //! Provider-specific decoding; coordinates share core validation and CPU work is bounded.
 use super::{Aircraft, AircraftDetails, MAX_POSITION_AGE_SECS};
 use globecraft_core::math::now_unix;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 const GLOBAL_RESPONSE_LIMIT: u64 = 20 * 1024 * 1024;
 const LOCAL_RESPONSE_LIMIT: u64 = 8 * 1024 * 1024;
 const ADSB_LOCAL_RADIUS_NM: u32 = 250;
@@ -9,6 +10,46 @@ const ADSB_LOCAL_RADIUS_NM: u32 = 250;
 const MAX_TURN_RATE_DEG_S: f64 = 30.0;
 const FEET_PER_METER: f64 = 3.28084;
 const KNOTS_PER_METER_PER_SECOND: f64 = 1.94384449;
+/// When ADSB.lol answers "too many requests", every request to it waits at least
+/// this long (or as long as it asks).
+const ADSB_LOL_MIN_PAUSE: Duration = Duration::from_secs(20);
+
+/// Until when ADSB.lol asked to be left alone, shared by every request to it.
+static ADSB_LOL_PAUSED_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// An ADSB.lol API answer, or an error without asking while it asked to wait.
+pub(super) async fn adsb_lol(
+    request: reqwest::RequestBuilder,
+    limit: u64,
+) -> Result<Vec<u8>, crate::Error> {
+    let paused = *ADSB_LOL_PAUSED_UNTIL
+        .lock()
+        .expect("ADSB.lol pause poisoned");
+    if let Some(until) = paused.filter(|until| *until > Instant::now()) {
+        let left = until.saturating_duration_since(Instant::now()).as_secs() + 1;
+        return Err(
+            format!("ADSB.lol asked to wait (too many requests); again in {left} s").into(),
+        );
+    }
+    match crate::http::body_or_retry_after(request, limit + 1).await? {
+        crate::http::Fetched::Body(bytes) if bytes.len() as u64 > limit => {
+            Err(format!("Aircraft response exceeds {limit} bytes").into())
+        }
+        crate::http::Fetched::Body(bytes) => Ok(bytes),
+        crate::http::Fetched::RetryAfter(wait) => {
+            let wait = wait.max(ADSB_LOL_MIN_PAUSE);
+            *ADSB_LOL_PAUSED_UNTIL
+                .lock()
+                .expect("ADSB.lol pause poisoned") = Some(Instant::now() + wait);
+            Err(format!(
+                "ADSB.lol asked to wait (too many requests); again in {} s",
+                wait.as_secs()
+            )
+            .into())
+        }
+    }
+}
+
 async fn response(request: reqwest::RequestBuilder, limit: u64) -> Result<Vec<u8>, crate::Error> {
     let bytes = crate::http::body(request, limit + 1).await?;
     if bytes.len() as u64 > limit {
@@ -45,7 +86,7 @@ pub(super) async fn download_local(
 ) -> Result<Arc<[Aircraft]>, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Aircraft)?;
     let url = format!("{base_url}/lat/{lat:.4}/lon/{lon:.4}/dist/{ADSB_LOCAL_RADIUS_NM}");
-    let bytes = response(client.get(url), LOCAL_RESPONSE_LIMIT).await?;
+    let bytes = adsb_lol(client.get(url), LOCAL_RESPONSE_LIMIT).await?;
     crate::cpu::run(
         crate::cpu::Service::Features,
         move || -> Result<_, crate::Error> {

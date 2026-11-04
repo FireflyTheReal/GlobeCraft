@@ -14,7 +14,9 @@ const HEX: &str = "https://api.adsb.lol/v2/hex";
 const MAX_TRACE_BYTES: u64 = 16_000_000;
 const MAX_SMALL_BYTES: u64 = 2_000_000;
 /// How often the selected flight's position, and its recent trace, are asked for.
-const POSITION_EVERY: Duration = Duration::from_secs(3);
+const POSITION_EVERY: Duration = Duration::from_secs(5);
+/// A position from the flights list this recent makes asking for it needless.
+const FRESH_POSITION_SECS: f64 = 6.0;
 const TRACE_EVERY: Duration = Duration::from_secs(30);
 /// A trace point's flag for the first point of a new leg (readsb).
 const NEW_LEG_FLAG: u64 = 2;
@@ -247,14 +249,15 @@ async fn route(
     let client = crate::http::client(crate::http::Policy::Aircraft)?;
     let body =
         serde_json::json!({"planes": [{"callsign": callsign.trim(), "lat": lat, "lng": lon}]});
-    let bytes = crate::http::body(client.post(ROUTESET).json(&body), MAX_SMALL_BYTES).await?;
+    let bytes = super::decode::adsb_lol(client.post(ROUTESET).json(&body), MAX_SMALL_BYTES).await?;
     let json = json_body(&bytes)?;
     Ok(parse_route(&json, airports.as_deref()))
 }
 
 async fn position(hex: String) -> Result<Option<Aircraft>, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Aircraft)?;
-    let bytes = crate::http::body(client.get(format!("{HEX}/{hex}")), MAX_SMALL_BYTES).await?;
+    let bytes =
+        super::decode::adsb_lol(client.get(format!("{HEX}/{hex}")), MAX_SMALL_BYTES).await?;
     let json = json_body(&bytes)?;
     Ok(super::decode::parse_adsb_lol(&json, now_unix())
         .into_iter()
@@ -280,6 +283,7 @@ pub struct SelectedFlight {
     pub position: Option<Aircraft>,
     /// The route was asked for and the answer came (with or without a route).
     pub route_known: bool,
+    /// Why its track could not be loaded.
     pub error: Option<String>,
 }
 
@@ -333,10 +337,12 @@ impl FlightSelection {
     }
 
     /// Takes finished downloads and starts the ones due.
+    /// `listed`: the flight as the flights list has it, if it does.
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
         airports: Option<Arc<crate::airports::Airports>>,
+        listed: Option<&Aircraft>,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
         if self.fixed {
@@ -359,6 +365,7 @@ impl FlightSelection {
                         merge(&mut merged, trace.track);
                     }
                     flight.track = merged.into();
+                    flight.error = None;
                     if trace.aircraft != AircraftInfo::default() {
                         flight.aircraft = trace.aircraft;
                     }
@@ -374,13 +381,10 @@ impl FlightSelection {
                     flight.position = Some(aircraft);
                 }
                 Update::Position(Ok(None)) => {}
-                Update::Route(Err(error)) => {
-                    flight.route_known = true;
-                    flight.error = Some(error.to_string());
-                }
-                Update::Track(Err(error)) | Update::Position(Err(error)) => {
-                    flight.error = Some(error.to_string());
-                }
+                // No route is shown as unknown; a missed position is asked again.
+                Update::Route(Err(_)) => flight.route_known = true,
+                Update::Position(Err(_)) => {}
+                Update::Track(Err(error)) => flight.error = Some(error.to_string()),
             }
         }
         let now = Instant::now();
@@ -408,9 +412,22 @@ impl FlightSelection {
                 })
             }));
         }
-        if self
-            .position_asked
-            .is_none_or(|t| now.duration_since(t) >= POSITION_EVERY)
+        if let Some(listed) = listed.filter(|listed| {
+            flight
+                .position
+                .as_ref()
+                .is_none_or(|known| listed.observed_unix > known.observed_unix)
+        }) {
+            flight.position = Some(listed.clone());
+        }
+        let fresh = flight
+            .position
+            .as_ref()
+            .is_some_and(|known| now_unix() - known.observed_unix < FRESH_POSITION_SECS);
+        if !fresh
+            && self
+                .position_asked
+                .is_none_or(|t| now.duration_since(t) >= POSITION_EVERY)
         {
             self.position_asked = Some(now);
             let hex = flight.hex.clone();

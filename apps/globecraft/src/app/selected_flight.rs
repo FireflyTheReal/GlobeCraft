@@ -16,7 +16,6 @@ use std::sync::Arc;
 const TRACK_POINTS: f32 = 2.5;
 const REMAINING_POINTS: f32 = 1.6;
 const REMAINING: Color32 = Color32::from_rgb(235, 235, 235);
-const RING_POINTS: f32 = 11.0;
 const AIRPORT_POINTS: f32 = 5.0;
 const AIRPORT_FILL: Color32 = Color32::from_rgb(255, 205, 110);
 const HALO: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 200);
@@ -131,10 +130,19 @@ impl App {
             return;
         }
         let wake = ctx.clone();
-        self.flight_selection
-            .update(&self.runtime, self.live_airports.airports(), move || {
-                wake.request_repaint()
-            });
+        let snapshot = self.live_aircraft.snapshot();
+        let listed = self.flight_selection.selected().and_then(|flight| {
+            snapshot
+                .aircraft
+                .iter()
+                .find(|aircraft| *aircraft.hex == *flight.hex)
+        });
+        self.flight_selection.update(
+            &self.runtime,
+            self.live_airports.airports(),
+            listed,
+            move || wake.request_repaint(),
+        );
         self.selected_snapshot = self.merged_snapshot();
     }
 
@@ -298,21 +306,6 @@ impl App {
                     AIRPORT_FILL,
                 );
             }
-        }
-        if let Some(at) = current
-            .and_then(|(lat, lon)| project_unhidden(basis, rect, None, None, lat, lon))
-            .map(|p| Pos2::new(p.x as f32, p.y as f32))
-        {
-            shapes.push(Shape::circle_stroke(
-                at,
-                RING_POINTS * scale,
-                Stroke::new(3.5 * scale, HALO),
-            ));
-            shapes.push(Shape::circle_stroke(
-                at,
-                RING_POINTS * scale,
-                Stroke::new(2.0 * scale, AIRPORT_FILL),
-            ));
         }
         painter.extend(shapes);
     }
