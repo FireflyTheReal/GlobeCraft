@@ -1,0 +1,114 @@
+name: Time zones
+
+# Publishes the world's time zones, simplified for the globe, into the one
+# `map-data` pre-release as `globecraft-timezones-<release>.geojson.gz` and the
+# manifest entry `timezones`. Source: timezone-boundary-builder on GitHub (the zones
+# in use now, with the ocean zones so every point has one), built from OpenStreetMap,
+# ODbL. Each feature is a (multi)polygon with its IANA name in `tzid`; the app finds
+# the zone under the cursor and draws the borders.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the file into the map-data release'
+        type: boolean
+        default: true
+  schedule:
+    # The 1st of each month: the boundaries change a few times a year.
+    - cron: '41 5 1 * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: map-data-timezones
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download the newest boundaries
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=evansiroky/timezone-boundary-builder
+          tag=$(gh release view --repo "$repo" --json tagName --jq .tagName)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          gh release download "$tag" --repo "$repo" --pattern 'timezones-with-oceans-now.geojson.zip'
+          unzip -o timezones-with-oceans-now.geojson.zip
+          ls -la
+
+      - name: Simplify
+        run: |
+          set -euo pipefail
+          source=$(ls *.json | head -1)
+          # Enough for a globe and a cursor: a few hundred metres off at the most.
+          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 "$source" \
+            -simplify 1% weighted keep-shapes \
+            -filter-fields tzid \
+            -o precision=0.001 format=geojson timezones.geojson
+          ls -la timezones.geojson
+          python3 - <<'PY'
+          import json, sys
+          zones = json.load(open("timezones.geojson"))["features"]
+          names = {f["properties"]["tzid"] for f in zones}
+          print(f"{len(zones)} features, {len(names)} zones")
+          for needed in ("Europe/Berlin", "America/New_York", "Asia/Kolkata", "Etc/GMT-12"):
+              if needed not in names:
+                  sys.exit(f"missing {needed}")
+          if len(names) < 300:
+              sys.exit("too few zones: the source changed?")
+          PY
+          gzip -9 -c timezones.geojson > "globecraft-timezones-${{ steps.source.outputs.tag }}.geojson.gz"
+          ls -la globecraft-timezones-*.geojson.gz
+
+      - name: Publish into the map data release
+        if: github.event_name == 'schedule' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.source.outputs.tag }}
+          KEY: timezones
+        # Same rules as the other sets (map-data.yml, airports.yml).
+        run: |
+          set -euo pipefail
+          release=map-data
+          file="globecraft-timezones-$VERSION.geojson.gz"
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber "$file"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$release"
+          cat > merge.py <<'PY'
+          import json, os, sys
+          base, version, key = sys.argv[1], os.environ["VERSION"], os.environ["KEY"]
+          manifest = json.load(open("old-manifest.json"))
+          old = manifest.get(key, {})
+          manifest[key] = {
+              "version": version,
+              "previous": old.get("version") if old.get("version") != version else old.get("previous"),
+              "file": f"{base}/globecraft-timezones-{version}.geojson.gz",
+              "licence": "timezone-boundary-builder, from OpenStreetMap (ODbL)",
+          }
+          json.dump(manifest, open("manifest.json", "w"), indent=1)
+          PY
+          for attempt in 1 2 3 4 5; do
+            rm -f old-manifest.json check.json
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
+              --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
+            python3 merge.py "$base"
+            gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
+            sleep $((RANDOM % 20 + 10))
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --output check.json
+            if python3 -c 'import json, os, sys; sys.exit(json.load(open("check.json")).get(os.environ["KEY"], {}).get("file") != json.load(open("manifest.json"))[os.environ["KEY"]]["file"])'; then
+              break
+            fi
+            echo "The manifest changed underneath; merging again ($attempt)"
+          done
+          previous=$(python3 -c 'import json, os; print(json.load(open("old-manifest.json")).get(os.environ["KEY"], {}).get("version") or "")')
+          stale=$(gh release view "$release" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            grep -E '^globecraft-timezones-.*\.geojson\.gz$' |
+            grep -v -x -e "$file" -e "globecraft-timezones-$previous.geojson.gz" || true)
+          for old in $stale; do
+            gh release delete-asset "$release" "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done
