@@ -513,18 +513,6 @@ transport-airport-hover-tooltip =
         [private] Aeródromo privado
        *[other] Aeródromo
     }
-poi-hover-place =
-    { $name }
-    Ponto de interesse • { $class }
-poi-hover-peak =
-    { $name }
-    Pico • { $elevation }
-poi-hover-water =
-    { $name }
-    Água • { $class }
-poi-hover-park =
-    { $name }
-    Parque ou área protegida • { $class }
 
 update-available-label = Atualizar para v{ $version }
 update-available-tooltip = Atualização disponível: v{ $version } — clique para baixar e instalar

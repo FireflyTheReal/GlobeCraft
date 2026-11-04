@@ -1,4 +1,5 @@
-//! Street and road names written along the roads, as on a road map: each name sits on
+//! Names written along lines: streets and roads, as on a road map, and rivers (in the
+//! water colour). Each name sits on
 //! a nearly straight stretch of its road long enough to hold it, turned to the road's
 //! direction and kept upright. Main roads are named first and from higher up; names
 //! that would overlap one already placed, or repeat the same name close by, are left
@@ -188,7 +189,7 @@ fn turned_text(centre: Pos2, galley: Arc<egui::Galley>, angle: f32, opacity: f32
     let rotation = egui::emath::Rot2::from_angle(angle);
     let position = centre - rotation * half;
     Shape::Text(
-        egui::epaint::TextShape::new(position, galley, TEXT_COLOR)
+        egui::epaint::TextShape::new(position, galley, Color32::PLACEHOLDER)
             .with_angle(angle)
             .with_opacity_factor(opacity),
     )
@@ -210,6 +211,18 @@ pub(super) struct NameView<'a> {
     pub scale: f32,
 }
 
+/// A line to name: its name, its points (latitude, longitude: its fixed middle), its
+/// pieces on screen, how strongly it shows, whether it is named before the others,
+/// and its tile's fade.
+pub(super) struct NamedLine<'a> {
+    pub name: &'a str,
+    pub points: &'a [(f64, f64)],
+    pub segments: &'a [Vec<Pos2>],
+    pub opacity: f32,
+    pub major: bool,
+    pub fade: TileFade,
+}
+
 /// The name shapes for the roads on screen, each with its fade, and the room they
 /// take. Names go only where `taken` (names of higher priority) is free.
 pub(super) fn names(
@@ -220,38 +233,63 @@ pub(super) fn names(
     taken: &LabelSpace,
     memory: &mut NameMemory,
 ) -> (Vec<(TileFade, Shape)>, Vec<Rect>) {
-    let NameView {
-        basis,
-        viewport,
-        altitude_km,
-        size_points,
-        scale,
-    } = *view;
-    let mut candidates: Vec<(&ProjectedRoad, &Road, f32, f32)> = projected
+    let lines = projected
         .iter()
         .filter_map(|p| {
             let road = roads.get(p.source_index)?;
-            if road.name.is_empty() {
-                return None;
-            }
-            let opacity = name_opacity(road, altitude_km);
-            let length: f32 = p
-                .segments
-                .iter()
-                .flat_map(|line| line.windows(2))
-                .map(|pair| pair[0].distance(pair[1]))
-                .sum();
-            (opacity > 0.0).then_some((p, road, opacity, length))
+            Some(NamedLine {
+                name: &road.name,
+                points: &road.points,
+                segments: &p.segments,
+                opacity: name_opacity(road, view.altitude_km),
+                major: major(road),
+                fade: road.fade,
+            })
         })
         .collect();
-    // Names already shown first (they keep their places), then main roads, then the
-    // longest on screen.
+    line_names(painter, lines, view, taken, memory, (TEXT_COLOR, false))
+}
+
+/// The name shapes for `lines`, in `color` with a dark halo, each with its fade, and
+/// the room they take, where `taken` is free. `beside` writes a name next to its line
+/// (above it) instead of on it: a river's thin line stays clear, a road's wide one
+/// holds its name.
+pub(super) fn line_names(
+    painter: &egui::Painter,
+    lines: Vec<NamedLine<'_>>,
+    view: &NameView<'_>,
+    taken: &LabelSpace,
+    memory: &mut NameMemory,
+    (color, beside): (Color32, bool),
+) -> (Vec<(TileFade, Shape)>, Vec<Rect>) {
+    let NameView {
+        basis,
+        viewport,
+        size_points,
+        scale,
+        ..
+    } = *view;
+    let mut candidates: Vec<(NamedLine<'_>, f32)> = lines
+        .into_iter()
+        .filter(|line| !line.name.is_empty() && line.opacity > 0.0)
+        .map(|line| {
+            let length: f32 = line
+                .segments
+                .iter()
+                .flat_map(|piece| piece.windows(2))
+                .map(|pair| pair[0].distance(pair[1]))
+                .sum();
+            (line, length)
+        })
+        .collect();
+    // Names already shown first (they keep their places), then the major lines, then
+    // the longest on screen.
     candidates.sort_by(|a, b| {
-        let shown = |road: &Road| memory.shown.contains_key(&road.name);
-        shown(b.1)
-            .cmp(&shown(a.1))
-            .then(major(b.1).cmp(&major(a.1)))
-            .then(b.3.total_cmp(&a.3))
+        let shown = |line: &NamedLine<'_>| memory.shown.contains_key(line.name);
+        shown(&b.0)
+            .cmp(&shown(&a.0))
+            .then(b.0.major.cmp(&a.0.major))
+            .then(b.1.total_cmp(&a.1))
     });
     let now = Instant::now();
     let font = crate::app::fonts::map_font(painter.ctx(), size_points * scale);
@@ -261,51 +299,59 @@ pub(super) fn names(
     let mut written: Vec<(&str, Pos2)> = Vec::new();
     let mut shown = HashMap::new();
     let mut shapes = Vec::new();
-    for (projected, road, opacity, _) in candidates {
+    for (line, _) in candidates {
         if placed.len() >= MAX_NAMES {
             break;
         }
-        // The fixed point of the road the name is tied to.
-        let preferred = middle(&road.points)
+        // The fixed point of the line the name is tied to.
+        let preferred = middle(line.points)
             .and_then(|(lat, lon)| basis.project(basis.surface_position(lat, lon), viewport));
-        let galley = painter.layout_no_wrap(road.name.clone(), font.clone(), TEXT_COLOR);
+        let galley = painter.layout_no_wrap(line.name.to_owned(), font.clone(), color);
         let size = galley.size();
         let boxed = size + Vec2::splat(2.0 * margin);
+        // Where the name's centre goes for a point of the line: on it, or beside it.
+        let gap = if beside { size.y / 2.0 + margin } else { 0.0 };
+        let shift = |at: Pos2, angle: f32| at + Vec2::angled(angle).rot90() * gap;
         // A place is free when it is on screen, away from the same name written
         // before, and clear of the names placed so far by every layer.
-        let fits = |centre: Pos2, angle: f32| {
+        let fits = |at: Pos2, angle: f32| {
+            let centre = shift(at, angle);
             let bounds = turned_bounds(centre, boxed, angle);
             viewport.shrink(margin).contains(centre)
                 && !written
                     .iter()
-                    .any(|(name, at)| *name == road.name && at.distance(centre) < repeat)
+                    .any(|(name, at)| *name == line.name && at.distance(centre) < repeat)
                 && !placed.iter().any(|other| other.intersects(bounds))
                 && taken.is_free(bounds)
         };
-        let found = projected
+        let found = line
             .segments
             .iter()
-            .find_map(|line| anchor_where(line, size.x + 2.0 * margin, size.y, preferred, fits));
-        if let Some((centre, angle)) = found {
+            .find_map(|piece| anchor_where(piece, size.x + 2.0 * margin, size.y, preferred, fits));
+        if let Some((at, angle)) = found {
+            let centre = shift(at, angle);
             let bounds = turned_bounds(centre, boxed, angle);
-            // A new name fades in; the road's own tile fade applies too.
-            let since = *memory.shown.get(&road.name).unwrap_or(&now);
-            shown.insert(road.name.clone(), since);
+            // A new name fades in; the line's own tile fade applies too.
+            let since = *memory.shown.get(line.name).unwrap_or(&now);
+            shown.insert(line.name.to_owned(), since);
             let fade = TileFade {
-                shown: Some(road.fade.shown.map_or(since, |tile| tile.max(since))),
-                retired: road.fade.retired,
+                shown: Some(line.fade.shown.map_or(since, |tile| tile.max(since))),
+                retired: line.fade.retired,
             };
-            let halo = painter.layout_no_wrap(road.name.clone(), font.clone(), HALO_COLOR);
+            let halo = painter.layout_no_wrap(line.name.to_owned(), font.clone(), HALO_COLOR);
             let normal = Vec2::angled(angle).rot90();
             for offset in [normal, -normal, Vec2::angled(angle), -Vec2::angled(angle)] {
                 shapes.push((
                     fade,
-                    turned_text(centre + offset * scale, halo.clone(), angle, opacity),
+                    turned_text(centre + offset * scale, halo.clone(), angle, line.opacity),
                 ));
             }
-            shapes.push((fade, turned_text(centre, galley.clone(), angle, opacity)));
+            shapes.push((
+                fade,
+                turned_text(centre, galley.clone(), angle, line.opacity),
+            ));
             placed.push(bounds);
-            written.push((road.name.as_str(), centre));
+            written.push((line.name, centre));
         }
     }
     memory.shown = shown;

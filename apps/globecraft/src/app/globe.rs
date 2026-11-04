@@ -572,7 +572,6 @@ impl App {
             if let Some(geometry) = &live_geometry {
                 self.poi_shapes.draw_labels(&painter);
                 self.transport_shapes.draw_airports(&painter);
-                self.poi_shapes.hover(&painter, geometry, self.lang);
                 self.transport_shapes.hover(&painter, geometry, self.lang);
             }
             self.user_layers.paint_features(&painter);

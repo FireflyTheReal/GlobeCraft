@@ -10,6 +10,8 @@ mod poi_memory;
 mod shapes;
 mod transport;
 pub(super) use poi::PoiShapes;
+#[cfg(test)]
+pub(super) use poi::river_scene;
 pub(super) use transport::TransportShapes;
 mod world;
 pub(super) use world::WorldShapes;

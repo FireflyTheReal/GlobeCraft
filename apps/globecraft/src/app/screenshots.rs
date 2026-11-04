@@ -1325,3 +1325,44 @@ fn airport_search_screenshot() {
     settle(&mut h, 4.0);
     save(&mut h, &dir, "26-airport-flown-to");
 }
+
+/// A river's name written along it, as street names are (made-up river). Manual.
+#[test]
+#[ignore = "manual: renders a river name along the river"]
+fn river_name_screenshot() {
+    use egui_kittest::Harness;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 500.0));
+    let geometry = super::live_layers::river_scene(rect);
+    let mut shapes = super::live_layers::PoiShapes::default();
+    let mut fonts_set = false;
+    let mut h = Harness::builder()
+        .with_size(rect.size())
+        .with_pixels_per_point(2.0)
+        .renderer(WgpuTestRenderer::new())
+        .build_ui(move |ui| {
+            if !fonts_set {
+                ui.ctx().set_fonts(super::fonts::base_definitions());
+                fonts_set = true;
+                return;
+            }
+            let painter = ui.painter();
+            painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(28, 40, 30));
+            shapes.prepare(
+                painter,
+                &geometry,
+                &globecraft_data::settings::map_style::MapStyle::default(),
+                &globecraft_render::overlays::LabelSpace::default(),
+            );
+            shapes.draw_lines(painter);
+            shapes.draw_labels(painter);
+        });
+    h.run_steps(3);
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    h.run_steps(2);
+    let image = h.render().expect("render");
+    image.save(dir.join("27-river-name.png")).expect("save");
+}

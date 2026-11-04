@@ -3,16 +3,13 @@
 use super::fade::{TiledShapes, styled_line};
 use super::poi_memory::PoiMemory;
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Vec2};
-use globecraft_core::language::Lang;
-use globecraft_data::poi::{PoiLineKind, PoiPoint, PointKind};
+use globecraft_data::poi::{PoiLineKind, PointKind};
 use globecraft_data::settings::map_style::{LineType, MapStyle};
 use globecraft_data::vector_tiles::TileFade;
 use globecraft_render::live_layers::{LiveGeometry, PoiKey, PoiShown};
 use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
 use std::sync::Arc;
 use std::time::Instant;
-
-const HOVER_RADIUS_POINTS: f32 = 12.0;
 
 const LABEL_FONT_POINTS: f32 = 11.0;
 const WATER_FONT_POINTS: f32 = 12.0;
@@ -23,6 +20,9 @@ const LABEL_PADDING_POINTS: f32 = 2.0;
 const PARK_LABEL: Color32 = Color32::from_rgb(190, 240, 190);
 const LABEL: Color32 = Color32::from_rgb(240, 244, 250);
 const WATER_LABEL: Color32 = Color32::from_rgb(150, 200, 255);
+/// River names along the river below this altitude, canal names below the next.
+const RIVER_NAME_MAX_ALTITUDE_KM: f64 = 120.0;
+const CANAL_NAME_MAX_ALTITUDE_KM: f64 = 20.0;
 
 #[derive(Default)]
 pub(in crate::app) struct PoiShapes {
@@ -43,6 +43,10 @@ pub(in crate::app) struct PoiShapes {
     labels: TiledShapes,
     /// The names on screen, which keep their places.
     memory: PoiMemory,
+    /// River and canal names written along them, placed before the new place names.
+    river_names: TiledShapes,
+    river_placed: PlacedLabels,
+    river_memory: crate::app::road_names::NameMemory,
 }
 
 /// A place a pass drew: its key, the side its name took (`None`: marker only), and
@@ -136,7 +140,19 @@ impl PoiShapes {
         let scale = geometry.input.view.map_scale;
         let labels_key = (source, scale_bits, taken.key());
         if self.labels_key.as_ref() != Some(&labels_key) {
-            let placement = labels(painter, geometry, scale, taken, &mut self.memory, Pass::New);
+            let (shapes, rects) =
+                river_names(painter, geometry, scale, taken, &mut self.river_memory);
+            self.river_names = TiledShapes::build(painter, shapes);
+            self.river_placed.replace(rects);
+            let taken = taken.with(&self.river_placed);
+            let placement = labels(
+                painter,
+                geometry,
+                scale,
+                &taken,
+                &mut self.memory,
+                Pass::New,
+            );
             self.labels = TiledShapes::build(painter, placement.shapes);
             let mut drawn = self.shown_pass.clone();
             drawn.extend(placement.drawn);
@@ -156,84 +172,9 @@ impl PoiShapes {
     /// Markers and names, drawn over the borders.
     pub(in crate::app) fn draw_labels(&self, painter: &egui::Painter) {
         let now = Instant::now();
+        self.river_names.draw(painter, now);
         self.shown_labels.draw(painter, now);
         self.labels.draw(painter, now);
-    }
-    /// The nearest name under the pointer, with its class or elevation.
-    pub(in crate::app) fn hover(
-        &self,
-        painter: &egui::Painter,
-        geometry: &LiveGeometry,
-        lang: Lang,
-    ) {
-        let Some(pointer) = painter.ctx().pointer_hover_pos() else {
-            return;
-        };
-        let Some(snapshot) = &geometry.input.poi else {
-            return;
-        };
-        let scale = geometry.input.view.map_scale;
-        let mut nearest = None;
-        let mut minimum = (HOVER_RADIUS_POINTS * scale).powi(2);
-        for label in &geometry.poi.labels {
-            let distance = (pointer - label.position).length_sq();
-            if distance < minimum {
-                minimum = distance;
-                nearest = Some((label.position, label.tile, label.index));
-            }
-        }
-        let Some((at, tile, index)) = nearest else {
-            return;
-        };
-        let Some(point) = snapshot
-            .tiles
-            .get(tile)
-            .and_then(|tile| tile.points.get(index))
-        else {
-            return;
-        };
-        let text = tooltip(lang, point);
-        super::hover_label(painter, geometry.input.view.rect, at, &text, scale);
-    }
-}
-
-fn tooltip(lang: Lang, point: &PoiPoint) -> String {
-    let name = if point.name.is_empty() {
-        "—"
-    } else {
-        &point.name
-    };
-    // The subclass names the place more exactly (books rather than library).
-    let class = [&point.subclass, &point.class]
-        .into_iter()
-        .find(|text| !text.is_empty())
-        .map_or("—", |text| text.as_str());
-    match point.kind {
-        PointKind::Poi => lang.format(
-            "poi-hover-place",
-            &[("name", name.into()), ("class", class.into())],
-        ),
-        PointKind::Peak => lang.format(
-            "poi-hover-peak",
-            &[
-                ("name", name.into()),
-                (
-                    "elevation",
-                    point
-                        .elevation_m
-                        .map_or_else(|| "—".to_owned(), |metres| format!("{metres} m"))
-                        .into(),
-                ),
-            ],
-        ),
-        PointKind::Water => lang.format(
-            "poi-hover-water",
-            &[("name", name.into()), ("class", class.into())],
-        ),
-        PointKind::Park => lang.format(
-            "poi-hover-park",
-            &[("name", name.into()), ("class", class.into())],
-        ),
     }
 }
 
@@ -257,6 +198,61 @@ fn lines(geometry: &LiveGeometry, style: &MapStyle, scale: f32) -> Vec<(TileFade
         shapes.extend(drawn.into_iter().map(|shape| (fade, shape)));
     }
     shapes
+}
+
+/// River and canal names along them, where `taken` is free, as street names are.
+fn river_names(
+    painter: &egui::Painter,
+    geometry: &LiveGeometry,
+    scale: f32,
+    taken: &LabelSpace,
+    memory: &mut crate::app::road_names::NameMemory,
+) -> (Vec<(TileFade, Shape)>, Vec<Rect>) {
+    use crate::app::road_names::{NameView, NamedLine, line_names};
+    let Some(snapshot) = &geometry.input.poi else {
+        return (Vec::new(), Vec::new());
+    };
+    let view = &geometry.input.view;
+    let lines = geometry
+        .poi
+        .lines
+        .iter()
+        .filter_map(|projected| {
+            let line = snapshot
+                .tiles
+                .get(projected.tile)?
+                .lines
+                .get(projected.index)?;
+            let max_km = match line.kind {
+                PoiLineKind::River => RIVER_NAME_MAX_ALTITUDE_KM,
+                PoiLineKind::Canal => CANAL_NAME_MAX_ALTITUDE_KM,
+                PoiLineKind::Park => return None,
+            };
+            Some(NamedLine {
+                name: line.name.as_deref()?,
+                points: &line.points,
+                segments: &projected.segments,
+                opacity: projected.opacity
+                    * globecraft_render::live_layers::altitude_fade(max_km, view.altitude_km),
+                major: line.kind == PoiLineKind::River,
+                fade: snapshot.fade(projected.tile),
+            })
+        })
+        .collect();
+    line_names(
+        painter,
+        lines,
+        &NameView {
+            basis: &view.basis,
+            viewport: view.rect,
+            altitude_km: view.altitude_km,
+            size_points: WATER_FONT_POINTS,
+            scale,
+        },
+        taken,
+        memory,
+        (WATER_LABEL, true),
+    )
 }
 
 /// Markers and names. Labels come in priority order, names already on screen first
@@ -402,40 +398,111 @@ fn labels(
     }
 }
 
+/// A view of a made-up river winding west to east across the screen, for the tests
+/// and the screenshot of river names.
+#[cfg(test)]
+pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
+    use globecraft_core::camera::Cam;
+    use globecraft_data::poi::{PoiLine, PoiSnapshot, PoiTile};
+    use globecraft_render::live_layers::{LiveInput, LivePreparer, LiveView, PoiLayers};
+    let (lat, lon, alt) = (50.0, 8.5, 30.0);
+    let river: Vec<(f64, f64)> = (0..=80)
+        .map(|i| {
+            let x = -0.35 + 0.7 * f64::from(i) / 80.0;
+            (lat + 0.04 * (x * 9.0).sin(), lon + x)
+        })
+        .collect();
+    let tile = PoiTile {
+        points: Vec::new(),
+        lines: vec![PoiLine {
+            kind: PoiLineKind::River,
+            name: Some("Main".into()),
+            points: river,
+        }],
+    };
+    let input = LiveInput {
+        view: LiveView {
+            basis: Cam {
+                lat,
+                lon,
+                heading: 0.0,
+                alt,
+                tilt: 0.0,
+            }
+            .basis(f64::from(rect.width() / rect.height())),
+            rect,
+            altitude_km: alt,
+            map_scale: 1.0,
+            pixels_per_point: 1.0,
+            traffic_width_px: 1,
+            traffic_height_px: 1,
+            ground: None,
+        },
+        roads: None,
+        vessels: None,
+        satellites: None,
+        traffic: None,
+        transport: None,
+        transport_layers: Default::default(),
+        poi: Some(Arc::new(PoiSnapshot {
+            tiles: vec![Arc::new(tile)],
+            zoom: 12,
+            fades: Vec::new(),
+        })),
+        poi_layers: PoiLayers {
+            places: true,
+            peaks: true,
+            waters: true,
+            parks: true,
+        },
+        poi_shown: None,
+        unix_secs: 0.0,
+    };
+    LivePreparer::default().prepare(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn point(kind: PointKind) -> PoiPoint {
-        PoiPoint {
-            kind,
-            lat: 0.0,
-            lon: 0.0,
-            name: "Feature".into(),
-            class: "library".into(),
-            subclass: "books".into(),
-            rank: 1,
-            elevation_m: None,
-        }
-    }
-
     #[test]
-    fn hover_names_the_feature_class_and_peak_elevation() {
-        let place = tooltip(Lang::En, &point(PointKind::Poi));
-        assert!(place.contains("Feature"), "{place}");
-        // The subclass says what the place is when there is one.
-        assert!(place.contains("Place of interest • books"), "{place}");
-        let peak = tooltip(
-            Lang::En,
-            &PoiPoint {
-                kind: PointKind::Peak,
-                elevation_m: Some(1_234),
-                class: "peak".into(),
-                ..point(PointKind::Poi)
+    fn a_river_is_named_along_its_course() {
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 500.0));
+        let geometry = river_scene(rect);
+        let mut shapes = PoiShapes::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(rect),
+            ..Default::default()
+        };
+        let _ = crate::app::test_ui::run(&ctx, raw, |ui| {
+            shapes.prepare(
+                ui.painter(),
+                &geometry,
+                &MapStyle::default(),
+                &LabelSpace::default(),
+            );
+        });
+        // Placed once (the same name repeats only far apart), on screen.
+        let placed = shapes.river_placed.rects();
+        assert!(!placed.is_empty(), "the river got no name");
+        assert!(placed.iter().all(|r| rect.contains_rect(*r)), "{placed:?}");
+        // Another layer's name over the river's middle moves it along.
+        let middle = placed[0];
+        let mut taken = PlacedLabels::default();
+        taken.replace(vec![middle]);
+        let space = LabelSpace::default().with(&taken);
+        let _ = crate::app::test_ui::run(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| {
+                shapes.prepare(ui.painter(), &geometry, &MapStyle::default(), &space);
             },
         );
-        assert!(peak.contains("Peak • 1234 m"), "{peak}");
-        let park = tooltip(Lang::PtBr, &point(PointKind::Park));
-        assert!(park.contains("Parque ou área protegida • books"), "{park}");
+        let moved = shapes.river_placed.rects();
+        assert!(moved.iter().all(|r| !r.intersects(middle)), "{moved:?}");
     }
 }

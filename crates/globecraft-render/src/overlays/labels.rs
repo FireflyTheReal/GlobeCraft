@@ -88,6 +88,15 @@ pub struct LabelSpace {
 }
 impl LabelSpace {
     /// Adds the names of the next layer in priority order.
+    /// This space with `placed` taken too.
+    pub fn with(&self, placed: &PlacedLabels) -> Self {
+        let mut space = Self {
+            layers: self.layers.clone(),
+            index: OnceCell::new(),
+        };
+        space.add(placed);
+        space
+    }
     pub fn add(&mut self, placed: &PlacedLabels) {
         self.layers.push(placed.clone());
         self.index = OnceCell::new();

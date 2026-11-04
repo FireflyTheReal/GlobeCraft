@@ -63,8 +63,9 @@ impl PoiLayers {
 
 pub struct ProjectedPoiLine {
     pub kind: PoiLineKind,
-    /// The snapshot tile it came from (for its fade).
+    /// The snapshot tile it came from (for its fade), and its line there (its name).
     pub tile: usize,
+    pub index: usize,
     /// The altitude fade of its kind (1 when fully shown).
     pub opacity: f32,
     pub segments: Vec<Vec<Pos2>>,
@@ -151,7 +152,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
         .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
     let mut lines = Vec::new();
     for (tile_index, tile) in snapshot.tiles.iter().enumerate() {
-        for line in &tile.lines {
+        for (line_index, line) in tile.lines.iter().enumerate() {
             let opacity = line_opacity(line.kind, layers, view.altitude_km);
             if opacity <= 0.0 {
                 continue;
@@ -191,6 +192,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
                 lines.push(ProjectedPoiLine {
                     kind: line.kind,
                     tile: tile_index,
+                    index: line_index,
                     opacity,
                     segments,
                 });
