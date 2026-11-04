@@ -4,6 +4,10 @@ use globecraft_data::aircraft::{AircraftSnapshot, ProviderStatus};
 
 fn provider_text(status: &ProviderStatus, local: bool, lang: Lang) -> String {
     match status.loaded {
+        Some(loaded) if loaded.elapsed().as_secs() < 120 => lang.format(
+            "aircraft-updated-seconds-status",
+            &[("seconds", loaded.elapsed().as_secs().to_string().into())],
+        ),
         Some(loaded) => lang.format(
             "aircraft-updated-status",
             &[(

@@ -19,6 +19,7 @@ fn flight(hex: &str, observed: f64, latitude: f64) -> Aircraft {
         vertical_rate_fpm: None,
         turn_rate_deg_s: None,
         observed_unix: observed,
+        details: None,
     }
 }
 fn samples(aircraft: Vec<Aircraft>, now: Instant) -> Samples {
@@ -154,6 +155,7 @@ fn live_service_fetches_both_sources_off_ui_and_publishes_without_duplicate_requ
         latitude: 10.0,
         longitude: 20.0,
         altitude_km: 1000.0,
+        radius_km: 0.0,
     };
     loop {
         service.update(query);

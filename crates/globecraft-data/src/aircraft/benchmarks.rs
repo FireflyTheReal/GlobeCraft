@@ -22,6 +22,7 @@ fn aircraft_snapshot_cost() {
             vertical_rate_fpm: None,
             turn_rate_deg_s: None,
             observed_unix: now,
+            details: None,
         })
         .collect();
     let prepared = snapshot::prepare(

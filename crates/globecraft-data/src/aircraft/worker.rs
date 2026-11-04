@@ -7,7 +7,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 const GLOBAL_REFRESH: Duration = Duration::from_secs(17 * 60);
 /// ADSB.lol's own map asks every second; every 10 s keeps planes close to where
@@ -17,6 +20,19 @@ const FAILURE_RETRY: Duration = Duration::from_secs(3 * 60);
 const MOVE_RETRY_MIN: Duration = Duration::from_secs(10);
 const MOVE_REFRESH_KM: f64 = 140.0;
 const LOCAL_MAX_CAMERA_ALT_KM: f64 = 1800.0;
+/// The ground radius of one ADSB.lol circle (250 nm).
+const CIRCLE_KM: f64 = 463.0;
+/// Circles around the camera's own sit on a fixed grid (so they stay put while the
+/// camera moves): rows this far apart, circles in a row `CELL_KM` apart. Rows at
+/// different latitudes do not line up, so every point is within 438 km of a centre
+/// however they fall (half the diagonal of a 640 × 600 km cell).
+const ROW_KM: f64 = 600.0;
+const CELL_KM: f64 = 640.0;
+/// At most this many circles besides the camera's, and this many asked at once:
+/// about one request a second at most (every 10 s each), to be kind to ADSB.lol.
+const MAX_CELLS: usize = 10;
+const MAX_CELL_JOBS: usize = 3;
+const KM_PER_DEGREE: f64 = 111.195;
 
 #[cfg(test)]
 mod tests {
@@ -36,6 +52,45 @@ mod tests {
             now + LOCAL_REFRESH * 3
         );
         assert!(haversine_km((0.0, 179.8), (0.0, -179.8)) < MOVE_REFRESH_KM);
+    }
+
+    #[test]
+    fn grid_circles_cover_a_wide_view_and_stay_few() {
+        // Close up, the camera's own circle is enough.
+        assert!(cells_for((50.0, 8.0), 300.0).is_empty());
+        for center in [(50.0, 8.0), (0.0, 179.0), (-35.0, -60.0), (70.0, 20.0)] {
+            let radius = 800.0;
+            let cells = cells_for(center, radius);
+            assert!(
+                !cells.is_empty() && cells.len() <= MAX_CELLS,
+                "{center:?}: {}",
+                cells.len()
+            );
+            // Every point of the view is in the camera's circle or a grid circle.
+            for ring in 1..=9 {
+                for step in 0..36 {
+                    let point = globecraft_core::math::destination(
+                        center.0,
+                        center.1,
+                        f64::from(step) * 10.0,
+                        radius * f64::from(ring) / 9.0,
+                    );
+                    let covered = haversine_km(center, point) <= CIRCLE_KM
+                        || cells
+                            .iter()
+                            .any(|key| haversine_km(cell_center(*key), point) <= CIRCLE_KM);
+                    assert!(covered, "{center:?}: {point:?} is not covered");
+                }
+            }
+        }
+        // From high up, still at most MAX_CELLS circles, nearest first.
+        let far = cells_for((50.0, 8.0), 3000.0);
+        assert_eq!(far.len(), MAX_CELLS);
+        let distances: Vec<f64> = far
+            .iter()
+            .map(|key| haversine_km((50.0, 8.0), cell_center(*key)))
+            .collect();
+        assert!(distances.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 }
 
@@ -92,6 +147,171 @@ impl Drop for Provider {
     }
 }
 
+/// A grid circle: (row, column).
+type CellKey = (i32, i32);
+
+/// A row's number of circles around the globe and their spacing in degrees: a whole
+/// number, so the row closes up at ±180°.
+fn row_columns(lat: f64) -> (i32, f64) {
+    let around = 2.0 * std::f64::consts::PI * 6371.0 * lat.to_radians().cos().max(0.01);
+    let columns = (around / CELL_KM).ceil().max(1.0) as i32;
+    (columns, 360.0 / f64::from(columns))
+}
+
+fn cell_center((row, column): CellKey) -> (f64, f64) {
+    let lat = (f64::from(row) * ROW_KM / KM_PER_DEGREE).clamp(-89.0, 89.0);
+    let (_, step) = row_columns(lat);
+    (
+        lat,
+        globecraft_core::math::wrap_lon(f64::from(column) * step),
+    )
+}
+
+/// The grid circles that reach a view `radius_km` around `center`, nearest first,
+/// at most [`MAX_CELLS`]; none while the camera's own circle covers the view.
+fn cells_for(center: (f64, f64), radius_km: f64) -> Vec<CellKey> {
+    if radius_km <= CIRCLE_KM * 0.8 {
+        return Vec::new();
+    }
+    // Circles reaching less than half their radius into the view add little.
+    let reach = radius_km + CIRCLE_KM * 0.5;
+    let rows = (reach / ROW_KM).ceil() as i32 + 1;
+    let row0 = (center.0 * KM_PER_DEGREE / ROW_KM).round() as i32;
+    let mut cells = Vec::new();
+    for row in row0 - rows..=row0 + rows {
+        let lat = f64::from(row) * ROW_KM / KM_PER_DEGREE;
+        if lat.abs() > 89.0 {
+            continue;
+        }
+        let (columns, step) = row_columns(lat);
+        let column0 = (center.1 / step).round() as i32;
+        let span = ((reach / CELL_KM) / lat.to_radians().cos().max(0.05)).ceil() as i32 + 1;
+        for column in column0 - span..=column0 + span {
+            // Columns past ±180° are the same circles as those on the other side.
+            let column = column.rem_euclid(columns);
+            let key = (row, column);
+            let distance = haversine_km(center, cell_center(key));
+            if distance < reach && !cells.iter().any(|(k, _)| *k == key) {
+                cells.push((key, distance));
+            }
+        }
+    }
+    cells.sort_by(|a, b| a.1.total_cmp(&b.1));
+    cells
+        .into_iter()
+        .take(MAX_CELLS)
+        .map(|(key, _)| key)
+        .collect()
+}
+
+/// A grid circle's last answer: when, and its aircraft (`None` if it failed with
+/// nothing to keep).
+struct CellSample {
+    attempt: Instant,
+    aircraft: Option<Arc<[Aircraft]>>,
+}
+
+/// A finished grid circle download.
+type CellDone = (CellKey, Result<Arc<[Aircraft]>, crate::Error>);
+
+/// The grid circles' downloads and their latest aircraft.
+#[derive(Default)]
+struct Cells {
+    wanted: Vec<CellKey>,
+    samples: std::collections::HashMap<CellKey, CellSample>,
+    running: std::collections::HashMap<CellKey, JoinHandle<()>>,
+}
+impl Cells {
+    /// Keeps only the circles of this view; returns whether any were dropped.
+    fn want(&mut self, wanted: Vec<CellKey>) -> bool {
+        self.wanted = wanted;
+        let before = self.samples.len();
+        let wanted = &self.wanted;
+        self.samples.retain(|key, _| wanted.contains(key));
+        self.running.retain(|key, job| {
+            let keep = wanted.contains(key);
+            if !keep {
+                job.abort();
+            }
+            keep
+        });
+        self.samples.len() != before
+    }
+    /// Starts the downloads due; returns when the next one is due.
+    fn start(
+        &mut self,
+        now: Instant,
+        url: &str,
+        done: &mpsc::UnboundedSender<CellDone>,
+    ) -> Option<Instant> {
+        let mut next: Option<Instant> = None;
+        for key in self.wanted.clone() {
+            if self.running.contains_key(&key) {
+                continue;
+            }
+            let due = self.samples.get(&key).map_or(now, |sample| {
+                sample.attempt
+                    + if sample.aircraft.is_some() {
+                        LOCAL_REFRESH
+                    } else {
+                        LOCAL_REFRESH * 3
+                    }
+            });
+            if due > now {
+                next = Some(next.map_or(due, |old| old.min(due)));
+                continue;
+            }
+            if self.running.len() >= MAX_CELL_JOBS {
+                continue;
+            }
+            let (lat, lon) = cell_center(key);
+            let (url, done) = (url.to_owned(), done.clone());
+            self.running.insert(
+                key,
+                tokio::spawn(async move {
+                    let _ = done.send((key, decode::download_local(url, lat, lon).await));
+                }),
+            );
+        }
+        next
+    }
+    fn finish(&mut self, key: CellKey, result: Result<Arc<[Aircraft]>, crate::Error>) -> bool {
+        if self.running.remove(&key).is_none() {
+            return false;
+        }
+        let aircraft = match result {
+            Ok(aircraft) => Some(aircraft),
+            // A failed circle keeps showing its last aircraft until they expire.
+            Err(_) => self
+                .samples
+                .remove(&key)
+                .and_then(|old| old.aircraft)
+                .filter(|old| !old.is_empty()),
+        };
+        self.samples.insert(
+            key,
+            CellSample {
+                attempt: Instant::now(),
+                aircraft,
+            },
+        );
+        true
+    }
+    fn aircraft(&self) -> impl Iterator<Item = &Aircraft> {
+        self.samples
+            .values()
+            .filter_map(|sample| sample.aircraft.as_deref())
+            .flatten()
+    }
+}
+impl Drop for Cells {
+    fn drop(&mut self) {
+        for job in self.running.values() {
+            job.abort();
+        }
+    }
+}
+
 async fn receive(
     provider: &mut Provider,
 ) -> Result<Result<Arc<[Aircraft]>, crate::Error>, tokio::task::JoinError> {
@@ -109,6 +329,8 @@ pub(super) async fn run(
 ) {
     let mut global = Provider::default();
     let mut local = Provider::default();
+    let mut cells = Cells::default();
+    let (cell_done, mut cell_results) = mpsc::unbounded_channel();
     let mut local_center = None;
     let mut query = *queries.borrow_and_update();
     let mut dirty = false;
@@ -154,9 +376,29 @@ pub(super) async fn run(
                     deadline = Some(deadline.map_or(due, |old| old.min(due)));
                 }
             }
+            let wanted = if query.altitude_km <= LOCAL_MAX_CAMERA_ALT_KM {
+                cells_for((query.latitude, query.longitude), query.radius_km)
+            } else {
+                Vec::new()
+            };
+            dirty |= cells.want(wanted);
+            if let Some(due) = cells.start(now, &endpoints.local, &cell_done) {
+                deadline = Some(deadline.map_or(due, |old| old.min(due)));
+            }
+        } else {
+            dirty |= cells.want(Vec::new());
         }
         if dirty || (query.enabled && expires.is_some_and(|time| now >= time)) {
-            let (global_input, local_input) = (global.samples.clone(), local.samples.clone());
+            let global_input = global.samples.clone();
+            let mut local_input = local.samples.clone();
+            if !cells.samples.is_empty() {
+                // The grid circles count as the close-up source too.
+                let mut aircraft = local_input.aircraft.to_vec();
+                aircraft.extend(cells.aircraft().cloned());
+                local_input.aircraft = aircraft.into();
+                let newest = cells.samples.values().map(|sample| sample.attempt).max();
+                local_input.status.loaded = local_input.status.loaded.max(newest);
+            }
             match crate::cpu::run(crate::cpu::Service::Features, move || {
                 Ok(snapshot::prepare(
                     global_input,
@@ -202,6 +444,7 @@ pub(super) async fn run(
             }
             result = receive(&mut global) => { global.finish(result); dirty = true; }
             result = receive(&mut local) => { local.finish(result); dirty = true; }
+            Some((key, result)) = cell_results.recv() => { dirty |= cells.finish(key, result); }
             () = wait => {}
         }
     }

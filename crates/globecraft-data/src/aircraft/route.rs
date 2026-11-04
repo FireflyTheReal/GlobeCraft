@@ -47,9 +47,44 @@ pub struct Route {
     pub plausible: bool,
 }
 
-/// The current leg of a readsb trace (`trace_full`/`trace_recent` JSON): from the
-/// last point flagged as a new leg on.
-pub fn parse_trace(json: &serde_json::Value) -> Result<Vec<TrackPoint>, crate::Error> {
+/// What a trace file says about the aircraft, from ADSB.lol's aircraft database.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AircraftInfo {
+    /// Its type in words (`desc`), e.g. `BOEING 747-8`.
+    pub description: Option<String>,
+    /// Who operates it (`ownOp`).
+    pub operator: Option<String>,
+    /// The year it was built (`year`).
+    pub year: Option<String>,
+}
+
+impl AircraftInfo {
+    fn parse(json: &serde_json::Value) -> Self {
+        let text = |key: &str| {
+            json.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            description: text("desc"),
+            operator: text("ownOp"),
+            year: text("year"),
+        }
+    }
+}
+
+/// A trace file: the aircraft and the current leg of its track.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Trace {
+    pub aircraft: AircraftInfo,
+    pub track: Vec<TrackPoint>,
+}
+
+/// A readsb trace (`trace_full`/`trace_recent` JSON): the aircraft, and its track
+/// from the last point flagged as a new leg on.
+pub fn parse_trace(json: &serde_json::Value) -> Result<Trace, crate::Error> {
     let start = json
         .get("timestamp")
         .and_then(serde_json::Value::as_f64)
@@ -82,7 +117,10 @@ pub fn parse_trace(json: &serde_json::Value) -> Result<Vec<TrackPoint>, crate::E
             altitude_feet: number(3),
         });
     }
-    Ok(track)
+    Ok(Trace {
+        aircraft: AircraftInfo::parse(json),
+        track,
+    })
 }
 
 /// The route in an ADSB.lol `routeset` answer: an array with one entry per plane
@@ -167,7 +205,7 @@ fn json_body(bytes: &[u8]) -> Result<serde_json::Value, crate::Error> {
     }
 }
 
-async fn trace(hex: &str, kind: &str) -> Result<Vec<TrackPoint>, crate::Error> {
+async fn trace(hex: &str, kind: &str) -> Result<Trace, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Aircraft)?;
     let last = &hex[hex.len().saturating_sub(2)..];
     let url = format!("{TRACE_BASE}/{last}/trace_{kind}_{hex}.json");
@@ -177,11 +215,14 @@ async fn trace(hex: &str, kind: &str) -> Result<Vec<TrackPoint>, crate::Error> {
 }
 
 /// The flight's track: the day's trace, brought up to date by the recent one.
-async fn full_track(hex: String) -> Result<Vec<TrackPoint>, crate::Error> {
-    let mut track = trace(&hex, "full").await.unwrap_or_default();
+async fn full_track(hex: String) -> Result<Trace, crate::Error> {
+    let mut full = trace(&hex, "full").await.unwrap_or_default();
     let recent = trace(&hex, "recent").await?;
-    merge(&mut track, recent);
-    Ok(track)
+    merge(&mut full.track, recent.track);
+    if recent.aircraft != AircraftInfo::default() {
+        full.aircraft = recent.aircraft;
+    }
+    Ok(full)
 }
 
 /// Appends the points of `recent` after the end of `track`; a new leg in `recent`
@@ -221,7 +262,7 @@ async fn position(hex: String) -> Result<Option<Aircraft>, crate::Error> {
 }
 
 enum Update {
-    Track(Result<Vec<TrackPoint>, crate::Error>),
+    Track(Result<Trace, crate::Error>),
     Route(Result<Option<Route>, crate::Error>),
     Position(Result<Option<Aircraft>, crate::Error>),
 }
@@ -232,6 +273,8 @@ pub struct SelectedFlight {
     pub hex: String,
     pub callsign: String,
     pub track: Arc<[TrackPoint]>,
+    /// Its type in words, operator and year, from the trace.
+    pub aircraft: AircraftInfo,
     pub route: Option<Route>,
     /// Its latest position, every few seconds.
     pub position: Option<Aircraft>,
@@ -308,14 +351,17 @@ impl FlightSelection {
                 continue;
             }
             match update {
-                Update::Track(Ok(track)) => {
+                Update::Track(Ok(trace)) => {
                     let mut merged = flight.track.to_vec();
                     if merged.is_empty() {
-                        merged = track;
+                        merged = trace.track;
                     } else {
-                        merge(&mut merged, track);
+                        merge(&mut merged, trace.track);
                     }
                     flight.track = merged.into();
+                    if trace.aircraft != AircraftInfo::default() {
+                        flight.aircraft = trace.aircraft;
+                    }
                 }
                 Update::Route(Ok(route)) => {
                     flight.route = route;
@@ -401,6 +447,10 @@ mod tests {
     fn a_trace_keeps_its_last_leg() {
         let json = serde_json::json!({
             "icao": "86e79a",
+            "r": "JA873A",
+            "t": "B789",
+            "desc": "BOEING 787-9 Dreamliner",
+            "ownOp": "All Nippon Airways",
             "timestamp": 1793721901.184,
             "trace": [
                 [0.00, 43.75, 76.67, 37000, 523.1, 99.5, 1, 96, null, "adsb_icao", 37150, -64, 277, 0.0],
@@ -409,7 +459,17 @@ mod tests {
                 [9600.0, 35.60, 139.90, 12000, 300.0, 45.0, 0, 2000, null, "adsb_icao", 12100, 2000, 250, 0.0]
             ]
         });
-        let track = parse_trace(&json).unwrap();
+        let trace = parse_trace(&json).unwrap();
+        assert_eq!(
+            trace.aircraft.description.as_deref(),
+            Some("BOEING 787-9 Dreamliner")
+        );
+        assert_eq!(
+            trace.aircraft.operator.as_deref(),
+            Some("All Nippon Airways")
+        );
+        assert_eq!(trace.aircraft.year, None);
+        let track = trace.track;
         assert_eq!(track.len(), 2, "the earlier leg is dropped");
         assert_eq!(track[0].altitude_feet, None, "on the ground");
         assert_eq!(track[1].altitude_feet, Some(12000.0));

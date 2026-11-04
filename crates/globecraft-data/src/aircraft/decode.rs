@@ -1,5 +1,5 @@
 //! Provider-specific decoding; coordinates share core validation and CPU work is bounded.
-use super::{Aircraft, MAX_POSITION_AGE_SECS};
+use super::{Aircraft, AircraftDetails, MAX_POSITION_AGE_SECS};
 use globecraft_core::math::now_unix;
 use std::sync::Arc;
 const GLOBAL_RESPONSE_LIMIT: u64 = 20 * 1024 * 1024;
@@ -102,6 +102,7 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 // OpenSky has no turn rate.
                 turn_rate_deg_s: None,
                 observed_unix: observed,
+                details: None,
             })
         })
         .collect()
@@ -144,9 +145,39 @@ pub(super) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft
                 turn_rate_deg_s: number(v.get("track_rate"))
                     .filter(|rate| rate.abs() <= MAX_TURN_RATE_DEG_S),
                 observed_unix: now - age,
+                details: Some(Arc::new(adsb_lol_details(v))),
             })
         })
         .collect()
+}
+
+/// Everything else an ADSB.lol aircraft record says that GlobeCraft shows.
+fn adsb_lol_details(v: &serde_json::Value) -> AircraftDetails {
+    let text = |key: &str| -> Option<Box<str>> {
+        v.get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(Into::into)
+    };
+    let value = |key: &str| number(v.get(key));
+    AircraftDetails {
+        registration: text("r"),
+        type_code: text("t"),
+        category: text("category"),
+        squawk: text("squawk"),
+        emergency: text("emergency").filter(|state| &**state != "none"),
+        geometric_altitude_feet: value("alt_geom"),
+        indicated_airspeed_knots: value("ias"),
+        true_airspeed_knots: value("tas"),
+        mach: value("mach"),
+        wind: value("wd").zip(value("ws")),
+        outside_air_celsius: value("oat"),
+        true_heading_deg: value("true_heading"),
+        selected_altitude_feet: value("nav_altitude_mcp").or_else(|| value("nav_altitude_fms")),
+        selected_heading_deg: value("nav_heading"),
+        source: text("type"),
+    }
 }
 
 #[cfg(test)]
@@ -215,5 +246,26 @@ mod tests {
         assert_eq!(flights.len(), 1);
         assert_eq!(flights[0].callsign.as_ref(), "GLO123");
         assert!((flights[0].observed_unix - 995.8).abs() < 0.01);
+    }
+    #[test]
+    fn adsb_details_are_kept() {
+        // A record as ADSB.lol sent it (2026-11-04), shortened.
+        let data = serde_json::json!({"ac": [{
+            "hex":"4d0104","type":"adsb_icao","flight":"CLX9422 ","r":"LX-VCD","t":"B748",
+            "alt_baro":22975,"alt_geom":23425,"gs":454.1,"ias":356,"tas":488,"mach":0.808,
+            "wd":110,"ws":39,"oat":-33,"track":82.28,"track_rate":-0.03,"true_heading":84.43,
+            "baro_rate":1152,"squawk":"3506","emergency":"none","category":"A5",
+            "nav_altitude_mcp":27008,"nav_heading":80.86,"lat":49.980391,"lon":7.887961,
+            "seen_pos":0.045
+        }]});
+        let flight = &parse_adsb_lol(&data, 1000.0)[0];
+        assert_eq!(flight.turn_rate_deg_s, Some(-0.03));
+        let details = flight.details.as_deref().unwrap();
+        assert_eq!(details.registration.as_deref(), Some("LX-VCD"));
+        assert_eq!(details.type_code.as_deref(), Some("B748"));
+        assert_eq!(details.emergency, None, "\"none\" is no emergency");
+        assert_eq!(details.wind, Some((110.0, 39.0)));
+        assert_eq!(details.selected_altitude_feet, Some(27008.0));
+        assert_eq!(details.source.as_deref(), Some("adsb_icao"));
     }
 }

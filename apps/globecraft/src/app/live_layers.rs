@@ -20,7 +20,7 @@ mod tests;
 use super::App;
 use eframe::egui::{self, Color32, Rect, Vec2};
 use globecraft_core::{camera::Basis, language::Lang, math::now_unix};
-use globecraft_data::airports::{Airport, Airports, FlightGuess};
+use globecraft_data::airports::Airport;
 use globecraft_render::aircraft::{
     AircraftGeometry, AircraftWorker, ProjectionInput, ProjectionView,
 };
@@ -90,23 +90,21 @@ impl AircraftOverlay {
         self.geometry = Some(geometry);
         self.shape_key = None;
     }
-    fn draw(
-        &mut self,
-        painter: &egui::Painter,
-        input: ProjectionInput,
-        lang: Lang,
-        airports: Option<&Airports>,
-    ) {
+    fn draw(&mut self, painter: &egui::Painter, input: ProjectionInput, lang: Lang) {
         if let Some(completed) = self.worker.take_completed()
             && completed.matches(input.view, &input.data)
         {
             self.accept(completed, input.unix_secs);
         }
-        let current = self.geometry.as_ref().filter(|geometry| {
-            geometry.matches(input.view, &input.data) && geometry.is_recent(input.unix_secs)
-        });
+        // New flight data keeps the planes of the same view on screen until it is
+        // projected (a few milliseconds), instead of leaving a gap.
+        let current = self
+            .geometry
+            .as_ref()
+            .filter(|geometry| geometry.view == input.view && geometry.is_recent(input.unix_secs));
         let needs_refresh = current.is_none_or(|geometry| {
-            input.view.tick(geometry.unix_secs) != input.view.tick(input.unix_secs)
+            !Arc::ptr_eq(&geometry.data, &input.data)
+                || input.view.tick(geometry.unix_secs) != input.view.tick(input.unix_secs)
         });
         if needs_refresh
             && self
@@ -126,7 +124,7 @@ impl AircraftOverlay {
             self.shape_key = Some(key);
         }
         painter.extend(self.shapes.iter().cloned());
-        draw_hover(painter, geometry, lang, airports);
+        draw_hover(painter, geometry, lang);
     }
 }
 
@@ -163,9 +161,7 @@ impl App {
                 self.aircraft_input(*basis, rect, altitude_km, painter.ctx().pixels_per_point());
             let step = input.view.motion_step();
             self.paint_selected_flight(painter, basis, rect);
-            let airports = self.live_airports.airports();
-            self.aircraft_overlay
-                .draw(painter, input, self.lang, airports.as_deref());
+            self.aircraft_overlay.draw(painter, input, self.lang);
             painter
                 .ctx()
                 .request_repaint_after(motion::repaint_after(step));
@@ -203,12 +199,7 @@ fn vertical_rate_text(rate: Option<f64>) -> String {
     )
 }
 
-fn draw_hover(
-    painter: &egui::Painter,
-    geometry: &AircraftGeometry,
-    lang: Lang,
-    airports: Option<&Airports>,
-) {
+fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) {
     let view = geometry.view;
     let ms = view.map_scale;
     let Some(hover) = painter
@@ -270,17 +261,23 @@ fn draw_hover(
         ],
     );
     let mut text = text;
-    if let Some(guess) = airports.and_then(|airports| {
-        airports.guess(
-            sample.latitude,
-            sample.longitude,
-            sample.heading_deg,
-            sample.altitude_feet,
-            sample.vertical_rate_fpm,
-        )
-    }) {
-        text.push('\n');
-        text.push_str(&flight_guess_text(guess, lang));
+    // Its registration and type, and a declared emergency (ADSB.lol only).
+    if let Some(details) = sample.details.as_deref() {
+        let names: Vec<&str> = [
+            details.registration.as_deref(),
+            details.type_code.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !names.is_empty() {
+            text.push('\n');
+            text.push_str(&names.join(" · "));
+        }
+        if let Some(kind) = details.emergency.as_deref() {
+            text.push('\n');
+            text.push_str(&lang.format("flight-card-emergency", &[("kind", kind.into())]));
+        }
     }
     let galley = painter.layout_no_wrap(
         text,
@@ -426,15 +423,4 @@ pub(super) fn airport_label(airport: &Airport) -> String {
         label.push_str(&airport.municipality);
     }
     label
-}
-
-/// The hover card's line for where a flight seems to come from or go.
-fn flight_guess_text(guess: FlightGuess<'_>, lang: Lang) -> String {
-    let (key, airport) = match guess {
-        FlightGuess::Departing(airport) => ("aircraft-departing", airport),
-        FlightGuess::Arriving(airport) => ("aircraft-arriving", airport),
-        FlightGuess::Near(airport) => ("aircraft-near-airport", airport),
-        FlightGuess::ProbablyArriving(airport) => ("aircraft-probably-arriving", airport),
-    };
-    lang.format(key, &[("airport", airport_label(airport).into())])
 }

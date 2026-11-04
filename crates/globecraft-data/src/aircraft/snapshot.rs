@@ -7,7 +7,8 @@ use std::{
 
 const GLOBAL_MAX_AGE: Duration = Duration::from_secs(20 * 60);
 const LOCAL_MAX_AGE: Duration = Duration::from_secs(3 * 60);
-const MIN_EXPIRY_REFRESH: Duration = Duration::from_secs(1);
+/// Old positions are dropped at most this often: every new list is projected again.
+const MIN_EXPIRY_REFRESH: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Default)]
 pub(super) struct Samples {
@@ -58,15 +59,16 @@ pub(super) fn prepare(global: Samples, local: Samples, now: Instant, unix_secs: 
     }
     let mut aircraft: Vec<_> = by_hex.into_values().cloned().collect();
     aircraft.sort_unstable_by(|a, b| a.hex.cmp(&b.hex));
-    let expires = expires.map(|deadline| deadline.max(now + MIN_EXPIRY_REFRESH));
     Prepared {
         snapshot: Arc::new(AircraftSnapshot {
             aircraft: aircraft.into(),
             global: global.status,
             local: local.status,
             error: None,
+            // Exact, so a list kept while flights were off is not shown again stale.
             valid_until: expires,
         }),
-        expires,
+        // The worker rebuilds the list at most this often for expiry alone.
+        expires: expires.map(|deadline| deadline.max(now + MIN_EXPIRY_REFRESH)),
     }
 }

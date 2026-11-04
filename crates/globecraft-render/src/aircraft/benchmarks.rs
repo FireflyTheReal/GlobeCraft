@@ -91,6 +91,7 @@ pub(super) fn flights() -> Vec<Aircraft> {
             vertical_rate_fpm: None,
             turn_rate_deg_s: None,
             observed_unix: 1000.0,
+            details: None,
         })
         .collect()
 }

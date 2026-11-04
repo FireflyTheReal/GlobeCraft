@@ -34,6 +34,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
                 vertical_rate_fpm: None,
                 turn_rate_deg_s: None,
                 observed_unix: 1000.0,
+                details: None,
             }]
             .into(),
             ..Default::default()
@@ -48,7 +49,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
         ..Default::default()
     };
     let _ = crate::app::test_ui::run(&ctx, raw.clone(), |ui| {
-        overlay.draw(ui.painter(), input.clone(), Lang::En, None)
+        overlay.draw(ui.painter(), input.clone(), Lang::En)
     });
     let egui::Shape::Mesh(first) = &overlay.shapes[0] else {
         panic!("cached icon mesh");
@@ -56,14 +57,14 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
     let first = first.clone();
     assert_eq!(overlay.shapes.len(), 1);
     let _ = crate::app::test_ui::run(&ctx, raw.clone(), |ui| {
-        overlay.draw(ui.painter(), input.clone(), Lang::En, None)
+        overlay.draw(ui.painter(), input.clone(), Lang::En)
     });
     let egui::Shape::Mesh(second) = &overlay.shapes[0] else {
         panic!("reused icon mesh");
     };
     assert!(Arc::ptr_eq(&first, second));
     let _ = crate::app::test_ui::run(&ctx, raw.clone(), |ui| {
-        overlay.draw(ui.painter(), input.clone(), Lang::PtBr, None)
+        overlay.draw(ui.painter(), input.clone(), Lang::PtBr)
     });
     let egui::Shape::Mesh(translated) = &overlay.shapes[0] else {
         panic!("refreshed mesh");
@@ -83,7 +84,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
     }
     .basis(4.0 / 3.0);
     let output = crate::app::test_ui::run(&ctx, raw, |ui| {
-        overlay.draw(ui.painter(), input.clone(), Lang::En, None)
+        overlay.draw(ui.painter(), input.clone(), Lang::En)
     });
     assert!(
         !output
@@ -113,6 +114,7 @@ fn aircraft_mesh_repaint_cost() {
             vertical_rate_fpm: None,
             turn_rate_deg_s: None,
             observed_unix: 1000.0,
+            details: None,
         })
         .collect();
     let request = ProjectionInput {
@@ -147,7 +149,7 @@ fn aircraft_mesh_repaint_cost() {
     let _ = crate::app::test_ui::run(&ctx, raw.clone(), |_| {});
     let start = Instant::now();
     let _ = crate::app::test_ui::run(&ctx, raw.clone(), |ui| {
-        overlay.draw(ui.painter(), request.clone(), Lang::En, None)
+        overlay.draw(ui.painter(), request.clone(), Lang::En)
     });
     println!(
         "20,000 aircraft, {visible} visible: first icon-mesh construction {:.3} ms; {} cached shapes",
@@ -159,7 +161,7 @@ fn aircraft_mesh_repaint_cost() {
         let start = Instant::now();
         for _ in 0..ITERATIONS {
             black_box(crate::app::test_ui::run(&ctx, raw.clone(), |ui| {
-                overlay.draw(ui.painter(), request.clone(), Lang::En, None)
+                overlay.draw(ui.painter(), request.clone(), Lang::En)
             }));
         }
         samples.push(start.elapsed().as_secs_f64() * 1000.0 / ITERATIONS as f64);
@@ -206,6 +208,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                     vertical_rate_fpm: None,
                     turn_rate_deg_s: None,
                     observed_unix: 1000.0,
+                    details: None,
                 }]
                 .into(),
                 ..Default::default()
@@ -221,7 +224,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
             ..Default::default()
         };
         let _ = crate::app::test_ui::run(&ctx, raw, |ui| {
-            overlay.draw(ui.painter(), input.clone(), Lang::En, None)
+            overlay.draw(ui.painter(), input.clone(), Lang::En)
         });
         let texts = overlay
             .shapes

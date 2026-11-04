@@ -2,11 +2,12 @@
 //! ADSB.lol's map), the rest of its way to its destination, both airports and a card
 //! with its route. Its position comes every few seconds.
 use super::App;
+mod card;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape, Stroke};
-use globecraft_core::{camera::Basis, language::Lang, layers::MapLayer, math::now_unix};
+use globecraft_core::{camera::Basis, layers::MapLayer, math::now_unix};
 use globecraft_data::aircraft::{
     Aircraft, AircraftSnapshot,
-    route::{RouteAirport, SelectedFlight, TrackPoint},
+    route::{RouteAirport, TrackPoint},
 };
 use globecraft_render::overlays::{SEGMENT_CLIP_MARGIN_POINTS, clip_segment, project_unhidden};
 use serde_json::{Value, json};
@@ -21,7 +22,8 @@ const AIRPORT_FILL: Color32 = Color32::from_rgb(255, 205, 110);
 const HALO: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 200);
 const LABEL_POINTS: f32 = 12.0;
 const CARD_MARGIN_POINTS: f32 = 12.0;
-const CARD_WIDTH_POINTS: f32 = 300.0;
+const CARD_WIDTH_POINTS: f32 = 400.0;
+const EMERGENCY: Color32 = Color32::from_rgb(255, 90, 80);
 /// The great circle to the destination is drawn with a point every this many km.
 const REMAINING_STEP_KM: f64 = 40.0;
 /// A position newer than this is moved on along its track; an older one stays.
@@ -93,15 +95,6 @@ fn screen_runs(
         runs.push(run);
     }
     runs
-}
-
-fn duration_text(secs: f64) -> String {
-    let minutes = (secs / 60.0).round().max(0.0) as u64;
-    if minutes < 60 {
-        format!("{minutes} min")
-    } else {
-        format!("{} h {:02} min", minutes / 60, minutes % 60)
-    }
 }
 
 fn halo_text(
@@ -330,7 +323,7 @@ impl App {
             return;
         };
         let lang = self.lang;
-        let lines = card_lines(
+        let lines = card::lines(
             flight,
             lang,
             self.distance_units(),
@@ -353,6 +346,9 @@ impl App {
                         });
                     });
                     ui.label(egui::RichText::new(&lines.route).strong());
+                    if let Some(warning) = &lines.warning {
+                        ui.label(egui::RichText::new(warning).strong().color(EMERGENCY));
+                    }
                     for line in &lines.details {
                         ui.label(line);
                     }
@@ -396,102 +392,6 @@ fn track_shapes(
     }
 }
 
-struct CardLines {
-    title: String,
-    route: String,
-    details: Vec<String>,
-}
-
-fn card_lines(
-    flight: &SelectedFlight,
-    lang: Lang,
-    units: globecraft_core::units::DistanceUnits,
-    loading: bool,
-) -> CardLines {
-    let title = if flight.callsign.is_empty() {
-        flight.hex.to_uppercase()
-    } else {
-        format!("{} · {}", flight.callsign, flight.hex.to_uppercase())
-    };
-    let place = |airport: &RouteAirport| {
-        if airport.name.is_empty() {
-            airport.code.clone()
-        } else {
-            format!("{} ({})", airport.name, airport.code)
-        }
-    };
-    let route = match &flight.route {
-        Some(route) => lang.format(
-            "flight-card-route",
-            &[
-                ("from", place(&route.origin).into()),
-                ("to", place(&route.destination).into()),
-            ],
-        ),
-        None if !flight.route_known => lang.text("flight-card-route-loading").into(),
-        None => lang.text("flight-card-route-unknown").into(),
-    };
-    let mut details = Vec::new();
-    if flight.route.as_ref().is_some_and(|route| !route.plausible) {
-        details.push(lang.text("flight-card-route-unsure").into());
-    }
-    if let Some(aircraft) = &flight.position {
-        let mut parts = Vec::new();
-        if let Some(feet) = aircraft.altitude_feet {
-            parts.push(format!("{feet:.0} ft"));
-        }
-        if let Some(knots) = aircraft.speed_knots {
-            parts.push(format!("{knots:.0} kt"));
-        }
-        if let Some(rate) = aircraft.vertical_rate_fpm.filter(|rate| rate.abs() >= 50.0) {
-            parts.push(format!("{rate:+.0} ft/min"));
-        }
-        if !parts.is_empty() {
-            details.push(parts.join(" · "));
-        }
-    }
-    let mut progress = Vec::new();
-    if let (Some(first), Some(last)) = (flight.track.first(), flight.track.last()) {
-        let end = flight
-            .position
-            .as_ref()
-            .map_or(last.unix, |p| p.observed_unix.max(last.unix));
-        progress.push(lang.format(
-            "flight-card-flown",
-            &[("time", duration_text(end - first.unix).into())],
-        ));
-    }
-    let at = flight
-        .position
-        .as_ref()
-        .map(|p| (p.latitude, p.longitude))
-        .or_else(|| flight.track.last().map(|p| (p.lat, p.lon)));
-    if let (Some(route), Some(at)) = (&flight.route, at) {
-        let km =
-            globecraft_core::math::haversine_km(at, (route.destination.lat, route.destination.lon));
-        let distance = match units {
-            globecraft_core::units::DistanceUnits::Metric => format!("{km:.0} km"),
-            globecraft_core::units::DistanceUnits::Imperial => format!("{:.0} mi", km / 1.609_344),
-        };
-        progress.push(lang.format("flight-card-to-go", &[("distance", distance.into())]));
-    }
-    if !progress.is_empty() {
-        details.push(progress.join(" · "));
-    }
-    if flight.track.is_empty() && loading {
-        details.push(lang.text("flight-card-track-loading").into());
-    } else if flight.track.is_empty()
-        && let Some(error) = &flight.error
-    {
-        details.push(lang.format("flight-card-error", &[("error", error.clone().into())]));
-    }
-    CardLines {
-        title,
-        route,
-        details,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,11 +403,5 @@ mod tests {
         let high = egui::ecolor::Hsva::from(altitude_color(Some(38_000.0)));
         assert!(low.h < 0.12, "{low:?}");
         assert!(high.h > 0.65, "{high:?}");
-    }
-
-    #[test]
-    fn a_flight_time_reads_in_hours_and_minutes() {
-        assert_eq!(duration_text(40.0 * 60.0), "40 min");
-        assert_eq!(duration_text(125.0 * 60.0), "2 h 05 min");
     }
 }

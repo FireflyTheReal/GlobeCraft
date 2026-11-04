@@ -26,6 +26,37 @@ pub struct Aircraft {
     /// How fast its track turns, degrees per second (positive: right).
     pub turn_rate_deg_s: Option<f64>,
     pub observed_unix: f64,
+    /// What else ADSB.lol reports (OpenSky reports none of it).
+    pub details: Option<Arc<AircraftDetails>>,
+}
+
+/// What ADSB.lol reports beyond position and motion. Every field may be missing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AircraftDetails {
+    /// Registration (`r`), e.g. `LX-VCD`.
+    pub registration: Option<Box<str>>,
+    /// ICAO type designator (`t`), e.g. `B748`.
+    pub type_code: Option<Box<str>>,
+    /// Emitter category (`category`), e.g. `A3`.
+    pub category: Option<Box<str>>,
+    pub squawk: Option<Box<str>>,
+    /// The emergency it declares (`emergency`), when not `none`.
+    pub emergency: Option<Box<str>>,
+    /// Height by satellite (`alt_geom`), feet.
+    pub geometric_altitude_feet: Option<f64>,
+    pub indicated_airspeed_knots: Option<f64>,
+    pub true_airspeed_knots: Option<f64>,
+    pub mach: Option<f64>,
+    /// Wind it flies in: from (degrees), speed (knots).
+    pub wind: Option<(f64, f64)>,
+    /// Outside air temperature, °C.
+    pub outside_air_celsius: Option<f64>,
+    pub true_heading_deg: Option<f64>,
+    /// Altitude and heading the autopilot is set to.
+    pub selected_altitude_feet: Option<f64>,
+    pub selected_heading_deg: Option<f64>,
+    /// How the position was found (`type`): `adsb_icao`, `mlat`, `tisb_icao`…
+    pub source: Option<Box<str>>,
 }
 
 #[derive(Clone, Default)]
@@ -50,6 +81,9 @@ pub struct AircraftQuery {
     pub latitude: f64,
     pub longitude: f64,
     pub altitude_km: f64,
+    /// How far from (latitude, longitude) the view reaches, km. Wider than one
+    /// ADSB.lol circle, more circles around it are asked for.
+    pub radius_km: f64,
 }
 
 pub struct LiveAircraft {

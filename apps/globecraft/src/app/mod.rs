@@ -616,6 +616,13 @@ impl eframe::App for App {
                 latitude: self.cam.lat,
                 longitude: self.cam.lon,
                 altitude_km: self.cam.alt,
+                // Half the view's diagonal on the ground (a 16:10 window), longer
+                // when tilted towards the horizon.
+                radius_km: (self.cam.alt
+                    * globecraft_core::VERTICAL_FOV_HALF_TAN
+                    * 1.89
+                    * (1.0 + self.cam.tilt.max(0.0) / 45.0))
+                    .min(2500.0),
             });
         if aircraft_enabled {
             ctx.request_repaint_after(live_layers::FLIGHT_REPAINT_INTERVAL);
@@ -642,11 +649,11 @@ impl eframe::App for App {
             earth && self.layer(MapLayer::Aurora),
             move || aurora_wake.request_repaint(),
         );
-        // Airports by code: for the flight hover card and the search box.
+        // Airports by code: for the search box and a selected flight's route.
         let airports_wake = ctx.clone();
         self.live_airports.update(
             &self.runtime,
-            (earth && self.layer(MapLayer::Flights)) || !self.query.trim().is_empty(),
+            self.flight_selection.selected().is_some() || !self.query.trim().is_empty(),
             move || airports_wake.request_repaint(),
         );
         self.update_time_zones(ctx, earth);
