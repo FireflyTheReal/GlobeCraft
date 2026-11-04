@@ -297,6 +297,7 @@ impl UserLayers {
         let mut named = Vec::new();
         let mut counts = Vec::new();
         let mut hits = Vec::new();
+        let mut pulses = Vec::new();
         // Bottom layer first; names and hover are placed top layer first.
         for (layer, features, _) in &visible {
             let built = feature_geometry(painter, basis, rect, features, layer, scale, time);
@@ -304,6 +305,7 @@ impl UserLayers {
             markers.extend(built.markers);
             named.push(built.named);
             counts.extend(built.counts);
+            pulses.extend(built.pulses);
             hits.push((features.clone(), built.hits));
         }
         named.reverse();
@@ -314,6 +316,7 @@ impl UserLayers {
             keys: visible.into_iter().map(|(_, _, key)| key).collect(),
             shapes,
             counts,
+            pulses,
             scale,
             hits,
             named,
@@ -392,6 +395,8 @@ impl UserLayers {
 
     pub(super) fn paint_features(&self, painter: &egui::Painter) {
         if let Some(built) = &self.features {
+            let now = painter.ctx().input(|i| i.time);
+            points::paint_pulses(painter, &built.pulses, built.scale, now);
             painter.extend(built.shapes.iter().cloned());
             points::paint_counts(painter, &built.counts, built.scale);
         }
@@ -471,6 +476,8 @@ struct BuiltFeatures {
     shapes: Vec<Shape>,
     /// Cluster badge counts, laid out when drawn.
     counts: Vec<(Pos2, String, f32)>,
+    /// Markers of recent timed points, their rings drawn every frame.
+    pulses: Vec<points::Pulse>,
     scale: f32,
     /// Each layer's features and what the pointer can find on it, top layer first.
     hits: Vec<(Arc<FeatureSet>, Vec<points::Hit>)>,
@@ -488,6 +495,7 @@ struct LayerGeometry {
     named: Vec<NamedPoint>,
     counts: Vec<(Pos2, String, f32)>,
     hits: Vec<points::Hit>,
+    pulses: Vec<points::Pulse>,
 }
 
 fn feature_geometry(
@@ -546,6 +554,7 @@ fn feature_geometry(
         named: points.named,
         counts: points.counts,
         hits: points.hits,
+        pulses: points.pulses,
     }
 }
 

@@ -61,6 +61,7 @@ impl App {
                 let limit = format!("{}-12-31", year - 5);
                 self.wayback_idx = list.iter().position(|r| r.date <= limit).unwrap_or(0);
                 self.wayback_list = list;
+                self.wayback_time_date = None;
                 self.last_state = 0;
                 self.wake.dependencies_may_have_changed();
             }
@@ -73,6 +74,23 @@ impl App {
             Err(mpsc::TryRecvError::Disconnected) => self.wayback_rx = None,
             Err(mpsc::TryRecvError::Empty) => {}
         }
+    }
+
+    /// Away from the real time, Wayback shows the newest release on or before the
+    /// app's day (roadmap 4.H). Picked again only when that day changes, so a release
+    /// chosen by hand stays until the time moves.
+    pub(super) fn wayback_follow_time(&mut self) {
+        if self.time.is_live() || self.wayback_list.is_empty() {
+            self.wayback_time_date = None;
+            return;
+        }
+        let date = globecraft_core::time::date_utc(self.scene_unix());
+        if self.wayback_time_date.as_deref() == Some(date.as_str()) {
+            return;
+        }
+        let index = release_on_or_before(self.wayback_list.iter().map(|r| r.date.as_str()), &date);
+        self.wayback_time_date = Some(date);
+        self.set_wayback(index);
     }
 
     pub(super) fn set_wayback(&mut self, idx: usize) {
@@ -88,5 +106,31 @@ impl App {
         } else {
             self.settings.layers.basemap
         }
+    }
+}
+
+/// The index of the newest release dated on or before `date` in a list sorted newest
+/// first; the oldest release for days before any.
+fn release_on_or_before<'a>(dates: impl ExactSizeIterator<Item = &'a str>, date: &str) -> usize {
+    let count = dates.len();
+    let mut dates = dates;
+    dates
+        .position(|release| release <= date)
+        .unwrap_or(count.saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_on_or_before;
+
+    #[test]
+    fn the_release_shown_is_the_newest_on_or_before_the_day() {
+        let dates = ["2026-10-01", "2024-05-02", "2014-02-20"];
+        let pick = |day: &str| release_on_or_before(dates.iter().copied(), day);
+        assert_eq!(pick("2026-11-04"), 0);
+        assert_eq!(pick("2026-10-01"), 0);
+        assert_eq!(pick("2026-09-30"), 1);
+        assert_eq!(pick("2015-01-01"), 2);
+        assert_eq!(pick("2001-01-01"), 2);
     }
 }

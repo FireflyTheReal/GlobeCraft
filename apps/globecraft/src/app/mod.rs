@@ -213,6 +213,8 @@ pub(crate) struct App {
     compare_texture: Option<(egui::TextureHandle, u16)>,
     wayback_rx: Option<mpsc::Receiver<Result<Vec<WaybackRelease>, globecraft_data::Error>>>,
     wayback_started: bool,
+    /// The day of the app's time the Wayback release was last picked for.
+    wayback_time_date: Option<String>,
     wayback_err: Option<String>,
 
     suggestions: Vec<Suggestion>,
@@ -439,6 +441,7 @@ impl App {
             compare_texture: None,
             wayback_rx: None,
             wayback_started: false,
+            wayback_time_date: None,
             wayback_err: None,
             suggestions: vec![],
             remote_sugg: vec![],
@@ -688,6 +691,7 @@ impl eframe::App for App {
         self.poll_update_restart(ctx);
         self.ensure_wayback(ctx);
         self.poll_wayback();
+        self.wayback_follow_time();
         self.poll_suggestions(ctx);
         if let Some(error) = self.local_search.take_error() {
             self.status = format!("Local prefix index failed: {error}");

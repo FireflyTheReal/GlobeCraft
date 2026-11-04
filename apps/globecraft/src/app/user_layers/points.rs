@@ -28,6 +28,30 @@ const CLUSTER_TEXT_POINTS: f32 = 10.0;
 const HOVER_SLACK_POINTS: f32 = 3.0;
 /// Names listed on a cluster's hover card.
 const CLUSTER_HOVER_NAMES: usize = 3;
+/// Timed points younger than this (before the app's time) pulse, the youngest
+/// strongest: the day's earthquakes stand out from the week's.
+const PULSE_RECENT_SECS: f64 = 24.0 * 3600.0;
+/// At most this many pulse at once, the largest values first.
+const MAX_PULSES: usize = 40;
+/// One ring's run, seconds; two rings half a run apart.
+const PULSE_PERIOD_SECS: f64 = 2.4;
+/// A ring grows from the marker to this many times its radius, so larger values
+/// (magnitudes) send out larger rings.
+const PULSE_REACH: f32 = 3.5;
+/// Redraws while pulses run, about 30 a second.
+const PULSE_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// A marker or badge that pulses: where, its radius, colour and how strongly (1 for
+/// a point at the app's moment, falling to 0 a day before).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Pulse {
+    pub at: Pos2,
+    pub radius: f32,
+    pub color: Color32,
+    pub strength: f32,
+    /// Spreads the rings' phases, so neighbours do not beat together.
+    pub phase: f32,
+}
 
 /// A marker or badge the pointer can find: where, how big, and which points (the
 /// most important first).
@@ -48,6 +72,7 @@ pub(super) struct LayerPoints {
     /// Points with names, most important first.
     pub named: Vec<NamedPoint>,
     pub hits: Vec<Hit>,
+    pub pulses: Vec<Pulse>,
 }
 
 /// The radius (before the map scale) of a point's marker.
@@ -123,7 +148,17 @@ pub(super) fn layer_points(
         rooms: Vec::new(),
         named: Vec::new(),
         hits: Vec::new(),
+        pulses: Vec::new(),
     };
+    let scene = time.time.now(time.wall);
+    let recency = |index: usize| {
+        let ms = features.points[index].time_ms?;
+        let age = scene - ms as f64 / 1000.0;
+        (0.0..PULSE_RECENT_SECS)
+            .contains(&age)
+            .then(|| 1.0 - (age / PULSE_RECENT_SECS) as f32)
+    };
+    let mut pulses: Vec<(f64, Pulse)> = Vec::new();
     for group in cluster(&inputs, CLUSTER_RADIUS_POINTS * scale) {
         let (leader, at) = on_screen[group.leader];
         let members: Vec<usize> = group.members.iter().map(|&m| on_screen[m].0).collect();
@@ -157,6 +192,23 @@ pub(super) fn layer_points(
                 .push((at, count_text(members.len()), layer.opacity));
             radius
         };
+        if let Some(strength) = members.iter().filter_map(|&m| recency(m)).reduce(f32::max) {
+            let value = members
+                .iter()
+                .filter_map(|&m| features.points[m].value)
+                .reduce(f64::max)
+                .unwrap_or(0.0);
+            pulses.push((
+                value,
+                Pulse {
+                    at,
+                    radius,
+                    color,
+                    strength,
+                    phase: (leader as f32 * 0.618_034).fract(),
+                },
+            ));
+        }
         out.rooms
             .push(Rect::from_center_size(at, Vec2::splat(2.0 * radius)).expand(padding));
         out.hits.push(Hit {
@@ -165,7 +217,34 @@ pub(super) fn layer_points(
             members,
         });
     }
+    pulses.sort_by(|a, b| b.0.total_cmp(&a.0));
+    out.pulses = pulses
+        .into_iter()
+        .take(MAX_PULSES)
+        .map(|(_, pulse)| pulse)
+        .collect();
     out
+}
+
+/// The rings of the pulsing markers at the interface's clock `now` (seconds), and a
+/// redraw while any run.
+pub(super) fn paint_pulses(painter: &egui::Painter, pulses: &[Pulse], scale: f32, now: f64) {
+    if pulses.is_empty() {
+        return;
+    }
+    for pulse in pulses {
+        for ring in [0.0, 0.5] {
+            let t = ((now / PULSE_PERIOD_SECS) as f32 + pulse.phase + ring).fract();
+            let radius = pulse.radius * (1.0 + (PULSE_REACH - 1.0) * t);
+            let alpha = (1.0 - t) * (1.0 - t) * pulse.strength * 0.9;
+            painter.circle_stroke(
+                pulse.at,
+                radius,
+                Stroke::new(1.6 * scale, pulse.color.gamma_multiply(alpha)),
+            );
+        }
+    }
+    painter.ctx().request_repaint_after(PULSE_FRAME);
 }
 
 /// The badges' counts, laid out now (a kept layout can point at glyphs a refilled
