@@ -153,7 +153,7 @@ streaming model (1.7), so adding a kind is a form plus a descriptor, never a new
 | --- | --- | --- | --- |
 | 3.0 | **State/province streaming and fade** (reported 2026-10-22): state and province lines arrive too late, so they pop instead of fading, especially with a high "States visible below" setting; drawing them feels laggy | M | **Implemented 2026-10-22, needs a check on the Mac.** See 3.0 below. First slice of coordinate streaming (1.7) **Superseded 2026-10-25** by 13.19: borders and names come from OpenStreetMap tiles; this code was removed (branch `snapshot/2026-10-25-before-cleanup`) |
 | 3.1 | **Municipal redesign**: fade from state lines to municipal lines, fetching only the municipalities in view at a reasonable altitude, with no stutter while panning (see 3.1 below) | L | **First slice implemented 2026-10-22** (streaming units, see below); needs a check on the Mac, then per-source tuning **Superseded 2026-10-25** by 13.19: borders and names come from OpenStreetMap tiles; this code was removed (branch `snapshot/2026-10-25-before-cleanup`) |
-| 3.2 | **Night lights layer** from NASA GIBS "Earth at Night" (`IMG-03` [16.3]). Black Marble tiles in WMTS `epsg3857` with a fixed date; blended by the sun terminator when Sunlight is on, plain otherwise | M | Wanted by the user. Pilot source for the generic `TileSource` (1.2), plus a blend term in `pixel.rs`. Check the layer identifier and date with GetCapabilities first. `IMG-24` (raw VIIRS) is a pre-bake, so skip it **Done 2026-10-26** as the pilot source: `night_lights` in `sources.json` (GIBS `VIIRS_Black_Marble`, 2016-01-01, `GoogleMapsCompatible_Level8`, PNG; layer, date and resolution checked in Worldview's configuration, the format still to confirm on the first run), layer Night Lights (Sky group), added on the night side when Sunlight is on, the whole surface otherwise; CPU path only. |
+| 3.2 | **Night lights layer** from NASA GIBS "Earth at Night" (`IMG-03` [16.3]). Black Marble tiles in WMTS `epsg3857` with a fixed date; blended by the sun terminator when Sunlight is on, plain otherwise | M | Wanted by the user. Pilot source for the generic `TileSource` (1.2), plus a blend term in `pixel.rs`. Check the layer identifier and date with GetCapabilities first. `IMG-24` (raw VIIRS) is a pre-bake, so skip it **Done 2026-10-26** as the pilot source: `night_lights` in `sources.json` (GIBS `VIIRS_Black_Marble`, 2016-01-01, `GoogleMapsCompatible_Level8`, PNG; layer, date and resolution checked in Worldview's configuration, the format confirmed when GIBS served the 2016 and 2012 editions to the app, checked from the Mac 2026-11-04), layer Night Lights (Sky group), added on the night side when Sunlight is on, the whole surface otherwise; CPU path only. |
 | 3.3 | **Vector rebuild, steps 2–5** of `docs/features/VECTOR_MAP_DATA.md` (see 3.3 below) | XL | Unlocks Overture divisions (`REF-18`) and every future vector layer without one-off wiring **Partly superseded 2026-10-25:** borders and names are now per-tile (13.19), `load.rs` is down to the bundled fallback. What remains is the generic seams for other vector layers, together with 1.2 and 1.7 |
 | 3.4 | **PMTiles v3 reader** (`pmtiles` crate, HTTP range reads) with its own byte-bounded vector cache, separate from the 256 MiB imagery budget | M | Shared adapter C. Unlocks Mapterhorn as PMTiles (`TER-09`), Protomaps (`IMG-14`), building footprints (`BLD-01`), field parcels (`LND-05`) and EEZ borders (`MAR-03`) **Reader done 2026-10-28** (`globecraft-data/src/pmtiles.rs`, own code: header, Hilbert ids, directories, leaf cache, range reads). First use: GlobeCraft's own border tiles. The `Border tiles` workflow cuts the OpenFreeMap planet (OpenMapTiles schema) to the `boundary` and `place` layers and the ocean, zoom 0–12, and publishes them into the one `map-data` pre-release, whose `manifest.json` names the current files (a new build replaces the older files, keeping only the build before). The app reads only these; there is no OpenFreeMap fallback. Borders and names come to 4.3 GiB, over GitHub's 2 GiB asset limit, so they are split into parts (zoom 0–10, zoom 11, zoom 12 west and east of 0°); the reader asks only the part whose zooms and bounds hold a tile. Sizes in PERFORMANCE_BASELINE.md. Second set (2026-10-28): `transport` (rail, transit, ferries, airports, zoom 0–14, 626 MiB, one file), drawn by the Railways, Ferries and Airports layers. Third (2026-10-28): `roads` (motorway to residential with names, zoom 0–12, 2.5 GiB, three files), the Roads layer's source up to 1,000 km; Overpass only adds service roads and roadworks close up. Open: a disk cache for transport tiles. **Byte budget 2026-10-29:** each vector set's cache is bounded by both tile count and a 64 MiB estimated decoded-heap budget, keeping at least one tile; the estimate excludes allocator overhead |
 | 3.5 | **Polar view**: a dedicated polar projection (GIBS epsg3413/3031) in place of the `PolarCap` interim | L | The user prefers a real pole map. Needs per-provider projection in the tile path (`proj4rs`). With it (user 2026-11-04): the Antarctic territorial claims as lines, and the time zone lines in Antarctica, which today end without meeting (the stations' zones and the ocean's 15° meridians converge there) |
@@ -219,7 +219,7 @@ and timeline (H) and the point-layer engine (I).
 
 | Tag | Work | Size | Unlocks |
 | --- | --- | --- | --- |
-| A | WMS-as-XYZ adapter (tile bbox → `GetMap`, EPSG:3857) | M | GEBCO seafloor (`TER-01`), EMODnet bathymetry (`TER-04`), DWD radar (`WTH-06`), GloFAS floods (`HAZ-07`), EMODnet shipwrecks (`HER-05`) |
+| A | WMS-as-XYZ adapter (tile bbox → `GetMap`, EPSG:3857) | M | GEBCO seafloor (`TER-01`), EMODnet bathymetry (`TER-04`), DWD radar (`WTH-06`), GloFAS floods (`HAZ-07`), EMODnet shipwrecks (`HER-05`) **Done 2026-11-01** with Add Data (2.1): WMS GetMap by tile in the Web map form, used by the GEBCO and EMODnet presets |
 | B | Elevation decoders (Terrarium is done; add GSI and WebP Terrarium) and a hillshade-only mode for overview altitudes | S–M | Japan GSI (`TER-05`), OpenZenith fallback (`TER-03`), AWS Terrain Tiles as a second terrain source (`TER-06`; Mapterhorn should not be the only source) |
 | C | PMTiles (item 3.4) | M | See 3.4 |
 | D | Key manager, generalised from the assistant's key file: per-service keys from env or user config, 0600, never in `settings.json`, a "Keys" page in Settings | M | OpenWeatherMap (`WTH-04`), AISstream (`TRK-03`), FIRMS fires (`HAZ-09`), OpenAQ (`WTH-11`), ENTSO-E (`INF-06`), Earth Timelapse (`IMG-28`), TomTom (already used) |
@@ -278,7 +278,7 @@ and timeline (H) and the point-layer engine (I).
 | --- | --- | --- | --- |
 | 6.1 | **Layer opacity and order**: a slider per layer, drag to reorder, "solo" on alt-click | M | Standard in GIS tools. The ribbon and pane already share one layer identity |
 | 6.2 | **Legends**: a compact legend under each active data layer (radar dBZ, quake magnitude, fire confidence…) | M | No data layer currently says what its colours mean |
-| 6.3 | **Timeline bar** at the bottom of the globe for adapter H: play/pause, speed, date picker, "now" button | M | The visible half of the time dimension |
+| 6.3 | **Timeline bar** at the bottom of the globe for adapter H: play/pause, speed, date picker, "now" button | M | The visible half of the time dimension **Done 2026-11-04** with adapter H (section 4) |
 | 6.4 | **Status bar redesign**: altitude, scale bar, cursor elevation (from the DEM already in the cache) and the attributions of the visible layers instead of one fixed line | S–M | Free elevation readout: the DEM is already decoded **Partly done 2026-11-01:** the cursor ground height shows on the globe always (loaded relief tiles with Relief on; one level-10 elevation tile under the cursor without it, credited on hover), and the credits of the user's added layers join the attribution line. Altitude and the scale bar were already there |
 | 6.5 | **First-run onboarding**: three cards (navigate, layers, assistant) and an optional sample tour | S | The ribbon has many commands; first contact needs a guide |
 | 6.6 | **Accessibility**: full keyboard navigation of the ribbon and panes, a visible focus ring, accesskit labels on every custom widget (most already have them), a reduced-motion setting (no fly animations or fades), high-contrast tokens, UI scale presets | M | egui supports accesskit, and the custom widgets set `widget_info` |
@@ -538,15 +538,98 @@ Overall: binary size can probably drop by a third to a half without losing featu
 (14.2–14.5), and the CPU-bound visual cost can drop by an order of magnitude only
 through the GPU path (14.1). Everything else is incremental.
 
-## Suggested order
+## What's next (2026-11-04)
 
-1. Section 0: stabilise and verify the rewrite on the Mac (0.1, 0.2, 0.4 need the Mac; 0.6, 0.7 done). Borders are settled on OpenStreetMap tiles (13.19 phases 1–2 done 2026-10-25), so the municipal items in sections 3 and 13 are closed.
-2. 1.1 replay benchmark, so there is a baseline.
-3. Foundation, in this order: 1.2 generic `TileSource` (with night lights, 3.2, as the pilot source), 1.3 scheduling and cancellation, 1.5 tile processing, 1.4 predictive requests, 1.6 seamless arrival, 1.11 diagnostics. Re-measure after each.
-4. 1.7 coordinate streaming, 1.8 smooth live objects, 1.9 precision and 1.10 elevation; the municipal redesign (3.1), PMTiles (3.4) and the vector rebuild (3.3) ride on 1.7.
-5. Section 2, Add Data: the dialog, forms, service library with the master table's presets, user layers, then the Browser panel.
-6. Adapters that are still missing (section 4: time, points, key manager), then the layers in section 5 as presets.
-7. In parallel when it fits: 10.1 CI and 10.2 `App` split.
-8. Afterwards: 8.2 GPU beta (8.1 terrain ray marching done on the CPU 2026-10-26); then wind, 3D buildings and the sky mode.
+Every item not fully done, in the order to take them. Done and superseded items are
+not repeated here; the numbers point to the rows above. Reorder freely: this is a
+working queue, not a promise.
+
+**1. Check on the Mac what just landed** (needs the user)
+
+1. Flights: updates across the view, a selected flight's route and card (5); time zones as a classic map (5)
+2. 0.1 smoke test of the whole app (menus, shortcuts, assistant with a real key, drag and drop, screenshots)
+3. 0.2 re-test the aircraft freeze; 0.4 frame times on the Mac
+
+**2. Threads already open with the user**
+
+4. 13.6 small live symbols: aircraft by size class (ADSB.lol's `category` is now kept), ships by type, satellites by group
+5. G real satellite orbits (SGP4), with the satellite symbols
+6. 3.5 polar view: a real pole map, with the Antarctic claim lines and Antarctica's time zone lines
+7. 13.24 place names hidden after a cold jump to street level
+
+**3. Small and visible**
+
+8. 6.2 legends for the built-in data layers (radar, aurora, quakes…) and 6.4 the visible layers' credits in the status bar
+9. 1.10 elevation profile along the ruler, then measuring area (9)
+10. 6.9 search and filter in the Layers pane; 6.1 drag to reorder, solo, opacity for built-in layers
+11. 6.12 info card: state and municipality, long-press
+12. 2.6 `globecraft://` deep links together with share-a-view links (9)
+13. 14.6 idle cost: no repaint while nothing changes, idle CPU measured on the Mac
+
+**4. Engineering, before the codebase grows further**
+
+14. 10.1 CI on macOS, Linux and Windows with the screenshot tests; 10.3 a settings fixture per release
+15. 10.2 split the `App` struct into feature states
+16. 10.4 frame-budget watchdog; 10.6 network policy table and a "hosts contacted" page
+17. 7.7 assistant guardrails (rate limit, cost per turn, stop everywhere)
+
+**5. Foundation, remaining parts**
+
+18. 1.4 loading ahead during drag and inertia, a coarser ring around the view
+19. 1.3 per-host limits across sources, conditional revalidation (`ETag`); 3.4 disk cache for transport tiles
+20. 1.7 one streaming model for vector data, with 3.3's data-side seams
+21. 1.2 user-defined tile sources, WMS/PMTiles/MBTiles access, a time dimension in the tile key; H more dated sources
+
+**6. Layers (section 5) and the adapters they need**
+
+22. Quick presets: Natural Earth urban areas glow, EEZ and high seas borders, undersea feature names, GIBS daily imagery and the GEBCO seafloor as proper layers
+23. D key manager, then active fires (FIRMS) and the other keyed sources
+24. Hurricane tracks, lightning, power plants and wind turbines, forest loss, port traffic
+25. Heritage (GeoNames filter, Pleiades, Wikidata sites), species at the cursor, the Stonehenge LiDAR showcase
+26. B elevation decoders (Japan GSI, WebP Terrarium) and a hillshade-only overview mode; F cloud GeoTIFF windows (Copernicus DEM, WorldCover); field parcels for France
+
+**7. Add Data, remaining kinds**
+
+27. 2.1/2.2 MBTiles, PMTiles, OGC API, ArcGIS REST, WMTS capabilities, the "needs a key" notice
+28. 2.3 user entries with categories; 2.8 catalogue search (STAC, CSW, CKAN); later COG and GeoParquet
+
+**8. Interface polish**
+
+29. 6.5 first-run onboarding; 6.8 pane presets (Explore, Measure, Present)
+30. 6.11 scale bar and view disc for tilted views
+31. 6.6 accessibility (keyboard, focus ring, reduced motion, high contrast); 6.7 accent colour and sidebar look
+32. 6.10 more languages (es, fr, de, ja), with native speakers' review
+
+**9. Assistant**
+
+33. 7.3 data tools (layers in view, elevation at a point); 7.6 proposing layers from the library
+34. 7.4 local models with discovery and an offline mode; 7.1 vision (a screenshot with the question)
+35. 7.2 tour authoring; 7.5 saved conversations
+
+**10. Places, files and sharing**
+
+36. GPX and GeoJSON export; KML fidelity (lines, polygons, styles, NetworkLinks, time spans)
+37. Poster layout for the screenshots; line of sight and viewshed
+38. Movie export of tours (needs a deterministic render clock)
+
+**11. Rendering**
+
+39. 8.2 GPU renderer on Windows and Linux (14.1), then 8.1 terrain occlusion on the GPU path
+40. 8.4 terminator glow and city lights at dusk; 8.7 matching imagery colours between providers
+41. 8.8 frame pacing and 120 Hz; 8.9 offline region downloads
+42. 8.3 physically based atmosphere; 8.5 ocean highlight and waves
+43. E GRIB and wind particles (needs the GPU path); 8.6 3D buildings
+
+**12. Release and size**
+
+44. 10.7 packaging: notarised macOS build, Windows MSI, Linux AppImage or Flatpak; 0.8 publishing the release
+45. 14.4 big built-in images downloaded on first use; 14.5 fewer dependencies; 14.7 fewer, shorter docs
+46. 10.5 fuzzing the decoders; 10.8 WebAssembly feasibility; 1.5 tile processing (when 512 px or WebP sources arrive)
+
+**13. Later: other worlds and bigger ideas**
+
+47. 13.3 planets and moons streamed (Moon, Mars, Vesta Trek tiles, section 5), with their relief
+48. 3.6 per-country worldview for disputed borders (needs another source)
+49. Section 11: follow mode, sky mode, time machine, eclipse paths, story maps, archaeology showcase, field notebook, classroom kit, audio globe, ambient sound, collaborative view
 
 The previous v0.2.0 delivery plan is preserved in `docs/releases/v0.2.0.md`.
