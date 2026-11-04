@@ -609,6 +609,9 @@ impl App {
                 self.layer_small(ui, MapLayer::MilkyWay);
             });
         });
+        group(ui, lang.text("legend-title"), |ui| {
+            big(ui, self, "ui.legend", Value::Null);
+        });
         group(ui, lang.text("ribbon-group-time"), |ui| {
             big(ui, self, "ui.timeline", Value::Null);
             col(ui, |ui| {

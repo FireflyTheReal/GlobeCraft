@@ -615,6 +615,7 @@ impl App {
         }
         self.timeline_bar(&ui.ctx().clone(), rect);
         self.selected_flight_card(&ui.ctx().clone(), rect);
+        self.legend_window(&ui.ctx().clone(), rect);
 
         // scale bar
         if let Some(scale_bar) = self.scale_bar_cache.for_view(

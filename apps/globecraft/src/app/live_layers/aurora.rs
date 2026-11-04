@@ -77,6 +77,11 @@ fn alpha(chance: u8, night: f32) -> f32 {
 }
 
 /// Green, turning yellow-green where it is strongest.
+/// The glow's colour at a chance, as on the night side (the legend's key).
+pub(in crate::app) fn legend_colour(chance: u8) -> Color32 {
+    colour(chance, alpha(chance, 1.0))
+}
+
 fn colour(chance: u8, alpha: f32) -> Color32 {
     let t = (f32::from(chance) / 100.0).clamp(0.0, 1.0);
     let (r, g, b) = (40.0 + 150.0 * t, 255.0, 140.0 - 60.0 * t);

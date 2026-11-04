@@ -43,6 +43,7 @@ mod fonts;
 mod frame_timing;
 mod globe;
 mod here;
+mod legend;
 mod live_geometry;
 mod live_layers;
 mod live_maps;
@@ -150,6 +151,8 @@ pub(crate) struct App {
     live_maps: live_maps::LiveMaps,
     live_aircraft: globecraft_data::aircraft::LiveAircraft,
     aircraft_overlay: live_layers::AircraftOverlay,
+    /// The colour keys window.
+    legend: legend::Legend,
     /// The flight picked on the globe, with its track and route.
     flight_selection: globecraft_data::aircraft::route::FlightSelection,
     /// The flights with the selected one's newest position: (list it was made from,
@@ -404,6 +407,7 @@ impl App {
                 move || ctx.request_repaint()
             }),
             aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
+            legend: Default::default(),
             flight_selection: Default::default(),
             selected_snapshot: None,
             live_geometry: live_geometry::LiveOverlay::new(

@@ -2,6 +2,15 @@
 use globecraft_core::language::Lang;
 use image::RgbaImage;
 mod download;
+/// The radar's colours: each band from its lowest reflectivity (dBZ) up, as drawn
+/// on the map and in the legend.
+pub const RADAR_BANDS: [(f32, [u8; 3]); 5] = [
+    (0.0, [42, 205, 60]),
+    (18.0, [155, 220, 35]),
+    (28.0, [247, 230, 20]),
+    (38.0, [255, 145, 0]),
+    (47.0, [240, 35, 30]),
+];
 use download::{download_clouds, download_radar};
 use std::{
     sync::mpsc,

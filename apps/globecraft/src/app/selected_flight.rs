@@ -58,7 +58,7 @@ pub(super) fn flown_on(
 
 /// The track's colour at an altitude: orange near the ground, through green and
 /// blue to violet at cruise, grey on the ground.
-fn altitude_color(altitude_feet: Option<f64>) -> Color32 {
+pub(super) fn altitude_color(altitude_feet: Option<f64>) -> Color32 {
     let Some(feet) = altitude_feet else {
         return Color32::from_gray(150);
     };

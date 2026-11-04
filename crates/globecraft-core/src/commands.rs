@@ -539,6 +539,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         TOGGLE
     ),
     command!(
+        "ui.legend",
+        "ui-legend",
+        "symbology",
+        View,
+        Interface,
+        TOGGLE
+    ),
+    command!(
         "ui.timeline",
         "ui-timeline",
         "time_slider",

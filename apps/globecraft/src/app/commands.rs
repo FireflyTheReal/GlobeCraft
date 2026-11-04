@@ -768,6 +768,7 @@ impl App {
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
             id if id.starts_with("time.") => self.run_time(id, p)?,
             id if id.starts_with("flight.") => self.run_flight(id, p)?,
+            "ui.legend" => self.run_legend(p),
             "ui.timeline" => {
                 self.timeline_open = bool_param(p, "visible").unwrap_or(!self.timeline_open);
                 json!({"visible": self.timeline_open})
@@ -881,6 +882,7 @@ impl App {
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
             "ui.tileDiagnostics" => on(self.tile_diagnostics),
             "ui.timeline" => on(self.timeline_open),
+            "ui.legend" => on(self.legend_open()),
             "time.play" => on(self.time.speed() != 0.0),
             "time.pause" => CommandState {
                 enabled: self.time.speed() != 0.0,

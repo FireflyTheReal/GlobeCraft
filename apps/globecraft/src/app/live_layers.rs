@@ -2,10 +2,12 @@
 use globecraft_core::layers::MapLayer;
 mod aurora;
 pub(super) use aurora::AuroraShapes;
+pub(super) use aurora::legend_colour as aurora_colour;
 mod fade;
 pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
 mod poi;
 mod poi_icons;
+pub(super) use poi_icons::Group as PoiGroup;
 mod poi_memory;
 mod shapes;
 mod transport;

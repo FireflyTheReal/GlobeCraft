@@ -135,16 +135,10 @@ fn recolor_radar(src: [u8; 4]) -> [u8; 4] {
             dbz = *value;
         }
     }
-    let (r, g, b) = if dbz < 18.0 {
-        (42, 205, 60)
-    } else if dbz < 28.0 {
-        (155, 220, 35)
-    } else if dbz < 38.0 {
-        (247, 230, 20)
-    } else if dbz < 47.0 {
-        (255, 145, 0)
-    } else {
-        (240, 35, 30)
-    };
+    let [r, g, b] = super::RADAR_BANDS
+        .iter()
+        .rev()
+        .find(|(lowest, _)| dbz >= *lowest)
+        .map_or(super::RADAR_BANDS[0].1, |(_, rgb)| *rgb);
     [r, g, b, src[3].min(200)]
 }

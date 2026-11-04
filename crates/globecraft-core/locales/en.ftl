@@ -144,6 +144,33 @@ aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Speed: { $speed }
     Heading: { $heading }  |  Vertical rate: { $vertical_rate }
     Position { $age } s old
+cmd-ui-legend = Legend
+cmd-ui-legend-help = Shows what the colours on the globe mean: a selected flight's altitudes, rain radar, aurora and places of interest. Opens by itself when one of them appears.
+legend-title = Legend
+legend-empty = Nothing on the globe has a colour key right now.
+legend-flight-altitude = Selected flight: altitude
+legend-on-ground = on the ground
+legend-radar = Rain radar
+legend-radar-band = { $name } ({ $range })
+legend-radar-light = light
+legend-radar-moderate = moderate
+legend-radar-heavy = heavy
+legend-radar-very-heavy = very heavy
+legend-radar-extreme = extreme, hail possible
+legend-aurora = Aurora: chance
+legend-poi = Places of interest
+poi-group-food = Food and drink
+poi-group-shopping = Shopping
+poi-group-lodging = Lodging
+poi-group-culture = Culture
+poi-group-health = Health
+poi-group-education = Education
+poi-group-transport = Transport
+poi-group-nature = Nature and parks
+poi-group-terrain = Peaks
+poi-group-water = Water
+poi-group-worship = Places of worship
+poi-group-services = Services
 cmd-flight-select = Select a flight
 cmd-flight-select-help = Follows one plane: its track so far, where it flies from and to, and its position every few seconds.
 cmd-flight-clear = Close the flight

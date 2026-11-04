@@ -20,7 +20,7 @@ const RIM_POINTS: f32 = 1.0;
 
 /// What a place is, for its badge colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::app::live_layers) enum Group {
+pub(in crate::app) enum Group {
     Food,
     Shopping,
     Lodging,
@@ -36,7 +36,41 @@ pub(in crate::app::live_layers) enum Group {
 }
 
 impl Group {
-    fn color(self) -> Color32 {
+    /// Every group, in the legend's order.
+    pub(in crate::app) const ALL: [Self; 12] = [
+        Self::Food,
+        Self::Shopping,
+        Self::Lodging,
+        Self::Culture,
+        Self::Health,
+        Self::Education,
+        Self::Transport,
+        Self::Nature,
+        Self::Terrain,
+        Self::Water,
+        Self::Worship,
+        Self::Services,
+    ];
+
+    /// Its name in the legend.
+    pub(in crate::app) fn label_key(self) -> &'static str {
+        match self {
+            Self::Food => "poi-group-food",
+            Self::Shopping => "poi-group-shopping",
+            Self::Lodging => "poi-group-lodging",
+            Self::Culture => "poi-group-culture",
+            Self::Health => "poi-group-health",
+            Self::Education => "poi-group-education",
+            Self::Transport => "poi-group-transport",
+            Self::Nature => "poi-group-nature",
+            Self::Terrain => "poi-group-terrain",
+            Self::Water => "poi-group-water",
+            Self::Worship => "poi-group-worship",
+            Self::Services => "poi-group-services",
+        }
+    }
+
+    pub(in crate::app) fn color(self) -> Color32 {
         match self {
             Self::Food => Color32::from_rgb(232, 131, 58),
             Self::Shopping => Color32::from_rgb(142, 107, 217),

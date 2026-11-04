@@ -144,6 +144,33 @@ aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Velocidade: { $speed }
     Rumo: { $heading }  |  Taxa vertical: { $vertical_rate }
     Posição há { $age } s
+cmd-ui-legend = Legenda
+cmd-ui-legend-help = Mostra o que as cores no globo significam: as altitudes de um voo selecionado, o radar de chuva, a aurora e os pontos de interesse. Abre sozinha quando um deles aparece.
+legend-title = Legenda
+legend-empty = Nada no globo tem uma legenda de cores agora.
+legend-flight-altitude = Voo selecionado: altitude
+legend-on-ground = no solo
+legend-radar = Radar de chuva
+legend-radar-band = { $name } ({ $range })
+legend-radar-light = fraca
+legend-radar-moderate = moderada
+legend-radar-heavy = forte
+legend-radar-very-heavy = muito forte
+legend-radar-extreme = extrema, possível granizo
+legend-aurora = Aurora: probabilidade
+legend-poi = Pontos de interesse
+poi-group-food = Comida e bebida
+poi-group-shopping = Compras
+poi-group-lodging = Hospedagem
+poi-group-culture = Cultura
+poi-group-health = Saúde
+poi-group-education = Educação
+poi-group-transport = Transporte
+poi-group-nature = Natureza e parques
+poi-group-terrain = Picos
+poi-group-water = Água
+poi-group-worship = Locais de culto
+poi-group-services = Serviços
 cmd-flight-select = Selecionar um voo
 cmd-flight-select-help = Acompanha um avião: a rota já voada, de onde vem e para onde vai, e a posição a cada poucos segundos.
 cmd-flight-clear = Fechar o voo

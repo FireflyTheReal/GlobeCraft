@@ -1599,3 +1599,49 @@ fn selected_flight_screenshot() {
             .is_err()
     );
 }
+
+/// The legend: it opens by itself with a selected flight, rain radar, aurora and
+/// places of interest on, closes with `ui.legend`, stays closed while nothing new
+/// appears, and opens again when a key comes back. Manual.
+#[test]
+#[ignore = "manual: renders the legend window"]
+fn legend_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    for layer in ["flights", "radar", "aurora", "points_of_interest"] {
+        app.run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect("layer");
+    }
+    app.flight_selection
+        .set(globecraft_data::aircraft::route::SelectedFlight {
+            hex: "3c6a9a".into(),
+            callsign: "DLH400".into(),
+            route_known: true,
+            ..Default::default()
+        });
+    settle(&mut h, 2.0);
+    assert!(h.state().legend_open(), "the legend opens by itself");
+    save(&mut h, &dir, "30-legend");
+    h.state_mut()
+        .run("ui.legend", json!({"on": false}))
+        .expect("close");
+    settle(&mut h, 0.5);
+    assert!(!h.state().legend_open(), "closed stays closed");
+    h.state_mut()
+        .run("layer.show", json!({"layer": "aurora", "visible": false}))
+        .expect("aurora off");
+    settle(&mut h, 0.5);
+    assert!(
+        !h.state().legend_open(),
+        "a key going away does not open it"
+    );
+    h.state_mut()
+        .run("layer.show", json!({"layer": "aurora", "visible": true}))
+        .expect("aurora on");
+    settle(&mut h, 0.5);
+    assert!(h.state().legend_open(), "a key coming back opens it");
+}
