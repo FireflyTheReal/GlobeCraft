@@ -408,4 +408,28 @@ mod tests {
         let around = airports.around(40.64, -73.78 + 360.0, 5.0, AirportKind::Small);
         assert_eq!(around.len(), 1);
     }
+
+    /// The published list (`GLOBECRAFT_AIRPORTS_FILE`, the `.tsv.gz` from the
+    /// map-data release) reads whole and finds the big airports.
+    #[test]
+    #[ignore = "needs GLOBECRAFT_AIRPORTS_FILE"]
+    fn the_published_list_reads() {
+        let path = std::env::var("GLOBECRAFT_AIRPORTS_FILE").expect("GLOBECRAFT_AIRPORTS_FILE");
+        let bytes = std::fs::read(path).unwrap();
+        let mut text = String::new();
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_string(&mut text)
+            .unwrap();
+        let airports = Airports::parse(&text).unwrap();
+        println!("AIRPORTS {}", airports.len());
+        assert!(airports.len() > 5000);
+        for code in ["FRA", "EDDF", "JFK", "GRU", "SBGR", "NRT", "SYD"] {
+            assert!(airports.by_code(code).is_some(), "{code}");
+        }
+        let guess = airports.guess(50.05, 8.45, 250.0, Some(3_000.0), Some(2_000.0));
+        assert!(
+            matches!(guess, Some(FlightGuess::Departing(a)) if a.code() == "FRA"),
+            "{guess:?}"
+        );
+    }
 }
