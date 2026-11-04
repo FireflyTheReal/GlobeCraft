@@ -107,6 +107,12 @@ fn crossings(ring: &[(f64, f64)], lat: f64, lon: f64) -> usize {
 #[derive(Debug, Default)]
 pub struct TimeZones {
     pub zones: Vec<Zone>,
+    /// Where the clock changes (latitude, longitude): the borders between zones on
+    /// different clocks, without coasts.
+    pub lines: Vec<Vec<(f64, f64)>>,
+    /// One label per group of zones on the same clock: where, and its offsets
+    /// (`UTC+1/+2`).
+    pub labels: Vec<(f64, f64, Box<str>)>,
 }
 
 impl TimeZones {
@@ -130,11 +136,40 @@ impl TimeZones {
             value.as_array()?.iter().map(ring).collect()
         };
         let mut zones = Vec::new();
+        let mut lines = Vec::new();
+        let mut labels = Vec::new();
         for feature in features {
+            let geometry = &feature["geometry"];
+            match feature["properties"]["kind"].as_str() {
+                Some("line") => {
+                    match geometry["type"].as_str() {
+                        Some("LineString") => lines.extend(ring(&geometry["coordinates"])),
+                        Some("MultiLineString") => lines.extend(
+                            geometry["coordinates"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(ring),
+                        ),
+                        _ => {}
+                    }
+                    continue;
+                }
+                Some("label") => {
+                    if let (Some(text), Some(point)) = (
+                        feature["properties"]["label"].as_str(),
+                        ring(&serde_json::json!([geometry["coordinates"]]))
+                            .and_then(|points| points.first().copied()),
+                    ) {
+                        labels.push((point.0, point.1, text.into()));
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             let Some(tzid) = feature["properties"]["tzid"].as_str() else {
                 continue;
             };
-            let geometry = &feature["geometry"];
             let coordinates = &geometry["coordinates"];
             let polygons: Vec<Vec<Vec<(f64, f64)>>> = match geometry["type"].as_str() {
                 Some("Polygon") => polygon(coordinates).into_iter().collect(),
@@ -173,7 +208,11 @@ impl TimeZones {
         if zones.is_empty() {
             return Err("the time zone file holds no zones".into());
         }
-        Ok(Self { zones })
+        Ok(Self {
+            zones,
+            lines,
+            labels,
+        })
     }
 
     /// Reads the published file: gzip-compressed GeoJSON.
@@ -288,6 +327,10 @@ mod tests {
                  "geometry": {"type": "MultiPolygon", "coordinates": [
                     [[[68.0, 6.0], [97.0, 6.0], [97.0, 36.0], [68.0, 36.0], [68.0, 6.0]]]
                  ]}},
+                {"type": "Feature", "properties": {"kind": "line"},
+                 "geometry": {"type": "LineString", "coordinates": [[15.0, 47.0], [15.0, 55.0]]}},
+                {"type": "Feature", "properties": {"kind": "label", "label": "UTC+1/+2"},
+                 "geometry": {"type": "Point", "coordinates": [10.0, 51.0]}},
                 {"type": "Feature", "properties": {"tzid": "Etc/GMT+10"},
                  "geometry": {"type": "Polygon", "coordinates": [
                     [[-157.5, -30.0], [-142.5, -30.0], [-142.5, 30.0], [-157.5, 30.0], [-157.5, -30.0]]
@@ -300,6 +343,9 @@ mod tests {
     #[test]
     fn a_point_finds_its_zone_and_holes_are_left_out() {
         let zones = sample();
+        assert_eq!(zones.zones.len(), 3);
+        assert_eq!(zones.lines, vec![vec![(47.0, 15.0), (55.0, 15.0)]]);
+        assert_eq!(zones.labels, vec![(51.0, 10.0, "UTC+1/+2".into())]);
         assert_eq!(&*zones.zone_at(52.52, 13.40).unwrap().tzid, "Europe/Berlin");
         assert!(zones.zone_at(50.5, 9.5).is_none(), "inside the hole");
         assert_eq!(&*zones.zone_at(19.07, 72.88).unwrap().tzid, "Asia/Kolkata");

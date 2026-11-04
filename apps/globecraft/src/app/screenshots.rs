@@ -1400,6 +1400,27 @@ fn time_zones_screenshot() {
             "geometry": {"type": "Polygon", "coordinates": [ring(west)]}
         }));
     }
+    // Where the clock changes, and each clock's label, as the published file has.
+    for i in -12..=12 {
+        let lon = f64::from(i) * 15.0 - 7.5;
+        features.push(json!({
+            "type": "Feature", "properties": {"kind": "line"},
+            "geometry": {"type": "LineString", "coordinates": [[lon, -85.0], [lon, 85.0]]}
+        }));
+    }
+    for i in -12..12 {
+        let label = if i == 0 {
+            "UTC/+1".to_owned()
+        } else if i == 1 {
+            "UTC+1/+2".to_owned()
+        } else {
+            format!("UTC{i:+}")
+        };
+        features.push(json!({
+            "type": "Feature", "properties": {"kind": "label", "label": label},
+            "geometry": {"type": "Point", "coordinates": [f64::from(i) * 15.0, 20.0]}
+        }));
+    }
     let zones = globecraft_data::timezones::TimeZones::parse(&json!({
         "type": "FeatureCollection", "features": features
     }))

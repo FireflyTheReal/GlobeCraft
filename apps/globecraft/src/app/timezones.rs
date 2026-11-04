@@ -8,7 +8,10 @@ use globecraft_data::timezones::TimeZones;
 use std::sync::Arc;
 
 const BORDER: Color32 = Color32::from_rgba_premultiplied(200, 150, 60, 200);
-const BORDER_POINTS: f32 = 1.0;
+const BORDER_POINTS: f32 = 1.2;
+const LABEL: Color32 = Color32::from_rgb(255, 205, 110);
+const LABEL_HALO: Color32 = Color32::from_rgba_premultiplied(10, 12, 16, 220);
+const LABEL_POINTS: f32 = 12.0;
 
 /// What the borders were drawn for: the view, the zones and the map scale.
 type BordersKey = (Basis, Rect, usize, u32);
@@ -30,7 +33,7 @@ impl TimeZoneShapes {
     ) {
         let key = (*basis, rect, Arc::as_ptr(zones) as usize, scale.to_bits());
         if self.built.as_ref().is_none_or(|(built, _)| *built != key) {
-            self.built = Some((key, borders(basis, rect, zones, scale, view)));
+            self.built = Some((key, borders(painter, basis, rect, zones, scale, view)));
         }
         if let Some((_, shapes)) = &self.built {
             painter.extend(shapes.iter().cloned());
@@ -69,9 +72,44 @@ fn within_horizon(bounds: [f64; 4], (lat, lon, altitude_km): (f64, f64, f64)) ->
     }
 }
 
-/// Every zone's rings as lines on screen, cut where they leave the view or the
-/// visible side of the globe. `view`: the camera's latitude, longitude and altitude.
+/// A line with a point at least every `MAX_STEP_DEGREES`: the published lines keep
+/// only their corners, and a long straight side (an ocean zone's meridian) drawn
+/// between far-apart points would cut across the globe.
+fn densified(line: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    const MAX_STEP_DEGREES: f64 = 1.0;
+    let mut points = Vec::with_capacity(line.len());
+    for pair in line.windows(2) {
+        let ((lat_a, lon_a), (lat_b, lon_b)) = (pair[0], pair[1]);
+        let steps = ((lat_b - lat_a).abs().max((lon_b - lon_a).abs()) / MAX_STEP_DEGREES)
+            .ceil()
+            .max(1.0) as usize;
+        for i in 0..steps {
+            let t = i as f64 / steps as f64;
+            points.push((lat_a + (lat_b - lat_a) * t, lon_a + (lon_b - lon_a) * t));
+        }
+    }
+    points.extend(line.last().copied());
+    points
+}
+
+/// The bounds of a line: south, west, north, east.
+fn line_bounds(line: &[(f64, f64)]) -> [f64; 4] {
+    line.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |[s, w, n, e], &(lat, lon)| [s.min(lat), w.min(lon), n.max(lat), e.max(lon)],
+    )
+}
+
+/// The lines where the clock changes, on screen, cut where they leave the view or
+/// the visible side of the globe, and each clock's label. `view`: the camera's
+/// latitude, longitude and altitude.
 fn borders(
+    painter: &egui::Painter,
     basis: &Basis,
     rect: Rect,
     zones: &TimeZones,
@@ -87,15 +125,14 @@ fn borders(
         }
         run.clear();
     };
-    for ring in zones
-        .zones
+    for line in zones
+        .lines
         .iter()
-        .filter(|zone| within_horizon(zone.bounds(), view))
-        .flat_map(|zone| zone.polygons.iter().flatten())
+        .filter(|line| within_horizon(line_bounds(line), view))
     {
         let mut run: Vec<Pos2> = Vec::new();
         let mut previous = None;
-        for &(lat, lon) in ring {
+        for (lat, lon) in densified(line) {
             let current =
                 globecraft_render::overlays::project_unhidden(basis, rect, None, None, lat, lon);
             match previous
@@ -112,6 +149,36 @@ fn borders(
             previous = current;
         }
         flush(&mut run);
+    }
+    // The offsets, one per group of zones on the same clock, kept apart.
+    let font = super::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
+    let mut taken: Vec<Rect> = Vec::new();
+    for (lat, lon, text) in &zones.labels {
+        let Some(at) =
+            globecraft_render::overlays::project_unhidden(basis, rect, None, None, *lat, *lon)
+                .map(|p| Pos2::new(p.x as f32, p.y as f32))
+        else {
+            continue;
+        };
+        if !rect.contains(at) {
+            continue;
+        }
+        let galley = painter.layout_no_wrap(text.to_string(), font.clone(), LABEL);
+        let bounds = Rect::from_center_size(at, galley.size()).expand(4.0 * scale);
+        if taken.iter().any(|other| other.intersects(bounds)) {
+            continue;
+        }
+        taken.push(bounds);
+        let corner = at - galley.size() / 2.0;
+        let halo = painter.layout_no_wrap(text.to_string(), font.clone(), LABEL_HALO);
+        for offset in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, -1.0)] {
+            shapes.push(Shape::galley(
+                corner + offset * scale,
+                halo.clone(),
+                LABEL_HALO,
+            ));
+        }
+        shapes.push(Shape::galley(corner, galley, LABEL));
     }
     shapes
 }
@@ -195,11 +262,19 @@ mod tests {
                 tilt: 0.0,
             }
             .basis(1.6);
+            let ctx = egui::Context::default();
+            let raw = egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            };
             let start = std::time::Instant::now();
             let mut shapes = 0;
-            for _ in 0..10 {
-                shapes = borders(&basis, rect, &zones, 1.0, (48.0, 10.0, alt)).len();
-            }
+            let _ = crate::app::test_ui::run(&ctx, raw, |ui| {
+                for _ in 0..10 {
+                    shapes =
+                        borders(ui.painter(), &basis, rect, &zones, 1.0, (48.0, 10.0, alt)).len();
+                }
+            });
             println!(
                 "TZ BORDERS alt {alt} km: {:.2} ms, {shapes} lines",
                 start.elapsed().as_secs_f64() * 100.0
