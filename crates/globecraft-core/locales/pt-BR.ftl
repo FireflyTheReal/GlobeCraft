@@ -147,6 +147,20 @@ aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Velocidade: { $speed }
     Rumo: { $heading }  |  Taxa vertical: { $vertical_rate }
     Posição há { $age } s
+cmd-flight-select = Selecionar um voo
+cmd-flight-select-help = Acompanha um avião: a rota já voada, de onde vem e para onde vai, e a posição a cada poucos segundos.
+cmd-flight-clear = Fechar o voo
+cmd-flight-clear-help = Deixa de acompanhar o avião selecionado.
+flight-card-route = { $from } → { $to }
+flight-card-route-loading = Buscando a rota…
+flight-card-route-unknown = Rota desconhecida
+flight-card-route-unsure = A rota publicada pode não ser a deste voo.
+flight-card-flown = Voando há { $time }
+flight-card-to-go = Faltam { $distance }
+flight-card-track-loading = Carregando a rota voada…
+flight-card-error = Sem rota voada: { $error }
+flight-card-close = Deixar de acompanhar este avião
+flight-card-source = Rota e trajeto: ADSB.lol (ODbL)
 layers-weather-toggle = Mapa do clima (radar de chuva ao vivo)
 layers-clouds-toggle = Mapa das nuvens por satélite (Matt Eason)
 layers-live-overlays-help = Aviões reais, com cobertura incompleta: atualização global a cada ~17 min e local a cada ~90 s. Nuvens ~3 h; radar de chuva ~10 min. Requer internet.

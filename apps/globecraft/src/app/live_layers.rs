@@ -62,6 +62,21 @@ impl AircraftOverlay {
             shape_key: None,
         }
     }
+    /// The plane drawn under `point`, if any.
+    pub(super) fn flight_at(
+        &self,
+        point: egui::Pos2,
+    ) -> Option<globecraft_data::aircraft::Aircraft> {
+        let geometry = self.geometry.as_ref()?;
+        let reach = (HOVER_RADIUS_POINTS * geometry.view.map_scale).powi(2);
+        geometry
+            .flights
+            .iter()
+            .map(|flight| ((point - flight.position).length_sq(), flight))
+            .filter(|(distance, _)| *distance < reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, flight)| geometry.data.aircraft[flight.source_index].clone())
+    }
     pub(super) fn accept(&mut self, geometry: Arc<AircraftGeometry>, unix_secs: f64) {
         if !geometry.is_recent(unix_secs)
             || self.geometry.as_ref().is_some_and(|old| {
@@ -131,7 +146,7 @@ impl App {
                 map_scale: self.settings.map_scale,
                 pixels_per_point,
             },
-            data: self.live_aircraft.snapshot(),
+            data: self.aircraft_snapshot(),
             unix_secs: now_unix(),
         }
     }
@@ -147,6 +162,7 @@ impl App {
             let input =
                 self.aircraft_input(*basis, rect, altitude_km, painter.ctx().pixels_per_point());
             let step = input.view.motion_step();
+            self.paint_selected_flight(painter, basis, rect);
             let airports = self.live_airports.airports();
             self.aircraft_overlay
                 .draw(painter, input, self.lang, airports.as_deref());

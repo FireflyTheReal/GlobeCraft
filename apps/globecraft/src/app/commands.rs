@@ -767,6 +767,7 @@ impl App {
             }
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
             id if id.starts_with("time.") => self.run_time(id, p)?,
+            id if id.starts_with("flight.") => self.run_flight(id, p)?,
             "ui.timeline" => {
                 self.timeline_open = bool_param(p, "visible").unwrap_or(!self.timeline_open);
                 json!({"visible": self.timeline_open})
@@ -801,6 +802,14 @@ impl App {
             },
             "file.screenshot" => CommandState {
                 enabled: self.image.is_some() && !self.screenshot_running(),
+                checked: false,
+            },
+            "flight.clear" => CommandState {
+                enabled: self.flight_selection.selected().is_some(),
+                checked: false,
+            },
+            "flight.select" => CommandState {
+                enabled: earth,
                 checked: false,
             },
             "file.cancelScreenshot" => CommandState {

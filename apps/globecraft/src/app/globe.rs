@@ -262,6 +262,19 @@ impl App {
             }
         } else if !ruler_captured
             && resp.clicked()
+            && !self.ruler
+            && self.layer(MapLayer::Flights)
+            && let Some(plane) = resp
+                .interact_pointer_pos()
+                .filter(|p| rect.contains(*p))
+                .and_then(|p| self.aircraft_overlay.flight_at(p))
+        {
+            self.run_reporting(
+                "flight.select",
+                serde_json::json!({"hex": &*plane.hex, "callsign": plane.callsign.trim()}),
+            );
+        } else if !ruler_captured
+            && resp.clicked()
             && self.ruler
             && let Some(pt) = resp
                 .interact_pointer_pos()
@@ -594,6 +607,7 @@ impl App {
             ui.request_repaint();
         }
         self.timeline_bar(&ui.ctx().clone(), rect);
+        self.selected_flight_card(&ui.ctx().clone(), rect);
 
         // scale bar
         if let Some(scale_bar) = self.scale_bar_cache.for_view(

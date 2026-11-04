@@ -56,6 +56,7 @@ mod road_names;
 mod roads;
 mod ruler_history;
 mod search;
+mod selected_flight;
 mod still_shot;
 mod time;
 mod timezones;
@@ -149,6 +150,15 @@ pub(crate) struct App {
     live_maps: live_maps::LiveMaps,
     live_aircraft: globecraft_data::aircraft::LiveAircraft,
     aircraft_overlay: live_layers::AircraftOverlay,
+    /// The flight picked on the globe, with its track and route.
+    flight_selection: globecraft_data::aircraft::route::FlightSelection,
+    /// The flights with the selected one's newest position: (list it was made from,
+    /// that position's time, flights).
+    selected_snapshot: Option<(
+        usize,
+        f64,
+        std::sync::Arc<globecraft_data::aircraft::AircraftSnapshot>,
+    )>,
     live_geometry: live_geometry::LiveOverlay,
     world_shapes: live_layers::WorldShapes,
 
@@ -394,6 +404,8 @@ impl App {
                 move || ctx.request_repaint()
             }),
             aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
+            flight_selection: Default::default(),
+            selected_snapshot: None,
             live_geometry: live_geometry::LiveOverlay::new(
                 cc.egui_ctx.clone(),
                 Some(cache.clone()),
@@ -608,6 +620,7 @@ impl eframe::App for App {
         if aircraft_enabled {
             ctx.request_repaint_after(live_layers::FLIGHT_REPAINT_INTERVAL);
         }
+        self.update_selected_flight(ctx, aircraft_enabled);
         // Independent realtime layers, loaded only for the globe while enabled.
         let earth =
             self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;

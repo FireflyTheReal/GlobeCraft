@@ -547,6 +547,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         TOGGLE
     ),
     command!(
+        "flight.select",
+        "flight-select",
+        "plane",
+        Live,
+        View,
+        r#"{"type":"object","properties":{"hex":{"type":"string","description":"The plane's transponder (ICAO 24-bit) address, 6 hex digits"},"callsign":{"type":"string","description":"Its callsign, for its route; left out, the one it reports"}},"required":["hex"]}"#
+    ),
+    command!(
+        "flight.clear",
+        "flight-clear",
+        "close",
+        Live,
+        View,
+        NO_PARAMS
+    ),
+    command!(
         "time.set",
         "time-set",
         "history",

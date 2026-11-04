@@ -147,6 +147,20 @@ aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Speed: { $speed }
     Heading: { $heading }  |  Vertical rate: { $vertical_rate }
     Position { $age } s old
+cmd-flight-select = Select a flight
+cmd-flight-select-help = Follows one plane: its track so far, where it flies from and to, and its position every few seconds.
+cmd-flight-clear = Close the flight
+cmd-flight-clear-help = Stops following the selected plane.
+flight-card-route = { $from } → { $to }
+flight-card-route-loading = Looking up the route…
+flight-card-route-unknown = Route unknown
+flight-card-route-unsure = The published route may not be this flight's.
+flight-card-flown = Flown { $time }
+flight-card-to-go = { $distance } to go
+flight-card-track-loading = Loading the track…
+flight-card-error = No track: { $error }
+flight-card-close = Stop following this plane
+flight-card-source = Track and route: ADSB.lol (ODbL)
 layers-weather-toggle = Live precipitation radar (RainViewer)
 layers-clouds-toggle = Satellite cloud map (Matt Eason)
 layers-live-overlays-help = Aircraft positions come from live tracking (coverage incomplete); global updates ~17 min and nearby updates ~90 s. Cloud imagery ~3 h; rain radar ~10 min. Internet required.

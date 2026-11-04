@@ -1486,3 +1486,95 @@ fn time_zones_screenshot() {
         }
     }
 }
+
+/// A selected flight: its track so far coloured by altitude, the rest
+/// of its way to its destination dashed, both airports and the route card. Made-up
+/// Frankfurt to New York flight over the Atlantic; nothing is downloaded. Manual.
+#[test]
+#[ignore = "manual: renders a selected flight's track, route and card"]
+fn selected_flight_screenshot() {
+    use globecraft_data::aircraft::{
+        Aircraft,
+        route::{Route, RouteAirport, SelectedFlight, TrackPoint},
+    };
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let (frankfurt, new_york) = ((50.033, 8.570), (40.640, -73.779));
+    // Three hours along the great circle, one point a minute, climbing for 25 min.
+    let now = globecraft_core::math::now_unix();
+    let path = globecraft_core::math::great_circle(frankfurt, new_york, 480);
+    let track: Vec<TrackPoint> = path[..=180]
+        .iter()
+        .enumerate()
+        .map(|(minute, point)| {
+            let (lat, lon) = globecraft_core::math::v3_to_ll(*point);
+            TrackPoint {
+                unix: now - 60.0 * (180 - minute) as f64 - 4.0,
+                lat,
+                lon,
+                altitude_feet: Some((minute as f64 * 1500.0).min(37_000.0)),
+            }
+        })
+        .collect();
+    let last = *track.last().expect("track");
+    let next = globecraft_core::math::v3_to_ll(path[181]);
+    let heading = {
+        let (a, b) = (
+            (last.lat.to_radians(), last.lon.to_radians()),
+            (next.0.to_radians(), next.1.to_radians()),
+        );
+        let y = (b.1 - a.1).sin() * b.0.cos();
+        let x = a.0.cos() * b.0.sin() - a.0.sin() * b.0.cos() * (b.1 - a.1).cos();
+        y.atan2(x).to_degrees().rem_euclid(360.0)
+    };
+    let airport = |code: &str, name: &str, (lat, lon): (f64, f64)| RouteAirport {
+        code: code.into(),
+        name: name.into(),
+        lat,
+        lon,
+    };
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "flights", "visible": true}))
+        .expect("layer");
+    app.flight_selection.set(SelectedFlight {
+        hex: "3c6a9a".into(),
+        callsign: "DLH400".into(),
+        track: track.into(),
+        route: Some(Route {
+            origin: airport("FRA", "Frankfurt am Main", frankfurt),
+            destination: airport("JFK", "New York", new_york),
+            plausible: true,
+        }),
+        position: Some(Aircraft {
+            hex: "3c6a9a".into(),
+            callsign: "DLH400".into(),
+            latitude: last.lat,
+            longitude: last.lon,
+            heading_deg: heading,
+            speed_knots: Some(482.0),
+            altitude_feet: Some(37_000.0),
+            vertical_rate_fpm: Some(0.0),
+            turn_rate_deg_s: None,
+            observed_unix: now - 4.0,
+        }),
+        route_known: true,
+        error: None,
+    });
+    app.run(
+        "camera.set",
+        json!({"lat": 52.0, "lon": -30.0, "altitude_km": 7000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "29-selected-flight");
+    let selected = h.state_mut().run("flight.clear", json!({})).expect("clear");
+    assert_eq!(selected["selected"], Value::Null);
+    assert!(
+        h.state_mut()
+            .run("flight.select", json!({"hex": "nothex"}))
+            .is_err()
+    );
+}

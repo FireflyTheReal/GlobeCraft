@@ -250,6 +250,8 @@ pub struct FlightSelection {
     trace_asked: Option<Instant>,
     route_asked: bool,
     busy: usize,
+    /// Set by hand: nothing is downloaded.
+    fixed: bool,
 }
 
 impl FlightSelection {
@@ -273,6 +275,16 @@ impl FlightSelection {
         *self = Self::default();
     }
 
+    /// Selects a flight known in full, as finished downloads do (tests and
+    /// screenshots); nothing more is downloaded for it.
+    pub fn set(&mut self, flight: SelectedFlight) {
+        *self = Self {
+            flight: Some(flight),
+            fixed: true,
+            ..Self::default()
+        };
+    }
+
     pub fn selected(&self) -> Option<&SelectedFlight> {
         self.flight.as_ref()
     }
@@ -284,6 +296,9 @@ impl FlightSelection {
         airports: Option<Arc<crate::airports::Airports>>,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
+        if self.fixed {
+            return;
+        }
         let (Some(flight), Some(rx), Some(tx)) = (&mut self.flight, &self.rx, &self.tx) else {
             return;
         };
