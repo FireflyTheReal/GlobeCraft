@@ -81,7 +81,7 @@ impl App {
                 && let Some(p) = response.interact_pointer_pos()
             {
                 self.tilt_drag = response.drag_started();
-                self.cam.set_tilt(tilt_at(centre, p));
+                self.cam.tilt_zooming_out(tilt_at(centre, p));
                 self.fly = None;
                 active = true;
             }
@@ -97,7 +97,7 @@ impl App {
         if self.tilt_drag {
             match ui.input(|i| i.pointer.primary_down().then(|| i.pointer.interact_pos())) {
                 Some(Some(p)) => {
-                    self.cam.set_tilt(tilt_at(centre, p));
+                    self.cam.tilt_zooming_out(tilt_at(centre, p));
                     self.fly = None;
                     active = true;
                 }

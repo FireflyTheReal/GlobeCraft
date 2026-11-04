@@ -66,7 +66,7 @@ impl App {
             );
             // Up and down tilt: dragging up leans the view toward the horizon.
             if self.explorer.active == globecraft_core::body::Body::Earth {
-                self.cam.set_tilt(
+                self.cam.tilt_zooming_out(
                     self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
                 );
             }
@@ -82,7 +82,7 @@ impl App {
                 if amount != 0.0 {
                     self.fly = None;
                     self.cam
-                        .set_tilt(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
+                        .tilt_zooming_out(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
                     interacting = true;
                 }
             }
@@ -143,7 +143,7 @@ impl App {
                 if tilt != 0.0 {
                     self.fly = None;
                     self.cam
-                        .set_tilt(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
+                        .tilt_zooming_out(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
                     interacting = true;
                 }
             }

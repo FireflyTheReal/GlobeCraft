@@ -187,6 +187,22 @@ impl Cam {
             self.tilt = degrees.clamp(0.0, self.max_tilt());
         }
     }
+    /// Tilts to `degrees` (up to `MAX_TILT_DEG`), backing the camera off from the
+    /// ground point when it is too close for that tilt: tilting by hand never
+    /// locks, it zooms out as far as it needs.
+    pub fn tilt_zooming_out(&mut self, degrees: f64) {
+        /// Past the exact distance, so `max_tilt` does not round below the tilt.
+        const MARGIN: f64 = 1.0 + 1e-9;
+        if !degrees.is_finite() {
+            return;
+        }
+        let tilt = degrees.clamp(0.0, MAX_TILT_DEG);
+        let needed = MIN_TILTED_HEIGHT_KM / tilt.to_radians().cos() * MARGIN;
+        if self.alt < needed {
+            self.alt = needed.min(MAX_CAMERA_ALTITUDE_KM);
+        }
+        self.tilt = tilt.min(self.max_tilt());
+    }
     /// Keeps the tilt within `max_tilt` after the distance changed.
     pub fn clamp_tilt(&mut self) {
         /// Rounding in `max_tilt` at the zoom limit must not nibble at the tilt.
@@ -865,5 +881,30 @@ mod body_control_tests {
         assert!((cam.alt - MIN_CAMERA_ALTITUDE_KM).abs() < 1e-12);
         cam.set_zoom_fraction(2.0);
         assert!((cam.alt - MAX_CAMERA_ALTITUDE_KM).abs() < 1e-8);
+    }
+
+    #[test]
+    fn tilting_close_to_the_ground_zooms_out_instead_of_locking() {
+        let mut cam = Cam {
+            lat: 47.42,
+            lon: 10.98,
+            heading: 0.0,
+            alt: MIN_TILTED_HEIGHT_KM,
+            tilt: 0.0,
+        };
+        // Clamped tilting stays locked at this distance.
+        cam.set_tilt(45.0);
+        assert_eq!(cam.tilt, 0.0);
+        cam.tilt_zooming_out(45.0);
+        assert!((cam.tilt - 45.0).abs() < 1e-9, "{}", cam.tilt);
+        let height = cam.alt * cam.tilt.to_radians().cos();
+        assert!((height - MIN_TILTED_HEIGHT_KM).abs() < 1e-6, "{height}");
+        // The steepest tilt, and never past it.
+        cam.tilt_zooming_out(120.0);
+        assert!((cam.tilt - MAX_TILT_DEG).abs() < 1e-9);
+        // Far enough away, tilting leaves the distance alone.
+        let mut far = Cam { alt: 500.0, ..cam };
+        far.tilt_zooming_out(30.0);
+        assert_eq!((far.alt, far.tilt), (500.0, 30.0));
     }
 }

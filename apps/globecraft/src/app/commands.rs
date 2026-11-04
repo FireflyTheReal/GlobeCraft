@@ -180,7 +180,13 @@ impl App {
                 }
                 self.cam.clamp_tilt();
                 if let Some(tilt) = f64_param(p, "tilt_deg")? {
-                    self.cam.set_tilt(tilt);
+                    // A given altitude is kept (the tilt yields); otherwise the tilt
+                    // wins and the camera backs off as far as it needs.
+                    if p.get("altitude_km").is_some() {
+                        self.cam.set_tilt(tilt);
+                    } else {
+                        self.cam.tilt_zooming_out(tilt);
+                    }
                 }
                 self.touch();
                 self.camera_json()
@@ -223,7 +229,7 @@ impl App {
                     (None, Some(step)) => self.cam.tilt + step,
                     (None, None) => return Err("give tilt_deg or step".into()),
                 };
-                self.cam.set_tilt(tilt);
+                self.cam.tilt_zooming_out(tilt);
                 self.touch();
                 self.camera_json()
             }
