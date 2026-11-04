@@ -31,6 +31,21 @@ impl P<'_> {
         let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
         self.p.add(Shape::closed_line(v, Stroke::new(self.w(w), c)));
     }
+    /// A band between two curves of the same length, shaded from `low` along the
+    /// first to `high` along the second (aurora light, gradients).
+    fn band(&self, lower: &[(f32, f32)], upper: &[(f32, f32)], low: Color32, high: Color32) {
+        let mut mesh = egui::Mesh::default();
+        for (&(x0, y0), &(x1, y1)) in lower.iter().zip(upper) {
+            mesh.colored_vertex(self.pt(x0, y0), low);
+            mesh.colored_vertex(self.pt(x1, y1), high);
+        }
+        for i in 0..lower.len().min(upper.len()).saturating_sub(1) as u32 {
+            let k = 2 * i;
+            mesh.add_triangle(k, k + 1, k + 2);
+            mesh.add_triangle(k + 1, k + 3, k + 2);
+        }
+        self.p.add(Shape::mesh(mesh));
+    }
     /// Convex fill.
     fn fill(&self, pts: &[(f32, f32)], c: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
@@ -2405,22 +2420,38 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.circle(15.5, 15.0, 1.4, Some(green), None);
         }
         "aurora" => {
-            // Three curtains of light hanging over a dark horizon.
-            for (x, height, glow) in [(6.0, 11.0, 0.5), (12.0, 14.0, 0.8), (18.0, 10.0, 0.6)] {
-                let top = 17.0 - height;
-                p.fill(
-                    &[
-                        (x - 2.5, 17.0),
-                        (x - 1.0, top),
-                        (x + 1.5, top + 1.5),
-                        (x + 2.5, 17.0),
-                    ],
-                    green.gamma_multiply(glow * 0.45),
-                );
-                p.line(&[(x - 1.0, top), (x + 1.5, top + 1.5)], 1.2, green);
-            }
-            p.line(&[(3.0, 17.0), (21.0, 17.0)], 1.3, ink);
-            p.line(&[(3.0, 20.0), (21.0, 20.0)], 1.0, ink.gamma_multiply(0.5));
+            // A curtain of light, bright along its folded hem, fading upward, over hills.
+            let xs: Vec<f32> = (0..=40).map(|i| 2.5 + i as f32 * 0.475).collect();
+            let hem: Vec<(f32, f32)> = xs
+                .iter()
+                .map(|&x| (x, 14.0 + (x * 0.55).sin() * 1.5))
+                .collect();
+            let top: Vec<(f32, f32)> = hem
+                .iter()
+                .map(|&(x, y)| (x, y - 6.5 - (x * 0.8).sin().abs() * 3.5))
+                .collect();
+            p.band(&hem, &top, green, Color32::TRANSPARENT);
+            p.line(&hem, 1.4, green);
+            p.fill(
+                &[
+                    (2.0, 21.0),
+                    (2.0, 18.0),
+                    (7.0, 16.0),
+                    (12.0, 18.5),
+                    (12.0, 21.0),
+                ],
+                ink,
+            );
+            p.fill(
+                &[
+                    (10.0, 21.0),
+                    (10.0, 18.5),
+                    (16.0, 16.5),
+                    (22.0, 18.5),
+                    (22.0, 21.0),
+                ],
+                ink,
+            );
         }
         "cloud" => {
             let fill = p.tint(70);
