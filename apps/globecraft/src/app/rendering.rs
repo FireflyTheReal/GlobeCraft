@@ -1,4 +1,5 @@
 use super::App;
+use super::time::night_lights_credit;
 use eframe::egui;
 use globecraft_core::layers::MapLayer;
 use globecraft_core::{
@@ -313,8 +314,9 @@ impl App {
             lod_scale,
             level_blend: true,
             fixed_level: None,
-            night_lights: self.layer(MapLayer::NightLights)
-                && self.explorer.active == globecraft_core::body::Body::Earth,
+            night_lights: (self.layer(MapLayer::NightLights)
+                && self.explorer.active == globecraft_core::body::Body::Earth)
+                .then(|| self.night_lights_edition()),
             stars: self.layer(MapLayer::Stars),
         }
     }
@@ -494,12 +496,14 @@ impl App {
             .provider
             .attribution(globecraft_core::language::Lang::En)
             .to_string();
-        if frame.request.cfg.night_lights {
+        if let Some(edition) = frame.request.cfg.night_lights {
             self.renderer.displayed_credits.push_str("; ");
-            self.renderer.displayed_credits.push_str(
-                globecraft_data::tiles::Provider::NightLights
-                    .attribution(globecraft_core::language::Lang::En),
-            );
+            self.renderer
+                .displayed_credits
+                .push_str(&night_lights_credit(
+                    edition,
+                    globecraft_core::language::Lang::En,
+                ));
         }
         if self.renderer.displayed_sky {
             self.renderer.displayed_credits.push_str("; ");

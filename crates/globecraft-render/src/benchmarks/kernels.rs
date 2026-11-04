@@ -46,7 +46,7 @@ fn earth_model_kernel_time() {
         lod_scale: 1.0,
         level_blend: true,
         fixed_level: None,
-        night_lights: false,
+        night_lights: None,
         stars: true,
     };
     for model in EarthModel::ALL {
@@ -158,7 +158,7 @@ fn earth_model_raster_capture() {
                     lod_scale: 1.0,
                     level_blend: true,
                     fixed_level: None,
-                    night_lights: false,
+                    night_lights: None,
                     stars: true,
                 };
                 let (pixels, _) =

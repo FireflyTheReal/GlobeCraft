@@ -71,7 +71,7 @@ fn request(longitude: f64, presentation: u64) -> RenderRequest {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
-            night_lights: false,
+            night_lights: None,
             stars: true,
         },
         presentation,

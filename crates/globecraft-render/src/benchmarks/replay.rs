@@ -268,7 +268,7 @@ fn replay(
         lod_scale,
         level_blend: true,
         fixed_level: None,
-        night_lights: false,
+        night_lights: None,
         stars: true,
     };
     let hole = hole_rgba(&config(1.0));

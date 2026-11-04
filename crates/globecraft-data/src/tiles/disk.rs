@@ -64,6 +64,12 @@ impl DiskCache {
                     .id
                     .to_string(),
             );
+        } else if release > 0
+            && let Some(edition) = provider.source().editions.get(usize::from(release))
+        {
+            // The newest edition keeps the folder's top level (where the cache had it
+            // before editions); older ones get their own.
+            base = base.join(edition);
         }
         Ok(base
             .join(zoom.to_string())

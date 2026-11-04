@@ -91,7 +91,7 @@ impl Provider {
         let source = self.source();
         match source.access {
             Access::Wayback => wayback_tile_url(rel, z, x, y),
-            Access::Xyz { .. } => source.tile_url(z, x, y).unwrap_or_default(),
+            Access::Xyz { .. } => source.tile_url(z, x, y, rel).unwrap_or_default(),
         }
     }
     pub fn attribution(self, lg: Lang) -> &'static str {
@@ -105,7 +105,8 @@ impl Provider {
 
 pub type TileKey = u64;
 // Key layout: y 19 bits | x 19 bits | release index 16 bits | zoom 5 bits | source 5 bits.
-// `rel` is the index of the Wayback release (0 for every other provider).
+// `rel` is the index of the Wayback release, or of a dated source's edition (0 for
+// every other provider).
 pub fn make_key(p: Provider, z: u8, x: u32, y: u32, rel: u16) -> TileKey {
     (p.id() << PROVIDER_SHIFT)
         | ((z as u64) << ZOOM_SHIFT)

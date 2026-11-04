@@ -67,6 +67,10 @@ pub struct TileSource {
     /// Downloads from this source at once.
     #[serde(default = "default_max_parallel")]
     pub max_parallel: u8,
+    /// Dated editions (`YYYY-MM-DD`, newest first) that `{date}` in the template
+    /// stands for; a tile key's release index picks one. Empty for undated sources.
+    #[serde(default)]
+    pub editions: Vec<String>,
 }
 
 fn default_max_parallel() -> u8 {
@@ -107,14 +111,36 @@ pub(super) static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 
 impl TileSource {
     /// The address of tile `z/x/y`, for template sources.
-    pub fn tile_url(&self, z: u8, x: u32, y: u32) -> Option<String> {
+    /// The edition shown on `date` (`YYYY-MM-DD`): the newest on or before it, the
+    /// oldest for days before all of them; 0 for undated sources.
+    pub fn edition_for(&self, date: &str) -> u16 {
+        let index = self
+            .editions
+            .iter()
+            .position(|edition| edition.as_str() <= date)
+            .unwrap_or(self.editions.len().saturating_sub(1));
+        u16::try_from(index).unwrap_or(0)
+    }
+
+    /// The year of an edition, for credits (`None` for undated sources).
+    pub fn edition_year(&self, edition: u16) -> Option<&str> {
+        self.editions
+            .get(usize::from(edition))
+            .map(|date| &date[..4])
+    }
+
+    pub fn tile_url(&self, z: u8, x: u32, y: u32, edition: u16) -> Option<String> {
         match &self.access {
-            Access::Xyz { template } => Some(
-                template
+            Access::Xyz { template } => {
+                let mut url = template
                     .replace("{z}", &z.to_string())
                     .replace("{x}", &x.to_string())
-                    .replace("{y}", &y.to_string()),
-            ),
+                    .replace("{y}", &y.to_string());
+                if let Some(date) = self.editions.get(usize::from(edition)) {
+                    url = url.replace("{date}", date);
+                }
+                Some(url)
+            }
             Access::Wayback => None,
         }
     }
@@ -169,10 +195,28 @@ mod tests {
             attribution_key: None,
             prefetch: Prefetch::Allowed,
             max_parallel: 4,
+            editions: Vec::new(),
         };
         assert_eq!(
-            source.tile_url(3, 5, 2).as_deref(),
+            source.tile_url(3, 5, 2, 0).as_deref(),
             Some("https://example.org/3/2/5.png")
         );
+    }
+
+    #[test]
+    fn dated_sources_pick_the_edition_for_the_day() {
+        let lights = super::super::Provider::NightLights.source();
+        assert_eq!(lights.editions, ["2016-01-01", "2012-01-01"]);
+        assert_eq!(lights.edition_for("2026-11-04"), 0);
+        assert_eq!(lights.edition_for("2016-01-01"), 0);
+        assert_eq!(lights.edition_for("2015-12-31"), 1);
+        assert_eq!(lights.edition_for("1990-06-01"), 1);
+        assert_eq!(lights.edition_year(1), Some("2012"));
+        let url = lights.tile_url(2, 1, 2, 1).unwrap();
+        assert!(
+            url.contains("/2012-01-01/GoogleMapsCompatible_Level8/2/2/1.png"),
+            "{url}"
+        );
+        assert!(!lights.tile_url(2, 1, 2, 0).unwrap().contains("{date}"));
     }
 }

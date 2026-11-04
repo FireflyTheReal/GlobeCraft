@@ -167,7 +167,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         lod_scale: 1.0,
         level_blend: true,
         fixed_level: None,
-        night_lights: false,
+        night_lights: None,
         stars: true,
     };
     // Global overview warming must also cover parts of the globe that were
@@ -282,7 +282,7 @@ fn warm_gpu_frame_time() {
                 lod_scale: 1.0,
                 level_blend: true,
                 fixed_level: None,
-                night_lights: false,
+                night_lights: None,
                 stars: true,
             },
             overlays: None,
@@ -495,7 +495,7 @@ fn warm_gpu_frame_time() {
                 lod_scale: 1.0,
                 level_blend: true,
                 fixed_level: None,
-                night_lights: false,
+                night_lights: None,
                 stars: true,
             },
             overlays: None,

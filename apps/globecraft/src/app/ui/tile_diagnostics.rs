@@ -99,7 +99,7 @@ impl App {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
-            night_lights: false,
+            night_lights: None,
             stars: false,
         };
         let tiles = globecraft_render::diagnostics::view_tiles(w, h, basis, &cfg, rect);

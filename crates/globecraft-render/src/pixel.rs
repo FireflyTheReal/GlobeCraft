@@ -236,7 +236,7 @@ mod tests {
                 lod_scale,
                 level_blend: true,
                 fixed_level: None,
-                night_lights: false,
+                night_lights: None,
                 stars: true,
             };
             let rays = RayCaster::new(w, h, &basis);
@@ -275,7 +275,7 @@ mod tests {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
-            night_lights: false,
+            night_lights: None,
             stars: true,
         };
         for latitude in [
@@ -332,7 +332,7 @@ mod tests {
             lod_scale: 1.0,
             level_blend: true,
             fixed_level: None,
-            night_lights: false,
+            night_lights: None,
             stars: true,
         };
         // Stay midway between parallels so only the prime meridian can mark

@@ -67,7 +67,7 @@ pub struct RasterView {
     /// The terrain height the camera looks at (km), part of the camera position.
     pub ground_km: f64,
     pub sunlight: bool,
-    pub night_lights: bool,
+    pub night_lights: Option<u16>,
     pub stars: bool,
     pub sky: bool,
     pub cinematic_sky: bool,
@@ -169,7 +169,7 @@ mod tests {
             sunlight: false,
             sky: false,
             cinematic_sky: false,
-            night_lights: false,
+            night_lights: None,
             stars: true,
         };
         let off = view.keys(120.0);
@@ -215,7 +215,7 @@ mod tests {
             sunlight: true,
             sky: false,
             cinematic_sky: false,
-            night_lights: false,
+            night_lights: None,
             stars: true,
         };
         let original = view.keys(120.0);
@@ -269,7 +269,7 @@ mod tests {
             terrain: false,
             terrain_exaggeration: 1.0,
             ground_km: 0.0,
-            night_lights: false,
+            night_lights: None,
             stars: true,
         };
         let flat = view.keys(120.0);

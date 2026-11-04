@@ -2,7 +2,17 @@
 use super::App;
 use globecraft_core::math::now_unix;
 use globecraft_core::time::{HOUR_SECS, parse_iso};
+use globecraft_data::tiles::Provider;
 use serde_json::{Value, json};
+
+/// The night lights' credit for an edition, with its year.
+pub(super) fn night_lights_credit(edition: u16, lang: globecraft_core::language::Lang) -> String {
+    let provider = Provider::NightLights;
+    match provider.source().edition_year(edition) {
+        Some(year) => format!("{} {year}", provider.attribution(lang)),
+        None => provider.attribution(lang).to_owned(),
+    }
+}
 
 /// A playing time moves dated imagery on at most this often.
 const IMAGERY_STEP: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -38,6 +48,18 @@ impl App {
             self.imagery_time = (scene, std::time::Instant::now());
         }
         self.imagery_time.0
+    }
+
+    /// The night-lights edition for the app's time: the newest composite on or
+    /// before its day (NASA's 2016 one, the 2012 one before 2016).
+    pub(super) fn night_lights_edition(&self) -> u16 {
+        let date = globecraft_core::time::date_utc(self.scene_unix());
+        Provider::NightLights.source().edition_for(&date)
+    }
+
+    /// The night lights' credit, with the year shown.
+    pub(super) fn night_lights_credit(&self, lang: globecraft_core::language::Lang) -> String {
+        night_lights_credit(self.night_lights_edition(), lang)
     }
 
     /// Runs a `time.*` command.

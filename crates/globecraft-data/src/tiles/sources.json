@@ -93,20 +93,21 @@
     {
       "id": 5,
       "code": "night_lights",
-      "name": "Earth at Night (NASA Black Marble 2016)",
+      "name": "Earth at Night (NASA Black Marble)",
       "name_key": "provider-night-lights-label",
       "kind": "overlay",
       "basemap": false,
       "access": {
         "type": "xyz",
-        "template": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png"
+        "template": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/{date}/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png"
       },
+      "editions": ["2016-01-01", "2012-01-01"],
       "max_zoom": 8,
       "cache_dir": "gibs_black_marble",
-      "attribution": "Night lights: NASA Earth Observatory / GIBS (VIIRS Black Marble 2016)",
+      "attribution": "Night lights: NASA Earth Observatory / GIBS (VIIRS Black Marble)",
       "prefetch": "allowed",
       "max_parallel": 4,
-      "notes": "NASA GIBS, layer VIIRS_Black_Marble (Worldview: 'Earth at Night', 500 m, a 2012 and a 2016 composite), Web Mercator tile matrix GoogleMapsCompatible_Level8."
+      "notes": "NASA GIBS, layer VIIRS_Black_Marble (Worldview: 'Earth at Night', 500 m, a 2012 and a 2016 composite; 2020-2022 answer 404, checked 2026-11-04), Web Mercator tile matrix GoogleMapsCompatible_Level8. The app's time picks the edition."
     }
   ]
 }

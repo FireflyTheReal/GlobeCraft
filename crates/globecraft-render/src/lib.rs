@@ -79,7 +79,8 @@ pub struct RenderCfg {
     pub fixed_level: Option<i32>,
     /// City lights (NASA Black Marble): added on the night side when the sun is
     /// shown, the whole surface otherwise.
-    pub night_lights: bool,
+    /// Night lights, by the edition of their tiles (see `TileSource::editions`).
+    pub night_lights: Option<u16>,
     /// Point stars in the sky (over the Milky Way when it shows).
     pub stars: bool,
 }
@@ -309,11 +310,12 @@ fn night_lights(
     cfg: &RenderCfg,
     surface: &Surface,
 ) -> Option<Vec4> {
-    if !cfg.night_lights || (cfg.sun.is_some() && surface.darkness < MIN_NIGHT_LIGHTS_DARKNESS) {
+    let edition = cfg.night_lights?;
+    if cfg.sun.is_some() && surface.darkness < MIN_NIGHT_LIGHTS_DARKNESS {
         return None;
     }
     let level = natural_level(surface).min(i32::from(Provider::NightLights.max_zoom()));
-    let (col, found) = sample_chain(loc, Provider::NightLights, 0, level, surface);
+    let (col, found) = sample_chain(loc, Provider::NightLights, edition, level, surface);
     (found >= 0).then_some(col)
 }
 
