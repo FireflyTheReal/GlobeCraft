@@ -45,11 +45,14 @@ jobs:
       - name: Simplify
         run: |
           set -euo pipefail
-          source=$(ls *.json | head -1)
+          source=$(ls combined*.json | head -1)
+          python3 -c "import json,sys; f=json.load(open(sys.argv[1]))['features']; print(len(f), 'source features', sorted({x['geometry']['type'] for x in f}))" "$source"
           # Enough for a globe and a cursor: a few hundred metres off at the most.
-          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 "$source" \
+          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i "$source" \
+            -info \
             -simplify 1% weighted keep-shapes \
             -filter-fields tzid \
+            -info \
             -o precision=0.001 format=geojson timezones.geojson
           ls -la timezones.geojson
           python3 - <<'PY'
