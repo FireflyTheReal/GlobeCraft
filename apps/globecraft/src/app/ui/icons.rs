@@ -1579,6 +1579,15 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
             p.line(&[(12.0, 12.0), (19.0, 5.5)], 1.5, green);
             p.circle(15.5, 15.0, 1.4, Some(green), None);
         }
+        "time_zones" => {
+            // A globe cut into zones by meridians, with a clock face over it.
+            p.circle(10.0, 12.0, 8.5, Some(p.tint(50)), Some((1.3, ink)));
+            for x in [5.5, 10.0, 14.5] {
+                p.line(&[(x, 4.0), (x, 20.0)], 1.0, ink.gamma_multiply(0.7));
+            }
+            p.circle(17.0, 17.0, 5.5, Some(p.paper()), Some((1.3, ink)));
+            p.line(&[(17.0, 13.8), (17.0, 17.0), (19.4, 18.3)], 1.3, accent);
+        }
         "aurora" => {
             // A curtain of light, bright along its folded hem, fading upward, over hills.
             let xs: Vec<f32> = (0..=40).map(|i| 2.5 + i as f32 * 0.475).collect();

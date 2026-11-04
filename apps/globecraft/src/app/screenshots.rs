@@ -1366,3 +1366,71 @@ fn river_name_screenshot() {
     let image = h.render().expect("render");
     image.save(dir.join("27-river-name.png")).expect("save");
 }
+
+/// The Time zones layer (roadmap 5, `REF-05`) with made-up zones 15° wide: their
+/// borders, and the local time under the cursor over Berlin at the app's time. Manual.
+#[test]
+#[ignore = "manual: renders time zone borders and the local time"]
+fn time_zones_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    // A zone's outline with a point every 5° along its sides, as real outlines have.
+    let ring = |west: f64| {
+        let east = west + 15.0;
+        let mut points: Vec<[f64; 2]> = (0..=34)
+            .map(|k| [east, -85.0 + 5.0 * f64::from(k)])
+            .collect();
+        points.extend((0..=34).map(|k| [west, 85.0 - 5.0 * f64::from(k)]));
+        points.push([east, -85.0]);
+        points
+    };
+    let mut features = Vec::new();
+    for i in -12..12 {
+        let west = f64::from(i) * 15.0 - 7.5;
+        let tzid = match i {
+            1 => "Europe/Berlin".to_owned(),
+            0 => "Europe/London".to_owned(),
+            _ => format!("Etc/GMT{:+}", -i),
+        };
+        features.push(json!({
+            "type": "Feature",
+            "properties": {"tzid": tzid},
+            "geometry": {"type": "Polygon", "coordinates": [ring(west)]}
+        }));
+    }
+    let zones = globecraft_data::timezones::TimeZones::parse(&json!({
+        "type": "FeatureCollection", "features": features
+    }))
+    .expect("zones");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.live_time_zones.set(zones);
+    app.run(
+        "layer.show",
+        json!({"layer": "time_zones", "visible": true}),
+    )
+    .expect("layer");
+    app.run("time.set", json!({"time": "2026-07-01T12:00:00Z"}))
+        .expect("time");
+    app.run(
+        "camera.set",
+        json!({"lat": 50.0, "lon": 10.0, "altitude_km": 9000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 3.0);
+    // The pointer near the middle of the globe's view (10° E: the Berlin zone).
+    let size = h.ctx.content_rect().size();
+    let centre = egui::pos2(160.0 + size.x / 2.0, 95.0 + size.y / 2.0);
+    for _ in 0..3 {
+        h.event(egui::Event::PointerMoved(centre));
+        h.step();
+    }
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "28-time-zones");
+    let cursor = h.state().cursor.expect("pointer over the globe");
+    assert!((2.5..17.5).contains(&cursor.1), "{cursor:?}");
+    let local = h.state().cursor_local_time().expect("local time");
+    assert_eq!(local, "14:00 CEST (UTC+2)");
+}

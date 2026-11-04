@@ -43,6 +43,8 @@ pub enum MapLayer {
     /// NOAA's aurora forecast, glowing on the night side. Last, so the bits of saved
     /// layer sets keep their meaning.
     Aurora,
+    /// Time zone borders, and the local time under the cursor.
+    TimeZones,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -79,7 +81,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -87,6 +89,7 @@ impl MapLayer {
         Self::Terrain,
         Self::Grid,
         Self::GridLabels,
+        Self::TimeZones,
         Self::Atmosphere,
         Self::Sunlight,
         Self::Stars,
@@ -128,6 +131,7 @@ impl MapLayer {
             Self::Radar => "radar",
             Self::Clouds => "clouds",
             Self::Aurora => "aurora",
+            Self::TimeZones => "time_zones",
             Self::Flights => "flights",
             Self::Vessels => "vessels",
             Self::Satellites => "satellites",
@@ -166,6 +170,7 @@ impl MapLayer {
             Self::Radar => "layers-weather-toggle",
             Self::Clouds => "layers-clouds-toggle",
             Self::Aurora => "layers-aurora-toggle",
+            Self::TimeZones => "layers-timezones-toggle",
             Self::Flights => "layers-flights-toggle",
             Self::Vessels => "layers-vessels-toggle",
             Self::Satellites => "layers-satellites-toggle",
@@ -198,6 +203,7 @@ impl MapLayer {
             Self::Radar => "radar",
             Self::Clouds => "cloud",
             Self::Aurora => "aurora",
+            Self::TimeZones => "time_zones",
             Self::Flights => "plane",
             Self::Vessels => "ship",
             Self::Satellites => "satellite",
@@ -224,7 +230,7 @@ impl MapLayer {
             | Self::Peaks
             | Self::Waters
             | Self::Parks => LayerGroup::Geography,
-            Self::Terrain | Self::Grid | Self::GridLabels => LayerGroup::Globe,
+            Self::Terrain | Self::Grid | Self::GridLabels | Self::TimeZones => LayerGroup::Globe,
             Self::Atmosphere
             | Self::Sunlight
             | Self::NightLights

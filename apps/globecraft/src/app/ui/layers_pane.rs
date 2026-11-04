@@ -721,6 +721,14 @@ impl App {
                     "https://www.digitraffic.fi/en/marine-traffic/",
                 );
             }
+            MapLayer::TimeZones => {
+                note(ui, t, &self.live_time_zones.status(lang));
+                credit(
+                    ui,
+                    lang.text("timezones-source"),
+                    "https://github.com/evansiroky/timezone-boundary-builder",
+                );
+            }
             MapLayer::Aurora => {
                 note(ui, t, &self.live_aurora.status(lang));
                 credit(

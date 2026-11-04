@@ -34,6 +34,7 @@ pub mod planet;
 pub mod poi;
 pub mod roads;
 pub mod satellites;
+pub mod timezones;
 pub mod traffic;
 pub mod transport;
 pub mod updater;

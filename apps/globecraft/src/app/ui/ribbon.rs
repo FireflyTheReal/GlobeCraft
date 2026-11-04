@@ -369,6 +369,9 @@ impl App {
                 self.layer_small(ui, MapLayer::Grid);
                 self.layer_small(ui, MapLayer::GridLabels);
             });
+            col(ui, |ui| {
+                self.layer_small(ui, MapLayer::TimeZones);
+            });
         });
         if self.settings.experience.is_advanced() {
             self.earth_model_group(ui);
@@ -868,6 +871,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Terrain => "ribbon-layer-terrain",
         MapLayer::Grid => "ribbon-layer-grid",
         MapLayer::GridLabels => "ribbon-layer-grid-labels",
+        MapLayer::TimeZones => "ribbon-layer-timezones",
         MapLayer::Atmosphere => "ribbon-layer-atmosphere",
         MapLayer::Sunlight => "ribbon-layer-sunlight",
         MapLayer::Stars => "ribbon-layer-stars",

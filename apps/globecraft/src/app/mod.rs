@@ -58,6 +58,7 @@ mod ruler_history;
 mod search;
 mod still_shot;
 mod time;
+mod timezones;
 mod traffic;
 mod ui;
 mod update_restart;
@@ -140,6 +141,8 @@ pub(crate) struct App {
     live_satellites: globecraft_data::satellites::LiveSatellites,
     live_aurora: globecraft_data::aurora::LiveAurora,
     live_airports: globecraft_data::airports::LiveAirports,
+    live_time_zones: globecraft_data::timezones::LiveTimeZones,
+    time_zone_shapes: timezones::TimeZoneShapes,
     aurora_shapes: live_layers::AuroraShapes,
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
@@ -380,6 +383,8 @@ impl App {
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             live_aurora: globecraft_data::aurora::LiveAurora::default(),
             live_airports: globecraft_data::airports::LiveAirports::default(),
+            live_time_zones: globecraft_data::timezones::LiveTimeZones::default(),
+            time_zone_shapes: timezones::TimeZoneShapes::default(),
             aurora_shapes: live_layers::AuroraShapes::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
@@ -631,6 +636,7 @@ impl eframe::App for App {
             (earth && self.layer(MapLayer::Flights)) || !self.query.trim().is_empty(),
             move || airports_wake.request_repaint(),
         );
+        self.update_time_zones(ctx, earth);
         let transport_wake = ctx.clone();
         self.transport_tiles.update(
             &self.runtime,

@@ -514,6 +514,7 @@ impl App {
                 None
             };
             self.paint_aurora(&painter, &display_basis, rect);
+            self.paint_time_zones(&painter, &display_basis, rect);
             // All map names share one screen, placed in priority order, each layer
             // where the ones before it left room (painting keeps its own order):
             // the markers of the user's data (always drawn), places of interest
@@ -637,6 +638,10 @@ impl App {
         if self.layer(MapLayer::NightLights) {
             attribution.push_str(" · ");
             attribution.push_str(&self.night_lights_credit(lg));
+        }
+        if self.layer(MapLayer::TimeZones) && self.live_time_zones.zones().is_some() {
+            attribution.push_str(" · ");
+            attribution.push_str(lg.text("timezones-credit"));
         }
         if self.layer(MapLayer::Aurora) && self.live_aurora.grid().is_some() {
             attribution.push_str(" · ");

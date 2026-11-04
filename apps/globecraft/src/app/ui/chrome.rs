@@ -256,6 +256,15 @@ impl App {
                             globecraft_data::tiles::Provider::TerrainDem.attribution(lang),
                         );
                         separator(ui, &t);
+                        // The local time under the cursor (Time zones layer).
+                        if self.layer(globecraft_core::layers::MapLayer::TimeZones) {
+                            let time = self.cursor_local_time().unwrap_or_else(|| "—".into());
+                            ui.monospace(lang.format(
+                                "statusbar-cursor-local-time",
+                                &[("time", format!("{time:<22}").into())],
+                            ));
+                            separator(ui, &t);
+                        }
                     }
                     match self
                         .settings
