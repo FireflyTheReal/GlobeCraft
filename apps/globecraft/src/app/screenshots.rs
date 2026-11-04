@@ -368,6 +368,7 @@ fn add_data_screenshots() {
             location: file.to_string_lossy().into_owned(),
             format: globecraft_data::user_data::FeatureFormat::GeoJson,
             refresh_minutes: 0,
+            value_field: None,
         },
         visible: true,
         opacity: 1.0,
@@ -483,6 +484,96 @@ fn poi_zoom_stability() {
     println!(
         "POI zoom: {drawn_total} names drawn over 30 steps, {vanished} vanished, {moved} changed side"
     );
+}
+
+/// A point layer of 400 synthetic earthquakes around the Pacific: markers sized by
+/// magnitude, clusters with their counts, the size legend, and the hover card of the
+/// busiest cluster. Manual.
+#[test]
+#[ignore = "manual: renders a point layer with clusters"]
+fn point_layer_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    // A ring of quakes along the Pacific rim, magnitude 2.5 to 7.4, a day apart.
+    let ring = [
+        (35.0, 140.0),
+        (45.0, 150.0),
+        (55.0, 160.0),
+        (52.0, -170.0),
+        (58.0, -150.0),
+        (40.0, -125.0),
+        (20.0, -105.0),
+        (5.0, -82.0),
+        (-15.0, -75.0),
+        (-33.0, -72.0),
+        (-40.0, 175.0),
+        (-20.0, 170.0),
+        (-5.0, 150.0),
+        (10.0, 125.0),
+        (25.0, 125.0),
+    ];
+    let mut features = Vec::new();
+    for i in 0..400u32 {
+        let (lat, lon) = ring[(i as usize) % ring.len()];
+        let jitter = |k: u32| {
+            ((i.wrapping_mul(2654435761).wrapping_add(k) % 1000) as f64 / 1000.0 - 0.5) * 6.0
+        };
+        let mag = 2.5 + (i.wrapping_mul(40503) % 50) as f64 / 10.0;
+        features.push(format!(
+            r#"{{"type":"Feature","properties":{{"title":"M {mag:.1} - Quake {i}","mag":{mag:.1},"time":{},"depth":{}}},"geometry":{{"type":"Point","coordinates":[{},{}]}}}}"#,
+            1_793_785_080_000i64 - i64::from(i) * 86_400_000 / 40,
+            10 + i % 600,
+            lon + jitter(1),
+            lat + jitter(2),
+        ));
+    }
+    let file = std::env::temp_dir().join("globecraft-quakes.geojson");
+    std::fs::write(
+        &file,
+        format!(
+            r#"{{"type":"FeatureCollection","features":[{}]}}"#,
+            features.join(",")
+        ),
+    )
+    .expect("sample file");
+    let mut h = harness(ThemePreference::Dark);
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 20.0, "lon": -170.0, "altitude_km": 18000.0}),
+    );
+    let app = h.state_mut();
+    app.add_user_layer(globecraft_data::user_data::UserLayer {
+        id: 0,
+        name: "Earthquakes (sample)".into(),
+        source: globecraft_data::user_data::UserSource::Features {
+            location: file.to_string_lossy().into_owned(),
+            format: globecraft_data::user_data::FeatureFormat::GeoJson,
+            refresh_minutes: 0,
+            value_field: None,
+        },
+        visible: true,
+        opacity: 1.0,
+        attribution: "Synthetic sample".into(),
+        color: "#ff6a3d".into(),
+        preset: None,
+    });
+    let _ = app.run("ui.pane.layers", Value::Null);
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "15-point-layer");
+    if let Some(at) = h.state().user_layers.busiest_cluster() {
+        h.input_mut().events.push(egui::Event::PointerMoved(at));
+        settle(&mut h, 1.0);
+        save(&mut h, &dir, "16-point-layer-hover");
+    }
+    // Closer: single quakes sized by magnitude, with their names.
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": -33.0, "lon": -72.0, "altitude_km": 900.0}),
+    );
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "17-point-layer-close");
 }
 
 /// A WMS layer's legend in the Layers pane. `GLOBECRAFT_SHOT_WMS` is the service's

@@ -7,6 +7,7 @@ use globecraft_data::boundaries::{
 };
 use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
 use std::collections::HashMap;
+pub mod clusters;
 pub mod grid;
 mod labels;
 mod occlusion;

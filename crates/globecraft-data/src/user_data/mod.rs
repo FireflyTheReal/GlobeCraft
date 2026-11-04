@@ -6,12 +6,14 @@
 mod capabilities;
 mod legend;
 pub mod presets;
+mod properties;
 mod raster;
 mod saved;
 mod vector;
 
 pub use capabilities::{WmsLayer, wms_layers};
 pub use legend::{legend_image, wms_legend_url};
+pub use properties::format_time_utc;
 pub use raster::{RasterSnapshot, RasterTiles, test_tile};
 pub use saved::{SavedSources, export_sources, import_sources};
 pub use vector::{FeatureSet, NamedPoint, VectorLayer, load as load_features, parse_features};
@@ -74,6 +76,10 @@ pub enum UserSource {
         /// Reloaded this often (minutes) when it is a URL; 0 loads it once.
         #[serde(default)]
         refresh_minutes: u32,
+        /// The property the points are sized and ranked by; `None` looks for the
+        /// usual ones (`mag`, `population`…).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value_field: Option<String>,
     },
 }
 

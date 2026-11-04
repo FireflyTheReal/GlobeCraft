@@ -1072,6 +1072,8 @@ add-data-web-load-layers = Load layers
 add-data-web-default-name = Web map
 add-data-web-test-ok = A tile arrived ({ $width } × { $height } pixels).
 add-data-web-help = A tile address takes {"{"}z{"}"}, {"{"}x{"}"} and {"{"}y{"}"} ({"{"}-y{"}"} for TMS); {"{"}bbox{"}"} and {"{"}date{"}"} (yesterday) are filled in too. The layer is drawn over the imagery, under the borders.
+add-data-size-by-label = Size by
+add-data-size-by-hint = A property, such as mag or population (found if empty)
 add-data-name-label = Name
 add-data-attribution-label = Credit
 add-data-attribution-hint = What the data's licence asks you to show
@@ -1092,6 +1094,9 @@ add-data-features-test-ok = Read { $points } points and { $lines } lines or outl
 add-data-kml-help = KML and KMZ open into My Places.
 add-data-kml-action = Open KML…
 add-data-added-status = Added “{ $name }” to your layers.
+user-point-time = Time: { $time }
+user-cluster-hover = { $count } points here
+layers-user-legend-size = Sized by { $field }: { $low } to { $high }
 layers-user-legend = { $points ->
         [one] 1 point
        *[other] { $points } points

@@ -2,6 +2,7 @@
 //! the outlines of areas), read from GeoJSON, GPX or CSV with coordinate columns, from
 //! a file or a URL. A URL that is a live feed is read again at its interval.
 use super::FeatureFormat;
+use super::properties::{PointProperties, PropertyReader, Scalar};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,12 @@ pub struct NamedPoint {
     pub lat: f64,
     pub lon: f64,
     pub name: String,
+    /// The value its marker is sized and ranked by (`FeatureSet::value_field`).
+    pub value: Option<f64>,
+    /// When it happened, milliseconds since 1970, when its properties say.
+    pub time_ms: Option<i64>,
+    /// A few other properties, one `key: value` per line, for its hover card.
+    pub details: String,
 }
 
 /// What a layer draws.
@@ -29,6 +36,9 @@ pub struct FeatureSet {
     pub bounds: Option<[f64; 4]>,
     /// Whether vertices were left out over `MAX_VERTICES`.
     pub truncated: bool,
+    /// The property the points' values come from, and the smallest and largest value.
+    pub value_field: Option<String>,
+    pub value_range: Option<(f64, f64)>,
 }
 
 impl FeatureSet {
@@ -38,7 +48,7 @@ impl FeatureSet {
     fn room(&self) -> bool {
         self.vertices() < MAX_VERTICES
     }
-    fn point(&mut self, lat: f64, lon: f64, name: String) {
+    fn point(&mut self, lat: f64, lon: f64, name: String, properties: PointProperties) {
         if !valid(lat, lon) {
             return;
         }
@@ -46,7 +56,19 @@ impl FeatureSet {
             self.truncated = true;
             return;
         }
-        self.points.push(NamedPoint { lat, lon, name });
+        let PointProperties {
+            value,
+            time_ms,
+            details,
+        } = properties;
+        self.points.push(NamedPoint {
+            lat,
+            lon,
+            name,
+            value,
+            time_ms,
+            details,
+        });
     }
     fn line(&mut self, line: Vec<(f64, f64)>) {
         let line: Vec<(f64, f64)> = line
@@ -74,6 +96,16 @@ impl FeatureSet {
             *b = [b[0].min(lat), b[1].min(lon), b[2].max(lat), b[3].max(lon)];
         }
         self.bounds = bounds;
+        self.value_range = self
+            .points
+            .iter()
+            .filter_map(|p| p.value)
+            .fold(None, |range, v| {
+                Some(range.map_or((v, v), |(low, high): (f64, f64)| (low.min(v), high.max(v))))
+            });
+        if self.value_range.is_none() {
+            self.value_field = None;
+        }
         self
     }
 }
@@ -82,14 +114,21 @@ fn valid(lat: f64, lon: f64) -> bool {
     lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0
 }
 
-/// Reads features in `format` from `bytes`.
-pub fn parse_features(format: FeatureFormat, bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
-    let set = match format {
-        FeatureFormat::GeoJson => geojson(bytes)?,
+/// Reads features in `format` from `bytes`; point values come from the property
+/// `value_field`, or from the first of the usual ones (`mag`, `population`…) found.
+pub fn parse_features(
+    format: FeatureFormat,
+    bytes: &[u8],
+    value_field: Option<&str>,
+) -> Result<FeatureSet, crate::Error> {
+    let mut reader = PropertyReader::new(value_field);
+    let mut set = match format {
+        FeatureFormat::GeoJson => geojson(bytes, &mut reader)?,
         FeatureFormat::Gpx => gpx(bytes)?,
-        FeatureFormat::Csv => csv(bytes)?,
-    }
-    .finish();
+        FeatureFormat::Csv => csv(bytes, &mut reader)?,
+    };
+    set.value_field = reader.value_field().map(str::to_owned);
+    let set = set.finish();
     if set.points.is_empty() && set.lines.is_empty() {
         return Err("no points or lines with coordinates were found".into());
     }
@@ -98,11 +137,37 @@ pub fn parse_features(format: FeatureFormat, bytes: &[u8]) -> Result<FeatureSet,
 
 // ---- GeoJSON ----
 
-fn geojson(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
+fn geojson(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::Error> {
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let mut set = FeatureSet::default();
-    geojson_object(&value, "", &mut set);
+    geojson_object(&value, &Named::default(), &mut set, reader);
     Ok(set)
+}
+
+/// The name and properties a feature gives its geometry.
+#[derive(Clone, Debug, Default)]
+struct Named {
+    name: String,
+    properties: PointProperties,
+}
+
+/// A feature's scalar properties, for the property reader.
+fn scalars(
+    properties: Option<&serde_json::Value>,
+) -> impl Iterator<Item = (&str, Scalar<'_>)> + Clone {
+    properties
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| match value {
+            serde_json::Value::String(text) => Some((key.as_str(), Scalar::Text(text))),
+            serde_json::Value::Number(n) => Some((key.as_str(), Scalar::Number(n.as_f64()?))),
+            serde_json::Value::Bool(b) => Some((
+                key.as_str(),
+                Scalar::Text(if *b { "true" } else { "false" }),
+            )),
+            _ => None,
+        })
 }
 
 /// The name a feature's properties give it.
@@ -118,7 +183,12 @@ fn feature_name(properties: Option<&serde_json::Value>) -> String {
     String::new()
 }
 
-fn geojson_object(value: &serde_json::Value, name: &str, set: &mut FeatureSet) {
+fn geojson_object(
+    value: &serde_json::Value,
+    named: &Named,
+    set: &mut FeatureSet,
+    reader: &mut PropertyReader,
+) {
     let kind = value.get("type").and_then(serde_json::Value::as_str);
     match kind {
         Some("FeatureCollection") => {
@@ -128,13 +198,17 @@ fn geojson_object(value: &serde_json::Value, name: &str, set: &mut FeatureSet) {
                 .into_iter()
                 .flatten()
             {
-                geojson_object(feature, "", set);
+                geojson_object(feature, &Named::default(), set, reader);
             }
         }
         Some("Feature") => {
-            let name = feature_name(value.get("properties"));
+            let properties = value.get("properties");
+            let named = Named {
+                name: feature_name(properties),
+                properties: reader.read(scalars(properties)),
+            };
             if let Some(geometry) = value.get("geometry") {
-                geojson_object(geometry, &name, set);
+                geojson_object(geometry, &named, set, reader);
             }
         }
         Some("GeometryCollection") => {
@@ -144,7 +218,7 @@ fn geojson_object(value: &serde_json::Value, name: &str, set: &mut FeatureSet) {
                 .into_iter()
                 .flatten()
             {
-                geojson_object(geometry, name, set);
+                geojson_object(geometry, named, set, reader);
             }
         }
         Some(kind) => {
@@ -154,12 +228,12 @@ fn geojson_object(value: &serde_json::Value, name: &str, set: &mut FeatureSet) {
             match kind {
                 "Point" => {
                     if let Some((lat, lon)) = position(coordinates) {
-                        set.point(lat, lon, name.to_owned());
+                        set.point(lat, lon, named.name.clone(), named.properties.clone());
                     }
                 }
                 "MultiPoint" => {
                     for (lat, lon) in positions(coordinates) {
-                        set.point(lat, lon, name.to_owned());
+                        set.point(lat, lon, named.name.clone(), named.properties.clone());
                     }
                 }
                 "LineString" => set.line(positions(coordinates)),
@@ -223,7 +297,7 @@ fn gpx(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
             // `<wpt .../>`: no name element follows.
             Event::Empty(element) if element.local_name().as_ref() == "wpt" => {
                 if let Some((lat, lon)) = coordinates(&element) {
-                    set.point(lat, lon, String::new());
+                    set.point(lat, lon, String::new(), PointProperties::default());
                 }
             }
             Event::Start(element) if element.local_name().as_ref() == "wpt" => {
@@ -240,7 +314,12 @@ fn gpx(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
                 "name" => in_name = false,
                 "wpt" => {
                     if let Some((lat, lon, _)) = point.take() {
-                        set.point(lat, lon, std::mem::take(&mut name));
+                        set.point(
+                            lat,
+                            lon,
+                            std::mem::take(&mut name),
+                            PointProperties::default(),
+                        );
                     }
                 }
                 "trkseg" | "rte" => set.line(std::mem::take(&mut line)),
@@ -253,7 +332,7 @@ fn gpx(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
     }
     // A self-closing waypoint without a name element.
     if let Some((lat, lon, _)) = point.take() {
-        set.point(lat, lon, name);
+        set.point(lat, lon, name, PointProperties::default());
     }
     set.line(line);
     Ok(set)
@@ -276,7 +355,7 @@ fn coordinates(element: &quick_xml::events::BytesStart) -> Option<(f64, f64)> {
 
 // ---- CSV ----
 
-fn csv(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
+fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::Error> {
     let text = String::from_utf8_lossy(bytes);
     let mut lines = text.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("the file is empty")?;
@@ -284,6 +363,12 @@ fn csv(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
         .into_iter()
         .max_by_key(|d| header.matches(*d).count())
         .unwrap_or(',');
+    // The column names as written (for the hover card) and in lower case (to find
+    // the coordinates).
+    let headers: Vec<String> = split(header, delimiter)
+        .into_iter()
+        .map(|c| c.trim().trim_matches('"').to_owned())
+        .collect();
     let columns: Vec<String> = split(header, delimiter)
         .into_iter()
         .map(|c| c.trim().trim_matches('"').to_ascii_lowercase())
@@ -319,7 +404,14 @@ fn csv(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
                 .and_then(|i| fields.get(i))
                 .map(|f| f.trim().trim_matches('"').to_owned())
                 .unwrap_or_default();
-            set.point(la, lo, label);
+            let cells: Vec<&str> = fields.iter().map(|f| f.trim().trim_matches('"')).collect();
+            let others = headers
+                .iter()
+                .zip(cells)
+                .enumerate()
+                .filter(|(i, _)| *i != lat && *i != lon && Some(*i) != name)
+                .map(|(_, (key, cell))| (key.as_str(), Scalar::Text(cell)));
+            set.point(la, lo, label, reader.read(others));
         }
     }
     Ok(set)
@@ -361,15 +453,23 @@ struct Shared {
 pub struct VectorLayer {
     location: String,
     format: FeatureFormat,
+    /// The property point values come from (`None`: the usual ones).
+    value_field: Option<String>,
     refresh: Option<Duration>,
     shared: Arc<Mutex<Shared>>,
 }
 
 impl VectorLayer {
-    pub fn new(location: &str, format: FeatureFormat, refresh_minutes: u32) -> Self {
+    pub fn new(
+        location: &str,
+        format: FeatureFormat,
+        refresh_minutes: u32,
+        value_field: Option<&str>,
+    ) -> Self {
         Self {
             location: location.trim().to_owned(),
             format,
+            value_field: value_field.map(str::to_owned),
             refresh: (super::is_url(location) && refresh_minutes > 0)
                 .then(|| Duration::from_secs(u64::from(refresh_minutes) * 60)),
             shared: Arc::default(),
@@ -399,8 +499,9 @@ impl VectorLayer {
         }
         shared.loading = true;
         let (location, format, state) = (self.location.clone(), self.format, self.shared.clone());
+        let value_field = self.value_field.clone();
         runtime.spawn(async move {
-            let result = load(location, format).await;
+            let result = load(location, format, value_field).await;
             if let Ok(mut shared) = state.lock() {
                 shared.loading = false;
                 match result {
@@ -437,7 +538,11 @@ impl VectorLayer {
 }
 
 /// Reads and parses a file or URL.
-pub async fn load(location: String, format: FeatureFormat) -> Result<FeatureSet, crate::Error> {
+pub async fn load(
+    location: String,
+    format: FeatureFormat,
+    value_field: Option<String>,
+) -> Result<FeatureSet, crate::Error> {
     let bytes = if super::is_url(&location) {
         let client = crate::http::client(crate::http::Policy::UserData)?;
         crate::http::body(client.get(&location), MAX_BYTES).await?
@@ -453,7 +558,7 @@ pub async fn load(location: String, format: FeatureFormat) -> Result<FeatureSet,
         .await?
     };
     crate::cpu::run(crate::cpu::Service::Features, move || {
-        parse_features(format, &bytes)
+        parse_features(format, &bytes, value_field.as_deref())
     })
     .await
 }
@@ -473,13 +578,16 @@ mod tests {
              "geometry":{"type":"MultiPolygon","coordinates":[[[[0,0],[0,1],[1,1],[0,0]]]]}},
             {"type":"Feature","geometry":{"type":"Point","coordinates":[500,0]}}
         ]}"#;
-        let set = parse_features(FeatureFormat::GeoJson, json).unwrap();
+        let set = parse_features(FeatureFormat::GeoJson, json, None).unwrap();
         assert_eq!(
             set.points,
             [NamedPoint {
                 lat: 38.1,
                 lon: 142.3,
-                name: "M 4.6 - Japan".into()
+                name: "M 4.6 - Japan".into(),
+                value: None,
+                time_ms: None,
+                details: String::new(),
             }]
         );
         assert_eq!(set.lines.len(), 2);
@@ -497,7 +605,7 @@ mod tests {
               </trkseg></trk>
               <rte><rtept lat="1" lon="2"/><rtept lat="3" lon="4"/></rte>
             </gpx>"#;
-        let set = parse_features(FeatureFormat::Gpx, gpx).unwrap();
+        let set = parse_features(FeatureFormat::Gpx, gpx, None).unwrap();
         let names: Vec<&str> = set.points.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["Hut", ""]);
         assert_eq!(
@@ -512,16 +620,47 @@ mod tests {
     #[test]
     fn csv_finds_its_coordinate_columns_and_delimiter() {
         let csv = "Name;Latitude;Longitude\n\"Lisbon, PT\";38,72;-9,14\nBad;x;1\n";
-        let set = parse_features(FeatureFormat::Csv, csv.as_bytes()).unwrap();
+        let set = parse_features(FeatureFormat::Csv, csv.as_bytes(), None).unwrap();
         assert_eq!(
             set.points,
             [NamedPoint {
                 lat: 38.72,
                 lon: -9.14,
-                name: "Lisbon, PT".into()
+                name: "Lisbon, PT".into(),
+                value: None,
+                time_ms: None,
+                details: String::new(),
             }]
         );
-        let error = parse_features(FeatureFormat::Csv, b"a,b\n1,2\n").unwrap_err();
+        let error = parse_features(FeatureFormat::Csv, b"a,b\n1,2\n", None).unwrap_err();
         assert!(error.to_string().contains("latitude"), "{error}");
+    }
+
+    #[test]
+    fn points_carry_their_value_time_and_details() {
+        let json = br#"{"type":"FeatureCollection","features":[
+            {"type":"Feature","properties":{"title":"M 6.1 - Chile","mag":6.1,
+              "time":1793700000000,"tsunami":1,"url":"https://example.org"},
+             "geometry":{"type":"Point","coordinates":[-71.0,-33.0]}},
+            {"type":"Feature","properties":{"title":"M 2.5 - Alaska","mag":2.5},
+             "geometry":{"type":"Point","coordinates":[-150.0,61.0]}}
+        ]}"#;
+        let set = parse_features(FeatureFormat::GeoJson, json, None).unwrap();
+        assert_eq!(set.value_field.as_deref(), Some("mag"));
+        assert_eq!(set.value_range, Some((2.5, 6.1)));
+        let chile = &set.points[0];
+        assert_eq!(
+            (chile.value, chile.time_ms),
+            (Some(6.1), Some(1_793_700_000_000))
+        );
+        assert_eq!(chile.details, "tsunami: 1");
+        // A CSV column named in the layer sizes the points.
+        let csv = "city,lat,lon,people,founded\nLisbon,38.7,-9.1,545000,1147-01-01\n";
+        let set = parse_features(FeatureFormat::Csv, csv.as_bytes(), Some("people")).unwrap();
+        assert_eq!(set.points[0].value, Some(545_000.0));
+        assert_eq!(set.points[0].details, "founded: 1147-01-01");
+        // Without any value, no field is claimed.
+        let plain = parse_features(FeatureFormat::Csv, b"lat,lon\n1,2\n", None).unwrap();
+        assert_eq!((plain.value_field, plain.value_range), (None, None));
     }
 }

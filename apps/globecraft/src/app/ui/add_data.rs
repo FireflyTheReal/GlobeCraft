@@ -105,6 +105,8 @@ pub(in crate::app) struct AddDataDialog {
     /// `None`: from the file name.
     format: Option<FeatureFormat>,
     refresh_minutes: u32,
+    /// The property points are sized by; empty finds the usual ones.
+    size_by: String,
     color: egui::Color32,
     feature_test: Pending<(usize, usize)>,
 }
@@ -125,6 +127,7 @@ impl Default for AddDataDialog {
             location: String::new(),
             format: None,
             refresh_minutes: 0,
+            size_by: String::new(),
             color: DEFAULT_COLOR,
             feature_test: Pending::default(),
         }
@@ -251,6 +254,7 @@ impl AddDataDialog {
                 } else {
                     0
                 },
+                value_field: Some(self.size_by.trim().to_owned()).filter(|f| !f.is_empty()),
             },
             visible: true,
             opacity: 1.0,
@@ -592,6 +596,13 @@ impl AddDataDialog {
                     .on_hover_text(lang.text("add-data-refresh-help"));
                     ui.end_row();
                 }
+                ui.label(lang.text("add-data-size-by-label"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.size_by)
+                        .hint_text(lang.text("add-data-size-by-hint"))
+                        .desired_width(300.0),
+                );
+                ui.end_row();
                 ui.label(lang.text("add-data-name-label"));
                 ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(300.0));
                 ui.end_row();
@@ -625,11 +636,14 @@ impl AddDataDialog {
                 )
                 .clicked()
                 && let Some(UserSource::Features {
-                    location, format, ..
+                    location,
+                    format,
+                    value_field,
+                    ..
                 }) = layer.as_ref().map(|l| l.source.clone())
             {
                 self.feature_test.start(runtime, ctx, async move {
-                    globecraft_data::user_data::load_features(location, format)
+                    globecraft_data::user_data::load_features(location, format, value_field)
                         .await
                         .map(|set| (set.points.len(), set.lines.len()))
                         .map_err(|e| e.to_string())

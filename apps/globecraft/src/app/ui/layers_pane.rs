@@ -164,10 +164,10 @@ fn feature_legend(
     ui: &mut Ui,
     t: &Tokens,
     [r, g, b]: [u8; 3],
-    points: usize,
-    lines: usize,
+    features: &globecraft_data::user_data::FeatureSet,
     lang: globecraft_core::language::Lang,
 ) {
+    let (points, lines) = (features.points.len(), features.lines.len());
     const SWATCH: egui::Vec2 = vec2(26.0, 12.0);
     ui.horizontal(|ui| {
         ui.add_space(INDENT + 24.0);
@@ -196,6 +196,37 @@ fn feature_legend(
             .color(t.text_dim),
         );
     });
+    // Sized by a value: a small and a large marker with the smallest and largest.
+    if let (Some(field), Some((low, high))) = (&features.value_field, features.value_range) {
+        ui.horizontal(|ui| {
+            ui.add_space(INDENT + 24.0);
+            let (swatch, _) = ui.allocate_exact_size(vec2(26.0, 14.0), Sense::hover());
+            let color = egui::Color32::from_rgb(r, g, b);
+            ui.painter()
+                .circle_filled(swatch.left_center() + vec2(5.0, 0.0), 2.5, color);
+            ui.painter()
+                .circle_filled(swatch.right_center() - vec2(8.0, 0.0), 6.0, color);
+            let number = |v: f64| {
+                if v.fract() == 0.0 && v.abs() < 1e15 {
+                    format!("{}", v as i64)
+                } else {
+                    format!("{v:.1}")
+                }
+            };
+            ui.label(
+                egui::RichText::new(lang.format(
+                    "layers-user-legend-size",
+                    &[
+                        ("field", field.clone().into()),
+                        ("low", number(low).into()),
+                        ("high", number(high).into()),
+                    ],
+                ))
+                .size(11.0)
+                .color(t.text_dim),
+            );
+        });
+    }
 }
 
 /// A web map's legend image (from its WMS), at most as wide as the pane allows
@@ -435,8 +466,8 @@ impl App {
                     self.run_reporting("data.remove", json!({"id": layer.id}));
                 }
             });
-            if feature && let Some((points, lines)) = self.user_layers.feature_counts(layer.id) {
-                feature_legend(ui, t, layer.rgb(), points, lines, lang);
+            if feature && let Some(features) = self.user_layers.feature_set(layer.id) {
+                feature_legend(ui, t, layer.rgb(), &features, lang);
             }
             if !feature
                 && let Some(texture) = self

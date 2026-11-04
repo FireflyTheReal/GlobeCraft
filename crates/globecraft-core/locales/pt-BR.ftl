@@ -1072,6 +1072,8 @@ add-data-web-load-layers = Carregar camadas
 add-data-web-default-name = Mapa da web
 add-data-web-test-ok = Chegou um bloco ({ $width } × { $height } pixels).
 add-data-web-help = O endereço dos blocos usa {"{"}z{"}"}, {"{"}x{"}"} e {"{"}y{"}"} ({"{"}-y{"}"} para TMS); {"{"}bbox{"}"} e {"{"}date{"}"} (ontem) também são preenchidos. A camada é desenhada sobre as imagens, abaixo das fronteiras.
+add-data-size-by-label = Tamanho por
+add-data-size-by-hint = Uma propriedade, como mag ou population (encontrada se vazio)
 add-data-name-label = Nome
 add-data-attribution-label = Crédito
 add-data-attribution-hint = O que a licença dos dados pede para mostrar
@@ -1092,6 +1094,9 @@ add-data-features-test-ok = Foram lidos { $points } pontos e { $lines } linhas o
 add-data-kml-help = KML e KMZ abrem em Meus lugares.
 add-data-kml-action = Abrir KML…
 add-data-added-status = “{ $name }” foi adicionada às suas camadas.
+user-point-time = Hora: { $time }
+user-cluster-hover = { $count } pontos aqui
+layers-user-legend-size = Tamanho por { $field }: { $low } a { $high }
 layers-user-legend = { $points ->
         [one] 1 ponto
        *[other] { $points } pontos

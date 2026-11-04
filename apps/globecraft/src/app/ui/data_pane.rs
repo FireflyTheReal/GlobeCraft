@@ -295,6 +295,7 @@ mod tests {
             location: "/home/me/tracks/ride.gpx".into(),
             format: globecraft_data::user_data::FeatureFormat::Gpx,
             refresh_minutes: 0,
+            value_field: None,
         };
         assert_eq!(location(&layer), "ride.gpx");
     }

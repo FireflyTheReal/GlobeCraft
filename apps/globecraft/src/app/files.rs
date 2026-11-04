@@ -272,6 +272,7 @@ impl App {
                         location: location.to_owned(),
                         format,
                         refresh_minutes: 0,
+                        value_field: None,
                     },
                     visible: true,
                     opacity: 1.0,

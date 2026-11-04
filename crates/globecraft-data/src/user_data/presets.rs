@@ -102,6 +102,7 @@ fn earthquakes() -> UserSource {
         format: FeatureFormat::GeoJson,
         // USGS updates the feed every minute and asks clients not to poll faster.
         refresh_minutes: 5,
+        value_field: Some("mag".into()),
     }
 }
 
@@ -222,8 +223,11 @@ mod probe {
                     .await
                     .map(|(w, h)| format!("tile {w}x{h}")),
                 UserSource::Features {
-                    location, format, ..
-                } => super::super::load_features(location, format)
+                    location,
+                    format,
+                    value_field,
+                    ..
+                } => super::super::load_features(location, format, value_field)
                     .await
                     .map(|set| format!("{} points, {} lines", set.points.len(), set.lines.len())),
             };

@@ -323,7 +323,13 @@ impl App {
         }
     }
 }
-fn hover_label(painter: &egui::Painter, rect: Rect, screen: egui::Pos2, text: &str, ms: f32) {
+pub(super) fn hover_label(
+    painter: &egui::Painter,
+    rect: Rect,
+    screen: egui::Pos2,
+    text: &str,
+    ms: f32,
+) {
     let galley = painter.layout_no_wrap(
         text.to_string(),
         crate::app::fonts::map_font(painter.ctx(), 12.0 * ms),

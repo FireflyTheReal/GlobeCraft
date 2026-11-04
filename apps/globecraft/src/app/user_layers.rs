@@ -11,6 +11,7 @@ use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
 use std::collections::HashMap;
 use std::sync::Arc;
 mod legend;
+mod points;
 
 /// Point markers and their names (points).
 const MARKER_POINTS: f32 = 4.0;
@@ -112,7 +113,13 @@ impl UserLayers {
                         location,
                         format,
                         refresh_minutes,
-                    } => Stream::Vector(VectorLayer::new(location, *format, *refresh_minutes)),
+                        value_field,
+                    } => Stream::Vector(VectorLayer::new(
+                        location,
+                        *format,
+                        *refresh_minutes,
+                        value_field.as_deref(),
+                    )),
                 },
             });
             if !layer.visible || !earth {
@@ -272,19 +279,27 @@ impl UserLayers {
         let mut shapes = Vec::new();
         let mut markers = Vec::new();
         let mut named = Vec::new();
-        // Bottom layer first; names are placed top layer first.
+        let mut counts = Vec::new();
+        let mut hits = Vec::new();
+        // Bottom layer first; names and hover are placed top layer first.
         for (layer, features, _) in &visible {
             let built = feature_geometry(painter, basis, rect, features, layer, scale);
             shapes.extend(built.shapes);
             markers.extend(built.markers);
             named.push(built.named);
+            counts.extend(built.counts);
+            hits.push((features.clone(), built.hits));
         }
         named.reverse();
+        hits.reverse();
         self.markers.replace(markers);
         self.generation += 1;
         self.features = Some(BuiltFeatures {
             keys: visible.into_iter().map(|(_, _, key)| key).collect(),
             shapes,
+            counts,
+            scale,
+            hits,
             named,
             generation: self.generation,
         });
@@ -362,6 +377,7 @@ impl UserLayers {
     pub(super) fn paint_features(&self, painter: &egui::Painter) {
         if let Some(built) = &self.features {
             painter.extend(built.shapes.iter().cloned());
+            points::paint_counts(painter, &built.counts, built.scale);
         }
         if let Some((_, texts)) = &self.names {
             painter.extend(texts.iter().cloned());
@@ -373,14 +389,46 @@ impl UserLayers {
         &self.placed
     }
 
-    /// How many points and lines (or outlines) a loaded feature layer holds.
-    pub(super) fn feature_counts(&self, id: u64) -> Option<(usize, usize)> {
+    /// The busiest cluster on screen, for the hover screenshot.
+    #[cfg(test)]
+    pub(super) fn busiest_cluster(&self) -> Option<Pos2> {
+        let built = self.features.as_ref()?;
+        built
+            .hits
+            .iter()
+            .flat_map(|(_, hits)| hits)
+            .max_by_key(|hit| hit.members.len())
+            .map(|hit| hit.at)
+    }
+
+    /// A loaded feature layer's features, for its legend.
+    pub(super) fn feature_set(&self, id: u64) -> Option<Arc<FeatureSet>> {
         match &self.loaded.get(&id)?.stream {
-            Stream::Vector(vector) => {
-                let (features, _) = vector.features()?;
-                Some((features.points.len(), features.lines.len()))
-            }
+            Stream::Vector(vector) => Some(vector.features()?.0),
             Stream::Raster { .. } => None,
+        }
+    }
+
+    /// The hover card of the point or cluster under the pointer, top layer first.
+    pub(super) fn hover(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        lang: globecraft_core::language::Lang,
+    ) {
+        let (Some(pointer), Some(built)) = (painter.ctx().pointer_hover_pos(), &self.features)
+        else {
+            return;
+        };
+        if !rect.contains(pointer) {
+            return;
+        }
+        for (features, hits) in &built.hits {
+            if let Some(hit) = points::hit_at(hits, pointer, built.scale) {
+                let text = points::hover_text(lang, features, hit);
+                super::live_layers::hover_label(painter, rect, hit.at, &text, built.scale);
+                return;
+            }
         }
     }
 }
@@ -399,17 +447,25 @@ struct BuiltFeatures {
     keys: Vec<FeatureKey>,
     /// Lines, outlines and markers, bottom layer first.
     shapes: Vec<Shape>,
+    /// Cluster badge counts, laid out when drawn.
+    counts: Vec<(Pos2, String, f32)>,
+    scale: f32,
+    /// Each layer's features and what the pointer can find on it, top layer first.
+    hits: Vec<(Arc<FeatureSet>, Vec<points::Hit>)>,
     /// Each layer's named points, top layer first.
     named: Vec<Vec<NamedPoint>>,
     /// Changes with every rebuild, so the names know to follow.
     generation: u64,
 }
 
-/// One layer's lines and markers, the room the markers take and the named points.
+/// One layer's lines and markers, the room the markers take, the named points (most
+/// important first), the cluster counts and what the pointer can find.
 struct LayerGeometry {
     shapes: Vec<Shape>,
     markers: Vec<Rect>,
     named: Vec<NamedPoint>,
+    counts: Vec<(Pos2, String, f32)>,
+    hits: Vec<points::Hit>,
 }
 
 fn feature_geometry(
@@ -422,7 +478,6 @@ fn feature_geometry(
 ) -> LayerGeometry {
     let [r, g, b] = layer.rgb();
     let color = Color32::from_rgb(r, g, b).gamma_multiply(layer.opacity);
-    let outline = Color32::from_rgb(20, 24, 30).gamma_multiply(layer.opacity);
     let clip = rect.expand(globecraft_render::overlays::SEGMENT_CLIP_MARGIN_POINTS);
     let mut lines = Vec::new();
     for line in &features.lines {
@@ -460,42 +515,14 @@ fn feature_geometry(
         }
     }
     let mut shapes = super::live_geometry::mesh_shapes(painter, lines);
-    let radius = MARKER_POINTS * scale;
-    let padding = LABEL_PADDING_POINTS * scale;
-    let mut markers = Vec::new();
-    let mut rooms = Vec::new();
-    let mut named = Vec::new();
-    for point in &features.points {
-        let Some(at) = basis.project(
-            globecraft_render::overlays::ground_position(basis, None, point.lat, point.lon),
-            rect,
-        ) else {
-            continue;
-        };
-        if !rect.contains(at) {
-            continue;
-        }
-        rooms.push(Rect::from_center_size(at, Vec2::splat(2.0 * radius)).expand(padding));
-        markers.push(Shape::circle_filled(at, radius, color));
-        markers.push(Shape::circle_stroke(
-            at,
-            radius,
-            Stroke::new(1.0 * scale, outline),
-        ));
-        if !point.name.is_empty() {
-            named.push(NamedPoint {
-                at,
-                offset: radius + 4.0 * scale,
-                name: point.name.clone(),
-                opacity: layer.opacity,
-            });
-        }
-    }
-    shapes.extend(super::live_geometry::mesh_shapes(painter, markers));
+    let points = points::layer_points(basis, rect, features, layer, scale);
+    shapes.extend(super::live_geometry::mesh_shapes(painter, points.markers));
     LayerGeometry {
         shapes,
-        markers: rooms,
-        named,
+        markers: points.rooms,
+        named: points.named,
+        counts: points.counts,
+        hits: points.hits,
     }
 }
 
@@ -602,6 +629,7 @@ impl super::App {
                                 .get("refresh_minutes")
                                 .and_then(serde_json::Value::as_u64)
                                 .map_or(0, |m| m.min(24 * 60) as u32),
+                            value_field: text("size_by").map(str::to_owned),
                         },
                         _ => return Err("kind must be tiles, wms or features".into()),
                     };

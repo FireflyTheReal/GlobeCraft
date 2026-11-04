@@ -566,6 +566,7 @@ impl App {
                 self.transport_shapes.hover(&painter, geometry, self.lang);
             }
             self.user_layers.paint_features(&painter);
+            self.user_layers.hover(&painter, rect, self.lang);
             self.draw_live_layers(
                 &painter,
                 &display_basis,
