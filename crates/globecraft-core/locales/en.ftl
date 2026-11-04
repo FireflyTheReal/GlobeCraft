@@ -29,9 +29,6 @@ search-input-placeholder = Search a place, address or “lat, lon”
 search-submit-action = Search
 
 settings-open-tooltip = Settings
-toolbar-ruler-tooltip = Measure distances
-toolbar-placemark-tooltip = Add placemark
-toolbar-screenshot-tooltip = Save screenshot
 settings-language-label = Language
 settings-language-system = System locale ({ $language })
 settings-language-system-fallback = System locale ({ $language } — fallback)
@@ -333,8 +330,6 @@ menu-kml-save-as = Save KML/KMZ As…
 menu-screenshot-save = Save Screenshot
 menu-quit-action = Quit GlobeCraft
 
-sidebar-hide-tooltip = Hide sidebar
-sidebar-show-tooltip = Show sidebar
 
 settings-distance-units-label = Distance units
 settings-units-system = System locale ({ $unit })
@@ -406,7 +401,6 @@ menu-edit-title = Edit
 edit-undo-action = Undo
 edit-redo-action = Redo
 
-ruler-points-edit-action = Edit coordinates…
 ruler-points-title = Ruler coordinates
 ruler-path-heading = Path { $number }
 ruler-point-row = { $number }: { $latitude }°, { $longitude }°
