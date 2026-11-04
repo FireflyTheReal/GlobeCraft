@@ -67,7 +67,7 @@ pub(super) fn altitude_color(altitude_feet: Option<f64>) -> Color32 {
 }
 
 /// A line on screen: projected, cut where it leaves the view or the visible side.
-fn screen_runs(
+pub(super) fn screen_runs(
     basis: &Basis,
     rect: Rect,
     line: impl IntoIterator<Item = (f64, f64)>,

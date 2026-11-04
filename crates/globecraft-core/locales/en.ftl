@@ -146,6 +146,15 @@ aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Position { $age } s old
 cmd-ui-legend = Legend
 cmd-ui-legend-help = Shows what the colours on the globe mean: a selected flight's altitudes, rain radar, aurora and places of interest. Opens by itself when one of them appears.
+polar-imagery-attribution = Polar imagery: NASA Blue Marble (GIBS)
+antarctic-claim-united-kingdom = British Antarctic Territory (United Kingdom)
+antarctic-claim-argentina = Argentine Antarctica (Argentina)
+antarctic-claim-chile = Chilean Antarctic Territory (Chile)
+antarctic-claim-norway = Queen Maud Land (Norway)
+antarctic-claim-australia = Australian Antarctic Territory (Australia)
+antarctic-claim-france = Adélie Land (France)
+antarctic-claim-new-zealand = Ross Dependency (New Zealand)
+antarctic-claim-unclaimed = Marie Byrd Land (unclaimed)
 legend-title = Legend
 legend-empty = Nothing on the globe has a colour key right now.
 legend-flight-altitude = Selected flight: altitude

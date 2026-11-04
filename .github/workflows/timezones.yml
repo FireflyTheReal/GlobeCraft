@@ -11,7 +11,9 @@ name: Time zones
 # between their meridians, and land zones where their standard time differs from
 # their neighbour's, sea zones included; summer time is left out, as on such maps)
 # and `label` (one point in each sizeable area whose standard time is not a whole
-# hour, e.g. `+5:30`; the app labels the whole hours itself, along the view).
+# hour, e.g. `+5:30`; the app labels the whole hours itself, along the view). In
+# Antarctica the lines are the 15° sectors meeting at the South Pole; its station
+# zones stay as `zone` features for the local time.
 on:
   workflow_dispatch:
     inputs:
@@ -71,6 +73,21 @@ jobs:
               feature["properties"]["key"] = standard
               feature["properties"]["whole"] = standard % 60 == 0
               feature["properties"]["label"] = text(standard)
+              # Antarctica's research-station zones (a ring of New Zealand time
+              # around the South Pole, wedges for each station) stay for the local
+              # time under the cursor; its lines are the ocean's 15° sectors instead,
+              # meeting at the pole as on a classic map. Macquarie is an island.
+              feature["properties"]["lines"] = not (
+                  tz.startswith("Antarctica/") and tz != "Antarctica/Macquarie")
+          for hour in range(-12, 13):
+              west, east = max(hour * 15 - 7.5, -180), min(hour * 15 + 7.5, 180)
+              data["features"].append({
+                  "type": "Feature",
+                  "properties": {"tzid": "", "key": hour * 60, "whole": True,
+                                 "label": text(hour * 60), "lines": True},
+                  "geometry": {"type": "Polygon", "coordinates": [[
+                      [west, -90], [east, -90], [east, -60], [west, -60], [west, -90]]]},
+              })
           json.dump(data, open("keyed.json", "w"))
           print(len(data["features"]), "zones,", len({f["properties"]["key"] for f in data["features"]}), "standard times")
           PY
@@ -83,11 +100,13 @@ jobs:
           # sides would cross the globe. Zones on the same standard time merge, sea
           # and land alike, so only the borders where the time changes remain. Areas
           # off the whole hour larger than 10,000 km² get a label, largest first.
-          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i keyed.json name=zones \
+          NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i keyed.json name=all \
             -simplify dp interval=500 keep-shapes \
-            -filter-fields tzid,key,whole,label \
-            -o zones.json format=geojson precision=0.001 \
-            -dissolve key copy-fields=whole,label + name=regions \
+            -filter-fields tzid,key,whole,label,lines \
+            -filter 'tzid !== ""' + name=zones \
+            -o zones.json target=zones format=geojson precision=0.001 \
+            -filter 'lines === true' target=all + name=drawn \
+            -dissolve key copy-fields=whole,label target=drawn + name=regions \
             -innerlines target=regions + name=lines \
             -o lines.json target=lines format=geojson precision=0.001 \
             -filter '!whole' target=regions + name=parts \
@@ -107,6 +126,11 @@ jobs:
           for needed in ("Europe/Berlin", "America/New_York", "Asia/Kolkata", "Etc/GMT-12"):
               if needed not in names:
                   sys.exit(f"missing {needed}")
+          # Antarctica's sectors meet at the South Pole: some line reaches it.
+          if not any(abs(lat + 90) < 0.01 for g in lines for part in
+                     (g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]])
+                     for _, lat in part):
+              sys.exit("no line reaches the South Pole: Antarctic sectors missing?")
           # The ocean's zones are there: a line runs down the mid-Atlantic at 22.5° W.
           def near(lon, lat, g):
               parts = g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]]

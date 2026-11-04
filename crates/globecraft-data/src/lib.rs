@@ -26,6 +26,7 @@ pub mod runtime;
 pub mod profiling;
 
 pub mod airports;
+pub mod antarctic_claims;
 pub mod aurora;
 pub mod links;
 pub mod live_maps;

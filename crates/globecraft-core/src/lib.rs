@@ -10,6 +10,7 @@ pub mod layers;
 mod localization;
 pub mod math;
 pub mod placemark;
+pub mod polar;
 pub mod ruler;
 pub mod time;
 /// Mean Earth radius used by the globe model, in kilometers.

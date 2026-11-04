@@ -1645,3 +1645,43 @@ fn legend_screenshot() {
     settle(&mut h, 0.5);
     assert!(h.state().legend_open(), "a key coming back opens it");
 }
+
+/// The polar caps (roadmap 3.5): both poles from afar and Antarctica closer, with
+/// the country borders and, given `GLOBECRAFT_TIMEZONES_FILE`, the time zones. Needs
+/// the network (NASA GIBS polar tiles). Manual.
+#[test]
+#[ignore = "manual: renders both poles with their polar imagery"]
+fn polar_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    if let Ok(path) = std::env::var("GLOBECRAFT_TIMEZONES_FILE") {
+        let zones = globecraft_data::timezones::TimeZones::from_gzip(
+            &std::fs::read(path).expect("time zones file"),
+        )
+        .expect("zones");
+        let app = h.state_mut();
+        app.live_time_zones.set(zones);
+        app.run(
+            "layer.show",
+            json!({"layer": "time_zones", "visible": true}),
+        )
+        .expect("time zones");
+    }
+    for (name, lat, lon, altitude) in [
+        ("31-polar-south", -90.0, 0.0, 6_000.0),
+        ("31-polar-south-close", -86.5, 30.0, 900.0),
+        ("31-polar-north", 90.0, 0.0, 6_000.0),
+    ] {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": lat, "lon": lon, "altitude_km": altitude}),
+            )
+            .expect("camera");
+        settle(&mut h, 8.0);
+        save(&mut h, &dir, name);
+    }
+}

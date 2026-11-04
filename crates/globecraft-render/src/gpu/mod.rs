@@ -63,9 +63,11 @@ impl GpuRenderer {
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
         // The overview shader samples one release; a swipe compare renders on the CPU.
+        // Nor do the polar caps (their tiles are in another projection).
         if request.cfg.terrain.is_some()
             || request.cfg.night_lights.is_some()
             || !request.cfg.level_blend
+            || crate::polar::shows_polar_cap(&request.basis, request.width, request.height)
         {
             return false;
         }

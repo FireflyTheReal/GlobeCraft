@@ -23,6 +23,11 @@ pub(super) struct Surface {
     /// How far into the night the pixel is: 0 by day, 1 past twilight (0 without sun).
     pub(super) darkness: f32,
     pub(super) rim: f32,
+    /// Where the pixel is, degrees, and how much ground it covers (metres): for the
+    /// polar caps, which use their own tiles (see `polar`).
+    pub(super) lat: f64,
+    pub(super) lon: f64,
+    pub(super) metres_per_pixel: f64,
 }
 pub(super) fn surface<const ELLIPSOID: bool>(
     x: usize,
@@ -157,6 +162,9 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         night,
         darkness,
         rim,
+        lat,
+        lon,
+        metres_per_pixel: mpp,
     }
 }
 /// The colour of a ray that misses the Earth. `camera_up` is the camera's direction

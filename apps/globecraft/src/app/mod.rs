@@ -28,6 +28,7 @@ use std::{
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
+mod antarctica;
 mod assistant;
 mod cache;
 mod commands;

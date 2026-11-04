@@ -8,6 +8,7 @@ pub mod diagnostics;
 mod gpu;
 pub mod overlays;
 mod pixel;
+pub mod polar;
 mod rays;
 mod terrain;
 use pixel::{Surface, sky, surface};
@@ -206,6 +207,7 @@ fn shade_surface(
             _ => natural,
         };
         let (col, _) = sample_chain(loc, cfg.provider, rel, level, &surface);
+        let col = with_polar_cap(loc, &surface, col);
         return finish_surface(
             col,
             surface,
@@ -233,6 +235,7 @@ fn shade_surface(
             col = col.lerp_monotonic(c2, blend);
         }
     }
+    let col = with_polar_cap(loc, &surface, col);
     finish_surface(
         col,
         surface,
@@ -240,6 +243,20 @@ fn shade_surface(
         night_lights(loc, cfg, &surface),
         cfg.sun.is_some(),
     )
+}
+
+/// Past the Web Mercator limit the polar imagery (see `polar`) takes over, fading in
+/// just before it; while its tiles load, the stretched Mercator edge stays.
+fn with_polar_cap(
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    surface: &Surface,
+    col: Vec4,
+) -> Vec4 {
+    let weight = polar::cap_weight(surface.lat);
+    if weight <= 0.0 {
+        return col;
+    }
+    polar::sample(loc, surface).map_or(col, |polar| col.lerp_monotonic(polar, weight))
 }
 
 /// The single imagery level nearest a pixel's detail: its band, or the next one

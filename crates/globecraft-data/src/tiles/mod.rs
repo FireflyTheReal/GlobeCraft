@@ -30,6 +30,11 @@ impl Provider {
     pub const TerrainDem: Provider = Provider(4);
     /// NASA Black Marble night lights, drawn on the night side.
     pub const NightLights: Provider = Provider(5);
+    /// NASA Blue Marble in the Arctic polar stereographic projection (EPSG:3413),
+    /// for the cap past the Web Mercator limit.
+    pub const PolarNorth: Provider = Provider(6);
+    /// The same in the Antarctic projection (EPSG:3031).
+    pub const PolarSouth: Provider = Provider(7);
 }
 
 impl Provider {

@@ -131,7 +131,9 @@ often, and splitting them into tiles would add requests without adding quality.
   runtime never straddles it.
 - Poles: Web Mercator stops at ±85.0511°. Polar geometry is a separate
   `PolarCap` layer with its own projection, drawn before the tiled layers.
-  A pole map is the long-term answer; a cap layer is the interim one.
+  A pole map is the long-term answer; a cap layer is the interim one. **Imagery
+  done 2026-11-04:** the raster caps use NASA GIBS's polar tiles (roadmap 3.5,
+  `globecraft-render` `polar.rs`); vector data still stops at the Mercator limit.
 
 ### LOD and fade-in
 

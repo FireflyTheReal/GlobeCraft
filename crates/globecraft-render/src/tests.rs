@@ -263,6 +263,18 @@ fn ray_batches_preserve_partial_rows_provider_pixels_and_missing_tile_priorities
             );
         }
         misses.sort_unstable_by_key(|&(key, _)| key);
+        // The polar caps (added after these fixtures were recorded) ask for tiles of
+        // their own sources, which a view near a pole does and no other; the case's own
+        // requests are compared with the fixture unchanged.
+        let (polar, misses): (Vec<_>, Vec<_>) = misses.into_iter().partition(|&(key, _)| {
+            matches!(unkey(key).0, p if p == Provider::PolarNorth || p == Provider::PolarSouth)
+        });
+        assert_eq!(
+            !polar.is_empty(),
+            case.cam.lat.abs() > crate::polar::CAP_START_DEG,
+            "{}: polar requests",
+            case.name
+        );
         let bytes: Vec<u8> = misses
             .into_iter()
             .flat_map(|(key, dist)| key.to_le_bytes().into_iter().chain(dist.to_le_bytes()))
