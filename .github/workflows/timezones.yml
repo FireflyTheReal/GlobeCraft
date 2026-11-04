@@ -2,9 +2,10 @@ name: Time zones
 
 # Publishes the world's time zones, simplified for the globe, into the one
 # `map-data` pre-release as `globecraft-timezones-<release>.geojson.gz` and the
-# manifest entry `timezones`. Source: timezone-boundary-builder on GitHub (the zones
-# in use now, with the ocean zones so every point has one), built from OpenStreetMap,
-# ODbL. Each feature is a (multi)polygon with its IANA name in `tzid`; the app finds
+# manifest entry `timezones`. Source: timezone-boundary-builder on GitHub (every
+# zone, with the ocean zones so every point has one; not the `-now` file, which
+# merges zones whose clocks agree today and so gets past dates wrong), built from
+# OpenStreetMap, ODbL. Each feature is a (multi)polygon with its IANA name in `tzid`; the app finds
 # the zone under the cursor and draws the borders.
 on:
   workflow_dispatch:
@@ -38,8 +39,8 @@ jobs:
           repo=evansiroky/timezone-boundary-builder
           tag=$(gh release view --repo "$repo" --json tagName --jq .tagName)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          gh release download "$tag" --repo "$repo" --pattern 'timezones-with-oceans-now.geojson.zip'
-          unzip -o timezones-with-oceans-now.geojson.zip
+          gh release download "$tag" --repo "$repo" --pattern 'timezones-with-oceans.geojson.zip'
+          unzip -o timezones-with-oceans.geojson.zip
           ls -la
 
       - name: Simplify
