@@ -35,6 +35,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
                 turn_rate_deg_s: None,
                 observed_unix: 1000.0,
                 details: None,
+                class: globecraft_data::aircraft::AircraftClass::Unknown,
             }]
             .into(),
             ..Default::default()
@@ -115,6 +116,7 @@ fn aircraft_mesh_repaint_cost() {
             turn_rate_deg_s: None,
             observed_unix: 1000.0,
             details: None,
+            class: globecraft_data::aircraft::AircraftClass::Unknown,
         })
         .collect();
     let request = ProjectionInput {
@@ -209,6 +211,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                     turn_rate_deg_s: None,
                     observed_unix: 1000.0,
                     details: None,
+                    class: globecraft_data::aircraft::AircraftClass::Unknown,
                 }]
                 .into(),
                 ..Default::default()

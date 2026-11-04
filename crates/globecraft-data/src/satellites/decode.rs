@@ -1,5 +1,6 @@
 //! CelesTrak OMM fields and UTC epoch decoding.
-use super::Satellite;
+use super::{Satellite, SatelliteGroup, Sgp4Orbit};
+use std::sync::Arc;
 fn num(v: &serde_json::Value, k: &str) -> Option<f64> {
     v.get(k)?
         .as_f64()
@@ -43,15 +44,21 @@ fn parse_epoch(s: &str) -> Option<f64> {
     }
     Some(unix_day(y, m, d) as f64 * 86400.0 + hour * 3600.0 + minute * 60.0 + second)
 }
-pub(super) fn parse_omm(value: &serde_json::Value, now_unix_secs: f64) -> Vec<Satellite> {
+pub(super) fn parse_omm(
+    value: &serde_json::Value,
+    now_unix_secs: f64,
+    group: SatelliteGroup,
+) -> Vec<Satellite> {
     value
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|v| {
+            let epoch = parse_epoch(v["EPOCH"].as_str()?)?;
             let s = Satellite {
                 name: v["OBJECT_NAME"].as_str()?.to_owned(),
                 norad: v["NORAD_CAT_ID"].to_string().trim_matches('"').to_owned(),
+                group,
                 orbit: globecraft_core::orbit::OrbitalElements {
                     inclination_deg: num(v, "INCLINATION")?,
                     raan_deg: num(v, "RA_OF_ASC_NODE")?,
@@ -59,8 +66,9 @@ pub(super) fn parse_omm(value: &serde_json::Value, now_unix_secs: f64) -> Vec<Sa
                     argument_perigee_deg: num(v, "ARG_OF_PERICENTER")?,
                     mean_anomaly_deg: num(v, "MEAN_ANOMALY")?,
                     mean_motion_rev_per_day: num(v, "MEAN_MOTION")?,
-                    epoch_unix_secs: parse_epoch(v["EPOCH"].as_str()?)?,
+                    epoch_unix_secs: epoch,
                 },
+                sgp4: Sgp4Orbit::from_omm(v, epoch).map(Arc::new),
             };
             if s.orbit.mean_motion_rev_per_day > 0.0 && s.ground_position(now_unix_secs).is_some() {
                 Some(s)
@@ -79,6 +87,8 @@ mod tests {
         let sat = Satellite {
             name: "test".into(),
             norad: "1".into(),
+            group: SatelliteGroup::Station,
+            sgp4: None,
             orbit: globecraft_core::orbit::OrbitalElements {
                 inclination_deg: 90.0,
                 raan_deg: 0.0,
@@ -118,10 +128,17 @@ mod validation_tests {
     #[test]
     fn omm_snapshot_uses_the_injected_observation_clock_and_retains_provider_ids() {
         let json = serde_json::json!([{"OBJECT_NAME":"TEST","NORAD_CAT_ID":42,"INCLINATION":"90.0","RA_OF_ASC_NODE":0.0,"ECCENTRICITY":0.001,"ARG_OF_PERICENTER":0.0,"MEAN_ANOMALY":0.0,"MEAN_MOTION":15.0,"EPOCH":"2023-11-14T22:13:20.000Z"}]);
-        let satellites = parse_omm(&json, 1_700_000_000.0);
+        let satellites = parse_omm(&json, 1_700_000_000.0, SatelliteGroup::Station);
         assert_eq!(satellites.len(), 1);
         assert_eq!(satellites[0].norad, "42");
         assert_eq!(satellites[0].orbit.epoch_unix_secs, 1_700_000_000.0);
-        assert!(parse_omm(&json, 1_700_000_000.0 + 15.0 * 86400.0).is_empty());
+        assert!(
+            parse_omm(
+                &json,
+                1_700_000_000.0 + 15.0 * 86400.0,
+                SatelliteGroup::Station
+            )
+            .is_empty()
+        );
     }
 }

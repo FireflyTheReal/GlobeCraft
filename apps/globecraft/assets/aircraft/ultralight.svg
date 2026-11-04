@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft live-flight marker: ultralight or hang glider, nose up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Ultralight or hang glider top view">
+  <g fill="#f3faff">
+    <polygon points="12,5 12,13 2.50,17.50 1.50,16"/>
+    <polygon points="22.50,16 21.50,17.50 12,13 12,5"/>
+    <polygon points="11.20,10.50 12.80,10.50 12.80,14.50 11.20,14.50"/>
+  </g>
+</svg>

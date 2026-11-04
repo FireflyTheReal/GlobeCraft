@@ -8,8 +8,10 @@ pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
 mod poi;
 mod poi_icons;
 pub(super) use poi_icons::Group as PoiGroup;
+pub(super) use world::{VesselClass, satellite_symbol};
 mod poi_memory;
 mod shapes;
+pub(super) use shapes::class_symbol;
 mod transport;
 pub(super) use poi::PoiShapes;
 #[cfg(test)]
@@ -153,7 +155,11 @@ impl AircraftOverlay {
             .flights
             .iter()
             .find(|flight| &*geometry.data.aircraft[flight.source_index].hex == hex)?;
-        Some(shapes::selected_plane(flight, geometry.view.map_scale))
+        Some(shapes::selected_plane(
+            flight,
+            geometry.data.aircraft[flight.source_index].class,
+            geometry.view.map_scale,
+        ))
     }
 }
 
@@ -377,7 +383,7 @@ impl App {
         };
         let ms = self.settings.map_scale;
         let hover = painter.ctx().pointer_hover_pos();
-        let mut nearest: Option<(&globecraft_data::satellites::Satellite, egui::Pos2)> = None;
+        let mut nearest: Option<(&globecraft_data::satellites::Satellite, egui::Pos2, f64)> = None;
         let mut distance = (13.0 * ms).powi(2);
         painter.extend(
             self.world_shapes
@@ -392,12 +398,12 @@ impl App {
                 let d = (h - at).length_sq();
                 if d < distance {
                     distance = d;
-                    nearest = Some((sat, at));
+                    nearest = Some((sat, at, projected.altitude_km));
                 }
             }
         }
-        if let Some((sat, at)) = nearest {
-            let text = world::satellite_tooltip(self.lang, sat);
+        if let Some((sat, at, altitude_km)) = nearest {
+            let text = world::satellite_tooltip(self.lang, sat, Some(altitude_km));
             hover_label(painter, rect, at, &text, ms);
         }
     }

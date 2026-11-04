@@ -1580,6 +1580,7 @@ fn selected_flight_screenshot() {
                 source: Some("adsb_icao".into()),
                 ..Default::default()
             })),
+            class: globecraft_data::aircraft::AircraftClass::Heavy,
         }),
         route_known: true,
         error: None,
@@ -1682,6 +1683,151 @@ fn polar_screenshot() {
             )
             .expect("camera");
         settle(&mut h, 8.0);
+        save(&mut h, &dir, name);
+    }
+}
+
+/// Answers every request forever: OpenSky-style state vectors for `states/all`,
+/// ADSB.lol-style aircraft for anything else.
+fn fake_aircraft_server(opensky: serde_json::Value, adsb: serde_json::Value) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    std::thread::spawn(move || {
+        for socket in listener.incoming() {
+            let Ok(mut socket) = socket else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let n = socket.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let body = if request.contains("states/all") {
+                opensky.to_string()
+            } else {
+                adsb.to_string()
+            };
+            let _ = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    port
+}
+
+/// Roadmap 13.6 and G: every kind of aircraft with its own symbol (made-up flights
+/// over the Strait of Dover from a local server), ships coloured by type and sized by
+/// length (OpenSeaFeed), and satellites by group at their real height, predicted with
+/// SGP4 from CelesTrak's elements, with the legend. Needs the network. Manual.
+#[test]
+#[ignore = "manual: renders aircraft, ship and satellite symbols"]
+fn live_symbols_screenshot() {
+    use globecraft_data::aircraft::LiveAircraft;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    // ADSB.lol categories for most, OpenSky's numbers (index 17) for the rest.
+    let adsb: Vec<serde_json::Value> = [
+        ("A3", "EZY81AB", 0.0, 0.0, 60.0),
+        ("A5", "BAW117", 0.0, 0.35, 250.0),
+        ("A1", "GBXYZ", 0.0, 0.7, 120.0),
+        ("A6", "RRR7201", 0.25, 0.0, 300.0),
+        ("A7", "GHELI", 0.25, 0.35, 15.0),
+        ("B1", "GLIDER1", 0.25, 0.7, 200.0),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, (category, flight, dlat, dlon, track))| {
+        json!({
+            "hex": format!("40{index:04x}"), "flight": flight, "category": category,
+            "lat": 50.75 + dlat, "lon": 1.0 + dlon, "track": track, "gs": 240.0,
+            "alt_baro": 12000, "seen_pos": 0.5
+        })
+    })
+    .collect();
+    let now = globecraft_core::math::now_unix();
+    let opensky: Vec<serde_json::Value> = [(10, 0.0), (12, 0.35), (14, 0.7)]
+        .iter()
+        .enumerate()
+        .map(|(index, (category, dlon))| {
+            json!([
+                format!("41{index:04x}"),
+                format!("TEST{index}"),
+                "United Kingdom",
+                now,
+                now,
+                1.0 + dlon,
+                50.5,
+                600.0,
+                false,
+                30.0,
+                90.0,
+                0.0,
+                null,
+                null,
+                null,
+                false,
+                0,
+                category
+            ])
+        })
+        .collect();
+    let port = fake_aircraft_server(json!({"states": opensky}), json!({"ac": adsb}));
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.live_aircraft = LiveAircraft::with_sources(
+        app.runtime.handle(),
+        || {},
+        format!("http://127.0.0.1:{port}/api/states/all?extended=1"),
+        format!("http://127.0.0.1:{port}/v2"),
+    );
+    for layer in ["flights", "vessels"] {
+        app.run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect("layer");
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": 50.75, "lon": 1.35, "altitude_km": 160.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 12.0);
+    save(&mut h, &dir, "32-live-symbols");
+    let app = h.state_mut();
+    for (layer, visible) in [("flights", false), ("vessels", false), ("satellites", true)] {
+        app.run("layer.show", json!({"layer": layer, "visible": visible}))
+            .expect("layer");
+    }
+    for _ in 0..60 {
+        if !h.state().live_satellites.snapshot().is_empty() {
+            break;
+        }
+        settle(&mut h, 1.0);
+    }
+    let satellites = h.state().live_satellites.snapshot();
+    assert!(
+        !satellites.is_empty(),
+        "{}",
+        h.state().live_satellites.status(h.state().lang)
+    );
+    println!(
+        "{} satellites, {} with SGP4",
+        satellites.len(),
+        satellites.iter().filter(|s| s.sgp4.is_some()).count()
+    );
+    for (name, camera) in [
+        (
+            "32-satellites",
+            json!({"lat": 20.0, "lon": 10.0, "altitude_km": 60_000.0}),
+        ),
+        (
+            "32-satellites-tilted",
+            json!({"lat": 35.0, "lon": 5.0, "altitude_km": 4_000.0, "tilt_deg": 60.0}),
+        ),
+    ] {
+        h.state_mut().run("camera.set", camera).expect("camera");
+        settle(&mut h, 12.0);
         save(&mut h, &dir, name);
     }
 }

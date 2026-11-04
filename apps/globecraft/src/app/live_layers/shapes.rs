@@ -1,4 +1,5 @@
 use eframe::egui::{self, Align2, Color32, Shape, Stroke, Vec2};
+use globecraft_data::aircraft::AircraftClass;
 use globecraft_render::aircraft::{AircraftGeometry, ProjectedFlight};
 use std::sync::OnceLock;
 
@@ -6,8 +7,51 @@ const TRAIL_WIDTH_POINTS: f32 = 1.2;
 const LABEL_FONT_POINTS: f32 = 11.0;
 const LABEL_OFFSET_POINTS: Vec2 = Vec2::new(9.0, -6.0);
 const SHADOW_OFFSET_POINTS: Vec2 = Vec2::new(1.0, 1.0);
-// The plane geometry is taken from the bundled SVG, not the former yellow diamond.
+// The plane geometry is taken from the bundled SVGs: an airliner for most traffic,
+// and a symbol of its own for each other kind of aircraft.
 const AIRPLANE_SVG: &str = include_str!("../../../assets/airplane.svg");
+const CLASS_SVGS: [(AircraftClass, &str, f32); 8] = [
+    (
+        AircraftClass::Heavy,
+        include_str!("../../../assets/aircraft/heavy.svg"),
+        1.25,
+    ),
+    (
+        AircraftClass::Light,
+        include_str!("../../../assets/aircraft/light.svg"),
+        0.8,
+    ),
+    (
+        AircraftClass::Fast,
+        include_str!("../../../assets/aircraft/fast.svg"),
+        0.95,
+    ),
+    (
+        AircraftClass::Helicopter,
+        include_str!("../../../assets/aircraft/helicopter.svg"),
+        0.85,
+    ),
+    (
+        AircraftClass::Glider,
+        include_str!("../../../assets/aircraft/glider.svg"),
+        0.9,
+    ),
+    (
+        AircraftClass::Balloon,
+        include_str!("../../../assets/aircraft/balloon.svg"),
+        0.75,
+    ),
+    (
+        AircraftClass::Ultralight,
+        include_str!("../../../assets/aircraft/ultralight.svg"),
+        0.75,
+    ),
+    (
+        AircraftClass::Drone,
+        include_str!("../../../assets/aircraft/drone.svg"),
+        0.7,
+    ),
+];
 const SVG_CENTER_POINTS: f32 = 12.0;
 const AIRPLANE_SCALE_POINTS: f32 = 0.78;
 const AIRPLANE_OUTLINE_SCALE: f32 = 1.11;
@@ -23,12 +67,30 @@ const SELECTED_SCALE: f32 = 1.35;
 struct SvgAirplane {
     // Each SVG polygon is convex, allowing efficient, indexed triangle fans.
     polygons: Vec<Vec<Vec2>>,
+    /// Its size next to the airliner's.
+    scale: f32,
 }
 
-fn airplane_symbol() -> &'static SvgAirplane {
-    static SYMBOL: OnceLock<SvgAirplane> = OnceLock::new();
-    SYMBOL.get_or_init(|| {
-        let polygons = AIRPLANE_SVG
+/// The symbol of a kind of aircraft.
+fn airplane_symbol(class: AircraftClass) -> &'static SvgAirplane {
+    static SYMBOLS: OnceLock<Vec<(AircraftClass, SvgAirplane)>> = OnceLock::new();
+    let symbols = SYMBOLS.get_or_init(|| {
+        CLASS_SVGS
+            .iter()
+            .map(|(class, svg, scale)| (*class, parse_symbol(svg, *scale)))
+            .collect()
+    });
+    static AIRLINER: OnceLock<SvgAirplane> = OnceLock::new();
+    symbols
+        .iter()
+        .find(|(kind, _)| *kind == class)
+        .map(|(_, symbol)| symbol)
+        .unwrap_or_else(|| AIRLINER.get_or_init(|| parse_symbol(AIRPLANE_SVG, 1.0)))
+}
+
+fn parse_symbol(svg: &str, scale: f32) -> SvgAirplane {
+    {
+        let polygons = svg
             .split("<polygon")
             .skip(1)
             .map(|element| {
@@ -55,38 +117,65 @@ fn airplane_symbol() -> &'static SvgAirplane {
                 polygon
             })
             .collect();
-        SvgAirplane { polygons }
-    })
+        SvgAirplane { polygons, scale }
+    }
 }
 
 /// The selected plane, in its own colours above the others.
-pub(super) fn selected_plane(flight: &ProjectedFlight, map_scale: f32) -> Shape {
+pub(super) fn selected_plane(
+    flight: &ProjectedFlight,
+    class: AircraftClass,
+    map_scale: f32,
+) -> Shape {
     let mut mesh = egui::Mesh::default();
     let size = map_scale * SELECTED_SCALE;
     add_airplane_mesh(
         &mut mesh,
-        flight,
+        (flight.position, heading(flight, class)),
         size,
-        airplane_symbol(),
+        airplane_symbol(class),
         (SELECTED_FILL, SELECTED_OUTLINE),
         1.0,
     );
     Shape::mesh(mesh)
 }
 
+/// A kind of aircraft's symbol, nose up, for the legend.
+pub(in crate::app) fn class_symbol(class: AircraftClass, center: egui::Pos2, size: f32) -> Shape {
+    let mut mesh = egui::Mesh::default();
+    let symbol = airplane_symbol(class);
+    add_airplane_mesh(
+        &mut mesh,
+        (center, Vec2::new(0.0, -1.0)),
+        size / (24.0 * AIRPLANE_SCALE_POINTS * 1.25),
+        symbol,
+        (AIRPLANE_FILL, AIRPLANE_OUTLINE),
+        1.0,
+    );
+    Shape::mesh(mesh)
+}
+
+/// Which way a flight's nose points on screen; a balloon stays upright.
+fn heading(flight: &ProjectedFlight, class: AircraftClass) -> Vec2 {
+    if class == AircraftClass::Balloon {
+        Vec2::new(0.0, -1.0)
+    } else {
+        (flight.icon[0] - flight.position).normalized()
+    }
+}
+
 fn add_airplane_mesh(
     mesh: &mut egui::Mesh,
-    flight: &ProjectedFlight,
+    (position, forward): (egui::Pos2, Vec2),
     map_scale: f32,
     symbol: &SvgAirplane,
     (fill, outline): (Color32, Color32),
     opacity: f32,
 ) {
-    // Existing projection already computes the direction of the aircraft on screen.
-    // Reuse it so the SVG turns as the camera/globe turns, even near the poles.
-    let forward = (flight.icon[0] - flight.position).normalized();
+    // The projection already computes the direction of the aircraft on screen, so
+    // the SVG turns as the camera/globe turns, even near the poles.
     let right = Vec2::new(-forward.y, forward.x);
-    let icon_size = AIRPLANE_SCALE_POINTS * map_scale;
+    let icon_size = AIRPLANE_SCALE_POINTS * map_scale * symbol.scale;
 
     // Draw the dark silhouette beneath all SVG parts, then the light silhouette.
     // This creates an exterior outline without outlines between overlapping wings.
@@ -97,7 +186,7 @@ fn add_airplane_mesh(
                 let dx = (point.x - SVG_CENTER_POINTS) * icon_size * scale;
                 let dy = (SVG_CENTER_POINTS - point.y) * icon_size * scale;
                 mesh.colored_vertex(
-                    flight.position + right * dx + forward * dy,
+                    position + right * dx + forward * dy,
                     color.gamma_multiply(opacity),
                 );
             }
@@ -121,7 +210,6 @@ pub(super) fn build(painter: &egui::Painter, geometry: &AircraftGeometry) -> Vec
     let mut output = Vec::new();
     let mut trails = Vec::new();
     let mut planes = egui::Mesh::default();
-    let symbol = airplane_symbol();
     // Resolved before `fonts_mut`: `map_font` reads the fonts too, and egui's context
     // lock is not re-entrant, so resolving it inside the closure froze the app as soon
     // as the first label appeared (below 650 km).
@@ -133,11 +221,12 @@ pub(super) fn build(painter: &egui::Painter, geometry: &AircraftGeometry) -> Vec
             trail_stroke.color.gamma_multiply(flight.opacity),
         );
         trails.push(Shape::line_segment(flight.trail, stroke));
+        let class = geometry.data.aircraft[flight.source_index].class;
         add_airplane_mesh(
             &mut planes,
-            flight,
+            (flight.position, heading(flight, class)),
             ms,
-            symbol,
+            airplane_symbol(class),
             (AIRPLANE_FILL, AIRPLANE_OUTLINE),
             flight.opacity,
         );
@@ -211,15 +300,47 @@ mod tests {
 
     #[test]
     fn bundled_svg_contains_real_airplane_wings_and_fuselage() {
-        let symbol = airplane_symbol();
+        let symbol = airplane_symbol(AircraftClass::Unknown);
         assert_eq!(symbol.polygons.len(), 5);
         assert!(symbol.polygons.iter().all(|polygon| polygon.len() >= 4));
-        assert!(
-            symbol
-                .polygons
-                .iter()
-                .flatten()
-                .all(|point| point.x.is_finite() && point.y.is_finite())
-        );
+        assert!(std::ptr::eq(
+            symbol,
+            airplane_symbol(AircraftClass::Airliner)
+        ));
+    }
+
+    /// Every kind of aircraft has its own symbol, inside the 24-unit box, and every
+    /// polygon is convex (they are drawn as triangle fans).
+    #[test]
+    fn every_aircraft_class_has_a_convex_symbol() {
+        for class in AircraftClass::ALL {
+            let symbol = airplane_symbol(class);
+            if class != AircraftClass::Airliner {
+                assert!(
+                    !std::ptr::eq(symbol, airplane_symbol(AircraftClass::Unknown)),
+                    "{class:?}"
+                );
+            }
+            for polygon in &symbol.polygons {
+                assert!(polygon.len() >= 3, "{class:?}");
+                assert!(
+                    polygon
+                        .iter()
+                        .all(|p| (0.0..=24.0).contains(&p.x) && (0.0..=24.0).contains(&p.y)),
+                    "{class:?}"
+                );
+                let turns: Vec<f32> = (0..polygon.len())
+                    .map(|i| {
+                        let [a, b, c] = [0, 1, 2].map(|k| polygon[(i + k) % polygon.len()]);
+                        (b - a).x * (c - b).y - (b - a).y * (c - b).x
+                    })
+                    .filter(|turn| turn.abs() > 1e-4)
+                    .collect();
+                assert!(
+                    turns.iter().all(|t| *t > 0.0) || turns.iter().all(|t| *t < 0.0),
+                    "{class:?}: {polygon:?}"
+                );
+            }
+        }
     }
 }

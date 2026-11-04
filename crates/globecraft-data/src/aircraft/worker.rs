@@ -110,7 +110,7 @@ pub(super) struct Endpoints {
 impl Default for Endpoints {
     fn default() -> Self {
         Self {
-            global: "https://opensky-network.org/api/states/all".into(),
+            global: "https://opensky-network.org/api/states/all?extended=1".into(),
             local: "https://api.adsb.lol/v2".into(),
         }
     }

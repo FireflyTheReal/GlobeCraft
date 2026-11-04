@@ -46,7 +46,7 @@ the app shows the matching attribution on screen while a source is in use.
 | --- | --- | --- |
 | [OpenSky Network](https://opensky-network.org/) | Aircraft positions | Non-commercial use, rate-limited; attribution |
 | [ADSB.lol](https://www.adsb.lol/) | Aircraft positions near you | ODbL |
-| [CelesTrak](https://celestrak.org/) | Satellite orbital elements | Free to use with attribution |
+| [CelesTrak](https://celestrak.org/) | Satellite orbital elements (stations, GNSS, weather and brightest groups) | Free to use with attribution |
 | [OpenSeaFeed](https://openseafeed.com/) | Ship (AIS) positions | Service terms |
 | [Fintraffic Digitraffic](https://www.digitraffic.fi/) | Finnish ship positions (fallback) | CC BY 4.0 |
 | [RainViewer](https://www.rainviewer.com/) | Precipitation radar | Free for personal, educational and small community use; attribution |
@@ -65,6 +65,8 @@ reqwest, tokio, rstar, geo-index, fluent, kml, rusqlite and others); their licen
 listed by `cargo about` or in each crate. [sofars](https://crates.io/crates/sofars)
 (IAU SOFA routines) is licensed as described in
 [assets/sky/sofars-LICENSE.txt](assets/sky/sofars-LICENSE.txt).
+Satellite positions are predicted with [sgp4](https://crates.io/crates/sgp4) (MIT), a
+Rust port of the SGP4 model of Vallado et al., *Revisiting Spacetrack Report #3* (2006).
 
 ### RustGIS
 

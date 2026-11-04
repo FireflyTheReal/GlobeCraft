@@ -173,7 +173,11 @@ pub struct ProjectedVessel {
 }
 pub struct ProjectedSatellite {
     pub source_index: usize,
+    /// Where the satellite is, at its height.
     pub position: Pos2,
+    /// The point on the ground below it, when that is in front of the camera.
+    pub ground: Option<Pos2>,
+    pub altitude_km: f64,
 }
 pub struct LiveGeometry {
     pub input: LiveInput,
@@ -385,27 +389,35 @@ fn dead_reckon(ship: &Vessel, age: f64) -> (f64, f64) {
         knots * KM_PER_NAUTICAL_MILE / SECONDS_PER_HOUR * age.min(VESSEL_EXTRAPOLATION_MAX_SECS);
     destination(ship.lat, ship.lon, ship.course, km)
 }
+/// Satellites where they are: at their height above the ground, hidden only where
+/// the Earth stands in front of them, with the point below them when it shows.
 fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
     let Some(satellites) = &input.satellites else {
         return Vec::new();
     };
+    let view = input.view;
     satellites
         .iter()
         .enumerate()
         .filter_map(|(source_index, sat)| {
-            let (lat, lon) = sat.ground_position(input.unix_secs)?;
-            let position = input
-                .view
+            let at = sat.position(input.unix_secs)?;
+            let radius = 1.0 + at.altitude_km / globecraft_core::EARTH_RADIUS_KM;
+            let position = view.basis.project_above(
+                globecraft_core::math::ll_to_v3(at.lat, at.lon) * radius,
+                view.rect,
+            )?;
+            if !view.rect.contains(position) {
+                return None;
+            }
+            let ground = view
                 .basis
-                .project(input.view.basis.surface_position(lat, lon), input.view.rect)?;
-            input
-                .view
-                .rect
-                .contains(position)
-                .then_some(ProjectedSatellite {
-                    source_index,
-                    position,
-                })
+                .project(view.basis.surface_position(at.lat, at.lon), view.rect);
+            Some(ProjectedSatellite {
+                source_index,
+                position,
+                ground,
+                altitude_km: at.altitude_km,
+            })
         })
         .collect()
 }

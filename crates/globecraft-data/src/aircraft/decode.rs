@@ -1,5 +1,5 @@
 //! Provider-specific decoding; coordinates share core validation and CPU work is bounded.
-use super::{Aircraft, AircraftDetails, MAX_POSITION_AGE_SECS};
+use super::{Aircraft, AircraftClass, AircraftDetails, MAX_POSITION_AGE_SECS};
 use globecraft_core::math::now_unix;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -144,6 +144,10 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
                 turn_rate_deg_s: None,
                 observed_unix: observed,
                 details: None,
+                class: f
+                    .get(17)
+                    .and_then(serde_json::Value::as_i64)
+                    .map_or(AircraftClass::Unknown, AircraftClass::from_opensky),
             })
         })
         .collect()
@@ -187,6 +191,10 @@ pub(super) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft
                     .filter(|rate| rate.abs() <= MAX_TURN_RATE_DEG_S),
                 observed_unix: now - age,
                 details: Some(Arc::new(adsb_lol_details(v))),
+                class: v
+                    .get("category")
+                    .and_then(serde_json::Value::as_str)
+                    .map_or(AircraftClass::Unknown, AircraftClass::from_adsb),
             })
         })
         .collect()
@@ -267,13 +275,17 @@ mod tests {
         let now = 1000.0;
         let data = serde_json::json!({"states": [
             ["e490aa", "AZU123 ", "Brazil", 990, 995, -43.2, -19.7, 10000.0, false, 250.0, 45.0, null, null, null],
+            // With `extended=1`, index 17 is the emitter category (8: rotorcraft).
+            ["e490ab", "PRHEL", "Brazil", 990, 995, -43.1, -19.6, 300.0, false, 50.0, 90.0, null, null, null, null, false, 0, 8],
             ["x", "GROUND", "Brazil", 990, 995, -43.2, -19.7, 0, true, 0, 0],
             ["z", "OLD", "Brazil", 800, 800, -43.2, -19.7, 1000, false, 100, 0]
         ]});
         let flights = parse_opensky(&data, now);
-        assert_eq!(flights.len(), 1);
+        assert_eq!(flights.len(), 2);
         assert_eq!(flights[0].callsign.as_ref(), "AZU123");
         assert!((flights[0].altitude_feet.unwrap() - 32808.4).abs() < 0.1);
+        assert_eq!(flights[0].class, AircraftClass::Unknown);
+        assert_eq!(flights[1].class, AircraftClass::Helicopter);
     }
     #[test]
     fn parses_adsb_position_and_rejects_ground_and_stale_records() {
@@ -301,6 +313,7 @@ mod tests {
         }]});
         let flight = &parse_adsb_lol(&data, 1000.0)[0];
         assert_eq!(flight.turn_rate_deg_s, Some(-0.03));
+        assert_eq!(flight.class, AircraftClass::Heavy, "A5");
         let details = flight.details.as_deref().unwrap();
         assert_eq!(details.registration.as_deref(), Some("LX-VCD"));
         assert_eq!(details.type_code.as_deref(), Some("B748"));

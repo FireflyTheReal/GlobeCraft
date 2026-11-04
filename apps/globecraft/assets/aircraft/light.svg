@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft live-flight marker: light single-engine aircraft, nose up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Light single-engine aircraft top view">
+  <g fill="#f3faff">
+    <polygon points="12,4 13,5 13.30,17 12.60,21 11.40,21 10.70,17 11,5"/>
+    <polygon points="2.50,8.50 21.50,8.50 21.50,10.80 2.50,10.80"/>
+    <polygon points="8.20,18.80 15.80,18.80 15.80,20.40 8.20,20.40"/>
+    <polygon points="9.60,3 14.40,3 14.40,3.80 9.60,3.80"/>
+  </g>
+</svg>

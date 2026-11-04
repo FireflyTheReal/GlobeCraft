@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft live-flight marker: helicopter, nose up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Helicopter top view">
+  <g fill="#f3faff">
+    <polygon points="15.14,11.30 13.30,13.14 10.70,13.14 8.86,11.30 8.86,8.70 10.70,6.86 13.30,6.86 15.14,8.70"/>
+    <polygon points="11.30,12 12.70,12 12.40,21.50 11.60,21.50"/>
+    <polygon points="10,20.20 14,20.20 14,21.40 10,21.40"/>
+    <polygon points="3.70,2.30 21.70,20.30 20.30,21.70 2.30,3.70"/>
+    <polygon points="20.30,2.30 21.70,3.70 3.70,21.70 2.30,20.30"/>
+  </g>
+</svg>

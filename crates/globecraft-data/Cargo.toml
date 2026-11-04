@@ -34,5 +34,6 @@ fst.workspace = true
 flate2.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+sgp4.workspace = true
 self_update.workspace = true
 semver.workspace = true

@@ -544,7 +544,35 @@ vessels-custom-status = { $count } vessels • custom AIS GeoJSON • provider c
 vessels-fallback-status = { $count } vessels • Fintraffic fallback (Finland only); global feed unavailable
 vessels-fallback-source = Fintraffic (fallback)
 satellites-loading-status = Loading orbits…
-satellites-loaded-status = { $count } satellites • approximate orbital position (not telemetry)
+satellites-loaded-status = { $count } satellites • SGP4 predictions from CelesTrak elements (not telemetry)
+satellite-group-station = Space stations
+satellite-group-navigation = Navigation (GPS, Galileo, GLONASS, BeiDou)
+satellite-group-weather = Weather
+satellite-group-bright = Brightest (visible to the eye)
+aircraft-class-unknown = Aircraft (kind not reported)
+aircraft-class-airliner = Airliner or business jet
+aircraft-class-heavy = Heavy jet
+aircraft-class-light = Light aircraft
+aircraft-class-fast = High-performance jet
+aircraft-class-helicopter = Helicopter
+aircraft-class-glider = Glider
+aircraft-class-balloon = Balloon or airship
+aircraft-class-ultralight = Ultralight or hang glider
+aircraft-class-drone = Drone
+vessel-class-cargo = Cargo
+vessel-class-tanker = Tanker
+vessel-class-passenger = Passenger
+vessel-class-fishing = Fishing
+vessel-class-high-speed = High-speed craft
+vessel-class-tug = Tug or pilot boat
+vessel-class-service = Service vessel
+vessel-class-military = Military or law enforcement
+vessel-class-pleasure = Pleasure craft or sailing
+vessel-class-other = Other
+vessel-class-unknown = Not reported
+legend-aircraft = Aircraft
+legend-vessels = Ships (larger = longer)
+legend-satellites = Satellites
 traffic-key-help = Enter a TomTom key for real traffic
 traffic-zoom-help = Zoom in to see traffic
 traffic-loading-status = Loading live traffic…
@@ -570,9 +598,12 @@ vessels-hover-tooltip =
     { $latitude }°, { $longitude }° • { $course } • { $speed } kt
     Last AIS report { $minutes } min ago • coverage varies
 satellites-hover-tooltip =
-    { $name } (NORAD { $norad })
+    { $name } (NORAD { $norad }) • { $group }
     Period { $period } • Altitude { $altitude } • Inclination { $inclination }
-    Estimated orbital position • CelesTrak
+    { $model ->
+        [sgp4] Predicted with SGP4 from CelesTrak elements
+       *[simple] Estimated orbital position • CelesTrak
+    }
 transport-airport-hover-tooltip =
     { $name }
     IATA { $iata } • ICAO { $icao }

@@ -1,12 +1,15 @@
-//! The legend: what the colours on the globe mean. It opens by itself when something
-//! colour-coded appears (a selected flight, rain radar, aurora, places of interest),
+//! The legend: what the colours and symbols on the globe mean. It opens by itself when
+//! something coded appears (aircraft, ships, satellites, a selected flight, rain
+//! radar, aurora, places of interest),
 //! closes with its ✕, and `ui.legend` (View tab, Command Search) brings it back.
 //! Each key takes its colours from the code that draws them, so the two never differ.
 use super::App;
-use super::live_layers::{PoiGroup, aurora_colour};
+use super::live_layers::{PoiGroup, VesselClass, aurora_colour, class_symbol, satellite_symbol};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
 use globecraft_core::layers::MapLayer;
-use globecraft_data::live_maps::RADAR_BANDS;
+use globecraft_data::{
+    aircraft::AircraftClass, live_maps::RADAR_BANDS, satellites::SatelliteGroup,
+};
 use serde_json::{Value, json};
 
 const RAMP_SIZE_POINTS: Vec2 = Vec2::new(220.0, 12.0);
@@ -14,6 +17,9 @@ const RAMP_STEPS: usize = 64;
 const TICK_HEIGHT_POINTS: f32 = 14.0;
 const TICK_FONT_POINTS: f32 = 11.0;
 const SWATCH_POINTS: f32 = 12.0;
+/// The aircraft and satellite symbols are drawn in a square this large.
+const SYMBOL_POINTS: f32 = 22.0;
+const SATELLITE_SYMBOL_POINTS: f32 = 5.0;
 /// The window's corner sits this far inside the globe's bottom right corner, above
 /// the timeline and the credits.
 const MARGIN_POINTS: Vec2 = Vec2::new(16.0, 72.0);
@@ -25,6 +31,9 @@ const AURORA_CHANCE_SPAN: (f32, f32) = (4.0, 60.0);
 /// A colour key the legend can show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LegendKind {
+    Aircraft,
+    Vessels,
+    Satellites,
     FlightAltitude,
     Radar,
     Aurora,
@@ -96,6 +105,36 @@ fn ramp(ui: &mut egui::Ui, colour: impl Fn(f32) -> Color32, ticks: &[(f32, &str)
     }
 }
 
+/// A symbol and what it stands for.
+fn symbol(ui: &mut egui::Ui, shapes: impl FnOnce(egui::Pos2) -> Vec<egui::Shape>, text: &str) {
+    ui.horizontal(|ui| {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(SYMBOL_POINTS, SYMBOL_POINTS), Sense::hover());
+        ui.painter().extend(shapes(rect.center()));
+        ui.label(text);
+    });
+}
+
+/// Items in two columns.
+fn two_columns<T>(
+    ui: &mut egui::Ui,
+    id: &str,
+    items: &[T],
+    mut item: impl FnMut(&mut egui::Ui, &T),
+) {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([12.0, 2.0])
+        .show(ui, |ui| {
+            for (index, value) in items.iter().enumerate() {
+                item(ui, value);
+                if index % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+        });
+}
+
 /// A coloured square and what it stands for.
 fn swatch(ui: &mut egui::Ui, colour: Color32, text: &str) {
     ui.horizontal(|ui| {
@@ -115,6 +154,9 @@ impl App {
             return Vec::new();
         }
         [
+            (LegendKind::Aircraft, self.layer(MapLayer::Flights)),
+            (LegendKind::Vessels, self.layer(MapLayer::Vessels)),
+            (LegendKind::Satellites, self.layer(MapLayer::Satellites)),
             (
                 LegendKind::FlightAltitude,
                 self.layer(MapLayer::Flights) && self.flight_selection.selected().is_some(),
@@ -172,6 +214,44 @@ impl App {
                         ui.separator();
                     }
                     match kind {
+                        LegendKind::Aircraft => {
+                            ui.strong(lang.text("legend-aircraft"));
+                            two_columns(ui, "legend-aircraft", &AircraftClass::ALL, |ui, class| {
+                                symbol(
+                                    ui,
+                                    |at| vec![class_symbol(*class, at, SYMBOL_POINTS)],
+                                    lang.text(class.label_key()),
+                                );
+                            });
+                        }
+                        LegendKind::Vessels => {
+                            ui.strong(lang.text("legend-vessels"));
+                            two_columns(ui, "legend-vessels", &VesselClass::ALL, |ui, class| {
+                                swatch(ui, class.colour(), lang.text(class.label_key()));
+                            });
+                        }
+                        LegendKind::Satellites => {
+                            ui.strong(lang.text("legend-satellites"));
+                            two_columns(
+                                ui,
+                                "legend-satellites",
+                                &SatelliteGroup::ALL,
+                                |ui, group| {
+                                    symbol(
+                                        ui,
+                                        |at| {
+                                            satellite_symbol(
+                                                *group,
+                                                at,
+                                                SATELLITE_SYMBOL_POINTS,
+                                                1.0,
+                                            )
+                                        },
+                                        lang.text(group.label_key()),
+                                    );
+                                },
+                            );
+                        }
                         LegendKind::FlightAltitude => {
                             ui.strong(lang.text("legend-flight-altitude"));
                             ramp(
@@ -223,17 +303,9 @@ impl App {
                         }
                         LegendKind::PlacesOfInterest => {
                             ui.strong(lang.text("legend-poi"));
-                            egui::Grid::new("legend-poi-groups")
-                                .num_columns(2)
-                                .spacing([12.0, 2.0])
-                                .show(ui, |ui| {
-                                    for (index, group) in PoiGroup::ALL.iter().enumerate() {
-                                        swatch(ui, group.color(), lang.text(group.label_key()));
-                                        if index % 2 == 1 {
-                                            ui.end_row();
-                                        }
-                                    }
-                                });
+                            two_columns(ui, "legend-poi-groups", &PoiGroup::ALL, |ui, group| {
+                                swatch(ui, group.color(), lang.text(group.label_key()));
+                            });
                         }
                     }
                 }

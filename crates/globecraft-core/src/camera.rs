@@ -132,6 +132,32 @@ impl Basis {
         if p.dot(horizon_camera) < 1.0 {
             return None; // behind the horizon
         }
+        self.screen_point(p, rect)
+    }
+    /// A point above the ground (a satellite, in mean Earth radii from the centre),
+    /// in screen points; `None` when the Earth stands between it and the camera or it
+    /// is behind the camera. The Earth is taken as the unit sphere here: a few
+    /// kilometres of flattening cannot hide something hundreds of kilometres up.
+    pub fn project_above(&self, p: DVec3, rect: Rect) -> Option<Pos2> {
+        let to = p - self.c;
+        let length = to.length();
+        if length <= 0.0 {
+            return None;
+        }
+        let direction = to / length;
+        let b = self.c.dot(direction);
+        let disc = b * b - (self.c.length_squared() - 1.0);
+        if disc > 0.0 {
+            let entry = -b - disc.sqrt();
+            if entry > 0.0 && entry < length {
+                return None; // the Earth is in front of it
+            }
+        }
+        self.screen_point(p, rect)
+            .map(|at| Pos2::new(at.x as f32, at.y as f32))
+    }
+    /// Any point in front of the camera, in f64 screen points, hidden or not.
+    fn screen_point(&self, p: DVec3, rect: Rect) -> Option<DVec2> {
         let v = p - self.c;
         let local = self.view_from_world * v;
         let z = -local.z;
@@ -385,6 +411,36 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    /// Satellites show above the horizon and over the limb, and hide behind the Earth.
+    #[test]
+    fn points_above_the_ground_hide_only_behind_the_earth() {
+        let rect = Rect::from_min_size(emath::Pos2::ZERO, Vec2::new(1000.0, 1000.0));
+        let basis = Cam {
+            lat: 0.0,
+            lon: 0.0,
+            heading: 0.0,
+            alt: 30_000.0,
+            tilt: 0.0,
+        }
+        .basis(1.0);
+        let above = |lat: f64, lon: f64, km: f64| {
+            basis.project_above(crate::math::ll_to_v3(lat, lon) * (1.0 + km / 6_371.0), rect)
+        };
+        let overhead = above(0.0, 0.0, 400.0).unwrap();
+        assert!((overhead - rect.center()).length() < 0.5, "{overhead:?}");
+        // The far side is hidden; a geostationary satellite a quarter turn away is
+        // past the horizon but stands out beside the globe.
+        assert!(above(0.0, 180.0, 400.0).is_none());
+        assert!(above(0.0, 140.0, 2_000.0).is_none());
+        assert!(
+            basis
+                .project(basis.surface_position(0.0, 90.0), rect)
+                .is_none()
+        );
+        let geostationary = above(0.0, 90.0, 35_786.0).unwrap();
+        assert!(geostationary.x > overhead.x + 100.0, "{geostationary:?}");
+    }
 
     /// Roadmap 1.9: at the closest camera, a centimetre of camera motion moves the
     /// ground on screen smoothly (no float steps), and picking a projected point

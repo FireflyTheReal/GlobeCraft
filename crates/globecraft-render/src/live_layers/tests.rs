@@ -235,7 +235,9 @@ fn orbital_updates_reuse_roads_and_project_only_current_valid_subpoints() {
         vec![Satellite {
             name: "Orbit".into(),
             norad: "1".into(),
+            group: globecraft_data::satellites::SatelliteGroup::Station,
             orbit,
+            sgp4: None,
         }]
         .into(),
     );

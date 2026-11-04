@@ -18,6 +18,7 @@ fn input() -> ProjectionInput {
             turn_rate_deg_s: None,
             observed_unix: 1000.0,
             details: None,
+            class: globecraft_data::aircraft::AircraftClass::Unknown,
         })
         .collect::<Vec<_>>()
         .into();

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft live-flight marker: drone, nose up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Drone top view">
+  <g fill="#f3faff">
+    <polygon points="5.60,4.40 19.60,18.40 18.40,19.60 4.40,5.60"/>
+    <polygon points="18.40,4.40 19.60,5.60 5.60,19.60 4.40,18.40"/>
+    <polygon points="9.60,9.60 14.40,9.60 14.40,14.40 9.60,14.40"/>
+    <polygon points="7.96,6.22 6.22,7.96 3.78,7.96 2.04,6.22 2.04,3.78 3.78,2.04 6.22,2.04 7.96,3.78"/>
+    <polygon points="21.96,6.22 20.22,7.96 17.78,7.96 16.04,6.22 16.04,3.78 17.78,2.04 20.22,2.04 21.96,3.78"/>
+    <polygon points="7.96,20.22 6.22,21.96 3.78,21.96 2.04,20.22 2.04,17.78 3.78,16.04 6.22,16.04 7.96,17.78"/>
+    <polygon points="21.96,20.22 20.22,21.96 17.78,21.96 16.04,20.22 16.04,17.78 17.78,16.04 20.22,16.04 21.96,17.78"/>
+  </g>
+</svg>

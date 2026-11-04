@@ -544,7 +544,35 @@ vessels-custom-status = { $count } navios • GeoJSON AIS configurado • cobert
 vessels-fallback-status = { $count } navios • contingência Fintraffic (só Finlândia); fonte mundial indisponível
 vessels-fallback-source = Fintraffic (contingência)
 satellites-loading-status = Carregando órbitas…
-satellites-loaded-status = { $count } satélites • posição orbital aproximada (não telemetria)
+satellites-loaded-status = { $count } satélites • previsões SGP4 a partir dos elementos da CelesTrak (não telemetria)
+satellite-group-station = Estações espaciais
+satellite-group-navigation = Navegação (GPS, Galileo, GLONASS, BeiDou)
+satellite-group-weather = Meteorológicos
+satellite-group-bright = Mais brilhantes (visíveis a olho nu)
+aircraft-class-unknown = Aeronave (tipo não informado)
+aircraft-class-airliner = Avião comercial ou jato executivo
+aircraft-class-heavy = Jato pesado
+aircraft-class-light = Avião leve
+aircraft-class-fast = Jato de alto desempenho
+aircraft-class-helicopter = Helicóptero
+aircraft-class-glider = Planador
+aircraft-class-balloon = Balão ou dirigível
+aircraft-class-ultralight = Ultraleve ou asa-delta
+aircraft-class-drone = Drone
+vessel-class-cargo = Carga
+vessel-class-tanker = Petroleiro ou tanque
+vessel-class-passenger = Passageiros
+vessel-class-fishing = Pesca
+vessel-class-high-speed = Embarcação de alta velocidade
+vessel-class-tug = Rebocador ou prático
+vessel-class-service = Embarcação de serviço
+vessel-class-military = Militar ou policial
+vessel-class-pleasure = Recreio ou vela
+vessel-class-other = Outro
+vessel-class-unknown = Não informado
+legend-aircraft = Aeronaves
+legend-vessels = Navios (maior = mais comprido)
+legend-satellites = Satélites
 traffic-key-help = Insira uma chave TomTom para tráfego real
 traffic-zoom-help = Aproxime o mapa para mostrar o trânsito
 traffic-loading-status = Carregando tráfego real…
@@ -570,9 +598,12 @@ vessels-hover-tooltip =
     { $latitude }°, { $longitude }° • { $course } • { $speed } kt
     Último sinal AIS há { $minutes } min • cobertura depende da fonte
 satellites-hover-tooltip =
-    { $name } (NORAD { $norad })
+    { $name } (NORAD { $norad }) • { $group }
     Período { $period } • Altitude { $altitude } • Inclinação { $inclination }
-    Posição orbital estimada • CelesTrak
+    { $model ->
+        [sgp4] Prevista com SGP4 a partir dos elementos da CelesTrak
+       *[simple] Posição orbital estimada • CelesTrak
+    }
 transport-airport-hover-tooltip =
     { $name }
     IATA { $iata } • ICAO { $icao }

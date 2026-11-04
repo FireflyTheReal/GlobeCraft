@@ -28,6 +28,96 @@ pub struct Aircraft {
     pub observed_unix: f64,
     /// What else ADSB.lol reports (OpenSky reports none of it).
     pub details: Option<Arc<AircraftDetails>>,
+    /// What kind of aircraft its transponder says it is.
+    pub class: AircraftClass,
+}
+
+/// What kind of aircraft it is, from the ADS-B emitter category both feeds report
+/// (DO-260B §2.2.3.2.5.2: ADSB.lol as `A1`…`C7`, OpenSky as a number). The map draws
+/// each with its own symbol.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AircraftClass {
+    /// Not reported: drawn as an airliner, as most traffic is.
+    #[default]
+    Unknown,
+    /// Light, under 15,500 lb (A1).
+    Light,
+    /// Small to large airliners and business jets (A2, A3, A4).
+    Airliner,
+    /// Heavy, over 300,000 lb (A5).
+    Heavy,
+    /// High performance: fast and agile, mostly military jets (A6).
+    Fast,
+    Helicopter,
+    Glider,
+    /// Balloons and airships.
+    Balloon,
+    /// Ultralights, hang gliders and paragliders.
+    Ultralight,
+    Drone,
+}
+
+impl AircraftClass {
+    /// Every class with a symbol of its own, in the legend's order.
+    pub const ALL: [Self; 9] = [
+        Self::Airliner,
+        Self::Heavy,
+        Self::Light,
+        Self::Fast,
+        Self::Helicopter,
+        Self::Glider,
+        Self::Balloon,
+        Self::Ultralight,
+        Self::Drone,
+    ];
+
+    /// From ADSB.lol's `category` (`A1`…`C7`).
+    pub fn from_adsb(category: &str) -> Self {
+        match category.trim().to_ascii_uppercase().as_str() {
+            "A1" => Self::Light,
+            "A2" | "A3" | "A4" => Self::Airliner,
+            "A5" => Self::Heavy,
+            "A6" => Self::Fast,
+            "A7" => Self::Helicopter,
+            "B1" => Self::Glider,
+            "B2" => Self::Balloon,
+            "B4" => Self::Ultralight,
+            "B6" => Self::Drone,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// From OpenSky's `category` (state vector index 17, with `extended=1`).
+    pub fn from_opensky(category: i64) -> Self {
+        match category {
+            2 => Self::Light,
+            3..=5 => Self::Airliner,
+            6 => Self::Heavy,
+            7 => Self::Fast,
+            8 => Self::Helicopter,
+            9 => Self::Glider,
+            10 => Self::Balloon,
+            12 => Self::Ultralight,
+            14 => Self::Drone,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// The translation key of its name.
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Unknown => "aircraft-class-unknown",
+            Self::Light => "aircraft-class-light",
+            Self::Airliner => "aircraft-class-airliner",
+            Self::Heavy => "aircraft-class-heavy",
+            Self::Fast => "aircraft-class-fast",
+            Self::Helicopter => "aircraft-class-helicopter",
+            Self::Glider => "aircraft-class-glider",
+            Self::Balloon => "aircraft-class-balloon",
+            Self::Ultralight => "aircraft-class-ultralight",
+            Self::Drone => "aircraft-class-drone",
+        }
+    }
 }
 
 /// What ADSB.lol reports beyond position and motion. Every field may be missing.
@@ -98,6 +188,17 @@ impl LiveAircraft {
         repaint: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         Self::with_endpoints(runtime, repaint, worker::Endpoints::default())
+    }
+
+    /// The service with other sources: an OpenSky-style `states/all` URL and an
+    /// ADSB.lol-style API base (recorded data, local test servers).
+    pub fn with_sources(
+        runtime: &tokio::runtime::Handle,
+        repaint: impl Fn() + Send + Sync + 'static,
+        global: String,
+        local: String,
+    ) -> Self {
+        Self::with_endpoints(runtime, repaint, worker::Endpoints { global, local })
     }
 
     fn with_endpoints(

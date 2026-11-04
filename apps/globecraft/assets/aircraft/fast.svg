@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft live-flight marker: high-performance jet, nose up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="High-performance jet top view">
+  <g fill="#f3faff">
+    <polygon points="12,7 21,18 21,19.50 3,19.50 3,18"/>
+    <polygon points="9,20 15,20 16.50,22.50 7.50,22.50"/>
+    <polygon points="12,1 13,4 13.20,21 12,22.50 10.80,21 11,4"/>
+  </g>
+</svg>

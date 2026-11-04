@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft live-flight marker: glider, nose up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Glider top view">
+  <g fill="#f3faff">
+    <polygon points="0.50,9.30 23.50,9.30 23.50,10.60 0.50,10.60"/>
+    <polygon points="12,3.50 12.90,5.50 12.40,21 11.60,21 11.10,5.50"/>
+    <polygon points="9.30,19.50 14.70,19.50 14.70,20.60 9.30,20.60"/>
+  </g>
+</svg>

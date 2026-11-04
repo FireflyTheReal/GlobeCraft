@@ -315,6 +315,7 @@ mod tests {
                     source: Some("adsb_icao".into()),
                     ..AircraftDetails::default()
                 })),
+                class: globecraft_data::aircraft::AircraftClass::Heavy,
             }),
             route_known: true,
             ..SelectedFlight::default()

@@ -23,6 +23,7 @@ fn aircraft_snapshot_cost() {
             turn_rate_deg_s: None,
             observed_unix: now,
             details: None,
+            class: crate::aircraft::AircraftClass::Unknown,
         })
         .collect();
     let prepared = snapshot::prepare(

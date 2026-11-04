@@ -20,6 +20,7 @@ fn flight(hex: &str, observed: f64, latitude: f64) -> Aircraft {
         turn_rate_deg_s: None,
         observed_unix: observed,
         details: None,
+        class: crate::aircraft::AircraftClass::Unknown,
     }
 }
 fn samples(aircraft: Vec<Aircraft>, now: Instant) -> Samples {
