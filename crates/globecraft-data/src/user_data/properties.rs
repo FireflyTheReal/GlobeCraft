@@ -152,103 +152,14 @@ impl<'a> Scalar<'a> {
     }
 }
 
-/// Milliseconds since 1970 of an ISO 8601 date or date and time
-/// (`2026-11-04`, `2026-11-04T09:38`, `2026-11-04 09:38:12.5Z`, `…+01:00`); a time
-/// without a zone is read as UTC.
-pub(super) fn iso_time_ms(text: &str) -> Option<i64> {
-    let text = text.trim();
-    let bytes = text.as_bytes();
-    let digits = |from: usize, len: usize| -> Option<i64> {
-        let part = text.get(from..from + len)?;
-        part.bytes()
-            .all(|b| b.is_ascii_digit())
-            .then(|| part.parse().ok())
-            .flatten()
-    };
-    let year = digits(0, 4)?;
-    if bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
-        return None;
-    }
-    let month = digits(5, 2)?;
-    let day = digits(8, 2)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let mut ms = days_from_civil(year, month, day) * 86_400_000;
-    if text.len() == 10 {
-        return Some(ms);
-    }
-    if !matches!(bytes.get(10), Some(b'T' | b't' | b' ')) || bytes.get(13) != Some(&b':') {
-        return None;
-    }
-    let hour = digits(11, 2)?;
-    let minute = digits(14, 2)?;
-    ms += (hour * 60 + minute) * 60_000;
-    let mut rest = &text[16..];
-    if let Some(seconds) = rest.strip_prefix(':') {
-        let end = seconds
-            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-            .unwrap_or(seconds.len());
-        let value: f64 = seconds[..end].parse().ok()?;
-        ms += (value * 1000.0).round() as i64;
-        rest = &seconds[end..];
-    }
-    match rest {
-        "" | "Z" | "z" => Some(ms),
-        zone if zone.len() == 6 && matches!(&zone[..1], "+" | "-") && &zone[3..4] == ":" => {
-            let hours: i64 = zone[1..3].parse().ok()?;
-            let minutes: i64 = zone[4..6].parse().ok()?;
-            let offset = (hours * 60 + minutes) * 60_000;
-            Some(if zone.starts_with('+') {
-                ms - offset
-            } else {
-                ms + offset
-            })
-        }
-        _ => None,
-    }
+/// Milliseconds since 1970 of an ISO 8601 date or date and time.
+fn iso_time_ms(text: &str) -> Option<i64> {
+    globecraft_core::time::parse_iso(text).map(|secs| (secs * 1000.0).round() as i64)
 }
 
 /// `2026-11-04 09:38 UTC` for milliseconds since 1970.
 pub fn format_time_utc(ms: i64) -> String {
-    let days = ms.div_euclid(86_400_000);
-    let minutes = ms.rem_euclid(86_400_000) / 60_000;
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
-        minutes / 60,
-        minutes % 60
-    )
-}
-
-/// The date of a day count since 1970-01-01 (Howard Hinnant's algorithm).
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month, day)
-}
-
-/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let month_index = (month + 9) % 12;
-    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
+    globecraft_core::time::format_utc(ms as f64 / 1000.0)
 }
 
 #[cfg(test)]

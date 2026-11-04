@@ -486,17 +486,9 @@ fn poi_zoom_stability() {
     );
 }
 
-/// A point layer of 400 synthetic earthquakes around the Pacific: markers sized by
-/// magnitude, clusters with their counts, the size legend, and the hover card of the
-/// busiest cluster. Manual.
-#[test]
-#[ignore = "manual: renders a point layer with clusters"]
-fn point_layer_screenshot() {
-    let dir = std::path::PathBuf::from(
-        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
-    );
-    std::fs::create_dir_all(&dir).expect("screenshot folder");
-    // A ring of quakes along the Pacific rim, magnitude 2.5 to 7.4, a day apart.
+/// A ring of 400 quakes along the Pacific rim, magnitude 2.5 to 7.4, one every 36
+/// minutes over the ten days before 2026-11-04 09:38 UTC, as a GeoJSON file.
+fn quake_sample() -> std::path::PathBuf {
     let ring = [
         (35.0, 140.0),
         (45.0, 150.0),
@@ -538,13 +530,11 @@ fn point_layer_screenshot() {
         ),
     )
     .expect("sample file");
-    let mut h = harness(ThemePreference::Dark);
-    let _ = h.state_mut().run(
-        "camera.set",
-        json!({"lat": 20.0, "lon": -170.0, "altitude_km": 18000.0}),
-    );
-    let app = h.state_mut();
-    app.add_user_layer(globecraft_data::user_data::UserLayer {
+    file
+}
+
+fn quake_layer(file: &std::path::Path) -> globecraft_data::user_data::UserLayer {
+    globecraft_data::user_data::UserLayer {
         id: 0,
         name: "Earthquakes (sample)".into(),
         source: globecraft_data::user_data::UserSource::Features {
@@ -558,7 +548,70 @@ fn point_layer_screenshot() {
         attribution: "Synthetic sample".into(),
         color: "#ff6a3d".into(),
         preset: None,
-    });
+    }
+}
+
+/// The timeline (roadmap 4.H): the bar, sunlight at another time, and the sample quakes
+/// filtered to the day before the app's time. Manual.
+#[test]
+#[ignore = "manual: renders the timeline and time-filtered points"]
+fn timeline_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let file = quake_sample();
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    let _ = app.run(
+        "camera.set",
+        json!({"lat": 20.0, "lon": -170.0, "altitude_km": 18000.0}),
+    );
+    app.add_user_layer(quake_layer(&file));
+    app.run("ui.timeline", Value::Null).expect("timeline");
+    app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    app.run("time.set", json!({"time": "2026-11-04T09:38:00Z"}))
+        .expect("time.set");
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "18-timeline-all");
+    let app = h.state_mut();
+    app.run("time.window", json!({"hours": 24}))
+        .expect("window");
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "19-timeline-last-day");
+    // Three days back: the quakes of 4 to 3 days before, and the sun of that hour.
+    let app = h.state_mut();
+    app.run("time.step", json!({"hours": -72})).expect("step");
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "20-timeline-three-days-back");
+    // Midsummer noon over the Pacific: the night side moves.
+    let app = h.state_mut();
+    app.run("time.set", json!({"time": "2026-06-21T23:00:00Z"}))
+        .expect("time.set");
+    app.run("time.window", json!({"hours": 0})).expect("window");
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "21-timeline-june");
+}
+
+/// A point layer of 400 synthetic earthquakes around the Pacific: markers sized by
+/// magnitude, clusters with their counts, the size legend, and the hover card of the
+/// busiest cluster. Manual.
+#[test]
+#[ignore = "manual: renders a point layer with clusters"]
+fn point_layer_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let file = quake_sample();
+    let mut h = harness(ThemePreference::Dark);
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 20.0, "lon": -170.0, "altitude_km": 18000.0}),
+    );
+    let app = h.state_mut();
+    app.add_user_layer(quake_layer(&file));
     let _ = app.run("ui.pane.layers", Value::Null);
     settle(&mut h, 4.0);
     save(&mut h, &dir, "15-point-layer");

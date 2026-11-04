@@ -59,7 +59,7 @@ impl FeatureFormat {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UserSource {
     /// Map tiles in Web Mercator: a URL template with `{z}`, `{x}` and `{y}` (or `{-y}`
-    /// for TMS), `{bbox}` for a WMS GetMap by tile, and `{date}` for yesterday's date.
+    /// for TMS), `{bbox}` for a WMS GetMap by tile, and `{date}` for the day before the app's time.
     Tiles {
         template: String,
         #[serde(default)]
@@ -167,8 +167,9 @@ pub fn wms_template(base: &str, layers: &str) -> String {
     )
 }
 
-/// The address of tile `z/x/y` of a template (see [`UserSource::Tiles`]).
-pub fn tile_url(template: &str, z: u8, x: u32, y: u32) -> String {
+/// The address of tile `z/x/y` of a template (see [`UserSource::Tiles`]), with
+/// `{date}` standing for `date` (`YYYY-MM-DD`).
+pub fn tile_url(template: &str, z: u8, x: u32, y: u32, date: &str) -> String {
     let mut url = template
         .replace("{z}", &z.to_string())
         .replace("{x}", &x.to_string())
@@ -182,7 +183,7 @@ pub fn tile_url(template: &str, z: u8, x: u32, y: u32) -> String {
         );
     }
     if url.contains("{date}") {
-        url = url.replace("{date}", &yesterday());
+        url = url.replace("{date}", date);
     }
     url
 }
@@ -196,26 +197,10 @@ fn mercator_bounds(z: u8, x: u32, y: u32) -> [f64; 4] {
     [west, north - size, west + size, north]
 }
 
-/// Yesterday's date (UTC) as `YYYY-MM-DD`: daily products such as NASA GIBS have it
-/// complete.
-fn yesterday() -> String {
-    let days = (globecraft_core::math::now_unix() / 86_400.0).floor() as i64 - 1;
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
-/// The calendar date of a day count since 1970-01-01 (Howard Hinnant's algorithm).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
+/// The day before `unix` (UTC) as `YYYY-MM-DD`: daily products such as NASA GIBS
+/// have it complete.
+pub fn day_before(unix: f64) -> String {
+    globecraft_core::time::date_utc(unix - globecraft_core::time::DAY_SECS)
 }
 
 /// Whether a location is a web address (else a path on this computer).
@@ -231,15 +216,15 @@ mod tests {
     #[test]
     fn templates_fill_xyz_tms_and_wms_addresses() {
         assert_eq!(
-            tile_url("https://t.example/{z}/{x}/{y}.png", 3, 5, 2),
+            tile_url("https://t.example/{z}/{x}/{y}.png", 3, 5, 2, ""),
             "https://t.example/3/5/2.png"
         );
         assert_eq!(
-            tile_url("https://t.example/{z}/{x}/{-y}.png", 3, 5, 2),
+            tile_url("https://t.example/{z}/{x}/{-y}.png", 3, 5, 2, ""),
             "https://t.example/3/5/5.png"
         );
         let wms = wms_template("https://wms.example/mapserv", "GEBCO_LATEST");
-        let url = tile_url(&wms, 0, 0, 0);
+        let url = tile_url(&wms, 0, 0, 0, "");
         assert!(
             url.starts_with("https://wms.example/mapserv?SERVICE=WMS&REQUEST=GetMap"),
             "{url}"
@@ -252,10 +237,17 @@ mod tests {
     }
 
     #[test]
-    fn dates_count_from_the_epoch() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(20_758), (2026, 11, 1));
-        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+    fn daily_imagery_shows_the_day_before_the_app_time() {
+        // 2026-11-04 09:38 UTC: the day before is complete.
+        assert_eq!(day_before(1_793_785_080.0), "2026-11-03");
+        let url = tile_url(
+            "https://gibs.example/{date}/{z}/{y}/{x}.jpg",
+            3,
+            1,
+            2,
+            "2026-11-03",
+        );
+        assert_eq!(url, "https://gibs.example/2026-11-03/3/2/1.jpg");
     }
 
     #[test]

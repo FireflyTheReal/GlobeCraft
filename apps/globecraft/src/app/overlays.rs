@@ -107,7 +107,7 @@ impl App {
             labels: self.layer(MapLayer::PlaceLabels),
             sun: self.layer(MapLayer::Sunlight).then(|| {
                 let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-                let time = (globecraft_core::math::now_unix() / interval).floor() * interval;
+                let time = (self.scene_unix() / interval).floor() * interval;
                 globecraft_core::math::subsolar(time)
             }),
         }

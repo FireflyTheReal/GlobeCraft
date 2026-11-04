@@ -2,7 +2,7 @@
 //! (magnitude, population…), points that would cover each other gathered into a
 //! cluster badge with their count, names in order of value, and what the pointer
 //! finds for the hover card.
-use super::{LABEL_PADDING_POINTS, MARKER_POINTS, NamedPoint};
+use super::{FeatureTime, LABEL_PADDING_POINTS, MARKER_POINTS, NamedPoint};
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2};
 use globecraft_core::camera::Basis;
 use globecraft_core::language::Lang;
@@ -84,6 +84,7 @@ pub(super) fn layer_points(
     features: &FeatureSet,
     layer: &UserLayer,
     scale: f32,
+    time: &FeatureTime,
 ) -> LayerPoints {
     let [r, g, b] = layer.rgb();
     let color = Color32::from_rgb(r, g, b).gamma_multiply(layer.opacity);
@@ -93,6 +94,12 @@ pub(super) fn layer_points(
     // The points on screen, and where.
     let mut on_screen: Vec<(usize, Pos2)> = Vec::new();
     for (index, point) in features.points.iter().enumerate() {
+        // Timed points show inside the app time's window, up to its moment.
+        if let Some(ms) = point.time_ms
+            && !time.time.shows(ms as f64 / 1000.0, time.wall)
+        {
+            continue;
+        }
         let Some(at) = basis.project(
             globecraft_render::overlays::ground_position(basis, None, point.lat, point.lon),
             rect,

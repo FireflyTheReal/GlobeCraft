@@ -47,6 +47,8 @@ struct FeatureKey {
     opacity: u32,
     color: [u8; 3],
     scale: u32,
+    /// For layers with timed points: the scene minute and the window (bits).
+    time: Option<(i64, Option<u64>)>,
 }
 
 /// What the web-map image was projected for: the view, its size in pixels, and each
@@ -89,7 +91,9 @@ impl UserLayers {
         layers: &[UserLayer],
         view: (f64, f64, f64, f64),
         earth: bool,
+        scene_unix: f64,
     ) {
+        let date = globecraft_data::user_data::day_before(scene_unix);
         self.loaded.retain(|id, loaded| {
             layers
                 .iter()
@@ -129,6 +133,7 @@ impl UserLayers {
             let repaint = move || wake.request_repaint();
             match &mut loaded.stream {
                 Stream::Raster { tiles, snapshot } => {
+                    tiles.set_date(date.clone());
                     *snapshot = tiles.update(runtime, view, repaint);
                 }
                 Stream::Vector(vector) => vector.update(runtime, repaint),
@@ -244,6 +249,7 @@ impl UserLayers {
         rect: Rect,
         layers: &[UserLayer],
         scale: f32,
+        time: &FeatureTime,
     ) {
         let visible: Vec<(&UserLayer, Arc<FeatureSet>, FeatureKey)> = layers
             .iter()
@@ -265,6 +271,16 @@ impl UserLayers {
                     opacity: layer.opacity.to_bits(),
                     color: layer.rgb(),
                     scale: scale.to_bits(),
+                    time: features
+                        .points
+                        .iter()
+                        .any(|p| p.time_ms.is_some())
+                        .then(|| {
+                            (
+                                (time.time.now(time.wall) / 60.0).floor() as i64,
+                                time.time.window_secs().map(f64::to_bits),
+                            )
+                        }),
                 };
                 Some((layer, features, key))
             })
@@ -283,7 +299,7 @@ impl UserLayers {
         let mut hits = Vec::new();
         // Bottom layer first; names and hover are placed top layer first.
         for (layer, features, _) in &visible {
-            let built = feature_geometry(painter, basis, rect, features, layer, scale);
+            let built = feature_geometry(painter, basis, rect, features, layer, scale, time);
             shapes.extend(built.shapes);
             markers.extend(built.markers);
             named.push(built.named);
@@ -433,6 +449,12 @@ impl UserLayers {
     }
 }
 
+/// The app's time and the real time, for timed points.
+pub(super) struct FeatureTime {
+    pub time: globecraft_core::time::AppTime,
+    pub wall: f64,
+}
+
 /// A point on screen that has a name to place.
 struct NamedPoint {
     at: Pos2,
@@ -475,6 +497,7 @@ fn feature_geometry(
     features: &FeatureSet,
     layer: &UserLayer,
     scale: f32,
+    time: &FeatureTime,
 ) -> LayerGeometry {
     let [r, g, b] = layer.rgb();
     let color = Color32::from_rgb(r, g, b).gamma_multiply(layer.opacity);
@@ -515,7 +538,7 @@ fn feature_geometry(
         }
     }
     let mut shapes = super::live_geometry::mesh_shapes(painter, lines);
-    let points = points::layer_points(basis, rect, features, layer, scale);
+    let points = points::layer_points(basis, rect, features, layer, scale, time);
     shapes.extend(super::live_geometry::mesh_shapes(painter, points.markers));
     LayerGeometry {
         shapes,

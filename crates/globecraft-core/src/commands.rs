@@ -539,6 +539,54 @@ pub const COMMANDS: &[CommandSpec] = &[
         TOGGLE
     ),
     command!(
+        "ui.timeline",
+        "ui-timeline",
+        "time_slider",
+        View,
+        Interface,
+        TOGGLE
+    ),
+    command!(
+        "time.set",
+        "time-set",
+        "history",
+        View,
+        View,
+        r#"{"type":"object","properties":{"time":{"type":["string","number"],"description":"now (back to the real time), an ISO 8601 date or date and time (UTC unless a zone is given), or seconds since 1970"}},"required":["time"]}"#
+    ),
+    command!(
+        "time.step",
+        "time-step",
+        "history",
+        View,
+        View,
+        r#"{"type":"object","properties":{"hours":{"type":"number","description":"Hours to move the app's time, negative to go back"}},"required":["hours"]}"#
+    ),
+    command!(
+        "time.play",
+        "time-play",
+        "run",
+        View,
+        View,
+        r#"{"type":"object","properties":{"hours_per_second":{"type":"number","description":"How fast the time runs; left out, the timeline's speed"}}}"#
+    ),
+    command!(
+        "time.pause",
+        "time-pause",
+        "time_pause",
+        View,
+        View,
+        NO_PARAMS
+    ),
+    command!(
+        "time.window",
+        "time-window",
+        "history",
+        View,
+        View,
+        r#"{"type":"object","properties":{"hours":{"type":"number","description":"Timed points (earthquakes…) show when they happened within this many hours before the app's time; 0 shows all"}},"required":["hours"]}"#
+    ),
+    command!(
         "ui.tileDiagnostics",
         "ui-tile-diagnostics",
         "stats",

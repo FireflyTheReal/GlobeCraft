@@ -93,6 +93,8 @@ pub struct RasterTiles {
     min_zoom: u8,
     max_zoom: u8,
     tile_px: u16,
+    /// The day `{date}` stands for (`YYYY-MM-DD`).
+    date: String,
     shared: Arc<Mutex<Shared>>,
     snapshot: Option<(Vec<TileKey>, u64, Arc<RasterSnapshot>)>,
 }
@@ -104,8 +106,24 @@ impl RasterTiles {
             min_zoom,
             max_zoom: max_zoom.clamp(min_zoom, 22),
             tile_px: tile_px.max(64),
+            date: super::day_before(globecraft_core::math::now_unix()),
             shared: Arc::default(),
             snapshot: None,
+        }
+    }
+
+    /// The day a template's `{date}` stands for: daily imagery follows the app's
+    /// time. Another day starts the tiles over.
+    pub fn set_date(&mut self, date: String) {
+        if date == self.date {
+            return;
+        }
+        self.date = date;
+        if self.template.contains("{date}") {
+            if let Ok(mut shared) = self.shared.lock() {
+                shared.tiles.clear();
+            }
+            self.snapshot = None;
         }
     }
 
@@ -155,7 +173,7 @@ impl RasterTiles {
             }
             shared.tiles.insert(*key, Entry::Loading);
             inflight += 1;
-            let url = super::tile_url(&self.template, key.z, key.x, key.y);
+            let url = super::tile_url(&self.template, key.z, key.x, key.y, &self.date);
             let (state, key, repaint) = (self.shared.clone(), *key, repaint.clone());
             runtime.spawn(async move {
                 let result = fetch_tile(url).await;
@@ -270,7 +288,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
 pub async fn test_tile(template: String, zoom: u8) -> Result<(u32, u32), crate::Error> {
     // The tile under 0°, 0° at `zoom`, or the world tile.
     let key = TileKey::at(zoom, 0.0, 0.0);
-    let image = fetch_tile(super::tile_url(&template, key.z, key.x, key.y)).await?;
+    let date = super::day_before(globecraft_core::math::now_unix());
+    let image = fetch_tile(super::tile_url(&template, key.z, key.x, key.y, &date)).await?;
     Ok(image.dimensions())
 }
 

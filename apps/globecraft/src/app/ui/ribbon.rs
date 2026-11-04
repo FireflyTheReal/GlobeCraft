@@ -605,6 +605,25 @@ impl App {
                 self.layer_small(ui, MapLayer::MilkyWay);
             });
         });
+        group(ui, lang.text("ribbon-group-time"), |ui| {
+            big(ui, self, "ui.timeline", Value::Null);
+            col(ui, |ui| {
+                small_with(
+                    ui,
+                    self,
+                    "time.set",
+                    json!({"time": "now"}),
+                    Look {
+                        label: Some(lang.text("timeline-now-action")),
+                        help: Some(lang.text("timeline-now-help")),
+                        checked: Some(false),
+                        ..Look::default()
+                    },
+                );
+                small(ui, self, "time.play", Value::Null);
+                small(ui, self, "time.pause", Value::Null);
+            });
+        });
         group(ui, lang.text("ribbon-group-panes"), |ui| {
             col(ui, |ui| {
                 small(ui, self, "ui.pane.layers", Value::Null);

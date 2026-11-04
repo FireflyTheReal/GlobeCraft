@@ -5,7 +5,7 @@
 use super::App;
 use eframe::egui;
 use globecraft_core::coordinates::{CoordinateDisplay, CoordinateFormat};
-use globecraft_core::math::{haversine_km, ll_to_v3, now_unix, subsolar};
+use globecraft_core::math::{haversine_km, ll_to_v3, subsolar};
 use serde_json::{Value, json};
 
 /// Named places farther than this are not called "nearest".
@@ -98,7 +98,8 @@ impl App {
                     bearing_deg((label.lat, label.lon), (lat, lon)),
                 )
             });
-        let unix = now_unix();
+        // The app's time: the card answers for the moment the globe shows.
+        let unix = self.scene_unix();
         let seconds_of_day = unix.rem_euclid(86_400.0);
         HereInfo {
             coordinates,

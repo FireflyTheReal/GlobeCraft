@@ -520,6 +520,10 @@ impl App {
                 rect,
                 &self.settings.user_layers,
                 self.settings.map_scale,
+                &super::user_layers::FeatureTime {
+                    time: self.time,
+                    wall: now_unix(),
+                },
             );
             let mut taken = LabelSpace::default();
             taken.add(self.user_layers.markers());
@@ -583,6 +587,7 @@ impl App {
             self.touch();
             ui.request_repaint();
         }
+        self.timeline_bar(&ui.ctx().clone(), rect);
 
         // scale bar
         if let Some(scale_bar) = self.scale_bar_cache.for_view(

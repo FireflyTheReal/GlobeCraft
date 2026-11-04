@@ -267,7 +267,7 @@ impl App {
     ) -> RenderCfg {
         let grid_step = globecraft_render::grid_step(self.cam.alt, width, height);
         let sun = if self.layer(MapLayer::Sunlight) {
-            let (la, lo) = subsolar(now_unix());
+            let (la, lo) = subsolar(self.scene_unix());
             Some(ll_to_v3(la, lo))
         } else {
             None
@@ -280,7 +280,7 @@ impl App {
         };
         let sky = if let Some(image) = self.sky.image.clone().filter(|_| self.sky_ready()) {
             let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-            let time = (now_unix() / interval).floor() * interval;
+            let time = (self.scene_unix() / interval).floor() * interval;
             let (latitude, longitude) = subsolar(time);
             match globecraft_render::celestial::SkyBackdrop::new(
                 image,

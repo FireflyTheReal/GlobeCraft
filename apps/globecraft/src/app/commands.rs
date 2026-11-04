@@ -760,6 +760,11 @@ impl App {
                 self.here_json(lat, lon)
             }
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
+            id if id.starts_with("time.") => self.run_time(id, p)?,
+            "ui.timeline" => {
+                self.timeline_open = bool_param(p, "visible").unwrap_or(!self.timeline_open);
+                json!({"visible": self.timeline_open})
+            }
             _ => return Err(format!("unknown command '{id}'")),
         };
         ctx.request_repaint();
@@ -860,6 +865,12 @@ impl App {
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
             "ui.tileDiagnostics" => on(self.tile_diagnostics),
+            "ui.timeline" => on(self.timeline_open),
+            "time.play" => on(self.time.speed() != 0.0),
+            "time.pause" => CommandState {
+                enabled: self.time.speed() != 0.0,
+                checked: false,
+            },
             "ui.navigatorStyle" => on(str_param(params, "style")
                 .is_some_and(|style| style == self.settings.navigation.navigator.code())),
             "ui.ribbon" => on(self.settings.workspace.ribbon_minimized),

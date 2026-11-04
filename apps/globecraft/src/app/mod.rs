@@ -57,6 +57,7 @@ mod roads;
 mod ruler_history;
 mod search;
 mod still_shot;
+mod time;
 mod traffic;
 mod ui;
 mod update_restart;
@@ -198,6 +199,12 @@ pub(crate) struct App {
     show_shortcuts: bool,
 
     wayback_list: Vec<WaybackRelease>,
+    /// The app's time: live, a moment, or playing (roadmap 4.H).
+    pub(super) time: globecraft_core::time::AppTime,
+    /// The timeline bar is open, and the speed its play button runs at (scene
+    /// seconds per second).
+    pub(super) timeline_open: bool,
+    pub(super) timeline_speed: f64,
     wayback_idx: usize,
     /// Wayback swipe compare: the release shown right of the split, and where the split
     /// runs (a fraction of the view's width).
@@ -424,6 +431,9 @@ impl App {
             show_about: false,
             show_shortcuts: false,
             wayback_list: vec![],
+            time: globecraft_core::time::AppTime::default(),
+            timeline_open: false,
+            timeline_speed: globecraft_core::time::HOUR_SECS,
             wayback_idx: 0,
             wayback_compare: None,
             compare_texture: None,
@@ -620,13 +630,19 @@ impl eframe::App for App {
             },
             move || poi_wake.request_repaint(),
         );
+        let scene = self.scene_unix();
         self.user_layers.update(
             ctx,
             &self.runtime,
             &self.settings.user_layers,
             (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
             earth,
+            scene,
         );
+        if self.time.speed() != 0.0 {
+            // A playing time moves the sun and the timed points every frame.
+            ctx.request_repaint();
+        }
         let place_wake = ctx.clone();
         self.place_names.update(
             &self.runtime,

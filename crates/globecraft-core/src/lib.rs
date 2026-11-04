@@ -11,6 +11,7 @@ mod localization;
 pub mod math;
 pub mod placemark;
 pub mod ruler;
+pub mod time;
 /// Mean Earth radius used by the globe model, in kilometers.
 pub const EARTH_RADIUS_KM: f64 = 6371.0088;
 pub const METERS_PER_KM: f64 = 1000.0;
