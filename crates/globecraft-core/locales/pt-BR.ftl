@@ -139,6 +139,10 @@ aircraft-loading-status = carregando
 aircraft-zoom-in-status = aproxime o mapa
 aircraft-updated-status = há { $minutes } min
 aircraft-source-error = { $source }: { $error }
+aircraft-departing = Decolando de { $airport } (estimativa)
+aircraft-arriving = Chegando a { $airport } (estimativa)
+aircraft-near-airport = Em { $airport } (estimativa)
+aircraft-probably-arriving = Provavelmente indo para { $airport } (estimativa)
 aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Velocidade: { $speed }
     Rumo: { $heading }  |  Taxa vertical: { $vertical_rate }

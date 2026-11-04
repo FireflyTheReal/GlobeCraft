@@ -1299,3 +1299,29 @@ fn icon_sheet() {
             .expect("save");
     }
 }
+
+/// An airport code in the search box (roadmap 5, `TRK-02`), with a sample airport
+/// list: the airport is the first suggestion, and Enter flies there. Manual.
+#[test]
+#[ignore = "manual: renders the search box with an airport code"]
+fn airport_search_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let sample = "kind\tiata\ticao\tlat\tlon\televation_ft\tcountry\tmunicipality\tname\n\
+        L\tFRA\tEDDF\t50.03625\t8.55929\t364\tDE\tFrankfurt am Main\tFrankfurt am Main Airport\n\
+        L\tMUC\tEDDM\t48.35378\t11.78609\t1487\tDE\tMunich\tMunich Airport\n";
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.live_airports
+        .set(globecraft_data::airports::Airports::parse(sample).expect("sample"));
+    app.query = "fra".into();
+    app.on_query_changed();
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "25-airport-search");
+    let ctx = h.ctx.clone();
+    h.state_mut().start_search(&ctx);
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "26-airport-flown-to");
+}

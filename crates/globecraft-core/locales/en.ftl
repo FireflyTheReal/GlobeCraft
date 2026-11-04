@@ -139,6 +139,10 @@ aircraft-loading-status = loading
 aircraft-zoom-in-status = zoom in
 aircraft-updated-status = { $minutes } min ago
 aircraft-source-error = { $source }: { $error }
+aircraft-departing = Departing { $airport } (guess)
+aircraft-arriving = Arriving at { $airport } (guess)
+aircraft-near-airport = At { $airport } (guess)
+aircraft-probably-arriving = Probably heading for { $airport } (guess)
 aircraft-hover-tooltip = { $code }  (ICAO { $hex })
     Altitude: { $altitude }  |  Speed: { $speed }
     Heading: { $heading }  |  Vertical rate: { $vertical_rate }

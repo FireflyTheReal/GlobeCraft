@@ -139,6 +139,7 @@ pub(crate) struct App {
     here_card: Option<here::HereCard>,
     live_satellites: globecraft_data::satellites::LiveSatellites,
     live_aurora: globecraft_data::aurora::LiveAurora,
+    live_airports: globecraft_data::airports::LiveAirports,
     aurora_shapes: live_layers::AuroraShapes,
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
@@ -378,6 +379,7 @@ impl App {
             here_card: None,
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             live_aurora: globecraft_data::aurora::LiveAurora::default(),
+            live_airports: globecraft_data::airports::LiveAirports::default(),
             aurora_shapes: live_layers::AuroraShapes::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
@@ -621,6 +623,13 @@ impl eframe::App for App {
             &self.runtime,
             earth && self.layer(MapLayer::Aurora),
             move || aurora_wake.request_repaint(),
+        );
+        // Airports by code: for the flight hover card and the search box.
+        let airports_wake = ctx.clone();
+        self.live_airports.update(
+            &self.runtime,
+            (earth && self.layer(MapLayer::Flights)) || !self.query.trim().is_empty(),
+            move || airports_wake.request_repaint(),
         );
         let transport_wake = ctx.clone();
         self.transport_tiles.update(

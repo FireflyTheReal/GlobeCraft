@@ -22,6 +22,16 @@ pub(crate) async fn template(set: &str) -> Result<String, crate::Error> {
         .ok_or_else(|| format!("map data manifest without the {set} set").into())
 }
 
+/// The address of manifest entry `set`'s single file (`"file"`, e.g. the airports).
+pub(crate) async fn file(set: &str) -> Result<String, crate::Error> {
+    let json = manifest().await?;
+    json[set]["file"]
+        .as_str()
+        .filter(|url| url.starts_with("https://"))
+        .map(str::to_owned)
+        .ok_or_else(|| format!("map data manifest without the {set} file").into())
+}
+
 /// One set read from several manifest entries: `set` and its zoom bands (`bands`,
 /// each built by a run of its own, e.g. the roads of zoom 13 and of zoom 14), as one
 /// set of parts; each part's header says which zooms it holds. Bands not published

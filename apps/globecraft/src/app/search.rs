@@ -10,6 +10,8 @@ use std::{
 };
 const SUGGESTION_DEBOUNCE_DELAY: Duration = Duration::from_millis(280);
 const SUGGESTION_POLL_INTERVAL: Duration = Duration::from_millis(90);
+/// An airport found by its code is shown from this high: its runways in view.
+const AIRPORT_ALTITUDE_KM: f64 = 8.0;
 
 impl App {
     pub(super) fn on_query_changed(&mut self) {
@@ -51,6 +53,22 @@ impl App {
                     &self.remote_sugg,
                 )
             });
+        // An airport code (FRA, EDDF) goes first.
+        if let Some(airport) = self
+            .live_airports
+            .airports()
+            .and_then(|airports| airports.by_code(&self.query).cloned())
+        {
+            self.suggestions.insert(
+                0,
+                globecraft_data::search::Suggestion {
+                    label: super::live_layers::airport_label(&airport),
+                    lat: airport.lat,
+                    lon: airport.lon,
+                    alt: AIRPORT_ALTITUDE_KM,
+                },
+            );
+        }
         if self.sugg_sel.is_some_and(|i| i >= self.suggestions.len()) {
             self.sugg_sel = None;
         }
@@ -156,6 +174,22 @@ impl App {
                 return;
             }
             Ok(None) => {}
+        }
+        if let Some(airport) = self
+            .live_airports
+            .airports()
+            .and_then(|airports| airports.by_code(&q).cloned())
+        {
+            self.sugg_open = false;
+            self.fly_to(airport.lat, airport.lon, AIRPORT_ALTITUDE_KM);
+            self.status = self.lang.format(
+                "search-navigation-status",
+                &[(
+                    "destination",
+                    super::live_layers::airport_label(&airport).into(),
+                )],
+            );
+            return;
         }
         let (tx, rx) = mpsc::channel();
         self.search_rx = Some(rx);

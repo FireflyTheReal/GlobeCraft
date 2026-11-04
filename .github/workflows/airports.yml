@@ -1,0 +1,132 @@
+name: Airports
+
+# Publishes the airports GlobeCraft knows by code into the one `map-data`
+# pre-release, as `globecraft-airports-<date>.tsv.gz` and the manifest entry
+# `airports`. Source: OurAirports (davidmegginson/ourairports-data on GitHub),
+# public domain (Unlicense). Kept: large and medium airports, and small ones with an
+# IATA code; closed ones, heliports, seaplane bases and balloon ports are left out.
+# Columns: kind (L, M or S), IATA, ICAO, latitude, longitude, elevation (ft),
+# country (ISO 3166-1 alpha-2), municipality, name.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the file into the map-data release'
+        type: boolean
+        default: true
+  schedule:
+    # Mondays: OurAirports changes a little every day; weekly is plenty.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: map-data-airports
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download OurAirports
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o airports.csv \
+            https://davidmegginson.github.io/ourairports-data/airports.csv
+          wc -l airports.csv
+
+      - name: Keep the airports with codes
+        id: build
+        run: |
+          set -euo pipefail
+          version=$(date -u +%Y%m%d)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          python3 - "$version" <<'PY'
+          import csv, gzip, sys
+          version = sys.argv[1]
+          kinds = {"large_airport": "L", "medium_airport": "M", "small_airport": "S"}
+          clean = lambda text: " ".join((text or "").replace("\t", " ").split())
+          rows = []
+          with open("airports.csv", newline="", encoding="utf-8") as source:
+              for row in csv.DictReader(source):
+                  kind = kinds.get(row["type"])
+                  iata = clean(row.get("iata_code")).upper()
+                  icao = clean(row.get("icao_code") or row.get("gps_code")).upper()
+                  if not kind or (kind == "S" and not iata):
+                      continue
+                  if len(icao) != 4 or not icao.isalnum():
+                      icao = ""
+                  if len(iata) != 3 or not iata.isalpha():
+                      iata = ""
+                  if not iata and not icao:
+                      continue
+                  try:
+                      lat, lon = float(row["latitude_deg"]), float(row["longitude_deg"])
+                  except ValueError:
+                      continue
+                  elevation = row.get("elevation_ft") or ""
+                  rows.append([kind, iata, icao, f"{lat:.5f}", f"{lon:.5f}", elevation,
+                               clean(row["iso_country"]), clean(row["municipality"]),
+                               clean(row["name"])])
+          rows.sort(key=lambda r: ("LMS".index(r[0]), r[1] or r[2]))
+          name = f"globecraft-airports-{version}.tsv.gz"
+          with gzip.open(name, "wt", encoding="utf-8", newline="") as out:
+              out.write("kind\tiata\ticao\tlat\tlon\televation_ft\tcountry\tmunicipality\tname\n")
+              for row in rows:
+                  out.write("\t".join(row) + "\n")
+          counts = {k: sum(1 for r in rows if r[0] == k) for k in "LMS"}
+          print(f"{len(rows)} airports {counts}")
+          if counts["L"] < 300 or len(rows) < 5000:
+              sys.exit("too few airports: the source changed?")
+          PY
+          ls -la globecraft-airports-*.tsv.gz
+
+      - name: Publish into the map data release
+        if: github.event_name == 'schedule' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+          KEY: airports
+        # Same rules as the tile sets (map-data.yml): upload under a new name, switch
+        # the manifest entry, keep the build before, delete older ones.
+        run: |
+          set -euo pipefail
+          release=map-data
+          file="globecraft-airports-$VERSION.tsv.gz"
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber "$file"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$release"
+          cat > merge.py <<'PY'
+          import json, os, sys
+          base, version, key = sys.argv[1], os.environ["VERSION"], os.environ["KEY"]
+          manifest = json.load(open("old-manifest.json"))
+          old = manifest.get(key, {})
+          manifest[key] = {
+              "version": version,
+              "previous": old.get("version") if old.get("version") != version else old.get("previous"),
+              "file": f"{base}/globecraft-airports-{version}.tsv.gz",
+              "licence": "OurAirports, public domain (Unlicense)",
+          }
+          json.dump(manifest, open("manifest.json", "w"), indent=1)
+          PY
+          for attempt in 1 2 3 4 5; do
+            rm -f old-manifest.json check.json
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
+              --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
+            python3 merge.py "$base"
+            gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
+            sleep $((RANDOM % 20 + 10))
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --output check.json
+            if python3 -c 'import json, os, sys; sys.exit(json.load(open("check.json")).get(os.environ["KEY"], {}).get("file") != json.load(open("manifest.json"))[os.environ["KEY"]]["file"])'; then
+              break
+            fi
+            echo "The manifest changed underneath; merging again ($attempt)"
+          done
+          previous=$(python3 -c 'import json, os; print(json.load(open("old-manifest.json")).get(os.environ["KEY"], {}).get("version") or "")')
+          stale=$(gh release view "$release" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            grep -E '^globecraft-airports-[0-9]+\.tsv\.gz$' |
+            grep -v -x -e "$file" -e "globecraft-airports-$previous.tsv.gz" || true)
+          for old in $stale; do
+            gh release delete-asset "$release" "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done
