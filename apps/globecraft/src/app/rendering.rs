@@ -410,8 +410,10 @@ impl App {
         if let Some(geometry) = live_layers {
             self.live_geometry.accept(geometry);
         }
+        // Planes projected for this frame are shown with it even when a newer list
+        // arrived meanwhile (every few seconds now): rejecting them left the planes
+        // undrawn while the view moved, as nothing else matches a moving view.
         if let Some(geometry) = aircraft
-            && Arc::ptr_eq(&geometry.data, &self.live_aircraft.snapshot())
             && geometry.view.map_scale == self.settings.map_scale
             && geometry.view.pixels_per_point == ctx.pixels_per_point()
         {

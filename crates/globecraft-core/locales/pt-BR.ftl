@@ -156,7 +156,6 @@ flight-card-flown = Voando há { $time }
 flight-card-to-go = Faltam { $distance }
 flight-card-track-loading = Carregando a rota voada…
 flight-card-error = Sem rota voada: { $error }
-flight-card-close = Deixar de acompanhar este avião
 flight-card-built = fabricado em { $year }
 flight-card-altitude = { $feet } pés
 flight-card-gps-altitude = GPS { $feet } pés

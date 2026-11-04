@@ -156,7 +156,6 @@ flight-card-flown = Flown { $time }
 flight-card-to-go = { $distance } to go
 flight-card-track-loading = Loading the track…
 flight-card-error = No track: { $error }
-flight-card-close = Stop following this plane
 flight-card-built = built { $year }
 flight-card-altitude = { $feet } ft
 flight-card-gps-altitude = GPS { $feet } ft

@@ -22,6 +22,7 @@ const HALO: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 200);
 const LABEL_POINTS: f32 = 12.0;
 const CARD_MARGIN_POINTS: f32 = 12.0;
 const CARD_WIDTH_POINTS: f32 = 400.0;
+const CARD_MIN_WIDTH_POINTS: f32 = 220.0;
 const EMERGENCY: Color32 = Color32::from_rgb(255, 90, 80);
 /// The great circle to the destination is drawn with a point every this many km.
 const REMAINING_STEP_KM: f64 = 40.0;
@@ -322,33 +323,29 @@ impl App {
             self.distance_units(),
             self.flight_selection.loading(),
         );
-        let mut close = false;
-        egui::Area::new(egui::Id::new("selected-flight-card"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(rect.left_top() + egui::vec2(CARD_MARGIN_POINTS, CARD_MARGIN_POINTS))
+        // A window of its own: moved by its title, resized at its edges, closed by
+        // its ✕ (or a click beside the planes, see `globe.rs`).
+        let mut open = true;
+        egui::Window::new(egui::RichText::new(&lines.title).strong())
+            .id(egui::Id::new("selected-flight-card"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .constrain_to(rect)
+            .default_pos(rect.left_top() + egui::vec2(CARD_MARGIN_POINTS, CARD_MARGIN_POINTS))
+            .default_width(CARD_WIDTH_POINTS)
+            .min_width(CARD_MIN_WIDTH_POINTS)
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width(CARD_WIDTH_POINTS);
-                    ui.horizontal(|ui| {
-                        ui.heading(&lines.title);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            close = ui
-                                .small_button("✕")
-                                .on_hover_text(lang.text("flight-card-close"))
-                                .clicked();
-                        });
-                    });
-                    ui.label(egui::RichText::new(&lines.route).strong());
-                    if let Some(warning) = &lines.warning {
-                        ui.label(egui::RichText::new(warning).strong().color(EMERGENCY));
-                    }
-                    for line in &lines.details {
-                        ui.label(line);
-                    }
-                    ui.small(lang.text("flight-card-source"));
-                });
+                ui.label(egui::RichText::new(&lines.route).strong());
+                if let Some(warning) = &lines.warning {
+                    ui.label(egui::RichText::new(warning).strong().color(EMERGENCY));
+                }
+                for line in &lines.details {
+                    ui.label(line);
+                }
+                ui.small(lang.text("flight-card-source"));
             });
-        if close {
+        if !open {
             // Clearing cannot fail.
             let _ = self.run("flight.clear", json!({}));
         }

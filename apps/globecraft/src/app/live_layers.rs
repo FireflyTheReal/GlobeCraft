@@ -91,8 +91,9 @@ impl AircraftOverlay {
         self.shape_key = None;
     }
     fn draw(&mut self, painter: &egui::Painter, input: ProjectionInput, lang: Lang) {
+        // A projection for this view is shown even if a newer list came meanwhile.
         if let Some(completed) = self.worker.take_completed()
-            && completed.matches(input.view, &input.data)
+            && completed.view == input.view
         {
             self.accept(completed, input.unix_secs);
         }
