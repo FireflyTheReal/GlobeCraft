@@ -36,6 +36,7 @@ fn input() -> ProjectionInput {
             altitude_km: 600.0,
             map_scale: 1.0,
             pixels_per_point: 1.0,
+            heights: true,
         },
         data: Arc::new(AircraftSnapshot {
             aircraft: data,

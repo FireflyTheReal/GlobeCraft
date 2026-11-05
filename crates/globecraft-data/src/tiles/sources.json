@@ -122,7 +122,7 @@
       "max_zoom": 4,
       "tile_px": 512,
       "cache_dir": "gibs_polar_bathymetry_north",
-      "attribution": "Polar imagery: NASA Blue Marble (GIBS)",
+      "attribution": "Polar imagery: NASA Blue Marble and MODIS (GIBS)",
       "attribution_key": "polar-imagery-attribution",
       "prefetch": "allowed",
       "max_parallel": 4,
@@ -131,21 +131,21 @@
     {
       "id": 7,
       "code": "polar_south",
-      "name": "Antarctic imagery (NASA Blue Marble with shaded relief and bathymetry, polar)",
+      "name": "Antarctic imagery (NASA MODIS Terra true colour, 21 December 2025, polar)",
       "kind": "imagery",
       "basemap": false,
       "access": {
         "type": "xyz",
-        "template": "https://gibs.earthdata.nasa.gov/wmts/epsg3031/best/BlueMarble_ShadedRelief_Bathymetry/default/500m/{z}/{y}/{x}.jpeg"
+        "template": "https://gibs.earthdata.nasa.gov/wmts/epsg3031/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/2025-12-21/250m/{z}/{y}/{x}.jpeg"
       },
-      "max_zoom": 4,
+      "max_zoom": 5,
       "tile_px": 512,
-      "cache_dir": "gibs_polar_bathymetry_south",
-      "attribution": "Polar imagery: NASA Blue Marble (GIBS)",
+      "cache_dir": "gibs_polar_modis_south",
+      "attribution": "Polar imagery: NASA Blue Marble and MODIS (GIBS)",
       "attribution_key": "polar-imagery-attribution",
       "prefetch": "allowed",
       "max_parallel": 4,
-      "notes": "EPSG:3031 polar stereographic; same grid as polar_north."
+      "notes": "EPSG:3031 polar stereographic; same grid as polar_north, one level finer (level 5, 256 m per pixel). One clear summer day, not Blue Marble (500 m): south of 83 degrees it is all ice, which a cloudless December day shows twice as sharp (Blue Marble has no finer polar layer; the Arctic stays on it, as its open ocean matches Esri's and summer days there are cloudy, checked 2026-11-05)."
     }
   ]
 }

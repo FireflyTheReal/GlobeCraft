@@ -67,7 +67,8 @@ impl GpuRenderer {
         if request.cfg.terrain.is_some()
             || request.cfg.night_lights.is_some()
             || !request.cfg.level_blend
-            || crate::polar::shows_polar_cap(&request.basis, request.width, request.height)
+            || (crate::polar::under(request.cfg.provider)
+                && crate::polar::shows_polar_cap(&request.basis, request.width, request.height))
         {
             return false;
         }

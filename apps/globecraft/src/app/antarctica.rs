@@ -1,5 +1,6 @@
-//! The Antarctic territorial claims, drawn with the country borders in the disputed
-//! style: the claims' sides from 60° S to the South Pole, and each claim's name.
+//! The Antarctic territorial claims, their own layer (on and off apart from the
+//! country borders), in the borders' disputed style: the claims' sides from 60° S to
+//! the South Pole, and each claim's name, outlined to stand out on the ice.
 use super::App;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape};
 use globecraft_core::{camera::Basis, layers::MapLayer};
@@ -13,23 +14,61 @@ use globecraft_render::overlays::project_unhidden;
 const STEP_DEG: f64 = 0.5;
 const LABEL_POINTS: f32 = 11.0;
 const LABEL: Color32 = Color32::from_rgb(232, 236, 242);
-const LABEL_HALO: Color32 = Color32::from_rgba_premultiplied(10, 12, 16, 220);
+/// A thin dark outline, one pixel in each of eight directions: it keeps the white
+/// names legible on the white ice (the earlier halo, two copies offset by a point and
+/// a half, read as doubled letters, and a country name's shadow vanished on ice).
+const LABEL_OUTLINE: Color32 = Color32::from_rgba_premultiplied(12, 16, 24, 230);
+const OUTLINE_DIRECTIONS: [(f32, f32); 8] = [
+    (1.0, 0.0),
+    (-1.0, 0.0),
+    (0.0, 1.0),
+    (0.0, -1.0),
+    (0.7, 0.7),
+    (-0.7, 0.7),
+    (0.7, -0.7),
+    (-0.7, -0.7),
+];
 /// Names are left out where they would come this close to one already placed.
 const LABEL_GAP_POINTS: f32 = 4.0;
 /// The casing under the claim lines: this much wider, in this colour.
 const CASING_POINTS: f32 = 2.0;
 const CASING_RGBA: [u8; 4] = [16, 22, 32, 190];
 
+/// A name with a one-pixel outline all round, in `outline`'s colour; the time zone
+/// labels use it too.
+pub(super) fn outlined(
+    shapes: &mut Vec<Shape>,
+    painter: &egui::Painter,
+    corner: Pos2,
+    galley: std::sync::Arc<egui::Galley>,
+    outline: Color32,
+) {
+    let pixel = 1.0 / painter.ctx().pixels_per_point();
+    for (x, y) in OUTLINE_DIRECTIONS {
+        shapes.push(Shape::galley_with_override_text_color(
+            corner + egui::vec2(x, y) * pixel,
+            galley.clone(),
+            outline,
+        ));
+    }
+    let colour = galley
+        .job
+        .sections
+        .first()
+        .map_or(Color32::WHITE, |section| section.format.color);
+    shapes.push(Shape::galley(corner, galley, colour));
+}
+
 impl App {
-    /// The claim lines and names, under the borders and names; only while country
-    /// borders show and the view reaches south of 55° S.
+    /// The claim lines and names, under the borders and names; only while their
+    /// layer is on and the view reaches south of 60° S.
     pub(super) fn paint_antarctic_claims(
         &self,
         painter: &egui::Painter,
         basis: &Basis,
         rect: Rect,
     ) {
-        if !self.layer(MapLayer::CountryBorders) {
+        if !self.layer(MapLayer::AntarcticClaims) {
             return;
         }
         let scale = self.settings.map_scale;
@@ -68,7 +107,7 @@ impl App {
                 continue;
             };
             let text = self.lang.text(claim.name_key).to_owned();
-            let galley = painter.layout_no_wrap(text.clone(), font.clone(), LABEL);
+            let galley = painter.layout_no_wrap(text, font.clone(), LABEL);
             let corner = Align2::CENTER_CENTER.anchor_size(at, galley.size()).min;
             let bounds =
                 Rect::from_min_size(corner, galley.size()).expand(LABEL_GAP_POINTS * scale);
@@ -76,15 +115,7 @@ impl App {
                 continue;
             }
             taken.push(bounds);
-            let halo = painter.layout_no_wrap(text, font.clone(), LABEL_HALO);
-            for offset in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, -1.0)] {
-                shapes.push(Shape::galley(
-                    corner + offset * scale,
-                    halo.clone(),
-                    LABEL_HALO,
-                ));
-            }
-            shapes.push(Shape::galley(corner, galley, LABEL));
+            outlined(&mut shapes, painter, corner, galley, LABEL_OUTLINE);
         }
         painter.extend(shapes);
     }

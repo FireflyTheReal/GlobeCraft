@@ -10,6 +10,8 @@ use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dcamera::rh};
 const PROJECTION_DEPTH_EPSILON: f64 = 1e-9;
 const ROTATION_AXIS_EPSILON: f64 = 1e-13;
 const MIN_PAN_LATITUDE_COSINE: f64 = 0.05;
+/// Pans that start or end closer to a pole than this follow great circles.
+const POLE_PAN_LATITUDE_DEG: f64 = 87.0;
 // The CPU renderer uses Earth radii. Projection depth is not used for clipping.
 const PROJECTION_NEAR_EARTH_RADII: f64 = MIN_CAMERA_ALTITUDE_KM / EARTH_RADIUS_KM;
 
@@ -134,27 +136,33 @@ impl Basis {
         }
         self.screen_point(p, rect)
     }
-    /// A point above the ground (a satellite, in mean Earth radii from the centre),
-    /// in screen points; `None` when the Earth stands between it and the camera or it
-    /// is behind the camera. The Earth is taken as the unit sphere here: a few
-    /// kilometres of flattening cannot hide something hundreds of kilometres up.
+    /// A point above the ground (an aircraft or a satellite, in mean Earth radii from
+    /// the centre), in screen points; `None` when the Earth (this basis's model) stands
+    /// between it and the camera or it is behind the camera.
     pub fn project_above(&self, p: DVec3, rect: Rect) -> Option<Pos2> {
+        /// A point this close behind where its ray meets the ground is on it.
+        const ON_THE_GROUND_RADII: f64 = 1e-6;
         let to = p - self.c;
         let length = to.length();
         if length <= 0.0 {
             return None;
         }
         let direction = to / length;
-        let b = self.c.dot(direction);
-        let disc = b * b - (self.c.length_squared() - 1.0);
-        if disc > 0.0 {
-            let entry = -b - disc.sqrt();
-            if entry > 0.0 && entry < length {
-                return None; // the Earth is in front of it
-            }
+        if self
+            .model
+            .geometry()
+            .intersect(self.c, direction)
+            .is_some_and(|hit| (hit - self.c).length() < length - ON_THE_GROUND_RADII)
+        {
+            return None; // the Earth is in front of it
         }
         self.screen_point(p, rect)
             .map(|at| Pos2::new(at.x as f32, at.y as f32))
+    }
+    /// A point `km` above the ground at a latitude and longitude, in mean Earth radii.
+    pub fn raised_position(&self, lat: f64, lon: f64, km: f64) -> DVec3 {
+        let ground = self.surface_position(lat, lon);
+        ground + ground.normalize() * (km / crate::EARTH_RADIUS_KM)
     }
     /// Any point in front of the camera, in f64 screen points, hidden or not.
     fn screen_point(&self, p: DVec3, rect: Rect) -> Option<DVec2> {
@@ -254,9 +262,49 @@ impl Cam {
         let h = self.heading.to_radians();
         let movement = DMat2::from_angle(-h) * DVec2::new(-dx * k, dy * k);
         let (de, dn) = (movement.x, movement.y);
+        if self.pans_over_a_pole(dn) {
+            self.pan_great_circle(de, dn);
+            return;
+        }
         self.lat = (self.lat + dn).clamp(-MAX_CAMERA_LATITUDE_DEG, MAX_CAMERA_LATITUDE_DEG);
         self.lon =
             wrap_lon(self.lon + de / self.lat.to_radians().cos().max(MIN_PAN_LATITUDE_COSINE));
+    }
+
+    /// Whether a pan by `dn` degrees north starts or ends near a pole, where steps in
+    /// latitude and longitude would stop at the pole and spin around it.
+    fn pans_over_a_pole(&self, dn: f64) -> bool {
+        self.lat.abs() > POLE_PAN_LATITUDE_DEG || (self.lat + dn).abs() > POLE_PAN_LATITUDE_DEG
+    }
+
+    /// A pan along the great circle the drag points in, `de` and `dn` degrees east and
+    /// north: the view goes straight over the pole and down the other side, turning
+    /// with the globe as it would held in the hand.
+    fn pan_great_circle(&mut self, de: f64, dn: f64) {
+        let degrees = de.hypot(dn);
+        if degrees <= 0.0 {
+            return;
+        }
+        /// A step that would end in the last tenth of a degree around the pole, where
+        /// the camera may not stand, goes on along its circle until it is out again
+        /// (clamped, small steps never got past the pole).
+        const CAP_STEP_DEG: f64 = 0.01;
+        const CAP_MAX_STEPS: usize = 100;
+        let bearing = de.atan2(dn).to_degrees();
+        let mut to = (self.lat, self.lon);
+        for extra in 0..=CAP_MAX_STEPS {
+            let arc = degrees + extra as f64 * CAP_STEP_DEG;
+            to = crate::math::destination(
+                self.lat,
+                self.lon,
+                bearing,
+                arc.to_radians() * crate::EARTH_RADIUS_KM,
+            );
+            if to.0.abs() <= MAX_CAMERA_LATITUDE_DEG {
+                break;
+            }
+        }
+        self.rotate(ll_to_v3(self.lat, self.lon), ll_to_v3(to.0, to.1));
     }
 
     pub fn pan_for_model(&mut self, dx: f64, dy: f64, height_pts: f32, model: EarthModel) {
@@ -268,6 +316,14 @@ impl Cam {
         let movement =
             DMat2::from_angle(-self.heading.to_radians()) * DVec2::new(-dx, dy) * km_per_point;
         let (meridional, prime_vertical) = model.geometry().curvature_km(self.lat);
+        if self.pans_over_a_pole((movement.y / meridional).to_degrees()) {
+            // Near the pole the sphere's step is within metres of the ellipsoid's.
+            self.pan_great_circle(
+                (movement.x / prime_vertical).to_degrees(),
+                (movement.y / meridional).to_degrees(),
+            );
+            return;
+        }
         self.lat = (self.lat + (movement.y / meridional).to_degrees())
             .clamp(-MAX_CAMERA_LATITUDE_DEG, MAX_CAMERA_LATITUDE_DEG);
         self.lon = wrap_lon(
@@ -412,6 +468,44 @@ mod tests {
     use crate::math::haversine_km;
     use emath::Vec2;
 
+    /// Dragging northwards goes straight over the North Pole and down the other side,
+    /// on both Earth models, in small steps as a drag sends them.
+    #[test]
+    fn panning_crosses_the_pole() {
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            let mut cam = Cam {
+                lat: 88.0,
+                lon: 10.0,
+                heading: 0.0,
+                alt: 500.0,
+                tilt: 0.0,
+            };
+            let mut lowest_step = f64::MAX;
+            let mut previous = cam;
+            for _ in 0..80 {
+                cam.pan_for_model(0.0, 5.0, 800.0, model);
+                let step =
+                    crate::math::haversine_km((previous.lat, previous.lon), (cam.lat, cam.lon));
+                lowest_step = lowest_step.min(step);
+                previous = cam;
+            }
+            // 80 steps of about 0.02°: not yet over. Keep going.
+            for _ in 0..80 {
+                cam.pan_for_model(0.0, 5.0, 800.0, model);
+            }
+            assert!(cam.lat < 89.0, "{model:?}: went past the pole, {cam:?}");
+            assert!(
+                (crate::math::wrap_lon(cam.lon - 190.0)).abs() < 1.0,
+                "{model:?}: down the other side, {cam:?}"
+            );
+            assert!(
+                (cam.heading.abs() - 180.0).abs() < 1.0,
+                "{model:?}: {cam:?}"
+            );
+            assert!(lowest_step > 0.0, "{model:?}: never stuck");
+        }
+    }
+
     /// Satellites show above the horizon and over the limb, and hide behind the Earth.
     #[test]
     fn points_above_the_ground_hide_only_behind_the_earth() {
@@ -425,7 +519,7 @@ mod tests {
         }
         .basis(1.0);
         let above = |lat: f64, lon: f64, km: f64| {
-            basis.project_above(crate::math::ll_to_v3(lat, lon) * (1.0 + km / 6_371.0), rect)
+            basis.project_above(basis.raised_position(lat, lon, km), rect)
         };
         let overhead = above(0.0, 0.0, 400.0).unwrap();
         assert!((overhead - rect.center()).length() < 0.5, "{overhead:?}");
@@ -440,6 +534,26 @@ mod tests {
         );
         let geostationary = above(0.0, 90.0, 35_786.0).unwrap();
         assert!(geostationary.x > overhead.x + 100.0, "{geostationary:?}");
+        // On the ellipsoid a plane over the pole (inside the mean sphere) still shows.
+        let polar = Cam {
+            lat: 89.0,
+            lon: 0.0,
+            heading: 0.0,
+            alt: 50.0,
+            tilt: 0.0,
+        }
+        .basis_for_model(1.0, EarthModel::Wgs84);
+        assert!(
+            polar
+                .project_above(polar.raised_position(89.1, 0.0, 10.0), rect)
+                .is_some()
+        );
+        assert!(
+            polar
+                .project_above(polar.raised_position(89.0, 0.0, 0.0), rect)
+                .is_some(),
+            "a point on the ground is not hidden by the ground"
+        );
     }
 
     /// Roadmap 1.9: at the closest camera, a centimetre of camera motion moves the
@@ -770,7 +884,9 @@ mod bounds_tests {
             tilt: 0.0,
         };
         cam.pan(-10000.0, 10000.0, 600.0);
-        assert_eq!(cam.lat, 89.9);
+        // A long drag goes over the pole (a great circle), never into its last tenth.
+        assert!(cam.lat.abs() <= MAX_CAMERA_LATITUDE_DEG);
+        assert!(cam.lat < 89.0, "{cam:?}");
         assert!((-180.0..180.0).contains(&cam.lon));
         assert_eq!(cam.alt, 1000.0);
     }

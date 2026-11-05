@@ -11,9 +11,12 @@ name: Time zones
 # between their meridians, and land zones where their standard time differs from
 # their neighbour's, sea zones included; summer time is left out, as on such maps)
 # and `label` (one point in each sizeable area whose standard time is not a whole
-# hour, e.g. `+5:30`; the app labels the whole hours itself, along the view). In
-# Antarctica the lines are the 15° sectors meeting at the South Pole; its station
-# zones stay as `zone` features for the local time.
+# hour, e.g. `+5:30`; the app labels the whole hours itself, along the view, north
+# of 58° S). South of 60° S the source's rectangle per research station is replaced
+# by the classic map of Antarctica's time: the continent and its ice shelves (Natural
+# Earth, from its GitHub repository) in sectors meeting at the South Pole, each on
+# its stations' time, with a label each, and the sea around it in the ocean's 15°
+# zones. An approximation: stations may keep other times.
 on:
   workflow_dispatch:
     inputs:
@@ -54,42 +57,96 @@ jobs:
         run: |
           set -euo pipefail
           source=$(ls combined*.json | head -1)
+          pip install --break-system-packages --quiet shapely==2.0.6
+          ne=https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson
+          curl -fsSL -o land.geojson "$ne/ne_50m_land.geojson"
+          curl -fsSL -o ice-shelves.geojson "$ne/ne_50m_antarctic_ice_shelves_polys.geojson"
           # Each zone's standard time: the smaller of its UTC offsets in mid-January
           # and mid-July of this year (summer time only ever adds).
-          python3 - "$source" <<'PY'
+          python3 - "$source" land.geojson ice-shelves.geojson <<'PY'
           import datetime, json, sys, zoneinfo
+          from shapely.geometry import box, mapping, shape
+          from shapely.ops import unary_union
+
           data = json.load(open(sys.argv[1]))
           year = datetime.date.today().year
           def offset(tz, month):
               at = datetime.datetime(year, month, 15, 12, tzinfo=datetime.timezone.utc)
               return int(at.astimezone(zoneinfo.ZoneInfo(tz)).utcoffset().total_seconds() // 60)
           def text(minutes):
-              sign = "+" if minutes >= 0 else "\u2212"
+              sign = "+" if minutes >= 0 else "−"
               minutes = abs(minutes)
               return f"{sign}{minutes // 60}" + (f":{minutes % 60:02d}" if minutes % 60 else "")
+          def keyed(tz, geometry):
+              standard = min(offset(tz, 1), offset(tz, 7))
+              return {"type": "Feature",
+                      "properties": {"tzid": tz, "key": standard, "whole": standard % 60 == 0,
+                                     "label": text(standard)},
+                      "geometry": mapping(geometry) if not isinstance(geometry, dict) else geometry}
+
+          # South of 60° S (the Antarctic Treaty's limit) the source has a rectangle per
+          # research station; it is replaced by the classic map of Antarctica's time: the
+          # continent and its ice shelves in sectors meeting at the South Pole, each on the
+          # time its stations keep (an approximation: stations may keep other times), and
+          # the sea around it in the ocean's 15° zones.
+          LIMIT = -60.0
+          SECTORS = [  # west, east (degrees), zone
+              (-90.0, -20.0, "Antarctica/Rothera"),        # the Peninsula: British, Argentine, Chilean bases
+              (-20.0, 25.0, "Antarctica/Troll"),           # western Queen Maud Land
+              (25.0, 44.0 + 38 / 60, "Antarctica/Syowa"),  # eastern Queen Maud Land
+              (44.0 + 38 / 60, 70.0, "Antarctica/Mawson"),
+              (70.0, 100.0, "Antarctica/Davis"),
+              (100.0, 136.0 + 11 / 60, "Antarctica/Casey"),
+              (136.0 + 11 / 60, 160.0, "Antarctica/DumontDUrville"),  # Adélie Land, George V Land
+              (160.0, 180.0, "Antarctica/McMurdo"),        # the Ross Dependency, and the South Pole
+              (-180.0, -150.0, "Antarctica/McMurdo"),
+              (-150.0, -90.0, "Etc/GMT+6"),                # Marie Byrd Land: unclaimed, no station
+          ]
+          LABEL_LAT = -84.0  # nearer the pole than the claims' names
+
+          land = unary_union([
+              shape(f["geometry"]).intersection(box(-180, -90, 180, LIMIT))
+              for name in sys.argv[2:]
+              for f in json.load(open(name))["features"]
+              if shape(f["geometry"]).bounds[1] < LIMIT
+          ]).buffer(0)
+          south = box(-180, -90, 180, LIMIT)
+          features = []
           for feature in data["features"]:
               tz = feature["properties"]["tzid"]
-              standard = min(offset(tz, 1), offset(tz, 7))
-              feature["properties"]["key"] = standard
-              feature["properties"]["whole"] = standard % 60 == 0
-              feature["properties"]["label"] = text(standard)
-              # Antarctica's research-station zones (a ring of New Zealand time
-              # around the South Pole, wedges for each station) stay for the local
-              # time under the cursor; its lines are the ocean's 15° sectors instead,
-              # meeting at the pole as on a classic map. Macquarie is an island.
-              feature["properties"]["lines"] = not (
-                  tz.startswith("Antarctica/") and tz != "Antarctica/Macquarie")
+              geometry = shape(feature["geometry"])
+              if geometry.bounds[1] < LIMIT:
+                  geometry = geometry.difference(south)
+                  if geometry.is_empty:
+                      continue
+                  features.append(keyed(tz, geometry))
+              else:
+                  features.append(keyed(tz, feature["geometry"]))
+          for west, east, tz in SECTORS:
+              part = land.intersection(box(west, -90, east, LIMIT))
+              if not part.is_empty:
+                  features.append(keyed(tz, part))
+          sea = south.difference(land)
           for hour in range(-12, 13):
               west, east = max(hour * 15 - 7.5, -180), min(hour * 15 + 7.5, 180)
-              data["features"].append({
-                  "type": "Feature",
-                  "properties": {"tzid": "", "key": hour * 60, "whole": True,
-                                 "label": text(hour * 60), "lines": True},
-                  "geometry": {"type": "Polygon", "coordinates": [[
-                      [west, -90], [east, -90], [east, -60], [west, -60], [west, -90]]]},
-              })
+              part = sea.intersection(box(west, -90, east, LIMIT))
+              if not part.is_empty:
+                  # Etc/GMT has the sign the other way round.
+                  tz = "Etc/GMT" if hour == 0 else f"Etc/GMT{'-' if hour > 0 else '+'}{abs(hour)}"
+                  features.append(keyed(tz, part))
+          data["features"] = features
           json.dump(data, open("keyed.json", "w"))
-          print(len(data["features"]), "zones,", len({f["properties"]["key"] for f in data["features"]}), "standard times")
+          # A label in each sector, as on a map of Antarctica's time.
+          labels = []
+          for west, east, tz in SECTORS:
+              if west == -180.0:
+                  continue  # the Ross Dependency's other half: labelled once, across 180°
+              standard = min(offset(tz, 1), offset(tz, 7))
+              middle = (west + east) / 2 if east != 180.0 else -175.0
+              labels.append({"type": "Feature", "properties": {"label": text(standard)},
+                             "geometry": {"type": "Point", "coordinates": [middle, LABEL_LAT]}})
+          json.dump({"type": "FeatureCollection", "features": labels}, open("antarctic-labels.json", "w"))
+          print(len(features), "zones,", len({f["properties"]["key"] for f in features}), "standard times")
           PY
 
       - name: Simplify, draw the lines between clocks and place their labels
@@ -102,11 +159,9 @@ jobs:
           # off the whole hour larger than 10,000 km² get a label, largest first.
           NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i keyed.json name=all \
             -simplify dp interval=500 keep-shapes \
-            -filter-fields tzid,key,whole,label,lines \
-            -filter 'tzid !== ""' + name=zones \
-            -o zones.json target=zones format=geojson precision=0.001 \
-            -filter 'lines === true' target=all + name=drawn \
-            -dissolve key copy-fields=whole,label target=drawn + name=regions \
+            -filter-fields tzid,key,whole,label \
+            -o zones.json target=all format=geojson precision=0.001 \
+            -dissolve key copy-fields=whole,label target=all + name=regions \
             -innerlines target=regions + name=lines \
             -o lines.json target=lines format=geojson precision=0.001 \
             -filter '!whole' target=regions + name=parts \
@@ -120,7 +175,9 @@ jobs:
           zones = json.load(open("zones.json"))["features"]
           lines = json.load(open("lines.json"))
           lines = lines.get("geometries") or [f["geometry"] for f in lines.get("features", [])]
-          labels = json.load(open("labels.json"))["features"]
+          # Antarctica's sector labels first: they keep their places.
+          labels = (json.load(open("antarctic-labels.json"))["features"]
+                    + json.load(open("labels.json"))["features"])
           names = {f["properties"]["tzid"] for f in zones}
           print(f"{len(zones)} zones, {len(lines)} border lines, {len(labels)} labels")
           for needed in ("Europe/Berlin", "America/New_York", "Asia/Kolkata", "Etc/GMT-12"):

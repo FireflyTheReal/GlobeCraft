@@ -20,7 +20,7 @@ the app shows the matching attribution on screen while a source is in use.
 | [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | Streets basemap, place details, road geometry (Overpass) | ODbL; [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) |
 | [OpenTopoMap](https://opentopomap.org/about) | Topographic basemap | CC BY-SA; data © OpenStreetMap contributors, SRTM |
 | [Mapterhorn](https://mapterhorn.com/) | 3D terrain elevation | See the Mapterhorn attribution page (Copernicus DEM and national elevation models) |
-| [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) | Night lights layer (VIIRS Black Marble 2016); the polar caps past the Web Mercator limit (Blue Marble with shaded relief and bathymetry, EPSG:3413 and EPSG:3031) | NASA imagery is not copyrighted; credit NASA Earth Observatory / GIBS |
+| [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) | Night lights layer (VIIRS Black Marble 2016); the polar caps past the Web Mercator limit (the Arctic: Blue Marble with shaded relief and bathymetry, EPSG:3413; the Antarctic: MODIS Terra true colour of 21 December 2025, EPSG:3031) | NASA imagery is not copyrighted; credit NASA Earth Observatory / GIBS |
 | [NASA SVS 4851](https://svs.gsfc.nasa.gov/4851/) — NASA/Goddard Space Flight Center Scientific Visualization Studio | Milky Way background (bundled, reduced) | NASA media guidelines; see [assets/sky/README.md](assets/sky/README.md) |
 | NASA/GSFC/Arizona State University, LRO Camera (LROC) | Moon colour map (bundled, 2k) | NASA media guidelines |
 
@@ -30,7 +30,8 @@ the app shows the matching attribution on screen while a source is in use.
 | --- | --- | --- |
 | [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors | Every border from country to municipality, disputed lines, place names | ODbL |
 | [OpenMapTiles](https://openmaptiles.org/) schema, served by [OpenFreeMap](https://openfreemap.org/) | Vector tiles carrying those borders and names | OpenMapTiles CC BY 4.0; OpenFreeMap free service, attribution shown in the app |
-| [Natural Earth](https://www.naturalearthdata.com/) | Countries and major cities (1:110m, bundled), shown before the first tile arrives and used to find the country under the camera | Public domain |
+| [Natural Earth](https://www.naturalearthdata.com/) | Countries and major cities (1:110m, bundled), shown before the first tile arrives and used to find the country under the camera; Antarctica's land and ice shelves (1:50m), which the time zone workflow divides into the continent's time sectors | Public domain |
+| [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) | Time zones (from OpenStreetMap), simplified by the time zone workflow | ODbL |
 
 ## Search
 

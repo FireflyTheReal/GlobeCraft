@@ -430,7 +430,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "eye",
         Layers,
         View,
-        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
+        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","antarctic_claims","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
         "layer.terrainExaggeration",
@@ -439,6 +439,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Layers,
         View,
         r#"{"type":"object","properties":{"value":{"type":"number","description":"Vertical exaggeration, 0.5..3"}},"required":["value"]}"#
+    ),
+    command!(
+        "layer.flatLiveObjects",
+        "layer-flat-live-objects",
+        "satellite",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"on":{"type":"boolean","description":"true: aircraft and satellites drawn on the ground; false: at their height. Omit to toggle"}}}"#
     ),
     command!(
         "layer.stateAltitude",

@@ -664,6 +664,7 @@ impl App {
         }
         // The polar caps show NASA's imagery past the Mercator limit.
         if self.explorer.active == globecraft_core::body::Body::Earth
+            && globecraft_render::polar::under(self.effective_provider())
             && globecraft_render::polar::shows_polar_cap(
                 &display_basis,
                 rect.width() as usize,

@@ -1,8 +1,11 @@
 //! The polar caps: past the Web Mercator limit (85.05°) the imagery tiles end, and
 //! the last row of tiles used to be stretched to the pole. There the globe samples
-//! NASA's Blue Marble in polar stereographic tiles instead (GIBS EPSG:3413 and
-//! EPSG:3031), fading in over the two degrees before the limit so no seam shows.
-//! The caps render on the CPU: a view that shows one is not given to the GPU path.
+//! NASA imagery in polar stereographic tiles instead (GIBS EPSG:3413 and EPSG:3031):
+//! Blue Marble's ocean in the Arctic, a clear summer day of MODIS (250 m) over the
+//! Antarctic ice. It fades in over the two degrees before the limit and is brought to
+//! the colours of Esri's imagery there, so no seam or disc shows. Only under the
+//! satellite imagery. The caps render on the CPU: a view that shows one is not given
+//! to the GPU path.
 use crate::{Local, pixel::Surface, tuning::LOD_SHARPNESS_BIAS};
 use emath::{Pos2, Rect};
 use glam::Vec4;
@@ -26,6 +29,59 @@ const VIEW_PROBES: usize = 24;
 pub(crate) fn cap_weight(lat_deg: f64) -> f32 {
     let t = ((lat_deg.abs() - CAP_START_DEG) / (CAP_FULL_DEG - CAP_START_DEG)).clamp(0.0, 1.0);
     (t * t * (3.0 - 2.0 * t)) as f32
+}
+
+/// How a pole's imagery is brought to Esri's colours: the mean of each in the band
+/// where they meet (83° to 85.05°, measured from both sources' tiles on 2026-11-05),
+/// and how much the polar imagery's contrast is scaled per channel.
+struct ColourMatch {
+    polar_mean: Vec4,
+    esri_mean: Vec4,
+    contrast: Vec4,
+    /// Only the water is matched: the Arctic's few islands and Greenland's ice keep
+    /// their colours.
+    water_only: bool,
+}
+
+/// Blue Marble's Arctic Ocean is a deeper blue than Esri's, which showed as a dark
+/// disc around the North Pole.
+const NORTH_MATCH: ColourMatch = ColourMatch {
+    polar_mean: Vec4::new(0.060, 0.151, 0.313, 0.0),
+    esri_mean: Vec4::new(0.070, 0.320, 0.387, 0.0),
+    contrast: Vec4::new(1.07, 0.85, 0.66, 0.0),
+    water_only: true,
+};
+/// MODIS's summer ice is a little greyer than Esri's: lifted, its relief kept.
+const SOUTH_MATCH: ColourMatch = ColourMatch {
+    polar_mean: Vec4::new(0.891, 0.895, 0.910, 0.0),
+    esri_mean: Vec4::new(0.959, 0.971, 0.998, 0.0),
+    contrast: Vec4::new(1.0, 1.0, 1.0, 0.0),
+    water_only: false,
+};
+/// Water: darker than this luma is matched fully, brighter than the second not at all.
+const WATER_LUMA: (f32, f32) = (0.3, 0.6);
+
+/// A polar imagery colour in Esri's tones.
+fn matched(pole: Pole, colour: Vec4) -> Vec4 {
+    let m = match pole {
+        Pole::North => &NORTH_MATCH,
+        Pole::South => &SOUTH_MATCH,
+    };
+    let corrected = m.esri_mean + (colour - m.polar_mean) * m.contrast;
+    let weight = if m.water_only {
+        let luma = 0.299 * colour.x + 0.587 * colour.y + 0.114 * colour.z;
+        ((WATER_LUMA.1 - luma) / (WATER_LUMA.1 - WATER_LUMA.0)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    colour
+        .lerp(corrected, weight)
+        .clamp(Vec4::ZERO, Vec4::new(1.0, 1.0, 1.0, 0.0))
+}
+
+/// Whether the polar imagery shows under this base map: only under satellite imagery.
+pub fn under(base: Provider) -> bool {
+    base.is_imagery()
 }
 
 fn provider(pole: Pole) -> Provider {
@@ -79,7 +135,7 @@ pub(crate) fn sample(
     while level >= 0 {
         let (key, u, v) = tile_at(provider, level, position);
         if let Some(colour) = loc.tile_color(key, surface.dist, u, v, 1.0) {
-            return Some(colour);
+            return Some(matched(pole, colour));
         }
         level -= 1;
     }
@@ -117,6 +173,19 @@ mod tests {
     use globecraft_core::camera::Cam;
 
     #[test]
+    fn polar_colours_meet_esri_s() {
+        // The band's mean colours become Esri's; Greenland's white stays white.
+        let north = matched(Pole::North, NORTH_MATCH.polar_mean);
+        assert!((north - NORTH_MATCH.esri_mean).abs().max_element() < 1e-6);
+        let ice = Vec4::new(0.95, 0.96, 0.97, 0.0);
+        assert_eq!(matched(Pole::North, ice), ice);
+        let south = matched(Pole::South, SOUTH_MATCH.polar_mean);
+        assert!((south - SOUTH_MATCH.esri_mean).abs().max_element() < 1e-6);
+        assert_eq!(matched(Pole::South, Vec4::ONE).w, 0.0);
+        assert!(matched(Pole::South, Vec4::ONE).max_element() <= 1.0);
+    }
+
+    #[test]
     fn the_cap_fades_in_before_the_mercator_limit() {
         assert_eq!(cap_weight(80.0), 0.0);
         assert_eq!(cap_weight(-83.0), 0.0);
@@ -146,8 +215,9 @@ mod tests {
             grid_position(x, y)
         };
         assert!(u < 0.5 && v < 0.5, "({u}, {v})");
-        // Level 4 is the finest (512 m a pixel); a close view asks for it.
+        // Level 4 is Blue Marble's finest (512 m a pixel), 5 MODIS's (256 m).
         assert_eq!(level_for(400.0, 4), 4);
+        assert_eq!(level_for(200.0, 5), 5);
         assert_eq!(level_for(20_000.0, 4), 0);
     }
 

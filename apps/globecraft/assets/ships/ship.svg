@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft ship marker: ship (cargo, tanker and most others), bow up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Ship (cargo, tanker and most others) top view">
+  <g fill="#f3faff">
+    <polygon points="12,0.8 14.4,4.5 14.6,22.6 9.4,22.6 9.6,4.5"/>
+  </g>
+</svg>

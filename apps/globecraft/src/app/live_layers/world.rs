@@ -1,4 +1,5 @@
 //! Cache styled AIS/orbital meshes without changing polygon/label ordering.
+use super::shapes::{Symbol, add_symbol_mesh, parse_symbol};
 use eframe::egui::{self, Align2, Color32, Pos2, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
 use globecraft_data::{
@@ -6,7 +7,7 @@ use globecraft_data::{
     vessels::Vessel,
 };
 use globecraft_render::live_layers::{LiveGeometry, ProjectedSatellite, ProjectedVessel};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 const VESSEL_LABEL_ALTITUDE_KM: f64 = 75.0;
 const VESSEL_LABEL_LIMIT: usize = 75;
@@ -19,6 +20,8 @@ const SATELLITE_ICON_POINTS: f32 = 5.0;
 /// drawn at the usual size).
 const VESSEL_REFERENCE_LENGTH_M: f32 = 120.0;
 const VESSEL_SIZE_RANGE: (f32, f32) = (0.7, 1.6);
+/// The symbols are this much longer than the triangle they replace, being slimmer.
+const VESSEL_SYMBOL_LENGTH: f32 = 1.3;
 /// The line from a satellite down to the point below it, when that is this long and
 /// the satellite in a low orbit (from the navigation satellites' 20,000 km, the lines
 /// only crossed the screen).
@@ -107,6 +110,33 @@ impl VesselClass {
         }
     }
 
+    /// Its symbol: a hull for most ships, and its own for passenger ships, fishing
+    /// boats with their booms, sailing boats, tugs, catamarans and warships.
+    fn symbol(self) -> &'static Symbol {
+        static SYMBOLS: OnceLock<[Symbol; 7]> = OnceLock::new();
+        let symbols = SYMBOLS.get_or_init(|| {
+            [
+                include_str!("../../../assets/ships/ship.svg"),
+                include_str!("../../../assets/ships/passenger.svg"),
+                include_str!("../../../assets/ships/fishing.svg"),
+                include_str!("../../../assets/ships/sailing.svg"),
+                include_str!("../../../assets/ships/tug.svg"),
+                include_str!("../../../assets/ships/fast.svg"),
+                include_str!("../../../assets/ships/military.svg"),
+            ]
+            .map(|svg| parse_symbol(svg, 1.0))
+        });
+        &symbols[match self {
+            Self::Passenger => 1,
+            Self::Fishing => 2,
+            Self::Pleasure => 3,
+            Self::Tug => 4,
+            Self::HighSpeed => 5,
+            Self::Military => 6,
+            Self::Cargo | Self::Tanker | Self::Service | Self::Other | Self::Unknown => 0,
+        }]
+    }
+
     pub fn colour(self) -> Color32 {
         match self {
             Self::Cargo => Color32::from_rgb(112, 216, 96),
@@ -122,6 +152,21 @@ impl VesselClass {
             Self::Unknown => Color32::from_rgb(160, 168, 178),
         }
     }
+}
+
+/// A ship's symbol, bow up, `size` points long, for the legend.
+pub(in crate::app) fn vessel_symbol(class: VesselClass, center: Pos2, size: f32) -> Shape {
+    let mut mesh = egui::Mesh::default();
+    let colour = class.colour();
+    add_symbol_mesh(
+        &mut mesh,
+        (center, Vec2::new(0.0, -1.0)),
+        size / 24.0,
+        class.symbol(),
+        (colour, edge(colour)),
+        1.0,
+    );
+    Shape::mesh(mesh)
 }
 
 /// The dark edge around a symbol of this colour.
@@ -272,22 +317,24 @@ fn build_vessels(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape>
     let mut shapes = Vec::with_capacity(geometry.vessels.len() + VESSEL_LABEL_LIMIT);
     for (index, projected) in geometry.vessels.iter().enumerate() {
         let vessel = &vessels[projected.source_index];
-        let colour = VesselClass::from_code(vessel.ship_type).colour();
+        let class = VesselClass::from_code(vessel.ship_type);
         let size = vessel.length_m.map_or(1.0, |length| {
             (length as f32 / VESSEL_REFERENCE_LENGTH_M)
                 .sqrt()
                 .clamp(VESSEL_SIZE_RANGE.0, VESSEL_SIZE_RANGE.1)
         });
-        let at = projected.position;
-        shapes.push(Shape::convex_polygon(
-            projected
-                .icon
-                .iter()
-                .map(|corner| at + (*corner - at) * size)
-                .collect(),
-            colour.gamma_multiply(projected.opacity),
-            Stroke::new(1.0 * scale, edge(colour).gamma_multiply(projected.opacity)),
-        ));
+        // The projection gives the bow's direction and the usual half length.
+        let bow = projected.icon[0] - projected.position;
+        let mut mesh = egui::Mesh::default();
+        add_symbol_mesh(
+            &mut mesh,
+            (projected.position, bow.normalized()),
+            bow.length() * VESSEL_SYMBOL_LENGTH / 12.0 * size,
+            class.symbol(),
+            (class.colour(), edge(class.colour())),
+            projected.opacity,
+        );
+        shapes.push(Shape::mesh(mesh));
         if geometry.input.view.altitude_km < VESSEL_LABEL_ALTITUDE_KM && index < VESSEL_LABEL_LIMIT
         {
             let text = if vessel.name.is_empty() {
@@ -449,6 +496,32 @@ mod tests {
     use globecraft_core::orbit::OrbitalElements;
     use globecraft_render::live_layers::{LiveInput, LivePreparer, LiveView};
 
+    /// Every kind of ship has a symbol, its polygons convex and inside the box.
+    #[test]
+    fn ship_symbols_are_convex() {
+        for class in VesselClass::ALL {
+            for polygon in &class.symbol().polygons {
+                assert!(polygon.len() >= 3, "{class:?}");
+                assert!(
+                    polygon
+                        .iter()
+                        .all(|p| (0.0..=24.0).contains(&p.x) && (0.0..=24.0).contains(&p.y))
+                );
+                let turns: Vec<f32> = (0..polygon.len())
+                    .map(|i| {
+                        let [a, b, c] = [0, 1, 2].map(|k| polygon[(i + k) % polygon.len()]);
+                        (b - a).x * (c - b).y - (b - a).y * (c - b).x
+                    })
+                    .filter(|turn| turn.abs() > 1e-4)
+                    .collect();
+                assert!(
+                    turns.iter().all(|t| *t > 0.0) || turns.iter().all(|t| *t < 0.0),
+                    "{class:?}"
+                );
+            }
+        }
+    }
+
     fn ship() -> Vessel {
         Vessel {
             mmsi: "123456789".into(),
@@ -556,15 +629,16 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            satellite_heights: true,
         };
         let geometry = LivePreparer::default().prepare(input);
         crate::app::test_ui::run(&ctx, egui::RawInput::default(), |ui| {
             let painter = ui.painter();
             let raw = build_vessels(painter, &geometry);
             assert_eq!(raw.len(), 100 + VESSEL_LABEL_LIMIT);
-            assert!(matches!(&raw[0], Shape::Path(_)));
+            assert!(matches!(&raw[0], Shape::Mesh(_)));
             assert!(matches!(&raw[1], Shape::Text(_)));
-            assert!(matches!(&raw[2], Shape::Path(_)));
+            assert!(matches!(&raw[2], Shape::Mesh(_)));
             let mut cache = WorldShapes::default();
             let first = cache.vessels(painter, &geometry)[0].clone();
             let repeated = &cache.vessels(painter, &geometry)[0];

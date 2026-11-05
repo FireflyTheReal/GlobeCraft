@@ -23,6 +23,7 @@ const EXTRAPOLATION_MAX_SECS: f64 = 20.0 * 60.0;
 const FRESH_SECS: f64 = 120.0;
 const EXTRAPOLATION_MAX_SPEED_KNOTS: f64 = 1200.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
+const KM_PER_FOOT: f64 = 0.000_304_8;
 const SECONDS_PER_HOUR: f64 = 3600.0;
 const HEADING_PROBE_KM: f64 = 3.0;
 /// A plane reported turning keeps turning for at most this long (a standard-rate
@@ -51,6 +52,7 @@ pub fn project_flights(
     aircraft: &[Aircraft],
     unix_secs: f64,
     map_scale: f32,
+    heights: bool,
 ) -> Vec<ProjectedFlight> {
     aircraft
         .iter()
@@ -73,7 +75,20 @@ pub fn project_flights(
                 speed_km_s,
                 age.min(EXTRAPOLATION_MAX_SECS),
             );
-            let screen = basis.project(basis.surface_position(lat, lon), rect)?;
+            // At its height (barometric, near enough), hidden only behind the Earth.
+            let km = if heights {
+                flight.altitude_feet.unwrap_or(0.0).max(0.0) * KM_PER_FOOT
+            } else {
+                0.0
+            };
+            let at = |lat: f64, lon: f64| {
+                if km > 0.0 {
+                    basis.project_above(basis.raised_position(lat, lon, km), rect)
+                } else {
+                    basis.project(basis.surface_position(lat, lon), rect)
+                }
+            };
+            let screen = at(lat, lon)?;
             if !rect.contains(screen) {
                 return None;
             }
@@ -83,8 +98,7 @@ pub fn project_flights(
                 basis
                     .model
                     .destination((lat, lon), heading_deg, HEADING_PROBE_KM);
-            let heading = basis
-                .project(basis.surface_position(ahead_lat, ahead_lon), rect)
+            let heading = at(ahead_lat, ahead_lon)
                 .map(|ahead| (ahead.y - screen.y).atan2(ahead.x - screen.x))
                 .unwrap_or(-std::f32::consts::FRAC_PI_2);
             let forward = Vec2::angled(heading) * (ICON_SIZE_POINTS * map_scale);
@@ -142,6 +156,62 @@ pub fn fly(
 mod tests {
     use super::*;
     use globecraft_core::earth_model::EarthModel;
+
+    /// A plane at cruising height, seen from the side, is drawn above the point it
+    /// flies over; flat, on it.
+    #[test]
+    fn planes_fly_at_their_height_unless_flat() {
+        let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0));
+        let flight = Aircraft {
+            hex: "abc123".into(),
+            callsign: "TEST".into(),
+            latitude: 47.0,
+            longitude: 8.0,
+            heading_deg: 90.0,
+            speed_knots: Some(0.0),
+            altitude_feet: Some(36_000.0),
+            vertical_rate_fpm: None,
+            turn_rate_deg_s: None,
+            observed_unix: 1000.0,
+            details: None,
+            class: globecraft_data::aircraft::AircraftClass::Unknown,
+        };
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            let basis = globecraft_core::camera::Cam {
+                lat: 46.6,
+                lon: 8.0,
+                heading: 0.0,
+                alt: 30.0,
+                tilt: 70.0,
+            }
+            .basis_for_model(4.0 / 3.0, model);
+            let raised = project_flights(
+                &basis,
+                rect,
+                std::slice::from_ref(&flight),
+                1000.0,
+                1.0,
+                true,
+            );
+            let flat = project_flights(
+                &basis,
+                rect,
+                std::slice::from_ref(&flight),
+                1000.0,
+                1.0,
+                false,
+            );
+            let ground = basis
+                .project(basis.surface_position(47.0, 8.0), rect)
+                .unwrap();
+            assert_eq!(flat[0].position, ground, "{model:?}");
+            assert!(
+                raised[0].position.y < ground.y - 20.0,
+                "{model:?}: {:?} above {ground:?}",
+                raised[0].position
+            );
+        }
+    }
 
     #[test]
     fn a_turning_plane_follows_its_turn_then_flies_straight() {

@@ -265,13 +265,14 @@ fn ray_batches_preserve_partial_rows_provider_pixels_and_missing_tile_priorities
         misses.sort_unstable_by_key(|&(key, _)| key);
         // The polar caps (added after these fixtures were recorded) ask for tiles of
         // their own sources, which a view near a pole does and no other; the case's own
-        // requests are compared with the fixture unchanged.
+        // requests are compared with the fixture unchanged. Only under satellite
+        // imagery: a street map keeps its own colours to the pole.
         let (polar, misses): (Vec<_>, Vec<_>) = misses.into_iter().partition(|&(key, _)| {
             matches!(unkey(key).0, p if p == Provider::PolarNorth || p == Provider::PolarSouth)
         });
         assert_eq!(
             !polar.is_empty(),
-            case.cam.lat.abs() > crate::polar::CAP_START_DEG,
+            case.cam.lat.abs() > crate::polar::CAP_START_DEG && crate::polar::under(case.provider),
             "{}: polar requests",
             case.name
         );

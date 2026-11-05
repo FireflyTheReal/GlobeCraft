@@ -18,7 +18,9 @@ const ROW_INSET_POINTS: f32 = 70.0;
 /// above its rim.
 const ROW_ABOVE_RIM: f32 = 0.1;
 const ROW_SEARCH_STEP_POINTS: f32 = 10.0;
-const ROW_MAX_LAT_DEG: f64 = 70.0;
+/// The row stays north of 58° S: south of 60° S Antarctica's sectors keep the time
+/// of their stations, not the meridians' whole hours, and carry their own labels.
+const ROW_MAX_LAT_DEG: f64 = 58.0;
 
 /// What the borders were drawn for: the view, the zones and the map scale.
 type BordersKey = (Basis, Rect, usize, u32);
@@ -236,15 +238,8 @@ fn borders(
         taken.push(bounds);
         placed.push((at, text));
         let corner = at - galley.size() / 2.0;
-        let halo = painter.layout_no_wrap(text.to_string(), font.clone(), LABEL_HALO);
-        for offset in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, -1.0)] {
-            shapes.push(Shape::galley(
-                corner + offset * scale,
-                halo.clone(),
-                LABEL_HALO,
-            ));
-        }
-        shapes.push(Shape::galley(corner, galley, LABEL));
+        // A thin outline: two copies offset by a point and a half read as doubled digits.
+        super::antarctica::outlined(&mut shapes, painter, corner, galley, LABEL_HALO);
     }
     shapes
 }

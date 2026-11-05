@@ -127,6 +127,7 @@ impl App {
             poi_layers: self.poi_layers(),
             poi_shown: Some(self.poi_shapes.shown()),
             unix_secs: now_unix(),
+            satellite_heights: !self.settings.layers.flat_live_objects,
         }
     }
 }
@@ -200,6 +201,7 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            satellite_heights: true,
         };
         let geometry =
             globecraft_render::live_layers::LivePreparer::default().prepare(input.clone());
@@ -263,6 +265,7 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            satellite_heights: true,
         };
         let geometry =
             globecraft_render::live_layers::LivePreparer::default().prepare(input.clone());

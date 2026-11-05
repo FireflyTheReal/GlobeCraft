@@ -522,6 +522,11 @@ impl App {
                 );
                 json!({"terrain_exaggeration": self.settings.layers.terrain_exaggeration})
             }
+            "layer.flatLiveObjects" => {
+                let layers = &mut self.settings.layers;
+                layers.flat_live_objects = bool_param(p, "on").unwrap_or(!layers.flat_live_objects);
+                json!({"flat": layers.flat_live_objects})
+            }
             "layer.stateAltitude" => {
                 let km = required_f64(p, "km")?;
                 if !km.is_finite() {
@@ -843,6 +848,10 @@ impl App {
             "layer.terrainExaggeration" => CommandState {
                 enabled: self.layer(MapLayer::Terrain),
                 checked: false,
+            },
+            "layer.flatLiveObjects" => CommandState {
+                enabled: self.layer(MapLayer::Flights) || self.layer(MapLayer::Satellites),
+                checked: self.settings.layers.flat_live_objects,
             },
             "layer.stateAltitude" => CommandState {
                 enabled: self.layer(MapLayer::StateBorders),

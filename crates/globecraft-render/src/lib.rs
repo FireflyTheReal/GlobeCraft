@@ -207,7 +207,7 @@ fn shade_surface(
             _ => natural,
         };
         let (col, _) = sample_chain(loc, cfg.provider, rel, level, &surface);
-        let col = with_polar_cap(loc, &surface, col);
+        let col = with_polar_cap(loc, cfg, &surface, col);
         return finish_surface(
             col,
             surface,
@@ -235,7 +235,7 @@ fn shade_surface(
             col = col.lerp_monotonic(c2, blend);
         }
     }
-    let col = with_polar_cap(loc, &surface, col);
+    let col = with_polar_cap(loc, cfg, &surface, col);
     finish_surface(
         col,
         surface,
@@ -246,14 +246,16 @@ fn shade_surface(
 }
 
 /// Past the Web Mercator limit the polar imagery (see `polar`) takes over, fading in
-/// just before it; while its tiles load, the stretched Mercator edge stays.
+/// just before it; while its tiles load, the stretched Mercator edge stays. Only under
+/// satellite imagery: a street or topographic map keeps its own colours to its edge.
 fn with_polar_cap(
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    cfg: &RenderCfg,
     surface: &Surface,
     col: Vec4,
 ) -> Vec4 {
     let weight = polar::cap_weight(surface.lat);
-    if weight <= 0.0 {
+    if weight <= 0.0 || !polar::under(cfg.provider) {
         return col;
     }
     polar::sample(loc, surface).map_or(col, |polar| col.lerp_monotonic(polar, weight))

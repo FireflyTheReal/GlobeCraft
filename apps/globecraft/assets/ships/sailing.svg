@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft ship marker: sailing or pleasure craft, bow up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Sailing or pleasure craft top view">
+  <g fill="#f3faff">
+    <polygon points="12,2.5 13.6,6 13.9,14 13.3,21.5 10.7,21.5 10.1,14 10.4,6"/>
+    <polygon points="11.6,8 12.4,8 19.5,17.6 18.8,18.2"/>
+  </g>
+</svg>

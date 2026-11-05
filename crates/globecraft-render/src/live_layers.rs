@@ -108,6 +108,8 @@ pub struct LiveInput {
     /// The place names on screen, which keep their places (`poi::PoiShown`).
     pub poi_shown: Option<Arc<poi::PoiShown>>,
     pub unix_secs: f64,
+    /// Satellites at their height; off, on the ground below them.
+    pub satellite_heights: bool,
 }
 fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
     match (a, b) {
@@ -129,6 +131,7 @@ impl LiveInput {
             && self.roads.is_some() == other.roads.is_some()
             && self.vessels.is_some() == other.vessels.is_some()
             && self.satellites.is_some() == other.satellites.is_some()
+            && self.satellite_heights == other.satellite_heights
             && self.traffic.is_some() == other.traffic.is_some()
             && self.transport.is_some() == other.transport.is_some()
             && self.poi.is_some() == other.poi.is_some()
@@ -139,6 +142,7 @@ impl LiveInput {
             && same(&self.roads, &other.roads)
             && same(&self.vessels, &other.vessels)
             && same(&self.satellites, &other.satellites)
+            && self.satellite_heights == other.satellite_heights
             && same(&self.traffic, &other.traffic)
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
@@ -237,6 +241,7 @@ impl LivePreparer {
         let satellites = previous
             .filter(|old| {
                 same(&old.input.satellites, &input.satellites)
+                    && old.input.satellite_heights == input.satellite_heights
                     && old.input.same_satellite_time(&input)
             })
             .map(|old| old.satellites.clone())
@@ -401,11 +406,15 @@ fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
         .enumerate()
         .filter_map(|(source_index, sat)| {
             let at = sat.position(input.unix_secs)?;
-            let radius = 1.0 + at.altitude_km / globecraft_core::EARTH_RADIUS_KM;
-            let position = view.basis.project_above(
-                globecraft_core::math::ll_to_v3(at.lat, at.lon) * radius,
-                view.rect,
-            )?;
+            let position = if input.satellite_heights {
+                view.basis.project_above(
+                    view.basis.raised_position(at.lat, at.lon, at.altitude_km),
+                    view.rect,
+                )?
+            } else {
+                view.basis
+                    .project(view.basis.surface_position(at.lat, at.lon), view.rect)?
+            };
             if !view.rect.contains(position) {
                 return None;
             }

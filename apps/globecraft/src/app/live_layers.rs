@@ -8,7 +8,7 @@ pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
 mod poi;
 mod poi_icons;
 pub(super) use poi_icons::Group as PoiGroup;
-pub(super) use world::{VesselClass, satellite_symbol};
+pub(super) use world::{VesselClass, satellite_symbol, vessel_symbol};
 mod poi_memory;
 mod shapes;
 pub(super) use shapes::class_symbol;
@@ -178,6 +178,7 @@ impl App {
                 altitude_km,
                 map_scale: self.settings.map_scale,
                 pixels_per_point,
+                heights: !self.settings.layers.flat_live_objects,
             },
             data: self.aircraft_snapshot(),
             unix_secs: now_unix(),

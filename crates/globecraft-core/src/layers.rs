@@ -45,6 +45,8 @@ pub enum MapLayer {
     Aurora,
     /// Time zone borders, and the local time under the cursor.
     TimeZones,
+    /// The territorial claims in Antarctica: their sides and names.
+    AntarcticClaims,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -81,8 +83,9 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::CountryBorders,
+        Self::AntarcticClaims,
         Self::StateBorders,
         Self::PlaceLabels,
         Self::MunicipalBorders,
@@ -132,6 +135,7 @@ impl MapLayer {
             Self::Clouds => "clouds",
             Self::Aurora => "aurora",
             Self::TimeZones => "time_zones",
+            Self::AntarcticClaims => "antarctic_claims",
             Self::Flights => "flights",
             Self::Vessels => "vessels",
             Self::Satellites => "satellites",
@@ -171,6 +175,7 @@ impl MapLayer {
             Self::Clouds => "layers-clouds-toggle",
             Self::Aurora => "layers-aurora-toggle",
             Self::TimeZones => "layers-timezones-toggle",
+            Self::AntarcticClaims => "layers-antarctic-claims-toggle",
             Self::Flights => "layers-flights-toggle",
             Self::Vessels => "layers-vessels-toggle",
             Self::Satellites => "layers-satellites-toggle",
@@ -190,7 +195,7 @@ impl MapLayer {
     /// Icon name in the desktop icon set.
     pub fn icon(self) -> &'static str {
         match self {
-            Self::CountryBorders => "borders",
+            Self::CountryBorders | Self::AntarcticClaims => "borders",
             Self::StateBorders => "borders_states",
             Self::MunicipalBorders => "borders_fine",
             Self::PlaceLabels => "label",
@@ -223,6 +228,7 @@ impl MapLayer {
     pub fn group(self) -> LayerGroup {
         match self {
             Self::CountryBorders
+            | Self::AntarcticClaims
             | Self::StateBorders
             | Self::PlaceLabels
             | Self::MunicipalBorders
@@ -281,7 +287,11 @@ impl MapLayer {
     pub fn default_visible(self) -> bool {
         matches!(
             self,
-            Self::CountryBorders | Self::StateBorders | Self::PlaceLabels | Self::Atmosphere
+            Self::CountryBorders
+                | Self::AntarcticClaims
+                | Self::StateBorders
+                | Self::PlaceLabels
+                | Self::Atmosphere
         )
     }
 
@@ -402,9 +412,10 @@ mod tests {
             set.iter().collect::<Vec<_>>(),
             [
                 MapLayer::CountryBorders,
+                MapLayer::AntarcticClaims,
                 MapLayer::StateBorders,
                 MapLayer::PlaceLabels,
-                MapLayer::Atmosphere
+                MapLayer::Atmosphere,
             ]
         );
     }

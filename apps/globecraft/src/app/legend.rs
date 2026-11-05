@@ -4,7 +4,9 @@
 //! closes with its ✕, and `ui.legend` (View tab, Command Search) brings it back.
 //! Each key takes its colours from the code that draws them, so the two never differ.
 use super::App;
-use super::live_layers::{PoiGroup, VesselClass, aurora_colour, class_symbol, satellite_symbol};
+use super::live_layers::{
+    PoiGroup, VesselClass, aurora_colour, class_symbol, satellite_symbol, vessel_symbol,
+};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
 use globecraft_core::layers::MapLayer;
 use globecraft_data::{
@@ -227,7 +229,11 @@ impl App {
                         LegendKind::Vessels => {
                             ui.strong(lang.text("legend-vessels"));
                             two_columns(ui, "legend-vessels", &VesselClass::ALL, |ui, class| {
-                                swatch(ui, class.colour(), lang.text(class.label_key()));
+                                symbol(
+                                    ui,
+                                    |at| vec![vessel_symbol(*class, at, SYMBOL_POINTS)],
+                                    lang.text(class.label_key()),
+                                );
                             });
                         }
                         LegendKind::Satellites => {

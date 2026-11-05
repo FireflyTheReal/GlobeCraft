@@ -1743,7 +1743,7 @@ fn live_symbols_screenshot() {
         json!({
             "hex": format!("40{index:04x}"), "flight": flight, "category": category,
             "lat": 50.75 + dlat, "lon": 1.0 + dlon, "track": track, "gs": 240.0,
-            "alt_baro": 12000, "seen_pos": 0.5
+            "alt_baro": 4000 + 6000 * index, "seen_pos": 0.5
         })
     })
     .collect();
@@ -1794,6 +1794,23 @@ fn live_symbols_screenshot() {
     .expect("camera");
     settle(&mut h, 12.0);
     save(&mut h, &dir, "32-live-symbols");
+    // Tilted, the aircraft fly at their height above the Channel; flat, on it.
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": 50.2, "lon": 1.35, "altitude_km": 25.0, "tilt_deg": 72.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "32-live-symbols-tilted");
+    h.state_mut()
+        .run("layer.flatLiveObjects", json!({"on": true}))
+        .expect("flat");
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "32-live-symbols-flat");
+    h.state_mut()
+        .run("layer.flatLiveObjects", json!({"on": false}))
+        .expect("heights");
     let app = h.state_mut();
     for (layer, visible) in [("flights", false), ("vessels", false), ("satellites", true)] {
         app.run("layer.show", json!({"layer": layer, "visible": visible}))

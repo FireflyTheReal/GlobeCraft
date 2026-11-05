@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GlobeCraft ship marker: military or law-enforcement vessel, bow up. Every polygon is convex; the egui renderer reads them directly. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-label="Military or law-enforcement vessel top view">
+  <g fill="#f3faff">
+    <polygon points="12,0.5 13.8,5 14.1,15 13.4,23 10.6,23 9.9,15 10.2,5"/>
+  </g>
+</svg>

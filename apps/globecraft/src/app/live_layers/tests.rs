@@ -21,6 +21,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
             altitude_km: 14_000.0,
             map_scale: 1.0,
             pixels_per_point: 1.0,
+            heights: true,
         },
         data: Arc::new(AircraftSnapshot {
             aircraft: vec![Aircraft {
@@ -133,6 +134,7 @@ fn aircraft_mesh_repaint_cost() {
             altitude_km: 14_000.0,
             map_scale: 1.0,
             pixels_per_point: 1.0,
+            heights: true,
         },
         data: Arc::new(AircraftSnapshot {
             aircraft: data.into(),
@@ -197,6 +199,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                 altitude_km: 300.0,
                 map_scale: 1.0,
                 pixels_per_point: 1.0,
+                heights: true,
             },
             data: Arc::new(AircraftSnapshot {
                 aircraft: vec![Aircraft {

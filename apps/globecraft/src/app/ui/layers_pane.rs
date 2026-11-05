@@ -703,6 +703,7 @@ impl App {
                 "https://github.com/matteason/live-cloud-maps",
             ),
             MapLayer::Flights => {
+                self.flat_live_objects_control(ui);
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT + 46.0);
                     ui.vertical(|ui| {
@@ -738,6 +739,7 @@ impl App {
                 );
             }
             MapLayer::Satellites => {
+                self.flat_live_objects_control(ui);
                 note(ui, t, &self.live_satellites.status(lang));
                 credit(ui, "CelesTrak", "https://celestrak.org/");
             }
@@ -746,6 +748,22 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Aircraft and satellites at their height, or on the ground below them.
+    fn flat_live_objects_control(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
+        let mut flat = self.settings.layers.flat_live_objects;
+        ui.horizontal(|ui| {
+            ui.add_space(INDENT + 46.0);
+            if ui
+                .checkbox(&mut flat, lang.text("cmd-layer-flat-live-objects"))
+                .on_hover_text(lang.text("cmd-layer-flat-live-objects-help"))
+                .changed()
+            {
+                self.run_reporting("layer.flatLiveObjects", json!({"on": flat}));
+            }
+        });
     }
 
     /// The altitude below which state lines show, edited in the active distance unit and

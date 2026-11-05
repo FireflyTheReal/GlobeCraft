@@ -64,23 +64,23 @@ const SELECTED_FILL: Color32 = Color32::from_rgb(255, 196, 61);
 const SELECTED_OUTLINE: Color32 = Color32::from_rgb(46, 28, 0);
 const SELECTED_SCALE: f32 = 1.35;
 
-struct SvgAirplane {
+pub(super) struct Symbol {
     // Each SVG polygon is convex, allowing efficient, indexed triangle fans.
-    polygons: Vec<Vec<Vec2>>,
+    pub(super) polygons: Vec<Vec<Vec2>>,
     /// Its size next to the airliner's.
     scale: f32,
 }
 
 /// The symbol of a kind of aircraft.
-fn airplane_symbol(class: AircraftClass) -> &'static SvgAirplane {
-    static SYMBOLS: OnceLock<Vec<(AircraftClass, SvgAirplane)>> = OnceLock::new();
+fn airplane_symbol(class: AircraftClass) -> &'static Symbol {
+    static SYMBOLS: OnceLock<Vec<(AircraftClass, Symbol)>> = OnceLock::new();
     let symbols = SYMBOLS.get_or_init(|| {
         CLASS_SVGS
             .iter()
             .map(|(class, svg, scale)| (*class, parse_symbol(svg, *scale)))
             .collect()
     });
-    static AIRLINER: OnceLock<SvgAirplane> = OnceLock::new();
+    static AIRLINER: OnceLock<Symbol> = OnceLock::new();
     symbols
         .iter()
         .find(|(kind, _)| *kind == class)
@@ -88,7 +88,8 @@ fn airplane_symbol(class: AircraftClass) -> &'static SvgAirplane {
         .unwrap_or_else(|| AIRLINER.get_or_init(|| parse_symbol(AIRPLANE_SVG, 1.0)))
 }
 
-fn parse_symbol(svg: &str, scale: f32) -> SvgAirplane {
+/// The convex polygons of a bundled marker SVG (24 × 24, nose or bow up).
+pub(super) fn parse_symbol(svg: &str, scale: f32) -> Symbol {
     {
         let polygons = svg
             .split("<polygon")
@@ -117,7 +118,7 @@ fn parse_symbol(svg: &str, scale: f32) -> SvgAirplane {
                 polygon
             })
             .collect();
-        SvgAirplane { polygons, scale }
+        Symbol { polygons, scale }
     }
 }
 
@@ -166,16 +167,36 @@ fn heading(flight: &ProjectedFlight, class: AircraftClass) -> Vec2 {
 
 fn add_airplane_mesh(
     mesh: &mut egui::Mesh,
-    (position, forward): (egui::Pos2, Vec2),
+    at: (egui::Pos2, Vec2),
     map_scale: f32,
-    symbol: &SvgAirplane,
+    symbol: &Symbol,
+    colours: (Color32, Color32),
+    opacity: f32,
+) {
+    add_symbol_mesh(
+        mesh,
+        at,
+        AIRPLANE_SCALE_POINTS * map_scale,
+        symbol,
+        colours,
+        opacity,
+    );
+}
+
+/// A marker symbol at `position`, its top towards `forward` (a unit vector on
+/// screen), `unit_points` points to each of the SVG's units, with a dark edge.
+pub(super) fn add_symbol_mesh(
+    mesh: &mut egui::Mesh,
+    (position, forward): (egui::Pos2, Vec2),
+    unit_points: f32,
+    symbol: &Symbol,
     (fill, outline): (Color32, Color32),
     opacity: f32,
 ) {
     // The projection already computes the direction of the aircraft on screen, so
     // the SVG turns as the camera/globe turns, even near the poles.
     let right = Vec2::new(-forward.y, forward.x);
-    let icon_size = AIRPLANE_SCALE_POINTS * map_scale * symbol.scale;
+    let icon_size = unit_points * symbol.scale;
 
     // Draw the dark silhouette beneath all SVG parts, then the light silhouette.
     // This creates an exterior outline without outlines between overlapping wings.

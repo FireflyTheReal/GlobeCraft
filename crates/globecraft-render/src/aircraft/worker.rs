@@ -20,6 +20,8 @@ pub struct ProjectionView {
     pub altitude_km: f64,
     pub map_scale: f32,
     pub pixels_per_point: f32,
+    /// Aircraft at their height; off, on the ground below them.
+    pub heights: bool,
 }
 impl ProjectionView {
     /// How often flights move in this view, in seconds (see [`crate::motion`]).
@@ -85,6 +87,7 @@ impl AircraftPreparer {
             &input.data.aircraft,
             input.unix_secs,
             input.view.map_scale,
+            input.view.heights,
         );
         let mut labels: Vec<usize> = Vec::new();
         if input.view.altitude_km <= LABEL_MAX_ALTITUDE_KM {

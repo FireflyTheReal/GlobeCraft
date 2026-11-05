@@ -15,6 +15,8 @@ pub struct LayerPreferences {
     #[serde(serialize_with = "serialize_basemap")]
     pub basemap: Provider,
     pub terrain_exaggeration: f32,
+    /// Aircraft and satellites drawn on the ground below them, not at their height.
+    pub flat_live_objects: bool,
 }
 
 impl Default for LayerPreferences {
@@ -23,6 +25,7 @@ impl Default for LayerPreferences {
             visible: LayerSet::default(),
             basemap: Provider::Satellite,
             terrain_exaggeration: 1.0,
+            flat_live_objects: false,
         }
     }
 }
@@ -49,6 +52,9 @@ impl LayerPreferences {
             .and_then(Provider::from_code)
         {
             self.basemap = basemap;
+        }
+        if let Some(flat) = value.get("flat_live_objects").and_then(|v| v.as_bool()) {
+            self.flat_live_objects = flat;
         }
         if let Some(value) = value
             .get("terrain_exaggeration")

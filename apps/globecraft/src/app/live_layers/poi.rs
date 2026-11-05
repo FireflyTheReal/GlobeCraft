@@ -457,6 +457,7 @@ pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
         },
         poi_shown: None,
         unix_secs: 0.0,
+        satellite_heights: true,
     };
     LivePreparer::default().prepare(input)
 }
