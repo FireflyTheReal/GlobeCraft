@@ -13,7 +13,7 @@ pub struct WaybackRelease {
 }
 /// Sorted newest first. A tile key stores the index into this list.
 static WAYBACK: Mutex<Vec<WaybackRelease>> = Mutex::new(Vec::new());
-const WAYBACK_CONFIG: &str =
+pub(crate) const WAYBACK_CONFIG_URL: &str =
     "https://s3-us-west-2.amazonaws.com/config.maptiles.arcgis.com/waybackconfig.json";
 
 pub(crate) fn wayback_release(rel: u16) -> Option<WaybackRelease> {
@@ -67,12 +67,12 @@ fn parse_wayback_config(v: &serde_json::Value) -> Vec<WaybackRelease> {
 /// The release list's file in the shared download folder, kept by
 /// `remove_retired_caches`.
 pub(crate) fn release_list_path() -> std::path::PathBuf {
-    geo_cache_path(WAYBACK_CONFIG)
+    geo_cache_path(WAYBACK_CONFIG_URL)
 }
 /// Fetches the release list (network first so that new releases show up; disk cache as fallback).
 pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error> {
-    let path = geo_cache_path(WAYBACK_CONFIG);
-    let request = crate::http::client(crate::http::Policy::Wayback)?.get(WAYBACK_CONFIG);
+    let path = geo_cache_path(WAYBACK_CONFIG_URL);
+    let request = crate::http::client(crate::http::Policy::Wayback)?.get(WAYBACK_CONFIG_URL);
     let net = async {
         let bytes = crate::http::body(request, MAX_WAYBACK_CONFIG_BYTES).await?;
         let parsed = tokio::task::spawn_blocking(move || {

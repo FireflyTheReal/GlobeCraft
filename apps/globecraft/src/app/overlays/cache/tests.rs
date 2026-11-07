@@ -438,9 +438,20 @@ fn draw_ready(
     data: &Arc<BoundaryData>,
     style: OverlayStyle,
 ) {
+    draw_ready_with(cache, painter, view, data, style, &LabelSpace::default());
+}
+
+fn draw_ready_with(
+    cache: &mut OverlayCache,
+    painter: &egui::Painter,
+    view: OverlayView,
+    data: &Arc<BoundaryData>,
+    style: OverlayStyle,
+    taken: &LabelSpace,
+) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        cache.draw(painter, view, data, style);
+        cache.draw_with(painter, view, data, style, taken);
         if cache.key == Some(DrawKey { view, style }) {
             break;
         }
@@ -450,6 +461,71 @@ fn draw_ready(
         );
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
+}
+
+#[test]
+fn place_names_reserve_their_room_before_names_that_loaded_first() {
+    headless(|painter| {
+        let (view, style, data) = scene();
+        let data = Arc::new(data);
+        // A place of interest's name in the middle of the view, loaded before the
+        // place names after a jump to street level.
+        let poi = Rect::from_center_size(view.rect.center(), vec2(200.0, 40.0));
+        let mut poi_labels = PlacedLabels::default();
+        poi_labels.replace(vec![poi]);
+        let taken = LabelSpace::default().with(&poi_labels);
+
+        // A cold cache has no memory: only the first view after a jump reserves
+        // every name (`include_new`); otherwise the place name stays hidden.
+        let mut cold = OverlayCache::new(painter.ctx().clone(), None);
+        draw_ready_with(&mut cold, painter, view, &data, style, &taken);
+        assert!(!texts(&cold.shapes).contains(&"Country"));
+        assert!(
+            cold.remembered_placed(painter, view, style, &LabelSpace::default(), false)
+                .rects()
+                .is_empty()
+        );
+        let all = cold.remembered_placed(painter, view, style, &LabelSpace::default(), true);
+        assert!(
+            !LabelSpace::default().with(&all).is_free(poi),
+            "a new place name claims room from the places of interest that loaded first"
+        );
+
+        // The same name was drawn before the jump. The new view's geometry is
+        // prepared while the place of interest still holds the middle; the name is
+        // hidden in that pass but remembered, so it can reserve its room again.
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
+        draw_ready(&mut cache, painter, view, &data, style);
+        let lower = OverlayView {
+            basis: Cam {
+                lat: 0.0,
+                lon: 0.0,
+                heading: 0.0,
+                alt: 100.0,
+                tilt: 0.0,
+            }
+            .basis(4.0 / 3.0),
+            altitude_km: 100.0,
+            ..view
+        };
+        draw_ready_with(&mut cache, painter, lower, &data, style, &taken);
+        let remembered =
+            cache.remembered_placed(painter, lower, style, &LabelSpace::default(), false);
+        assert!(
+            !LabelSpace::default().with(&remembered).is_free(poi),
+            "the remembered name reserves the room the place of interest took"
+        );
+        // The place of interest yields that room; the name comes back.
+        draw_ready_with(
+            &mut cache,
+            painter,
+            lower,
+            &data,
+            style,
+            &LabelSpace::default(),
+        );
+        assert!(texts(&cache.shapes).contains(&"Country"));
+    });
 }
 
 #[test]

@@ -4,12 +4,28 @@ use super::icons;
 use super::theme::{Tokens, regular, semibold};
 use crate::app::App;
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use globecraft_core::language::fold_name;
 use globecraft_core::layers::{LayerGroup, MapLayer};
 use globecraft_data::tiles::Provider;
 use serde_json::json;
 
 const ROW_H: f32 = 24.0;
 const INDENT: f32 = 18.0;
+
+/// The Layers pane's search text and active-state filter. Not saved: it only narrows
+/// the pane for the session.
+#[derive(Default)]
+pub(in crate::app) struct LayersUi {
+    query: String,
+    active_only: bool,
+}
+
+/// Whether a row is shown: its name or its group's name contains the folded query,
+/// and it is on when the active-only filter is on.
+fn matches_filter(query: &str, names: &[&str], active_only: bool, active: bool) -> bool {
+    (!active_only || active)
+        && (query.is_empty() || names.iter().any(|name| fold_name(name).contains(query)))
+}
 
 /// A table-of-contents row: a check box (or radio dot), an icon and a label. Returns the click.
 struct TocRow<'a> {
@@ -113,10 +129,11 @@ fn toc_row(ui: &mut Ui, t: &Tokens, row: TocRow<'_>) -> egui::Response {
     }
 }
 
-/// A group heading with a disclosure arrow; returns whether it is open.
-fn group_heading(ui: &mut Ui, t: &Tokens, id: &str, title: &str) -> bool {
+/// A group heading with a disclosure arrow; returns whether it is open. A search
+/// keeps every group with matches open without changing the stored state.
+fn group_heading(ui: &mut Ui, t: &Tokens, id: &str, title: &str, force_open: bool) -> bool {
     let key = egui::Id::new(("layers_group_open", id));
-    let mut open = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(true);
+    let mut open = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(true) || force_open;
     ui.add_space(4.0);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, true, title));
@@ -139,7 +156,7 @@ fn group_heading(ui: &mut Ui, t: &Tokens, id: &str, title: &str) -> bool {
         semibold(12.0),
         t.group_label,
     );
-    if resp.clicked() {
+    if resp.clicked() && !force_open {
         open = !open;
         ui.data_mut(|d| d.insert_temp(key, open));
     }
@@ -268,10 +285,56 @@ fn credit(ui: &mut Ui, text: &str, url: &str) {
 }
 
 impl App {
+    /// The search field and active-state filter above the Layers list.
+    pub(in crate::app) fn layers_search(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
+        ui.horizontal(|ui| {
+            let clear_width = if self.layers_ui.query.is_empty() {
+                0.0
+            } else {
+                ui.spacing().interact_size.y + ui.spacing().item_spacing.x
+            };
+            let width = (ui.available_width() - clear_width).max(80.0);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.layers_ui.query)
+                    .id(egui::Id::new("layers-search"))
+                    .hint_text(lang.text("layers-search-placeholder"))
+                    .desired_width(width),
+            );
+            if !self.layers_ui.query.is_empty()
+                && icons::icon_button(ui, "close", lang.text("layers-search-clear")).clicked()
+            {
+                self.layers_ui.query.clear();
+            }
+            if response.has_focus()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                self.layers_ui.query.clear();
+            }
+        });
+        ui.checkbox(
+            &mut self.layers_ui.active_only,
+            lang.text("layers-search-active-only"),
+        )
+        .on_hover_text(lang.text("layers-search-active-help"));
+    }
+
+    /// Sets the Layers pane search from a test harness.
+    #[cfg(test)]
+    pub(in crate::app) fn set_layers_search(&mut self, query: &str, active_only: bool) {
+        self.layers_ui.query = query.to_owned();
+        self.layers_ui.active_only = active_only;
+    }
+
     pub(in crate::app) fn layers_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
         let earth = self.explorer.active == globecraft_core::body::Body::Earth;
+        let raw_query = self.layers_ui.query.clone();
+        let query = fold_name(&raw_query);
+        let active_only = self.layers_ui.active_only;
+        let filtering = !query.is_empty() || active_only;
+        let mut shown_any = false;
         if !earth {
             ui.label(
                 egui::RichText::new(lang.text("layers-earth-only"))
@@ -279,48 +342,96 @@ impl App {
                     .color(t.amber),
             );
         }
-        if group_heading(ui, &t, "basemap", lang.text("sidebar-imagery-title")) {
-            for provider in Provider::basemaps() {
-                let on = self.settings.layers.basemap == provider;
-                let icon = match provider {
-                    Provider::Satellite => "basemap",
-                    Provider::Wayback => "history",
-                    Provider::Streets => "road",
-                    _ => "terrain",
-                };
-                if toc_row(
-                    ui,
-                    &t,
-                    TocRow {
-                        icon,
-                        label: provider.name(lang),
-                        checked: on,
-                        enabled: earth,
-                        radio: true,
-                        indent: 0.0,
-                    },
+        let basemap_title = lang.text("sidebar-imagery-title");
+        let providers: Vec<_> = Provider::basemaps()
+            .filter(|provider| {
+                matches_filter(
+                    &query,
+                    &[basemap_title, provider.name(lang)],
+                    active_only,
+                    self.settings.layers.basemap == *provider,
                 )
-                .clicked()
-                    && earth
-                {
-                    self.run_reporting("layer.basemap", json!({"basemap": provider.code()}));
-                }
-                if on && provider == Provider::Wayback {
-                    self.wayback_controls(ui, &t);
+            })
+            .collect();
+        if !providers.is_empty() {
+            shown_any = true;
+            if group_heading(ui, &t, "basemap", basemap_title, filtering) {
+                for provider in providers {
+                    let on = self.settings.layers.basemap == provider;
+                    let icon = match provider {
+                        Provider::Satellite => "basemap",
+                        Provider::Wayback => "history",
+                        Provider::Streets => "road",
+                        _ => "terrain",
+                    };
+                    if toc_row(
+                        ui,
+                        &t,
+                        TocRow {
+                            icon,
+                            label: provider.name(lang),
+                            checked: on,
+                            enabled: earth,
+                            radio: true,
+                            indent: 0.0,
+                        },
+                    )
+                    .clicked()
+                        && earth
+                    {
+                        self.run_reporting("layer.basemap", json!({"basemap": provider.code()}));
+                    }
+                    if on && provider == Provider::Wayback {
+                        self.wayback_controls(ui, &t);
+                    }
                 }
             }
         }
-        if group_heading(ui, &t, "user_data", lang.text("layers-user-title")) {
-            self.user_layers_section(ui, &t, earth);
+        let user_title = lang.text("layers-user-title");
+        let user_indices: Vec<usize> = (0..self.settings.user_layers.len())
+            .rev()
+            .filter(|&index| {
+                let layer = &self.settings.user_layers[index];
+                matches_filter(
+                    &query,
+                    &[user_title, layer.name.as_str()],
+                    active_only,
+                    layer.visible,
+                )
+            })
+            .collect();
+        let show_user_group = !user_indices.is_empty()
+            || (!active_only
+                && self.settings.user_layers.is_empty()
+                && matches_filter(&query, &[user_title], active_only, true));
+        if show_user_group {
+            shown_any = true;
+            if group_heading(ui, &t, "user_data", user_title, filtering) {
+                self.user_layers_section(ui, &t, earth, &user_indices);
+            }
         }
         for group in LayerGroup::ALL {
-            if !group_heading(ui, &t, &format!("{group:?}"), lang.text(group.label_key())) {
+            let group_title = lang.text(group.label_key());
+            let layers: Vec<_> = MapLayer::ALL
+                .into_iter()
+                .filter(|layer| layer.group() == group && layer.listed())
+                .filter(|layer| {
+                    matches_filter(
+                        &query,
+                        &[group_title, lang.text(layer.label_key())],
+                        active_only,
+                        self.layer(*layer),
+                    )
+                })
+                .collect();
+            if layers.is_empty() {
                 continue;
             }
-            for layer in MapLayer::ALL
-                .into_iter()
-                .filter(|l| l.group() == group && l.listed())
-            {
+            shown_any = true;
+            if !group_heading(ui, &t, &format!("{group:?}"), group_title, filtering) {
+                continue;
+            }
+            for layer in layers {
                 let parent_on = layer.parent().is_none_or(|p| self.layer(p));
                 let indent = if layer.parent().is_some() {
                     INDENT
@@ -347,7 +458,7 @@ impl App {
                     self.layer_details(ui, &t, layer);
                 }
             }
-            if group == LayerGroup::Geography {
+            if group == LayerGroup::Geography && !filtering {
                 if self.boundary_loader.is_loading_base_layers() {
                     loading_note(ui, &t, lang.text("boundaries-loading-status"));
                 }
@@ -369,23 +480,37 @@ impl App {
                 note(ui, &t, lang.text("layers-boundary-attribution"));
             }
         }
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(lang.text("layers-live-overlays-help"))
-                .size(11.0)
-                .color(t.text_dim),
-        );
+        if filtering && !shown_any {
+            ui.add_space(8.0);
+            let message = if query.is_empty() {
+                lang.text("layers-search-empty-active").to_owned()
+            } else {
+                lang.format(
+                    "layers-search-empty",
+                    &[("query", raw_query.as_str().into())],
+                )
+            };
+            ui.label(egui::RichText::new(message).size(11.5).color(t.text_dim));
+        } else if !filtering {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(lang.text("layers-live-overlays-help"))
+                    .size(11.0)
+                    .color(t.text_dim),
+            );
+        }
     }
 
     /// The layers the user added, top of the drawing order first, each with its status,
-    /// opacity, order, zoom and remove controls.
-    fn user_layers_section(&mut self, ui: &mut Ui, t: &Tokens, earth: bool) {
+    /// opacity, order, zoom and remove controls. `indices` are the rows the search
+    /// keeps, already in display order.
+    fn user_layers_section(&mut self, ui: &mut Ui, t: &Tokens, earth: bool, indices: &[usize]) {
         let lang = self.lang;
         if self.settings.user_layers.is_empty() {
             note(ui, t, lang.text("layers-user-empty"));
         }
         let count = self.settings.user_layers.len();
-        for index in (0..count).rev() {
+        for &index in indices {
             let layer = self.settings.user_layers[index].clone();
             let feature = matches!(
                 layer.source,
@@ -791,5 +916,53 @@ impl App {
                     .clamp(0.0, globecraft_data::settings::STATE_MAX_ALTITUDE_MAX_KM);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use globecraft_core::language::Lang;
+
+    #[test]
+    fn search_matches_names_groups_and_active_state() {
+        let en = Lang::En;
+        let pt = Lang::PtBr;
+        let country = en.text(MapLayer::CountryBorders.label_key());
+        assert!(matches_filter(
+            &fold_name("country"),
+            &[country],
+            false,
+            false
+        ));
+        assert!(!matches_filter(
+            &fold_name("traffic"),
+            &[country],
+            false,
+            true
+        ));
+        assert!(matches_filter("", &[country], false, false));
+        assert!(matches_filter("", &[country], true, true));
+        assert!(!matches_filter("", &[country], true, false));
+        // Group headings are searchable, in both catalogs.
+        assert!(matches_filter(
+            &fold_name("borders"),
+            &[en.text(LayerGroup::Geography.label_key())],
+            false,
+            false
+        ));
+        assert!(matches_filter(
+            &fold_name("limites"),
+            &[pt.text(LayerGroup::Geography.label_key())],
+            false,
+            false
+        ));
+        // Folding makes accents optional.
+        assert!(matches_filter(
+            &fold_name("paises"),
+            &[pt.text(MapLayer::CountryBorders.label_key())],
+            false,
+            false
+        ));
     }
 }

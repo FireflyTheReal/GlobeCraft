@@ -74,11 +74,7 @@ fn client() -> Result<reqwest::Client, reqwest::Error> {
         return Ok(client.clone());
     }
     let client = reqwest::Client::builder()
-        .user_agent(concat!(
-            "GlobeCraft/",
-            env!("CARGO_PKG_VERSION"),
-            " (AI assistant)"
-        ))
+        .user_agent(crate::network::ASSISTANT_USER_AGENT)
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         .build()?;

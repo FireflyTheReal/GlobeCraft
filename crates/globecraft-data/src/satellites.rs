@@ -205,7 +205,7 @@ impl LiveSatellites {
     }
 }
 async fn download() -> Result<Arc<[Satellite]>, crate::Error> {
-    let client = crate::http::client(crate::http::Policy::Aircraft)?;
+    let client = crate::http::client(crate::http::Policy::Satellites)?;
     // All groups at once: one slow answer does not hold up the others.
     let mut jobs = tokio::task::JoinSet::new();
     for (order, (group, name)) in GROUPS.into_iter().enumerate() {

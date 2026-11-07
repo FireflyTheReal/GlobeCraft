@@ -6,7 +6,7 @@ use crate::pmtiles::TileLocation;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const MANIFEST_URL: &str =
+pub(crate) const MANIFEST_URL: &str =
     "https://github.com/FireflyTheReal/GlobeCraft/releases/download/map-data/manifest.json";
 /// Templates naming PMTiles archives start with this, followed by the sets separated
 /// by spaces, each set's parts separated by `|`.

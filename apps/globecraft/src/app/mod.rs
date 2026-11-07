@@ -105,6 +105,7 @@ pub(crate) struct App {
     controllers: controllers::Controllers,
     sky: globecraft_data::sky::SkyService,
     settings_ui: ui::settings::SettingsUi,
+    layers_ui: ui::layers_pane::LayersUi,
     language_preference: LanguagePreference,
     system_locale: String,
     cam: Cam,
@@ -362,6 +363,7 @@ impl App {
             controllers: controllers::Controllers::new(),
             sky: globecraft_data::sky::SkyService::default(),
             settings_ui: ui::settings::SettingsUi::default(),
+            layers_ui: ui::layers_pane::LayersUi::default(),
             language_preference,
             cam: settings.navigation.startup.camera(),
             fly: None,
@@ -762,6 +764,10 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         #[cfg(feature = "profiling")]
         let mut profile = globecraft_data::profiling::Span::new("ui.update");
+        #[cfg(feature = "profiling")]
+        let mut watchdog = globecraft_data::profiling::PassWatchdog::new("ui.slow");
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.setup");
         ui.set_theme(match self.settings.appearance.theme {
             globecraft_data::settings::appearance::ThemePreference::System => {
                 egui::ThemePreference::System
@@ -789,6 +795,8 @@ impl eframe::App for App {
         if let Some(error) = self.settings_writer.take_error() {
             self.status = format!("Settings persistence failed: {error}");
         }
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.input");
         if self.update_restart.is_saving() {
             ui.disable();
         } else {
@@ -803,11 +811,21 @@ impl eframe::App for App {
         if self.fly.is_some() {
             ui.request_repaint();
         }
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.header");
         self.header(ui);
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.ribbon");
         self.ribbon(ui);
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.status");
         self.status_bar(ui);
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.panes");
         self.left_pane(ui);
         self.right_pane(ui);
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.windows");
         self.settings_window(ui);
         self.menu_windows(ui);
         self.explorer_window(ui);
@@ -816,12 +834,16 @@ impl eframe::App for App {
         self.here_window(ui);
         self.ruler_points_window(ui);
         self.command_search_window(ui);
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.live_maps");
         self.live_maps.update(
             ui,
             &self.runtime,
             self.layer(MapLayer::Clouds),
             self.layer(MapLayer::Radar),
         );
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.boundary");
         let earth_visible =
             self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
         // Borders and names stream from OpenStreetMap tiles around the view while any
@@ -849,6 +871,8 @@ impl eframe::App for App {
         self.log_downloads();
         self.poll_still_shot();
         self.follow_ground(ui);
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.globe");
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::Tokens::get(ui).canvas))
             .show(ui, |ui| {
@@ -859,12 +883,20 @@ impl eframe::App for App {
                     self.globe_view(ui);
                 }
             });
+        #[cfg(feature = "profiling")]
+        watchdog.checkpoint("ui.slow.native_menu");
         #[cfg(target_os = "macos")]
         self.refresh_native_menu(ui);
         #[cfg(feature = "profiling")]
         {
+            let viewport = ui.ctx().input(|input| input.viewport_rect());
+            let pixels_per_point = ui.ctx().pixels_per_point();
+            profile.values.width = (viewport.width() * pixels_per_point).round().max(0.0) as usize;
+            profile.values.height =
+                (viewport.height() * pixels_per_point).round().max(0.0) as usize;
             profile.values.inflight = self.cache.inflight();
             profile.values.resident_bytes = self.cache.resident_bytes();
+            watchdog.finish(profile.values);
         }
     }
 }

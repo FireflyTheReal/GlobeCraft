@@ -8,6 +8,7 @@ mod benchmarks;
 mod cache;
 mod galleys;
 mod meshes;
+mod place_memory;
 mod projected;
 pub(super) use cache::OverlayCache;
 use cache::{ARRIVAL_FADE_STEPS, ArrivalFade, OverlayLayers, OverlayStyle, OverlayView};
@@ -15,6 +16,14 @@ use globecraft_data::boundaries::BoundaryData;
 pub(super) use meshes::PreparedOverlay;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// One frame's camera and overlay style, shared by the border names and the layers
+/// that place their names around them.
+#[derive(Clone, Copy)]
+pub(super) struct OverlayFrame {
+    view: OverlayView,
+    style: OverlayStyle,
+}
 
 /// How long a streamed boundary layer takes to fade in once its data arrives.
 const ARRIVAL_FADE: Duration = Duration::from_millis(600);
@@ -148,31 +157,18 @@ impl App {
         }
     }
 
-    /// Brings the borders and place names up to date for the displayed view, before
-    /// the other name layers place theirs around these names.
-    pub(super) fn prepare_overlays(
-        &mut self,
+    /// The camera, layers, style and fades the border and place-name pass uses this
+    /// frame. Built once so the places of interest and the names agree on it.
+    pub(super) fn overlay_frame(
+        &self,
         painter: &egui::Painter,
         basis: &Basis,
         rect: Rect,
         altitude_km: f64,
-        taken: &globecraft_render::overlays::LabelSpace,
-    ) {
+    ) -> OverlayFrame {
         let arrival = self.layer_arrivals.fade(Instant::now());
-        if !arrival.is_settled() {
-            painter.ctx().request_repaint();
-        }
-        let style = OverlayStyle {
-            layers: self.overlay_layers(),
-            map_scale: self.settings.map_scale,
-            lang: self.lang,
-            arrival,
-            map_style: self.settings.map_style,
-        };
-        meshes::BorderWidths::of(&style.map_style).publish(painter.ctx());
-        self.overlay_cache.prepare(
-            painter,
-            OverlayView {
+        OverlayFrame {
+            view: OverlayView {
                 basis: *basis,
                 rect,
                 altitude_km,
@@ -185,10 +181,45 @@ impl App {
                 pixels_per_point: painter.ctx().pixels_per_point(),
                 ground: self.renderer.displayed_ground(self.overlay_ground()),
             },
-            &self.boundaries,
-            style,
-            taken,
-        );
+            style: OverlayStyle {
+                layers: self.overlay_layers(),
+                map_scale: self.settings.map_scale,
+                lang: self.lang,
+                arrival,
+                map_style: self.settings.map_style,
+            },
+        }
+    }
+
+    /// The room the place names already on screen take, before the places of
+    /// interest place theirs. `frame` must be the one `prepare_overlays` will use.
+    /// With `include_new`, every place name on the view reserves its room, not only
+    /// the names remembered from earlier frames.
+    pub(super) fn reserve_place_names(
+        &mut self,
+        painter: &egui::Painter,
+        frame: OverlayFrame,
+        taken: &globecraft_render::overlays::LabelSpace,
+        include_new: bool,
+    ) -> globecraft_render::overlays::PlacedLabels {
+        self.overlay_cache
+            .remembered_placed(painter, frame.view, frame.style, taken, include_new)
+    }
+
+    /// Brings the borders and place names up to date for the displayed view, before
+    /// the other name layers place theirs around these names.
+    pub(super) fn prepare_overlays(
+        &mut self,
+        painter: &egui::Painter,
+        frame: OverlayFrame,
+        taken: &globecraft_render::overlays::LabelSpace,
+    ) {
+        if !frame.style.arrival.is_settled() {
+            painter.ctx().request_repaint();
+        }
+        meshes::BorderWidths::of(&frame.style.map_style).publish(painter.ctx());
+        self.overlay_cache
+            .prepare(painter, frame.view, &self.boundaries, frame.style, taken);
     }
 
     /// Paints what `prepare_overlays` prepared, then the ruler and placemarks.

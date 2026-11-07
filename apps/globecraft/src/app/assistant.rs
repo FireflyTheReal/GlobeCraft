@@ -110,11 +110,12 @@ impl App {
         config
     }
 
-    /// The provider to start with: the saved one, else the first with a key in the environment.
-    fn initial_provider(&self) -> String {
+    /// The provider the assistant would contact: the saved one, else the first with a
+    /// key in the environment. `None` until the user chooses one or a key exists.
+    pub(in crate::app) fn configured_assistant_provider(&self) -> Option<String> {
         let saved = &self.settings.assistant.provider;
         if provider::preset(saved).is_some() {
-            return saved.clone();
+            return Some(saved.clone());
         }
         PRESETS
             .iter()
@@ -123,8 +124,13 @@ impl App {
                     .iter()
                     .any(|k| std::env::var(k).is_ok_and(|v| !v.trim().is_empty()))
             })
-            .map_or("anthropic", |p| p.id)
-            .to_string()
+            .map(|p| p.id.to_string())
+    }
+
+    /// The provider to start with: the configured one, else Anthropic's preset.
+    fn initial_provider(&self) -> String {
+        self.configured_assistant_provider()
+            .unwrap_or_else(|| "anthropic".to_string())
     }
 
     /// Creates the agent on first use.

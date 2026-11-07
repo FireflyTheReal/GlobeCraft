@@ -111,6 +111,22 @@ fn interface_screenshots() {
     settle(&mut h, 2.0);
     save(&mut h, &dir, "02-layers-light");
 
+    // The search narrows the list to matching rows and keeps their groups open.
+    let app = h.state_mut();
+    app.set_layers_search("parks", false);
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "02-layers-search-light");
+    let app = h.state_mut();
+    app.set_layers_search("", true);
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "02-layers-active-light");
+    let app = h.state_mut();
+    app.set_layers_search("no such layer", false);
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "02-layers-search-empty-light");
+    let app = h.state_mut();
+    app.set_layers_search("", false);
+
     let app = h.state_mut();
     app.settings.workspace.ribbon_tab = Tab::Live;
     app.settings.workspace.open_right(RightPane::Measure);
@@ -153,6 +169,133 @@ fn interface_screenshots() {
     let _ = h.state_mut().run("ui.tileDiagnostics", json!({"on": true}));
     settle(&mut h, 2.0);
     save(&mut h, &dir, "08-tile-diagnostics-dark");
+}
+
+/// The Settings window's outer rectangle: the widest node labelled with its title,
+/// because the ribbon also has a "Settings" command with the same label.
+fn settings_window_rect(h: &Harness<'static, App>) -> egui::Rect {
+    use egui_kittest::kittest::Queryable;
+    h.get_all_by_label("Settings")
+        .map(|node| node.rect())
+        .max_by(|a, b| a.width().total_cmp(&b.width()))
+        .expect("settings window")
+}
+
+fn scroll_settings(h: &mut Harness<'static, App>, at: egui::Pos2, down: bool, steps: usize) {
+    h.event(egui::Event::PointerMoved(at));
+    for _ in 0..steps {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, if down { -400.0 } else { 400.0 }),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    settle(h, 0.3);
+}
+
+/// Settings → Network at the window's minimum size, in both languages, with a
+/// remote user layer and an assistant provider so the dynamic groups are shown.
+/// Manual because it renders offscreen with the project's screenshot renderer.
+#[test]
+#[ignore = "manual: renders the Settings Network page offscreen at minimum size"]
+fn network_settings_screenshots() {
+    use egui_kittest::kittest::Queryable;
+    use globecraft_data::user_data::{FeatureFormat, UserLayer, UserSource};
+
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut settings = Settings::default();
+    settings.appearance.theme = ThemePreference::Light;
+    settings.user_layers.push(UserLayer {
+        id: 9_999,
+        name: "City feed".into(),
+        source: UserSource::Features {
+            location: "https://data.example.org/cities.geojson".into(),
+            format: FeatureFormat::GeoJson,
+            refresh_minutes: 15,
+            value_field: None,
+        },
+        visible: true,
+        opacity: 1.0,
+        attribution: "Example data".into(),
+        color: "#ffb000".into(),
+        preset: None,
+    });
+    settings.assistant.provider = "ollama".into();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .with_pixels_per_point(1.5)
+        .with_step_dt(0.1)
+        .renderer(WgpuTestRenderer::new())
+        .build_eframe(move |cc| App::new(cc, settings, Arc::new(RestartRequest::default())));
+    settle(&mut h, 2.0);
+    let _ = h.state_mut().run("ui.settings", Value::Null);
+    settle(&mut h, 0.5);
+
+    // Drag the bottom-right corner to the Settings window's 520×360 point minimum.
+    let before = settings_window_rect(&h);
+    let start = before.max - egui::vec2(4.0, 4.0);
+    let delta = egui::vec2(520.0, 360.0) - before.size();
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.event(egui::Event::PointerMoved(start));
+    h.step();
+    h.event(button(start, true));
+    h.step();
+    for step in 1..=5 {
+        h.event(egui::Event::PointerMoved(
+            start + delta * (step as f32 / 5.0),
+        ));
+        h.step();
+    }
+    h.event(button(start + delta, false));
+    settle(&mut h, 0.5);
+    let rect = settings_window_rect(&h);
+    println!("settings window after resize: {rect:?}");
+    assert!(
+        (rect.width() - 520.0).abs() < 3.0 && (rect.height() - 360.0).abs() < 4.0,
+        "window did not reach its minimum: {rect:?}"
+    );
+
+    h.get_by_label("Network").click();
+    settle(&mut h, 0.5);
+    assert!(
+        h.query_by_label_contains("server.arcgisonline.com")
+            .is_some(),
+        "no basemap host row"
+    );
+    save(&mut h, &dir, "network-en-top");
+    scroll_settings(&mut h, rect.center(), true, 4);
+    save(&mut h, &dir, "network-en-middle");
+    scroll_settings(&mut h, rect.center(), true, 6);
+    save(&mut h, &dir, "network-en-bottom");
+    scroll_settings(&mut h, rect.center(), false, 10);
+
+    let _ = h
+        .state_mut()
+        .run("settings.language", json!({"language": "pt-BR"}));
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "network-pt-top");
+    scroll_settings(&mut h, rect.center(), true, 4);
+    save(&mut h, &dir, "network-pt-middle");
+    scroll_settings(&mut h, rect.center(), true, 6);
+    save(&mut h, &dir, "network-pt-bottom");
+    assert!(
+        h.query_by_label_contains("data.example.org").is_some(),
+        "no user-layer host row"
+    );
+    assert!(
+        h.query_by_label_contains("localhost:11434").is_some(),
+        "no assistant host row"
+    );
 }
 
 /// Answers OpenAI-compatible chat requests in order with `replies`, one connection each.

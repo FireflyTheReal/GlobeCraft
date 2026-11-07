@@ -166,7 +166,7 @@ impl LiveAurora {
 }
 
 async fn download() -> Result<AuroraGrid, crate::Error> {
-    let client = crate::http::client(crate::http::Policy::Aircraft)?;
+    let client = crate::http::client(crate::http::Policy::Aurora)?;
     let bytes = crate::http::body(client.get(URL), MAX_BYTES).await?;
     let json = crate::http::parse_json(bytes).await?;
     crate::cpu::run(crate::cpu::Service::Features, move || {

@@ -416,6 +416,16 @@ operation timings and dimensions/counts only, without names, tile URLs or querie
 Profiling-enabled builds require `GLOBECRAFT_PROFILE` to select an output file.
 Do not use their timings as overhead-free measurements.
 
+A UI pass of 50 ms or more also records a bounded frame trace (roadmap 10.4): one
+`ui.slow` summary event and one `ui.slow.<section>` event for each section of at
+least 5 ms, up to 24 section events. The sections are `setup`, `input`, `header`,
+`ribbon`, `status`, `panes`, `windows`, `live_maps`, `boundary`, `globe` and
+`native_menu`. All events of one pass share `unix_us`, so they group together.
+`scripts/profile_summary.py` reports them as `slow_passes`, largest section first;
+the normal timing groups exclude them. A total much larger than the listed
+sections means the cost is spread across many small sections. Normal builds
+compile the watchdog out, and a fast pass emits nothing.
+
 Finish compilation before recording measured intervals. Fix the compiler/profile,
 Rayon thread count, window size/DPI, layers and cache state for comparisons. Warm
 rotation, coordinate flight/detail loading, municipality loading and
@@ -556,9 +566,12 @@ that Clear/Reset can be cancelled. Switch themes and installed UI/map fonts;
 verify map text changes independently, clipping/fallback glyphs, missing-font
 recovery, and unchanged coordinate precision. Check drag/rotation/wheel gains,
 inverted scroll, save-current startup view and restart persistence. Change both
-cache budgets, restart, and verify active limits. Existing file dialogs and
-language/system-unit fallback must remain available. Headless tests do not prove
-installed-font appearance or OS dialog behavior.
+cache budgets, restart, and verify active limits. Open Settings → Network: every
+basemap host and built-in service must appear with its cadence and user agent, and
+adding an XYZ/GeoJSON URL layer or choosing an assistant provider must add/update the
+dynamic host rows. Check that local files and an unconfigured assistant claim no host.
+Existing file dialogs and language/system-unit fallback must remain available. Headless
+tests do not prove installed-font appearance or OS dialog behavior.
 
 ## Controller smoke checks
 

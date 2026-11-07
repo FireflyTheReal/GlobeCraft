@@ -112,6 +112,16 @@ impl PoiShapes {
     pub(in crate::app) fn shown_placed(&self) -> &PlacedLabels {
         &self.shown_placed
     }
+    /// Whether a name or marker is on screen from the last placement pass.
+    pub(in crate::app) fn has_shown_name(&self) -> bool {
+        self.memory.has_shown_name()
+    }
+    /// Whether a name on screen has held its place long enough that a newly arrived
+    /// place name should not take its room (a jump brings both layers in together,
+    /// so none has).
+    pub(in crate::app) fn has_settled_name(&self) -> bool {
+        self.memory.has_settled_name(Instant::now())
+    }
     /// What the last placement drew: each name's key, side and point.
     #[cfg(test)]
     pub(in crate::app) fn drawn(&self) -> &[(PoiKey, Option<usize>, egui::Pos2)] {

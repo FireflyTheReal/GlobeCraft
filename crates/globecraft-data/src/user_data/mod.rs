@@ -131,6 +131,14 @@ impl UserLayer {
         crate::settings::map_style::Rgba::parse_hex(&self.color)
             .map_or([255, 176, 0], |c| [c.0[0], c.0[1], c.0[2]])
     }
+    /// The host its data comes from; `None` for a file on this computer.
+    pub fn network_host(&self) -> Option<&str> {
+        let location = match &self.source {
+            UserSource::Tiles { template, .. } => template,
+            UserSource::Features { location, .. } => location,
+        };
+        crate::network::host_of_url(location)
+    }
 }
 
 /// Reads the saved list, keeping every entry that still parses.
@@ -291,5 +299,39 @@ mod tests {
             serde_json::to_value(&layer).unwrap(),
         ]);
         assert_eq!(layers_from_json(&json), vec![layer]);
+    }
+
+    #[test]
+    fn a_layer_names_only_a_remote_host() {
+        let mut layer = UserLayer {
+            id: 1,
+            name: "Tiles".into(),
+            source: UserSource::Tiles {
+                template: "https://tiles.example.org/{z}/{x}/{y}.png".into(),
+                min_zoom: 0,
+                max_zoom: 10,
+                tile_px: 256,
+            },
+            visible: true,
+            opacity: 1.0,
+            attribution: String::new(),
+            color: default_color(),
+            preset: None,
+        };
+        assert_eq!(layer.network_host(), Some("tiles.example.org"));
+        layer.source = UserSource::Features {
+            location: "https://user:pass@data.example.org:8443/feed.json".into(),
+            format: FeatureFormat::GeoJson,
+            refresh_minutes: 5,
+            value_field: None,
+        };
+        assert_eq!(layer.network_host(), Some("data.example.org:8443"));
+        layer.source = UserSource::Features {
+            location: "/home/me/points.geojson".into(),
+            format: FeatureFormat::GeoJson,
+            refresh_minutes: 0,
+            value_field: None,
+        };
+        assert_eq!(layer.network_host(), None);
     }
 }

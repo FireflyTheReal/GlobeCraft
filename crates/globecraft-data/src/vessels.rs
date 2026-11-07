@@ -160,7 +160,7 @@ async fn download() -> Result<VesselBatch, crate::Error> {
     })
 }
 async fn request_json(url: &str) -> Result<serde_json::Value, crate::Error> {
-    let req = crate::http::client(crate::http::Policy::Aircraft)?
+    let req = crate::http::client(crate::http::Policy::Vessels)?
         .get(url)
         .header("Digitraffic-User", "GlobeCraft/EducationalGlobe")
         .header("Accept", "application/json")

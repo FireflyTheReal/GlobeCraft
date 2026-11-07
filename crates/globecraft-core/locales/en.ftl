@@ -99,6 +99,13 @@ settings-cache-usage-unavailable = Cache size unavailable
 
 layers-section-title = Layers
 
+layers-search-placeholder = Search layers…
+layers-search-clear = Clear the layer search
+layers-search-active-only = Active only
+layers-search-active-help = Show only layers that are on.
+layers-search-empty = No layers match “{ $query }”.
+layers-search-empty-active = No layers are on.
+
 wayback-loading-status = Loading available dates…
 
 wayback-older-tooltip = Older
@@ -708,6 +715,7 @@ settings-category-navigation = Navigation
 settings-category-globe = Globe
 settings-category-graphics = Graphics
 settings-category-cache = Data & Cache
+settings-category-network = Network
 settings-category-files = Files & Export
 settings-search-placeholder = Search settings…
 settings-search-empty = No settings match “{ $query }”.
@@ -739,6 +747,39 @@ settings-startup-view-label = Startup view
 settings-startup-current-action = Use current view
 settings-startup-default-action = Use default view
 settings-startup-help = The saved position, heading and camera altitude are used at the next launch.
+
+settings-network-intro = Hosts GlobeCraft may contact. Built-in services show their request limit and user agent; layers you add and assistant providers come from your settings. Limits describe how GlobeCraft paces requests, not a guarantee from the provider.
+settings-network-group-basemaps = Maps and imagery
+settings-network-group-map-data = Map data
+settings-network-group-search = Search
+settings-network-group-live = Live layers
+settings-network-group-updates = Updates
+settings-network-group-user = Your data
+settings-network-group-assistant = Assistant
+settings-network-service-wayback = Esri Wayback release list
+settings-network-service-clouds = Live Cloud Maps (Matt Eason, EUMETSAT)
+settings-network-service-map-data = GlobeCraft map data
+settings-network-service-updates = GlobeCraft updates
+settings-network-limit-parallel = Up to { $count } requests at once
+settings-network-limit-seconds = Normally one request every { $seconds } s
+settings-network-limit-minutes = Normally one request every { $minutes } min
+settings-network-limit-hours = Normally one request every { $hours } h
+settings-network-limit-on-demand = Only when needed
+settings-network-limit-once = Once per session
+settings-network-limit-user-controlled = At the interval you set
+settings-network-tiles-on-demand = Visible tiles only
+settings-network-tiles-prefetch = Visible tiles first; nearby tiles may be prefetched
+settings-network-tile-agent = Tile requests send the user agent: { $agent }
+settings-network-agent = User agent: { $agent }
+settings-network-agent-updater = The updater library sends its own user agent.
+settings-network-user-layer-none = No user-added layer contacts a network host.
+settings-network-user-layer-host = { $name }: { $host }
+settings-network-user-layer-reload = { $name }: { $host } — reloads every { $minutes } min
+settings-network-user-layer-help = These addresses come from the layers you added. Files on this computer are not sent anywhere.
+settings-network-assistant-none = No assistant provider is configured. The assistant contacts nothing until you choose one.
+settings-network-assistant-selected = { $provider }: { $host }
+settings-network-assistant-invalid = { $provider }: the configured address is not a usable host
+settings-network-assistant-help = The assistant uses only this provider. Prompts, the commands it proposes and its API key go there; a provider on localhost or your local network stays on your network.
 
 settings-category-controllers = Controllers
 controllers-enabled = Enable controllers

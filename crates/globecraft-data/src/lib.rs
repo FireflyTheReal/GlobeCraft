@@ -8,6 +8,7 @@ mod http;
 pub mod kml;
 mod map_data;
 mod mvt;
+pub mod network;
 mod paths;
 mod pmtiles;
 pub mod search;

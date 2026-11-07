@@ -1,3 +1,9 @@
+use crate::network::{
+    AIRCRAFT_USER_AGENT, AURORA_USER_AGENT, BOUNDARY_USER_AGENT, CLOUD_USER_AGENT,
+    RADAR_USER_AGENT, SATELLITES_USER_AGENT, SEARCH_USER_AGENT, SUGGEST_USER_AGENT,
+    TILE_USER_AGENT, TRAFFIC_USER_AGENT, USER_DATA_USER_AGENT, VESSELS_USER_AGENT,
+    WAYBACK_USER_AGENT,
+};
 use crate::paths::cache_dir;
 use std::{path::PathBuf, time::Duration};
 const MAX_CACHE_FILENAME_CHARS: usize = 120;
@@ -28,7 +34,11 @@ pub(crate) enum Policy {
     Suggest,
     Cloud,
     Radar,
+    Traffic,
     Aircraft,
+    Vessels,
+    Aurora,
+    Satellites,
     /// Map tiles and feature files the user added.
     UserData,
 }
@@ -47,18 +57,19 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
     }
     let mut builder = reqwest::Client::builder();
     let agent = match policy {
-        Policy::Tile | Policy::Search => {
-            "GlobeCraft/0.2 (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)"
-        }
-        Policy::Boundary => "GlobeCraft/0.1 (map boundary overlay)",
-        Policy::Wayback => "GlobeCraft/0.2 (wayback release list)",
-        Policy::Suggest => "GlobeCraft/0.2 (search suggestions)",
-        Policy::Cloud => "GlobeCraft/1.0 (attribution: Matt Eason, EUMETSAT)",
-        Policy::Radar => "GlobeCraft/1.0 radar viewer",
-        Policy::Aircraft => "GlobeCraft/1.0 (live aircraft viewer; OpenSky / ADSB.lol)",
-        Policy::UserData => {
-            "GlobeCraft/0.3 (3D globe; user-added layer; +https://github.com/FireflyTheReal/GlobeCraft)"
-        }
+        Policy::Tile => TILE_USER_AGENT,
+        Policy::Search => SEARCH_USER_AGENT,
+        Policy::Boundary => BOUNDARY_USER_AGENT,
+        Policy::Wayback => WAYBACK_USER_AGENT,
+        Policy::Suggest => SUGGEST_USER_AGENT,
+        Policy::Cloud => CLOUD_USER_AGENT,
+        Policy::Radar => RADAR_USER_AGENT,
+        Policy::Traffic => TRAFFIC_USER_AGENT,
+        Policy::Aircraft => AIRCRAFT_USER_AGENT,
+        Policy::Vessels => VESSELS_USER_AGENT,
+        Policy::Aurora => AURORA_USER_AGENT,
+        Policy::Satellites => SATELLITES_USER_AGENT,
+        Policy::UserData => USER_DATA_USER_AGENT,
     };
     builder = builder.user_agent(agent);
     match policy {
@@ -76,8 +87,10 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
         }
         Policy::Suggest => builder = builder.timeout(Duration::from_secs(8)),
         Policy::Cloud => builder = builder.timeout(Duration::from_secs(65)),
-        Policy::Radar => builder = builder.timeout(Duration::from_secs(12)),
-        Policy::Aircraft => builder = builder.timeout(Duration::from_secs(25)),
+        Policy::Radar | Policy::Traffic => builder = builder.timeout(Duration::from_secs(12)),
+        Policy::Aircraft | Policy::Vessels | Policy::Aurora | Policy::Satellites => {
+            builder = builder.timeout(Duration::from_secs(25))
+        }
         Policy::UserData => {
             builder = builder
                 .connect_timeout(Duration::from_secs(15))

@@ -538,10 +538,11 @@ impl App {
             self.paint_antarctic_claims(&painter, &display_basis, rect);
             // All map names share one screen, placed in priority order, each layer
             // where the ones before it left room (painting keeps its own order):
-            // the markers of the user's data (always drawn), places of interest
-            // already on screen (a name once drawn stays while the view zooms),
-            // place names, the user's point names, street names, airports, then
-            // new places of interest.
+            // the markers of the user's data (always drawn), the room of place
+            // names already on screen, places of interest already on screen (a
+            // name once drawn stays while the view zooms), place names, the
+            // user's point names, street names, airports, then new places of
+            // interest.
             self.user_layers.prepare_features(
                 &painter,
                 &display_basis,
@@ -553,13 +554,24 @@ impl App {
                     wall: now_unix(),
                 },
             );
+            let frame = self.overlay_frame(&painter, &display_basis, rect, display_cam.alt);
             let mut taken = LabelSpace::default();
             taken.add(self.user_layers.markers());
             if let Some(geometry) = &live_geometry {
-                self.poi_shapes.prepare_shown(&painter, geometry, &taken);
+                // Place names keep their room even when the places of interest
+                // were projected first, as after a jump. When places of interest
+                // are on screen but none has settled yet, every place name
+                // reserves: this is the first view after the jump, and a
+                // district or city name that was never drawn must still be able
+                // to claim its room.
+                let include_new =
+                    self.poi_shapes.has_shown_name() && !self.poi_shapes.has_settled_name();
+                let remembered = self.reserve_place_names(&painter, frame, &taken, include_new);
+                self.poi_shapes
+                    .prepare_shown(&painter, geometry, &taken.with(&remembered));
                 taken.add(self.poi_shapes.shown_placed());
             }
-            self.prepare_overlays(&painter, &display_basis, rect, display_cam.alt, &taken);
+            self.prepare_overlays(&painter, frame, &taken);
             taken.add(&self.overlay_cache.placed());
             self.user_layers
                 .prepare_names(&painter, self.settings.map_scale, &taken);

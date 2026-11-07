@@ -11,7 +11,7 @@ mod cursor;
 mod data_pane;
 mod explore_pane;
 pub(in crate::app) mod icons;
-mod layers_pane;
+pub(in crate::app) mod layers_pane;
 mod measure_pane;
 mod navigation;
 pub(in crate::app) mod palette;

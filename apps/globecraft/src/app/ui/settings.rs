@@ -5,6 +5,7 @@ use globecraft_core::language::{Lang, fold_name};
 use globecraft_data::settings::Settings;
 mod controllers;
 mod map_style;
+mod network;
 mod sections;
 mod sky;
 pub(super) const MAX_UI_SLIDER_SCALE: f32 = 2.0;
@@ -24,10 +25,11 @@ enum Category {
     Graphics,
     Controllers,
     Cache,
+    Network,
     Files,
 }
 impl Category {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
         Self::MapStyle,
@@ -36,6 +38,7 @@ impl Category {
         Self::Graphics,
         Self::Controllers,
         Self::Cache,
+        Self::Network,
         Self::Files,
     ];
     fn name_id(self) -> &'static str {
@@ -48,6 +51,7 @@ impl Category {
             Self::Controllers => "settings-category-controllers",
             Self::Graphics => "settings-category-graphics",
             Self::Cache => "settings-category-cache",
+            Self::Network => "settings-category-network",
             Self::Files => "settings-category-files",
         }
     }
@@ -100,6 +104,22 @@ impl Category {
                 "settings-cache-disk-label",
                 "settings-cache-restart-help",
             ],
+            Self::Network => &[
+                "settings-network-intro",
+                "settings-network-group-basemaps",
+                "settings-network-group-map-data",
+                "settings-network-group-search",
+                "settings-network-group-live",
+                "settings-network-group-updates",
+                "settings-network-group-user",
+                "settings-network-group-assistant",
+                "settings-network-service-wayback",
+                "settings-network-service-clouds",
+                "settings-network-service-map-data",
+                "settings-network-service-updates",
+                "settings-network-user-layer-help",
+                "settings-network-assistant-help",
+            ],
             Self::Files => &[
                 "settings-screenshot-folder-label",
                 "settings-kml-folder-label",
@@ -112,6 +132,7 @@ impl Category {
             || std::iter::once(self.name_id())
                 .chain(self.keywords().iter().copied())
                 .any(|id| fold_name(lang.text(id)).contains(query))
+            || (self == Self::Network && network::network_matches(query))
     }
 }
 #[derive(Default)]
@@ -163,6 +184,8 @@ impl App {
                             *category == state.category
                         } else {
                             category.matches(&query, lang)
+                                || (*category == Category::Network
+                                    && self.network_dynamic_matches(&query))
                         }
                     })
                     .collect();
@@ -195,6 +218,7 @@ impl App {
                                     Category::Cache => {
                                         self.settings_cache(ui, &mut state.confirm_cache)
                                     }
+                                    Category::Network => self.settings_network(ui),
                                     Category::Files => self.settings_files(ui),
                                 }
                                 ui.add_space(ui.spacing().item_spacing.y);
@@ -255,6 +279,10 @@ mod tests {
         assert!(!Category::Files.matches("mgrs", Lang::En));
         assert!(Category::MapStyle.matches(&fold_name("Width"), Lang::En));
         assert!(Category::MapStyle.matches(&fold_name("espessura"), Lang::PtBr));
+        assert!(Category::Network.matches(&fold_name("github"), Lang::En));
+        assert!(Category::Network.matches(&fold_name("OpenSky"), Lang::En));
+        assert!(Category::Network.matches(&fold_name("tile.openstreetmap.org"), Lang::En));
+        assert!(!Category::Files.matches(&fold_name("github"), Lang::En));
         for lang in [Lang::En, Lang::PtBr] {
             for category in Category::ALL {
                 assert!(category.matches(&fold_name(lang.text(category.name_id())), lang));

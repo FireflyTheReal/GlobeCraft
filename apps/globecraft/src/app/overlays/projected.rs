@@ -5,6 +5,7 @@ use super::OverlayView;
 use super::cache::{ARRIVAL_FADE_STEPS, ArrivalFade};
 use super::galleys::LabelGalleys;
 use super::meshes::{BorderMeshes, MeshSettings, PreparedOverlay};
+use super::place_memory::{PlaceNameKey, PlaceNameMemory};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Shape, Stroke, Vec2};
 #[cfg(test)]
 use globecraft_data::boundaries::BoundaryData;
@@ -58,11 +59,12 @@ pub(super) fn build(
     });
     // Rebuild until every new name is laid out, as successive frames would.
     let mut galleys = LabelGalleys::default();
+    let memory = PlaceNameMemory::default();
     let borders = shapes.len();
     loop {
         shapes.truncate(borders);
         galleys.begin(painter.ctx());
-        let complete = build_labels(
+        let built = build_labels(
             &mut shapes,
             &mut Vec::new(),
             LabelPass {
@@ -71,12 +73,14 @@ pub(super) fn build(
                 viewport: view.rect,
                 policy,
                 taken: &LabelSpace::default(),
+                memory: &memory,
+                only_remembered: false,
             },
             &mut galleys,
             &grid_labels,
             labels.iter().map(|label| (label.position, label.label)),
         );
-        if complete {
+        if built.complete {
             return shapes;
         }
     }
@@ -89,6 +93,8 @@ pub(super) struct BuiltOverlay {
     /// The room the names and grid labels take on screen.
     pub label_rects: Vec<Rect>,
     pub labels_pending: bool,
+    /// The place names this build drew, for `PlaceNameMemory`.
+    pub drawn: Vec<PlaceNameKey>,
 }
 
 /// Shapes for prepared geometry: the worker's border meshes tinted with the current
@@ -100,6 +106,7 @@ pub(super) fn build_prepared(
     galleys: &mut LabelGalleys,
     style: OverlayStyle,
     taken: &LabelSpace,
+    memory: &PlaceNameMemory,
 ) -> BuiltOverlay {
     let geometry = &prepared.geometry;
     let policy = FadePolicy {
@@ -148,7 +155,7 @@ pub(super) fn build_prepared(
     }
     galleys.begin(painter.ctx());
     let mut label_rects = Vec::new();
-    let complete = build_labels(
+    let built = build_labels(
         &mut shapes,
         &mut label_rects,
         LabelPass {
@@ -157,6 +164,8 @@ pub(super) fn build_prepared(
             viewport: geometry.view.rect,
             policy,
             taken,
+            memory,
+            only_remembered: false,
         },
         galleys,
         &geometry.grid_labels,
@@ -168,8 +177,56 @@ pub(super) fn build_prepared(
     BuiltOverlay {
         shapes,
         label_rects,
-        labels_pending: !complete,
+        labels_pending: !built.complete,
+        drawn: built.drawn,
     }
+}
+
+/// The room the place names already remembered take for this view, before the places
+/// of interest are placed. They must be measured here, against the user's markers
+/// only, so a lower layer that arrived first cannot keep them hidden. With
+/// `include_new`, every place name on this view reserves its room: after a jump the
+/// places of interest can be projected first, and place names that were never drawn
+/// must be able to claim their room from names that arrived only moments before.
+pub(super) fn remembered_rects(
+    painter: &egui::Painter,
+    prepared: &PreparedOverlay,
+    galleys: &mut LabelGalleys,
+    style: OverlayStyle,
+    taken: &LabelSpace,
+    memory: &PlaceNameMemory,
+    include_new: bool,
+) -> Vec<Rect> {
+    let geometry = &prepared.geometry;
+    let policy = FadePolicy {
+        altitude_km: geometry.view.altitude_km,
+        state_max_km: geometry.view.state_visible_max_km,
+        municipal_detail_max_km: geometry.data.municipal_detail_max_km,
+        arrival: style.arrival,
+    };
+    let mut shapes = Vec::new();
+    let mut rects = Vec::new();
+    galleys.begin(painter.ctx());
+    let _ = build_labels(
+        &mut shapes,
+        &mut rects,
+        LabelPass {
+            painter,
+            style,
+            viewport: geometry.view.rect,
+            policy,
+            taken,
+            memory,
+            only_remembered: !include_new,
+        },
+        galleys,
+        &[],
+        geometry
+            .labels
+            .iter()
+            .map(|label| (label.position, &geometry.data.labels[label.source_index])),
+    );
+    rects
 }
 
 /// State lines fade in from the user's state altitude down to this fraction of it, then stay
@@ -283,13 +340,23 @@ struct LabelPass<'p> {
     style: OverlayStyle,
     viewport: Rect,
     policy: FadePolicy,
-    /// Room taken before these names (the markers of the user's data).
+    /// Room taken before these names (the markers of the user's data, and the
+    /// places of interest already on screen for the full pass).
     taken: &'p LabelSpace,
+    memory: &'p PlaceNameMemory,
+    /// Lay out only the place names already remembered, to reserve their room
+    /// before a lower layer places its names.
+    only_remembered: bool,
+}
+
+struct BuiltLabels {
+    complete: bool,
+    drawn: Vec<PlaceNameKey>,
 }
 
 /// Appends label shapes in priority order, and the room each takes to `rects`.
-/// Returns false when the layout budget ran out: the remaining (lower-priority)
-/// names are left for the next rebuild.
+/// `complete` is false when the layout budget ran out: the remaining
+/// (lower-priority) names are left for the next rebuild.
 fn build_labels<'a>(
     shapes: &mut Vec<Shape>,
     rects: &mut Vec<Rect>,
@@ -299,20 +366,36 @@ fn build_labels<'a>(
         viewport,
         policy,
         taken,
+        memory,
+        only_remembered,
     }: LabelPass<'_>,
     galleys: &mut LabelGalleys,
     grid_labels: &[globecraft_render::overlays::grid::GridLabel],
     cands: impl IntoIterator<Item = (egui::Pos2, &'a globecraft_data::boundaries::MapLabel)>,
-) -> bool {
+) -> BuiltLabels {
     let mut complete = true;
+    let mut drawn = Vec::new();
     let ms = style.map_scale;
     let mut placed = LabelIndex::default();
     if style.layers.labels {
         // The family lookup is the same for every label of the view.
         let map_family = crate::app::fonts::map_font(painter.ctx(), 1.0).family;
+        // Countries, then states, then cities; within each kind the names already
+        // drawn come before the new ones, and their projection order (rank) holds.
+        let mut cands: Vec<_> = cands
+            .into_iter()
+            .map(|(pos, label)| {
+                let key = PlaceNameKey::of(label);
+                let tier = memory.get(&key).map_or(u8::MAX, |entry| memory.tier(entry));
+                (pos, label, key, kind_priority(label.kind), tier)
+            })
+            .filter(|(_, _, _, _, tier)| !only_remembered || *tier != u8::MAX)
+            .collect();
+        // Stable, so the projection's rank order holds within a kind and tier.
+        cands.sort_by_key(|(_, _, _, kind, tier)| (*kind, *tier));
         // Collect what is visible, then place by priority (countries > states > cities)
         // skipping any name that would overlap one already drawn.
-        for (pos, label) in cands {
+        for (pos, label, key, _, _) in cands {
             if placed.len() >= MAX_VISIBLE_LABELS {
                 break;
             }
@@ -350,6 +433,7 @@ fn build_labels<'a>(
                 continue;
             }
             rects.push(area);
+            drawn.push(key);
             if galley.is_empty() {
                 continue;
             }
@@ -366,73 +450,84 @@ fn build_labels<'a>(
             ));
         }
     }
-    for label in grid_labels {
-        use globecraft_render::overlays::grid::GridAxis;
-        let direction = match (label.axis, label.degrees >= 0.0) {
-            (GridAxis::Latitude, true) => "compass-north",
-            (GridAxis::Latitude, false) => "compass-south",
-            (GridAxis::Longitude, true) => "compass-east",
-            (GridAxis::Longitude, false) => "compass-west",
-        };
-        let value = format!("{:.3}", label.degrees.abs());
-        let text = if label.degrees == 0.0 {
-            "0°".into()
-        } else {
-            style.lang.format(
-                "grid-coordinate-label",
-                &[
-                    (
-                        "degrees",
-                        value.trim_end_matches('0').trim_end_matches('.').into(),
-                    ),
-                    ("direction", style.lang.text(direction).into()),
-                ],
-            )
-        };
-        let galley = painter.layout_no_wrap(
-            text,
-            FontId::monospace(GRID_LABEL_FONT_POINTS * ms),
-            Color32::WHITE,
-        );
-        let half_size = galley.size() * 0.5 + Vec2::splat(LABEL_PADDING_POINTS);
-        if half_size.x * 2.0 > viewport.width() || half_size.y * 2.0 > viewport.height() {
-            continue;
-        }
-        let anchor = match label.edge {
-            globecraft_render::overlays::grid::GridLabelEdge::Left => {
-                label.position + Vec2::new(half_size.x, 0.0)
+    if !only_remembered {
+        for label in grid_labels {
+            use globecraft_render::overlays::grid::GridAxis;
+            let direction = match (label.axis, label.degrees >= 0.0) {
+                (GridAxis::Latitude, true) => "compass-north",
+                (GridAxis::Latitude, false) => "compass-south",
+                (GridAxis::Longitude, true) => "compass-east",
+                (GridAxis::Longitude, false) => "compass-west",
+            };
+            let value = format!("{:.3}", label.degrees.abs());
+            let text = if label.degrees == 0.0 {
+                "0°".into()
+            } else {
+                style.lang.format(
+                    "grid-coordinate-label",
+                    &[
+                        (
+                            "degrees",
+                            value.trim_end_matches('0').trim_end_matches('.').into(),
+                        ),
+                        ("direction", style.lang.text(direction).into()),
+                    ],
+                )
+            };
+            let galley = painter.layout_no_wrap(
+                text,
+                FontId::monospace(GRID_LABEL_FONT_POINTS * ms),
+                Color32::WHITE,
+            );
+            let half_size = galley.size() * 0.5 + Vec2::splat(LABEL_PADDING_POINTS);
+            if half_size.x * 2.0 > viewport.width() || half_size.y * 2.0 > viewport.height() {
+                continue;
             }
-            globecraft_render::overlays::grid::GridLabelEdge::Bottom => {
-                label.position - Vec2::new(0.0, half_size.y)
+            let anchor = match label.edge {
+                globecraft_render::overlays::grid::GridLabelEdge::Left => {
+                    label.position + Vec2::new(half_size.x, 0.0)
+                }
+                globecraft_render::overlays::grid::GridLabelEdge::Bottom => {
+                    label.position - Vec2::new(0.0, half_size.y)
+                }
+            };
+            let position = egui::pos2(
+                anchor.x.clamp(
+                    viewport.left() + half_size.x,
+                    viewport.right() - half_size.x,
+                ),
+                anchor.y.clamp(
+                    viewport.top() + half_size.y,
+                    viewport.bottom() - half_size.y,
+                ),
+            );
+            let area = Rect::from_center_size(position, galley.size()).expand(LABEL_PADDING_POINTS);
+            if !viewport.contains_rect(area) || !taken.is_free(area) || !placed.try_insert(area) {
+                continue;
             }
-        };
-        let position = egui::pos2(
-            anchor.x.clamp(
-                viewport.left() + half_size.x,
-                viewport.right() - half_size.x,
-            ),
-            anchor.y.clamp(
-                viewport.top() + half_size.y,
-                viewport.bottom() - half_size.y,
-            ),
-        );
-        let area = Rect::from_center_size(position, galley.size()).expand(LABEL_PADDING_POINTS);
-        if !viewport.contains_rect(area) || !taken.is_free(area) || !placed.try_insert(area) {
-            continue;
+            rects.push(area);
+            shapes.push(Shape::rect_filled(
+                area,
+                LABEL_PADDING_POINTS,
+                Color32::from_black_alpha(GRID_LABEL_BACKGROUND_ALPHA),
+            ));
+            shapes.push(Shape::galley(
+                position - galley.size() * 0.5,
+                galley,
+                Color32::WHITE,
+            ));
         }
-        rects.push(area);
-        shapes.push(Shape::rect_filled(
-            area,
-            LABEL_PADDING_POINTS,
-            Color32::from_black_alpha(GRID_LABEL_BACKGROUND_ALPHA),
-        ));
-        shapes.push(Shape::galley(
-            position - galley.size() * 0.5,
-            galley,
-            Color32::WHITE,
-        ));
     }
-    complete
+    BuiltLabels { complete, drawn }
+}
+
+/// Country names first, then states, then cities (the projection's priority).
+fn kind_priority(kind: LabelKind) -> u8 {
+    match kind {
+        LabelKind::Country => 0,
+        LabelKind::State => 1,
+        LabelKind::City => 2,
+    }
 }
 
 #[cfg(test)]

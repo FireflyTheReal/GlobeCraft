@@ -30,6 +30,7 @@ GlobeCraft updates itself when a new release is out (you can turn this off in Se
 | Point north again | Press `N` |
 | Find any command | `Ctrl/⌘ + K` (Command Search) |
 | Ask in plain words | Open the **Assistant** pane (needs your own AI provider key) |
+| See which services the app contacts | **Settings → Network** |
 
 The tabs at the top hold everything else: **Layers** (borders, names, grid, terrain),
 **Live** (aircraft, ships, satellites, rain radar, clouds, traffic), **Places**
@@ -61,6 +62,8 @@ On Linux you may first need `sudo apt install build-essential pkg-config libgtk-
 
 Developers: start with [the architecture](docs/ARCHITECTURE.md),
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [roadmap](docs/ROADMAP.md).
+The [network policy](docs/NETWORK_POLICY.md) lists every built-in host, cadence and
+user agent.
 
 ## Credits
 

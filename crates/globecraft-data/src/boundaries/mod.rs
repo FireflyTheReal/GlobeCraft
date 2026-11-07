@@ -285,7 +285,7 @@ impl MapLabel {
         }
     }
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LabelKind {
     Country,
     State,

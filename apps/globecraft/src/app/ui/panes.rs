@@ -193,6 +193,16 @@ impl App {
                             .show(ui, |ui| self.places_pane(ui));
                     }
                     SidebarPanel::Layers => {
+                        // The search stays above the scroll area, so it remains
+                        // reachable while a long layer list scrolls.
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin {
+                                left: 10,
+                                right: 10,
+                                top: 8,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| self.layers_search(ui));
                         egui::ScrollArea::vertical()
                             .id_salt("layers-scroll")
                             .auto_shrink([false, false])

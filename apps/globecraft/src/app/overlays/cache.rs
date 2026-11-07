@@ -1,6 +1,7 @@
 //! One displayed view; tile generation and unrelated panels do not invalidate it.
 use super::galleys::LabelGalleys;
 use super::meshes::PreparedOverlay;
+use super::place_memory::PlaceNameMemory;
 use super::projected;
 use eframe::egui::{self, Rect, Shape};
 use globecraft_core::{camera::Basis, language::Lang};
@@ -8,6 +9,7 @@ use globecraft_data::boundaries::BoundaryData;
 use globecraft_data::settings::map_style::MapStyle;
 use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, OverlayWorker, PlacedLabels};
 use std::sync::Arc;
+use std::time::Instant;
 
 pub(super) use globecraft_render::overlays::OverlayLayers;
 
@@ -82,6 +84,12 @@ pub(in crate::app) struct OverlayCache {
     labels_pending: bool,
     /// The room the names of `shapes` take on screen.
     placed: PlacedLabels,
+    /// The place names on screen and for a moment after they leave.
+    place_memory: PlaceNameMemory,
+    /// The room the remembered place names take before the places of interest are
+    /// placed, for the current view, style and room already taken.
+    remembered: PlacedLabels,
+    remembered_key: Option<(usize, OverlayStyle, LabelSpaceKey, u64, bool)>,
     /// `prepare` decided `shapes` belong on screen this frame.
     show: bool,
     /// The room taken before these names when `shapes` were built.
@@ -127,6 +135,9 @@ impl OverlayCache {
             galleys: LabelGalleys::default(),
             labels_pending: false,
             placed: PlacedLabels::default(),
+            place_memory: PlaceNameMemory::default(),
+            remembered: PlacedLabels::default(),
+            remembered_key: None,
             show: false,
             taken: LabelSpaceKey::default(),
             worker: OverlayWorker::with_finish(
@@ -150,6 +161,8 @@ impl OverlayCache {
         self.requested = None;
         self.galleys.clear();
         self.placed.clear();
+        self.remembered.clear();
+        self.remembered_key = None;
         self.show = false;
     }
 
@@ -194,7 +207,19 @@ impl OverlayCache {
         boundaries: &Arc<BoundaryData>,
         style: OverlayStyle,
     ) {
-        self.prepare(painter, view, boundaries, style, &LabelSpace::default());
+        self.draw_with(painter, view, boundaries, style, &LabelSpace::default());
+    }
+
+    #[cfg(test)]
+    pub(super) fn draw_with(
+        &mut self,
+        painter: &egui::Painter,
+        view: OverlayView,
+        boundaries: &Arc<BoundaryData>,
+        style: OverlayStyle,
+        taken: &LabelSpace,
+    ) {
+        self.prepare(painter, view, boundaries, style, taken);
         self.paint(painter);
     }
 
@@ -214,6 +239,68 @@ impl OverlayCache {
         }
     }
 
+    /// The room the place names already on screen take, for the places of interest
+    /// to leave free before the other place names are placed. Only the user's own
+    /// markers are taken into account, so a lower layer that arrived first cannot
+    /// keep a remembered name hidden. With `include_new`, every place name on the
+    /// view reserves its room (a jump that brought both layers in together).
+    pub(super) fn remembered_placed(
+        &mut self,
+        painter: &egui::Painter,
+        view: OverlayView,
+        style: OverlayStyle,
+        taken: &LabelSpace,
+        include_new: bool,
+    ) -> PlacedLabels {
+        if !style.layers.labels {
+            return PlacedLabels::default();
+        }
+        if !include_new && self.place_memory.is_empty() {
+            self.remembered.clear();
+            self.remembered_key = None;
+            return PlacedLabels::default();
+        }
+        let projected_view = projected_view(view, style);
+        let revision = self.place_memory.revision();
+        let key = (
+            self.geometry
+                .as_ref()
+                .map_or(0, |prepared| Arc::as_ptr(&prepared.geometry) as usize),
+            style,
+            taken.key(),
+            revision,
+            include_new,
+        );
+        if self.remembered_key.as_ref() == Some(&key) {
+            return self.remembered.clone();
+        }
+        let rects = {
+            let Self {
+                geometry,
+                galleys,
+                place_memory,
+                ..
+            } = self;
+            geometry
+                .as_ref()
+                .filter(|prepared| prepared.geometry.view == projected_view)
+                .map_or_else(Vec::new, |prepared| {
+                    projected::remembered_rects(
+                        painter,
+                        prepared,
+                        galleys,
+                        style,
+                        taken,
+                        place_memory,
+                        include_new,
+                    )
+                })
+        };
+        self.remembered.replace(rects);
+        self.remembered_key = Some(key);
+        self.remembered.clone()
+    }
+
     /// Returns whether `shapes` belong on screen.
     fn prepare_shapes(
         &mut self,
@@ -229,16 +316,7 @@ impl OverlayCache {
             self.key = None;
         }
         if self.key != Some(current) {
-            let geometry_view = globecraft_render::overlays::OverlayView {
-                basis: view.basis,
-                rect: view.rect,
-                altitude_km: view.altitude_km,
-                state_visible_max_km: view.state_max_km,
-                grid_step_deg: view.grid_step_deg,
-                layers: style.layers,
-                dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
-                ground: view.ground,
-            };
+            let geometry_view = projected_view(view, style);
             if let Some(completed) = self.worker.take_completed()
                 && completed.geometry.view == geometry_view
             {
@@ -269,9 +347,11 @@ impl OverlayCache {
                     &mut self.galleys,
                     style,
                     taken,
+                    &self.place_memory,
                 );
                 self.shapes = built.shapes;
                 self.placed.replace(built.label_rects);
+                self.place_memory.finish(Instant::now(), built.drawn);
                 if built.labels_pending {
                     // Rebuild next frame to lay out the names left over (cheap: the
                     // rest of the view is cached).
@@ -306,6 +386,22 @@ impl OverlayCache {
         }
         // Never paint shapes projected for a different displayed camera or layer set.
         self.key == Some(current)
+    }
+}
+
+fn projected_view(
+    view: OverlayView,
+    style: OverlayStyle,
+) -> globecraft_render::overlays::OverlayView {
+    globecraft_render::overlays::OverlayView {
+        basis: view.basis,
+        rect: view.rect,
+        altitude_km: view.altitude_km,
+        state_visible_max_km: view.state_max_km,
+        grid_step_deg: view.grid_step_deg,
+        layers: style.layers,
+        dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
+        ground: view.ground,
     }
 }
 

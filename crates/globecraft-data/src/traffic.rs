@@ -205,7 +205,7 @@ fn center_tile(lat: f64, lon: f64, zoom: u32) -> (i64, i64) {
     (x, y)
 }
 async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles, crate::Error> {
-    let client = crate::http::client(crate::http::Policy::Radar)?;
+    let client = crate::http::client(crate::http::Policy::Traffic)?;
     let n = 1i64 << zoom;
     let left = x - TRAFFIC_GRID_RADIUS;
     let top = (y - TRAFFIC_GRID_RADIUS).clamp(0, n - 1);

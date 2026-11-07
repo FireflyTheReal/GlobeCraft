@@ -99,6 +99,13 @@ settings-cache-usage-unavailable = Cache size unavailable
 
 layers-section-title = Camadas
 
+layers-search-placeholder = Buscar camadas…
+layers-search-clear = Limpar a busca de camadas
+layers-search-active-only = Somente ativas
+layers-search-active-help = Mostrar somente as camadas ativadas.
+layers-search-empty = Nenhuma camada corresponde a “{ $query }”.
+layers-search-empty-active = Nenhuma camada está ativada.
+
 wayback-loading-status = Carregando datas disponíveis…
 
 wayback-older-tooltip = Mais antiga
@@ -708,6 +715,7 @@ settings-category-navigation = Navegação
 settings-category-globe = Globo
 settings-category-graphics = Gráficos
 settings-category-cache = Dados e cache
+settings-category-network = Rede
 settings-category-files = Arquivos e exportação
 settings-search-placeholder = Buscar configurações…
 settings-search-empty = Nenhuma configuração corresponde a “{ $query }”.
@@ -739,6 +747,39 @@ settings-startup-view-label = Vista inicial
 settings-startup-current-action = Usar vista atual
 settings-startup-default-action = Usar vista padrão
 settings-startup-help = Posição, rumo e altitude salvos serão usados na próxima abertura.
+
+settings-network-intro = Hosts que o GlobeCraft pode contatar. Serviços integrados mostram o limite de requisições e o agente de usuário; camadas adicionadas por você e provedores do assistente vêm das suas configurações. Os limites descrevem como o GlobeCraft controla as requisições, não uma garantia do provedor.
+settings-network-group-basemaps = Mapas e imagens
+settings-network-group-map-data = Dados do mapa
+settings-network-group-search = Busca
+settings-network-group-live = Camadas ao vivo
+settings-network-group-updates = Atualizações
+settings-network-group-user = Seus dados
+settings-network-group-assistant = Assistente
+settings-network-service-wayback = Lista de versões do Esri Wayback
+settings-network-service-clouds = Mapas de nuvens ao vivo (Matt Eason, EUMETSAT)
+settings-network-service-map-data = Dados de mapa do GlobeCraft
+settings-network-service-updates = Atualizações do GlobeCraft
+settings-network-limit-parallel = Até { $count } requisições ao mesmo tempo
+settings-network-limit-seconds = Normalmente uma requisição a cada { $seconds } s
+settings-network-limit-minutes = Normalmente uma requisição a cada { $minutes } min
+settings-network-limit-hours = Normalmente uma requisição a cada { $hours } h
+settings-network-limit-on-demand = Somente quando necessário
+settings-network-limit-once = Uma vez por sessão
+settings-network-limit-user-controlled = No intervalo definido por você
+settings-network-tiles-on-demand = Somente os tiles visíveis
+settings-network-tiles-prefetch = Tiles visíveis primeiro; tiles próximos podem ser pré-carregados
+settings-network-tile-agent = Requisições de tiles enviam o agente de usuário: { $agent }
+settings-network-agent = Agente de usuário: { $agent }
+settings-network-agent-updater = A biblioteca de atualização envia o próprio agente de usuário.
+settings-network-user-layer-none = Nenhuma camada adicionada por você contata um host de rede.
+settings-network-user-layer-host = { $name }: { $host }
+settings-network-user-layer-reload = { $name }: { $host } — recarrega a cada { $minutes } min
+settings-network-user-layer-help = Estes endereços vêm das camadas que você adicionou. Arquivos neste computador não são enviados.
+settings-network-assistant-none = Nenhum provedor de assistente está configurado. O assistente não contata nada até você escolher um.
+settings-network-assistant-selected = { $provider }: { $host }
+settings-network-assistant-invalid = { $provider }: o endereço configurado não é um host utilizável
+settings-network-assistant-help = O assistente usa somente este provedor. Prompts, os comandos propostos e a chave de API vão para ele; um provedor em localhost ou na sua rede local permanece na sua rede.
 
 settings-category-controllers = Controles
 controllers-enabled = Ativar controles

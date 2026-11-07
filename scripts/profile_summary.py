@@ -8,10 +8,48 @@ from collections import defaultdict
 from pathlib import Path
 
 
+SLOW_TRACE_OPERATION = "ui.slow"
+
+
+def slow_passes(rows):
+    """Group the watchdog's summary and section events by UI pass."""
+    passes = {}
+    for row in rows:
+        operation = row["operation"]
+        is_slow_trace = operation == SLOW_TRACE_OPERATION or operation.startswith(
+            f"{SLOW_TRACE_OPERATION}."
+        )
+        if not is_slow_trace:
+            continue
+        key = row["unix_us"]
+        entry = passes.setdefault(key, {
+            "unix_us": int(key),
+            "total_ms": None,
+            "viewport": None,
+            "sections": [],
+        })
+        if operation == SLOW_TRACE_OPERATION:
+            entry["total_ms"] = round(int(row["elapsed_us"]) / 1000, 3)
+            entry["viewport"] = [int(row["width"]), int(row["height"])]
+        else:
+            entry["sections"].append({
+                "section": operation.removeprefix(f"{SLOW_TRACE_OPERATION}."),
+                "ms": round(int(row["elapsed_us"]) / 1000, 3),
+            })
+    for entry in passes.values():
+        entry["sections"].sort(key=lambda section: section["ms"], reverse=True)
+    return sorted(passes.values(), key=lambda entry: entry["unix_us"])
+
+
 def summarize(rows):
     groups = defaultdict(list)
     for row in rows:
-        key = (row["operation"], int(row["width"]), int(row["height"]))
+        operation = row["operation"]
+        if operation == SLOW_TRACE_OPERATION or operation.startswith(
+            f"{SLOW_TRACE_OPERATION}."
+        ):
+            continue
+        key = (operation, int(row["width"]), int(row["height"]))
         groups[key].append(int(row["elapsed_us"]) / 1000)
     timings = []
     for (operation, width, height), values in sorted(groups.items()):
@@ -25,10 +63,14 @@ def summarize(rows):
             "p95_ms": round(values[max(0, math.ceil(len(values) * 0.95) - 1)], 3),
             "max_ms": round(values[-1], 3),
         })
+    # `frame.raster` puts camera altitude in resident_bytes, so it cannot
+    # contribute to the decoded-cache estimate.
+    decoded = (int(row["resident_bytes"]) for row in rows if row["operation"] != "frame.raster")
     return {
         "timings": timings,
+        "slow_passes": slow_passes(rows),
         "max_inflight": max((int(row["inflight"]) for row in rows), default=0),
-        "max_decoded_estimate_mib": round(max((int(row["resident_bytes"]) for row in rows), default=0) / 1048576, 2),
+        "max_decoded_estimate_mib": round(max(decoded, default=0) / 1048576, 2),
         "dropped_events_counter": max((int(row["dropped_events"]) for row in rows), default=0),
     }
 

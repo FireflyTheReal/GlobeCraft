@@ -22,7 +22,7 @@ package metadata and build profiles; `Cargo.lock` pins resolved dependencies.
 | --- | --- | --- |
 | `globecraft` | Native startup, input, UI state, font layout, styled shapes and texture upload | `main.rs`, `app/mod.rs`, `app/ui`, `app/rendering.rs`, `app/overlays` |
 | `globecraft-core` | Command catalog and map-layer identities, double-precision math, camera/picking/flight, Unicode name normalization, language, Fluent catalogs and placemarks | `camera`, `flight`, `math`, `language`, `localization`, `placemark` |
-| `globecraft-data` | Async HTTP, tiles, boundaries, local search, KML, settings and persistence | `runtime`, `http`, `tiles`, `boundaries`, `search`, `kml`, `files`, `settings` |
+| `globecraft-data` | Async HTTP, tiles, boundaries, local search, KML, settings, persistence and the network policy table | `runtime`, `http`, `network`, `tiles`, `boundaries`, `search`, `kml`, `files`, `settings` |
 | `globecraft-render` | CPU rasterization, terrain relief, frame scheduling, geographic overlay preparation and tile priorities | `worker`, `overlays`, `terrain` |
 | `globecraft-assistant` | The AI assistant as a sans-I/O agent: provider wire formats, tool calls over the command catalog, approvals, retries and compaction | `agent`, `provider`, `tools` |
 
@@ -120,6 +120,17 @@ addressed (an XYZ/WMTS-REST template, or Esri Wayback), the zoom range, tile siz
 folder, attribution and prefetch policy. `tiles::Provider` is a source id with the built-in
 sources as named constants; everything else asks `Provider::source()`. A new template source
 is a new entry in the file. Each source's first failed download goes to the run log.
+
+## Network policy
+
+`globecraft_data::network` is the one readable table of built-in services: hosts,
+request cadence, user agent and the Settings group each belongs to. Tile rows are
+derived from `sources.json`, so adding a source adds its host automatically. The
+desktop's Settings → Network page renders the table plus the dynamic hosts from
+user-added layers and the assistant provider. HTTP clients take their user agents from
+this module; the table is descriptive, not an interceptor. See
+[network policy](NETWORK_POLICY.md) for the current hosts, the provider-policy caveats
+and the redirect/third-party limits.
 
 ## Terrain
 
