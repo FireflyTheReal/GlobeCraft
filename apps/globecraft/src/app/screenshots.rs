@@ -1735,6 +1735,15 @@ fn selected_flight_screenshot() {
     .expect("camera");
     settle(&mut h, 3.0);
     save(&mut h, &dir, "29-selected-flight");
+    // From behind Frankfurt, tilted: the track climbs from the ground to its height.
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": 50.4, "lon": 9.6, "altitude_km": 60.0, "tilt_deg": 74.0, "heading_deg": 290.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "29-selected-flight-tilted");
     let selected = h.state_mut().run("flight.clear", json!({})).expect("clear");
     assert_eq!(selected["selected"], Value::Null);
     assert!(
@@ -1814,15 +1823,19 @@ fn polar_screenshot() {
         )
         .expect("time zones");
     }
-    for (name, lat, lon, altitude) in [
-        ("31-polar-south", -90.0, 0.0, 6_000.0),
-        ("31-polar-south-close", -86.5, 30.0, 900.0),
-        ("31-polar-north", 90.0, 0.0, 6_000.0),
+    for (name, lat, lon, altitude, heading) in [
+        ("31-polar-south", -90.0, 0.0, 6_000.0, 0.0),
+        ("31-polar-south-close", -86.5, 30.0, 900.0, 0.0),
+        // The seam between Esri's imagery and the cap, close enough to see its tones.
+        ("31-polar-south-seam", -83.0, 60.0, 1_200.0, 0.0),
+        // The user's view of 2026-11-05.
+        ("31-polar-south-user", -85.676, -38.41, 6_882.0, 227.0),
+        ("31-polar-north", 90.0, 0.0, 6_000.0, 0.0),
     ] {
         h.state_mut()
             .run(
                 "camera.set",
-                json!({"lat": lat, "lon": lon, "altitude_km": altitude}),
+                json!({"lat": lat, "lon": lon, "altitude_km": altitude, "heading_deg": heading}),
             )
             .expect("camera");
         settle(&mut h, 8.0);
@@ -1959,6 +1972,26 @@ fn live_symbols_screenshot() {
         app.run("layer.show", json!({"layer": layer, "visible": visible}))
             .expect("layer");
     }
+    // Recorded answers when CelesTrak is not reachable from here (it limits repeated
+    // downloads): GLOBECRAFT_CELESTRAK_DIR holds STATIONS.json, GNSS.json, WEATHER.json
+    // and VISUAL.json.
+    if let Ok(folder) = std::env::var("GLOBECRAFT_CELESTRAK_DIR") {
+        use globecraft_data::satellites::SatelliteGroup;
+        let answers: Vec<_> = [
+            (SatelliteGroup::Station, "STATIONS"),
+            (SatelliteGroup::Navigation, "GNSS"),
+            (SatelliteGroup::Weather, "WEATHER"),
+            (SatelliteGroup::Bright, "VISUAL"),
+        ]
+        .into_iter()
+        .map(|(group, name)| {
+            let path = std::path::Path::new(&folder).join(format!("{name}.json"));
+            let text = std::fs::read_to_string(&path).expect("recorded CelesTrak answer");
+            (group, serde_json::from_str(&text).expect("CelesTrak JSON"))
+        })
+        .collect();
+        h.state_mut().live_satellites.show_recorded(&answers);
+    }
     for _ in 0..60 {
         if !h.state().live_satellites.snapshot().is_empty() {
             break;
@@ -1976,10 +2009,40 @@ fn live_symbols_screenshot() {
         satellites.len(),
         satellites.iter().filter(|s| s.sgp4.is_some()).count()
     );
+    // The ISS selected: one orbit at its height, from far away and from its side.
+    let iss = h
+        .state()
+        .live_satellites
+        .snapshot()
+        .iter()
+        .find(|satellite| satellite.norad == "25544")
+        .and_then(|satellite| satellite.position(globecraft_core::math::now_unix()));
+    if let Some(at) = iss {
+        h.state_mut()
+            .run("satellite.select", json!({"norad": "25544"}))
+            .expect("select");
+        for (name, camera) in [
+            (
+                "32-satellite-orbit",
+                json!({"lat": at.lat, "lon": at.lon, "altitude_km": 14_000.0}),
+            ),
+            (
+                "32-satellite-orbit-tilted",
+                json!({"lat": at.lat, "lon": at.lon, "altitude_km": 2_500.0, "tilt_deg": 65.0}),
+            ),
+        ] {
+            h.state_mut().run("camera.set", camera).expect("camera");
+            settle(&mut h, 4.0);
+            save(&mut h, &dir, name);
+        }
+        h.state_mut()
+            .run("satellite.clear", json!({}))
+            .expect("clear");
+    }
     for (name, camera) in [
         (
             "32-satellites",
-            json!({"lat": 20.0, "lon": 10.0, "altitude_km": 60_000.0}),
+            json!({"lat": 20.0, "lon": 10.0, "altitude_km": 50_000.0}),
         ),
         (
             "32-satellites-tilted",

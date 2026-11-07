@@ -360,7 +360,6 @@ impl App {
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::Waters);
                 self.layer_small(ui, MapLayer::Parks);
-                self.layer_small(ui, MapLayer::AntarcticClaims);
             });
         });
         group(ui, lang.text("layers-globe-title"), |ui| {
@@ -876,7 +875,6 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Grid => "ribbon-layer-grid",
         MapLayer::GridLabels => "ribbon-layer-grid-labels",
         MapLayer::TimeZones => "ribbon-layer-timezones",
-        MapLayer::AntarcticClaims => "ribbon-layer-antarctic-claims",
         MapLayer::Atmosphere => "ribbon-layer-atmosphere",
         MapLayer::Sunlight => "ribbon-layer-sunlight",
         MapLayer::Stars => "ribbon-layer-stars",

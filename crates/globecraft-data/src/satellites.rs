@@ -26,6 +26,8 @@ const MAX_EPOCH_AGE_SECS: f64 = 14.0 * SECONDS_PER_DAY;
 const J2000_UNIX_SECS: f64 = 946_728_000.0;
 const SECONDS_PER_JULIAN_YEAR: f64 = 365.25 * SECONDS_PER_DAY;
 const MEAN_EARTH_RADIUS_KM: f64 = 6_371.0;
+/// The Earth's gravitational parameter (WGS 84), km³/s².
+const EARTH_GM_KM3_S2: f64 = 398_600.441_8;
 
 /// What a satellite is for, by the CelesTrak group it came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +137,33 @@ impl Satellite {
     pub fn ground_position(&self, unix: f64) -> Option<(f64, f64)> {
         self.position(unix).map(|at| (at.lat, at.lon))
     }
+
+    /// One revolution around `unix`: `samples + 1` times and places, from half a
+    /// period before to half a period after. Earth-fixed, so the path does not close:
+    /// the Earth turns under it. Empty without a period.
+    pub fn orbit_path(&self, unix: f64, samples: usize) -> Vec<(f64, SatellitePosition)> {
+        let Some(period_secs) = self.orbit.period_minutes().map(|minutes| minutes * 60.0) else {
+            return Vec::new();
+        };
+        let samples = samples.max(1);
+        (0..=samples)
+            .filter_map(|i| {
+                let at = unix + period_secs * (i as f64 / samples as f64 - 0.5);
+                self.position(at).map(|position| (at, position))
+            })
+            .collect()
+    }
+
+    /// Its speed at a height, km/s (about the Earth's centre, by the vis-viva
+    /// equation with the orbit's mean size).
+    pub fn speed_km_s(&self, altitude_km: f64) -> Option<f64> {
+        let period_secs = self.orbit.period_minutes()? * 60.0;
+        let motion_rad_s = std::f64::consts::TAU / period_secs;
+        let semi_major_km = (EARTH_GM_KM3_S2 / (motion_rad_s * motion_rad_s)).cbrt();
+        let radius_km = MEAN_EARTH_RADIUS_KM + altitude_km;
+        let squared = EARTH_GM_KM3_S2 * (2.0 / radius_km - 1.0 / semi_major_km);
+        (squared > 0.0).then(|| squared.sqrt())
+    }
 }
 #[derive(Default)]
 pub struct LiveSatellites {
@@ -188,6 +217,21 @@ impl LiveSatellites {
     pub fn snapshot(&self) -> &[Satellite] {
         &self.satellites
     }
+    /// Shows recorded CelesTrak answers (OMM JSON per group, in `GROUPS`' order) as if
+    /// just downloaded, for screenshots and offline demonstrations; the next download
+    /// is due six hours later. Groups missing from `answers` stay empty.
+    pub fn show_recorded(&mut self, answers: &[(SatelliteGroup, serde_json::Value)]) {
+        let now = now_unix();
+        self.satellites = merged(
+            GROUPS
+                .iter()
+                .filter_map(|(group, _)| answers.iter().find(|(g, _)| g == group))
+                .map(|(group, json)| parse_omm(json, now, *group)),
+        );
+        self.loaded = Some(Instant::now());
+        self.attempted = Some(Instant::now());
+        self.error = None;
+    }
     pub fn shared_snapshot(&self) -> Option<Arc<[Satellite]>> {
         (!self.satellites.is_empty()).then(|| self.satellites.clone())
     }
@@ -231,19 +275,25 @@ async fn download() -> Result<Arc<[Satellite]>, crate::Error> {
             Err(e) => errors.push(e.to_string()),
         }
     }
-    // In the groups' order, so the dedup below keeps a satellite's first group.
+    // In the groups' order, so the dedup keeps a satellite's first group.
     groups.sort_by_key(|(order, _)| *order);
-    let mut all: Vec<Satellite> = groups.into_iter().flat_map(|(_, s)| s).collect();
     crate::cpu::run(crate::cpu::Service::Features, move || {
-        // Stable: of a satellite listed in several groups, the first group's stays.
-        all.sort_by(|a, b: &Satellite| a.norad.cmp(&b.norad));
-        all.dedup_by(|a, b| a.norad == b.norad);
+        let all = merged(groups.into_iter().map(|(_, s)| s));
         if all.is_empty() {
             return Err(format!("CelesTrak unavailable: {}", errors.join("; ")).into());
         }
-        Ok(all.into())
+        Ok(all)
     })
     .await
+}
+
+/// The groups' satellites, each once: of one listed in several groups, the first
+/// group's stays (the sort is stable).
+fn merged(groups: impl IntoIterator<Item = Vec<Satellite>>) -> Arc<[Satellite]> {
+    let mut all: Vec<Satellite> = groups.into_iter().flatten().collect();
+    all.sort_by(|a, b: &Satellite| a.norad.cmp(&b.norad));
+    all.dedup_by(|a, b| a.norad == b.norad);
+    all.into()
 }
 
 #[cfg(test)]
@@ -287,5 +337,23 @@ mod tests {
         }
         // More than 14 days away, nothing is predicted.
         assert!(iss.position(epoch + 15.0 * SECONDS_PER_DAY).is_none());
+        // One revolution (about 93 minutes), centred on now, at its height.
+        let path = iss.orbit_path(epoch + 3600.0, 120);
+        assert_eq!(path.len(), 121);
+        let period = path[120].0 - path[0].0;
+        assert!((period / 60.0 - 92.9).abs() < 0.2, "{period}");
+        assert!((path[60].0 - (epoch + 3600.0)).abs() < 1e-6);
+        assert!(
+            path.iter()
+                .all(|(_, at)| (400.0..440.0).contains(&at.altitude_km))
+        );
+        let reached = path.iter().map(|(_, at)| at.lat.abs()).fold(0.0, f64::max);
+        assert!(
+            (reached - 51.6).abs() < 0.6,
+            "up to its inclination: {reached}"
+        );
+        // About 7.66 km/s at 420 km.
+        let speed = iss.speed_km_s(420.0).unwrap();
+        assert!((speed - 7.66).abs() < 0.02, "{speed}");
     }
 }

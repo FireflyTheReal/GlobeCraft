@@ -773,6 +773,7 @@ impl App {
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
             id if id.starts_with("time.") => self.run_time(id, p)?,
             id if id.starts_with("flight.") => self.run_flight(id, p)?,
+            id if id.starts_with("satellite.") => self.run_satellite(id, p)?,
             "ui.legend" => self.run_legend(p),
             "ui.timeline" => {
                 self.timeline_open = bool_param(p, "visible").unwrap_or(!self.timeline_open);
@@ -808,6 +809,14 @@ impl App {
             },
             "file.screenshot" => CommandState {
                 enabled: self.image.is_some() && !self.screenshot_running(),
+                checked: false,
+            },
+            "satellite.clear" => CommandState {
+                enabled: self.satellite_selection.selected().is_some(),
+                checked: false,
+            },
+            "satellite.select" => CommandState {
+                enabled: earth && self.layer(MapLayer::Satellites),
                 checked: false,
             },
             "flight.clear" => CommandState {

@@ -8,6 +8,23 @@ struct ReferenceFrame {
     expected: &'static [u8],
 }
 
+/// The pixels showing a polar cap (or close to one): the fixtures were recorded
+/// before the caps' imagery (`polar`), which now draws there, from the built-in
+/// picture when no tile is loaded. The rest of each frame is compared unchanged.
+fn polar_cap_pixels(basis: &globecraft_core::camera::Basis, w: usize, h: usize) -> Vec<bool> {
+    /// A pixel this close to the cap's first latitude counts as the cap's.
+    const MARGIN_DEG: f64 = 0.5;
+    let rect = emath::Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(w as f32, h as f32));
+    (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            basis
+                .pick(rect, emath::Pos2::new(x as f32 + 0.5, y as f32 + 0.5))
+                .is_some_and(|(lat, _)| lat.abs() >= crate::polar::CAP_START_DEG - MARGIN_DEG)
+        })
+        .collect()
+}
+
 #[test]
 fn raster_matches_regression_fixtures() {
     let (w, h) = (64, 48);
@@ -79,7 +96,11 @@ fn raster_matches_regression_fixtures() {
         let (buf, misses) = render_pixels(w, h, &basis, &cfg, &lookup);
         assert!(!misses.is_empty(), "missing tiles must still be reported");
         assert_eq!(buf.len(), expected.len());
+        let caps = polar_cap_pixels(&basis, w, h);
         for (i, (actual, reference)) in buf.iter().zip(expected).enumerate() {
+            if caps[i / 4] {
+                continue;
+            }
             // Permit one quantization step for platform floating-point differences.
             assert!(
                 actual.abs_diff(*reference) <= 1,
@@ -255,7 +276,15 @@ fn ray_batches_preserve_partial_rows_provider_pixels_and_missing_tile_priorities
             &lookup,
         );
         assert_eq!(buf.len(), expected.len(), "{}", case.name);
+        let caps = polar_cap_pixels(
+            &case.cam.basis(case.width as f64 / case.height as f64),
+            case.width,
+            case.height,
+        );
         for (i, (actual, reference)) in buf.iter().zip(expected).enumerate() {
+            if caps[i / 4] && crate::polar::under(case.provider) {
+                continue;
+            }
             assert!(
                 actual.abs_diff(*reference) <= 1,
                 "{}: channel {i}: {actual} != {reference}",
@@ -270,9 +299,11 @@ fn ray_batches_preserve_partial_rows_provider_pixels_and_missing_tile_priorities
         let (polar, misses): (Vec<_>, Vec<_>) = misses.into_iter().partition(|&(key, _)| {
             matches!(unkey(key).0, p if p == Provider::PolarNorth || p == Provider::PolarSouth)
         });
-        assert_eq!(
-            !polar.is_empty(),
-            case.cam.lat.abs() > crate::polar::CAP_START_DEG && crate::polar::under(case.provider),
+        // Coarse views of a cap use the built-in picture and ask for nothing.
+        assert!(
+            polar.is_empty()
+                || (case.cam.lat.abs() > crate::polar::CAP_START_DEG
+                    && crate::polar::under(case.provider)),
             "{}: polar requests",
             case.name
         );

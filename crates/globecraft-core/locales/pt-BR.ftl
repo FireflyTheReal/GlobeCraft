@@ -191,6 +191,19 @@ cmd-flight-select = Selecionar um voo
 cmd-flight-select-help = Acompanha um avião: a rota já voada, de onde vem e para onde vai, e a posição a cada poucos segundos.
 cmd-flight-clear = Fechar o voo
 cmd-flight-clear-help = Deixa de acompanhar o avião selecionado.
+cmd-satellite-select = Selecionar um satélite
+cmd-satellite-select-help = Mostra uma volta completa da órbita de um satélite na altura real, prevista a partir dos elementos orbitais, e um cartão com a altura e a velocidade.
+cmd-satellite-clear = Fechar o satélite
+cmd-satellite-clear-help = Esconde a órbita e o cartão do satélite selecionado.
+satellite-card-catalogue = NORAD { $norad } • { $group }
+satellite-card-height = Altura { $height }
+satellite-card-speed = Velocidade { $speed }
+satellite-card-over = Sobre { $place }
+satellite-card-orbit = Uma órbita em { $period } min • inclinação { $inclination }°
+satellite-card-source = { $model ->
+        [sgp4] Prevista com SGP4 a partir de elementos da CelesTrak de { $days } dias
+       *[simple] Estimada a partir de elementos da CelesTrak de { $days } dias
+    }
 flight-card-route = { $from } → { $to }
 flight-card-route-loading = Buscando a rota…
 flight-card-route-unknown = Rota desconhecida
@@ -522,8 +535,6 @@ aurora-credit = Aurora: NOAA SWPC
 aurora-source = Centro de Previsão do Clima Espacial da NOAA (OVATION)
 layers-timezones-toggle = Fusos horários
 ribbon-layer-timezones = Fusos horários
-layers-antarctic-claims-toggle = Reivindicações na Antártida (linhas e nomes)
-ribbon-layer-antarctic-claims = Reivindicações antárticas
 timezones-loading-status = Carregando os fusos horários…
 timezones-loaded-status = { $count } fusos horários • a hora local sob o cursor aparece na barra de status
 timezones-source = timezone-boundary-builder (OpenStreetMap, ODbL)

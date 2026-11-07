@@ -13,10 +13,11 @@ name: Time zones
 # and `label` (one point in each sizeable area whose standard time is not a whole
 # hour, e.g. `+5:30`; the app labels the whole hours itself, along the view, north
 # of 58° S). South of 60° S the source's rectangle per research station is replaced
-# by the classic map of Antarctica's time: the continent and its ice shelves (Natural
-# Earth, from its GitHub repository) in sectors meeting at the South Pole, each on
-# its stations' time, with a label each, and the sea around it in the ocean's 15°
-# zones. An approximation: stations may keep other times.
+# by the standard map of Antarctica's time (Wikimedia Commons "UTC hue4map ATA"): the
+# continent and its ice shelves (Natural Earth, from its GitHub repository) with the
+# Peninsula and the Ross Dependency as sectors to the South Pole, the other coasts in
+# sectors on their stations' time down to 80° S, the interior on UTC and the pole on
+# New Zealand's time, with a label each; the sea around stays in the ocean's 15° zones.
 on:
   workflow_dispatch:
     inputs:
@@ -85,31 +86,50 @@ jobs:
                       "geometry": mapping(geometry) if not isinstance(geometry, dict) else geometry}
 
           # South of 60° S (the Antarctic Treaty's limit) the source has a rectangle per
-          # research station; it is replaced by the classic map of Antarctica's time: the
-          # continent and its ice shelves in sectors meeting at the South Pole, each on the
-          # time its stations keep (an approximation: stations may keep other times), and
-          # the sea around it in the ocean's 15° zones.
+          # research station. It is replaced by the standard map of Antarctica's time
+          # (Wikimedia Commons, "UTC hue4map ATA", 2011): on the continent and its ice
+          # shelves, the Peninsula and the Ross Dependency are sectors reaching the South
+          # Pole, the rest of the coast is in sectors on its stations' time down to 80° S,
+          # and the interior beyond is on UTC, but for the South Pole station on New
+          # Zealand's time. Each sector takes its stations' current time (Mawson has kept +5
+          # since 2009, which the 2011 map still shows as +6). The sea around is in the
+          # ocean's 15° zones.
           LIMIT = -60.0
-          SECTORS = [  # west, east (degrees), zone
-              (-90.0, -20.0, "Antarctica/Rothera"),        # the Peninsula: British, Argentine, Chilean bases
-              (-20.0, 25.0, "Antarctica/Troll"),           # western Queen Maud Land
-              (25.0, 44.0 + 38 / 60, "Antarctica/Syowa"),  # eastern Queen Maud Land
-              (44.0 + 38 / 60, 70.0, "Antarctica/Mawson"),
-              (70.0, 100.0, "Antarctica/Davis"),
-              (100.0, 136.0 + 11 / 60, "Antarctica/Casey"),
-              (136.0 + 11 / 60, 160.0, "Antarctica/DumontDUrville"),  # Adélie Land, George V Land
-              (160.0, 180.0, "Antarctica/McMurdo"),        # the Ross Dependency, and the South Pole
-              (-180.0, -150.0, "Antarctica/McMurdo"),
-              (-150.0, -90.0, "Etc/GMT+6"),                # Marie Byrd Land: unclaimed, no station
+          INTERIOR = -80.0
+          POLE = -88.8  # Amundsen-Scott South Pole Station's circle
+          QUEEN_MAUD_EAST = 44.0 + 38 / 60
+          ADELIE_WEST = 136.0 + 11 / 60
+          REGIONS = [  # west, east, south, north (degrees), zone, label (lon, lat) or None
+              (-180.0, 180.0, -90.0, POLE, "Antarctica/McMurdo", None),
+              (160.0, 180.0, -90.0, LIMIT, "Antarctica/McMurdo", (-175.0, -82.0)),  # Ross Dependency
+              (-180.0, -150.0, -90.0, LIMIT, "Antarctica/McMurdo", None),
+              (-90.0, -20.0, -90.0, LIMIT, "Antarctica/Rothera", (-62.0, -76.0)),  # the Peninsula
+              (-20.0, 15.0, INTERIOR, LIMIT, "Antarctica/Troll", (-2.5, -74.0)),
+              (15.0, QUEEN_MAUD_EAST, INTERIOR, LIMIT, "Antarctica/Syowa", (35.0, -72.0)),
+              (QUEEN_MAUD_EAST, 70.0, INTERIOR, LIMIT, "Antarctica/Mawson", (57.0, -73.0)),
+              (70.0, 98.5, INTERIOR, LIMIT, "Antarctica/Davis", (84.0, -73.0)),
+              (98.5, ADELIE_WEST, INTERIOR, LIMIT, "Antarctica/Casey", (117.0, -73.0)),
+              (ADELIE_WEST, 160.0, INTERIOR, LIMIT, "Antarctica/DumontDUrville", (152.0, -70.5)),
+              (-150.0, -90.0, INTERIOR, LIMIT, "Etc/GMT+6", (-105.0, -76.0)),  # Marie Byrd Land
+              (-180.0, 180.0, -90.0, INTERIOR, "Etc/UTC", (90.0, -85.0)),  # the interior
           ]
-          LABEL_LAT = -84.0  # nearer the pole than the claims' names
+          # Islands and ice rises smaller than this (square degrees) stay with the sea, and
+          # holes in the ice are filled: their coasts would only scatter short lines.
+          MIN_LAND_DEG2 = 0.5
 
-          land = unary_union([
+          def solid(geometry):
+              from shapely.geometry import MultiPolygon, Polygon
+              parts = geometry.geoms if hasattr(geometry, "geoms") else [geometry]
+              kept = [Polygon(p.exterior) for p in parts
+                      if isinstance(p, Polygon) and p.area >= MIN_LAND_DEG2]
+              return unary_union(kept)
+
+          land = solid(unary_union([
               shape(f["geometry"]).intersection(box(-180, -90, 180, LIMIT))
               for name in sys.argv[2:]
               for f in json.load(open(name))["features"]
               if shape(f["geometry"]).bounds[1] < LIMIT
-          ]).buffer(0)
+          ]).buffer(0))
           south = box(-180, -90, 180, LIMIT)
           features = []
           for feature in data["features"]:
@@ -122,10 +142,15 @@ jobs:
                   features.append(keyed(tz, geometry))
               else:
                   features.append(keyed(tz, feature["geometry"]))
-          for west, east, tz in SECTORS:
-              part = land.intersection(box(west, -90, east, LIMIT))
-              if not part.is_empty:
-                  features.append(keyed(tz, part))
+          taken = None
+          for west, east, low, high, tz, _ in REGIONS:
+              area = land.intersection(box(west, low, east, high))
+              if taken is not None:
+                  area = area.difference(taken)
+              if area.is_empty:
+                  continue
+              taken = area if taken is None else unary_union([taken, area])
+              features.append(keyed(tz, area))
           sea = south.difference(land)
           for hour in range(-12, 13):
               west, east = max(hour * 15 - 7.5, -180), min(hour * 15 + 7.5, 180)
@@ -136,15 +161,14 @@ jobs:
                   features.append(keyed(tz, part))
           data["features"] = features
           json.dump(data, open("keyed.json", "w"))
-          # A label in each sector, as on a map of Antarctica's time.
+          # A label in each region, as on the map.
           labels = []
-          for west, east, tz in SECTORS:
-              if west == -180.0:
-                  continue  # the Ross Dependency's other half: labelled once, across 180°
+          for _, _, _, _, tz, at in REGIONS:
+              if at is None:
+                  continue
               standard = min(offset(tz, 1), offset(tz, 7))
-              middle = (west + east) / 2 if east != 180.0 else -175.0
               labels.append({"type": "Feature", "properties": {"label": text(standard)},
-                             "geometry": {"type": "Point", "coordinates": [middle, LABEL_LAT]}})
+                             "geometry": {"type": "Point", "coordinates": list(at)}})
           json.dump({"type": "FeatureCollection", "features": labels}, open("antarctic-labels.json", "w"))
           print(len(features), "zones,", len({f["properties"]["key"] for f in features}), "standard times")
           PY
@@ -183,8 +207,8 @@ jobs:
           for needed in ("Europe/Berlin", "America/New_York", "Asia/Kolkata", "Etc/GMT-12"):
               if needed not in names:
                   sys.exit(f"missing {needed}")
-          # Antarctica's sectors meet at the South Pole: some line reaches it.
-          if not any(abs(lat + 90) < 0.01 for g in lines for part in
+          # Antarctica's sectors run to the South Pole station's circle (88.8° S).
+          if not any(lat < -88.5 for g in lines for part in
                      (g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]])
                      for _, lat in part):
               sys.exit("no line reaches the South Pole: Antarctic sectors missing?")

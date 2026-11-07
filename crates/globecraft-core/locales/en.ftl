@@ -191,6 +191,19 @@ cmd-flight-select = Select a flight
 cmd-flight-select-help = Follows one plane: its track so far, where it flies from and to, and its position every few seconds.
 cmd-flight-clear = Close the flight
 cmd-flight-clear-help = Stops following the selected plane.
+cmd-satellite-select = Select a satellite
+cmd-satellite-select-help = Shows one full revolution of a satellite's orbit at its height, predicted from its orbital elements, and a card with its height and speed.
+cmd-satellite-clear = Close the satellite
+cmd-satellite-clear-help = Hides the selected satellite's orbit and card.
+satellite-card-catalogue = NORAD { $norad } • { $group }
+satellite-card-height = Height { $height }
+satellite-card-speed = Speed { $speed }
+satellite-card-over = Over { $place }
+satellite-card-orbit = One orbit in { $period } min • inclination { $inclination }°
+satellite-card-source = { $model ->
+        [sgp4] Predicted with SGP4 from CelesTrak elements { $days } days old
+       *[simple] Estimated from CelesTrak elements { $days } days old
+    }
 flight-card-route = { $from } → { $to }
 flight-card-route-loading = Looking up the route…
 flight-card-route-unknown = Route unknown
@@ -522,8 +535,6 @@ aurora-credit = Aurora: NOAA SWPC
 aurora-source = NOAA Space Weather Prediction Center (OVATION)
 layers-timezones-toggle = Time zones
 ribbon-layer-timezones = Time zones
-layers-antarctic-claims-toggle = Antarctic claims (lines and names)
-ribbon-layer-antarctic-claims = Antarctic claims
 timezones-loading-status = Loading the time zones…
 timezones-loaded-status = { $count } time zones • the local time under the cursor shows in the status bar
 timezones-source = timezone-boundary-builder (OpenStreetMap, ODbL)

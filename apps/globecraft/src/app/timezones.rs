@@ -198,9 +198,10 @@ fn borders(
         }
         flush(&mut run);
     }
-    // The whole hours in a row across the lower part of the view, as along the
-    // bottom of a time zone map, then the zones off the whole hour where they are
-    // (the file lists the largest first, so they keep their label).
+    // The file's labels where they are (Antarctica's sectors, then the zones off the
+    // whole hour, largest first), then the whole hours in a row across the lower part
+    // of the view, as along the bottom of a time zone map. The file's come first: a
+    // whole hour of the row nearby must not hide a sector's label of the same text.
     let font = super::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
     let mut taken: Vec<Rect> = Vec::new();
     let mut placed: Vec<(Pos2, &str)> = Vec::new();
@@ -217,7 +218,7 @@ fn borders(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    for (lat, lon, text) in row.iter().chain(&zones.labels) {
+    for (lat, lon, text) in zones.labels.iter().chain(&row) {
         let Some(at) =
             globecraft_render::overlays::project_unhidden(basis, rect, None, None, *lat, *lon)
                 .map(|p| Pos2::new(p.x as f32, p.y as f32))

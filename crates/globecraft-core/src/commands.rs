@@ -430,7 +430,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "eye",
         Layers,
         View,
-        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","antarctic_claims","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
+        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
         "layer.terrainExaggeration",
@@ -569,6 +569,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         Live,
         View,
         r#"{"type":"object","properties":{"hex":{"type":"string","description":"The plane's transponder (ICAO 24-bit) address, 6 hex digits"},"callsign":{"type":"string","description":"Its callsign, for its route; left out, the one it reports"}},"required":["hex"]}"#
+    ),
+    command!(
+        "satellite.select",
+        "satellite-select",
+        "satellite",
+        Live,
+        View,
+        r#"{"type":"object","properties":{"norad":{"type":"string","description":"The satellite's NORAD catalogue number, e.g. 25544 for the ISS"}},"required":["norad"]}"#
+    ),
+    command!(
+        "satellite.clear",
+        "satellite-clear",
+        "close",
+        Live,
+        View,
+        NO_PARAMS
     ),
     command!(
         "flight.clear",

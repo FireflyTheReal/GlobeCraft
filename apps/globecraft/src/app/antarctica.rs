@@ -1,6 +1,6 @@
-//! The Antarctic territorial claims, their own layer (on and off apart from the
-//! country borders), in the borders' disputed style: the claims' sides from 60° S to
-//! the South Pole, and each claim's name, outlined to stand out on the ice.
+//! The Antarctic territorial claims: their sides from 60° S to the South Pole in the
+//! borders' disputed style, with the country borders; each claim's name, outlined to
+//! stand out on the ice, with the place names. Either shows without the other.
 use super::App;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape};
 use globecraft_core::{camera::Basis, layers::MapLayer};
@@ -68,7 +68,11 @@ impl App {
         basis: &Basis,
         rect: Rect,
     ) {
-        if !self.layer(MapLayer::AntarcticClaims) {
+        let (lines, names) = (
+            self.layer(MapLayer::CountryBorders),
+            self.layer(MapLayer::PlaceLabels),
+        );
+        if !lines && !names {
             return;
         }
         let scale = self.settings.map_scale;
@@ -81,14 +85,19 @@ impl App {
         };
         let mut shapes = Vec::new();
         let steps = ((90.0 + NORTH_LIMIT_DEG) / STEP_DEG).round() as usize;
+        let mut seen = false;
         for lon in boundaries() {
             let line = (0..=steps).map(|i| (NORTH_LIMIT_DEG - i as f64 * STEP_DEG, lon));
             for run in super::selected_flight::screen_runs(basis, rect, line) {
-                super::live_layers::styled_line(&mut shapes, &run, &casing, scale, 1.0);
-                super::live_layers::styled_line(&mut shapes, &run, &style, scale, 1.0);
+                seen = true;
+                if lines {
+                    super::live_layers::styled_line(&mut shapes, &run, &casing, scale, 1.0);
+                    super::live_layers::styled_line(&mut shapes, &run, &style, scale, 1.0);
+                }
             }
         }
-        if shapes.is_empty() {
+        if !seen || !names {
+            painter.extend(shapes);
             return;
         }
         let font = super::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);

@@ -22,6 +22,14 @@ const EXTRAPOLATION_MAX_SECS: f64 = 20.0 * 60.0;
 /// refreshes every 10 seconds, the global one far less often.
 const FRESH_SECS: f64 = 120.0;
 const EXTRAPOLATION_MAX_SPEED_KNOTS: f64 = 1200.0;
+/// A plane last seen descending below this height is about to land: once it lands
+/// the feeds report it on the ground, which the map leaves out, so its last airborne
+/// report would otherwise fly on for twenty minutes (user, 2026-11-05). It is moved
+/// on only until it would reach the ground at its rate of descent, and at most…
+const LANDING_HEIGHT_FEET: f64 = 5_000.0;
+/// …this long (also when the rate is not reported).
+const LANDING_EXTRAPOLATION_MAX_SECS: f64 = 45.0;
+const SECONDS_PER_MINUTE: f64 = 60.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
 const KM_PER_FOOT: f64 = 0.000_304_8;
 const SECONDS_PER_HOUR: f64 = 3600.0;
@@ -73,7 +81,7 @@ pub fn project_flights(
                 flight.heading_deg,
                 flight.turn_rate_deg_s.unwrap_or(0.0),
                 speed_km_s,
-                age.min(EXTRAPOLATION_MAX_SECS),
+                age.min(reckoning_limit_secs(flight)),
             );
             // At its height (barometric, near enough), hidden only behind the Earth.
             let km = if heights {
@@ -123,6 +131,25 @@ pub fn project_flights(
         .collect()
 }
 
+/// How long a report may be flown on: twenty minutes, but a plane coming in to land
+/// stops where it would touch down.
+fn reckoning_limit_secs(flight: &Aircraft) -> f64 {
+    let Some(feet) = flight.altitude_feet else {
+        return EXTRAPOLATION_MAX_SECS;
+    };
+    let descending = flight.vertical_rate_fpm.is_some_and(|rate| rate < 0.0);
+    if feet >= LANDING_HEIGHT_FEET || (!descending && flight.vertical_rate_fpm.is_some()) {
+        return EXTRAPOLATION_MAX_SECS;
+    }
+    let to_ground = flight
+        .vertical_rate_fpm
+        .filter(|rate| *rate < 0.0)
+        .map_or(f64::INFINITY, |rate| {
+            feet.max(0.0) / -rate * SECONDS_PER_MINUTE
+        });
+    to_ground.min(LANDING_EXTRAPOLATION_MAX_SECS)
+}
+
 /// Where a plane is after `secs`, and its track there: turning at `turn_rate` (°/s,
 /// positive to the right) for up to [`TURN_MAX_SECS`], then straight on.
 pub fn fly(
@@ -156,6 +183,66 @@ pub fn fly(
 mod tests {
     use super::*;
     use globecraft_core::earth_model::EarthModel;
+
+    /// A plane coming in to land stops where it would touch down; one cruising, or
+    /// low but climbing, flies on.
+    #[test]
+    fn landing_planes_stop_at_the_ground() {
+        let plane = |feet: Option<f64>, rate: Option<f64>| Aircraft {
+            hex: "abc123".into(),
+            callsign: "TEST".into(),
+            latitude: 47.0,
+            longitude: 8.0,
+            heading_deg: 90.0,
+            speed_knots: Some(140.0),
+            altitude_feet: feet,
+            vertical_rate_fpm: rate,
+            turn_rate_deg_s: None,
+            observed_unix: 1000.0,
+            details: None,
+            class: globecraft_data::aircraft::AircraftClass::Unknown,
+        };
+        assert_eq!(
+            reckoning_limit_secs(&plane(Some(35_000.0), Some(-1000.0))),
+            EXTRAPOLATION_MAX_SECS
+        );
+        assert_eq!(
+            reckoning_limit_secs(&plane(Some(2_000.0), Some(1500.0))),
+            EXTRAPOLATION_MAX_SECS
+        );
+        assert!((reckoning_limit_secs(&plane(Some(500.0), Some(-1000.0))) - 30.0).abs() < 1e-9);
+        assert_eq!(
+            reckoning_limit_secs(&plane(Some(3_000.0), Some(-700.0))),
+            LANDING_EXTRAPOLATION_MAX_SECS
+        );
+        assert_eq!(
+            reckoning_limit_secs(&plane(Some(1_000.0), None)),
+            LANDING_EXTRAPOLATION_MAX_SECS
+        );
+        // Two minutes after the last report the landing plane has not moved on.
+        let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0));
+        let basis = globecraft_core::camera::Cam {
+            lat: 47.0,
+            lon: 8.0,
+            heading: 0.0,
+            alt: 50.0,
+            tilt: 0.0,
+        }
+        .basis(4.0 / 3.0);
+        let landing = plane(Some(500.0), Some(-1000.0));
+        let at = |secs: f64| {
+            project_flights(
+                &basis,
+                rect,
+                std::slice::from_ref(&landing),
+                1000.0 + secs,
+                1.0,
+                false,
+            )[0]
+            .position
+        };
+        assert_eq!(at(30.0), at(120.0));
+    }
 
     /// A plane at cruising height, seen from the side, is drawn above the point it
     /// flies over; flat, on it.

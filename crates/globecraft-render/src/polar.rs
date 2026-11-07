@@ -4,13 +4,17 @@
 //! Blue Marble's ocean in the Arctic, a clear summer day of MODIS (250 m) over the
 //! Antarctic ice. It fades in over the two degrees before the limit and is brought to
 //! the colours of Esri's imagery there, so no seam or disc shows. Only under the
-//! satellite imagery. The caps render on the CPU: a view that shows one is not given
-//! to the GPU path.
+//! satellite imagery. A picture of each cap is built into the app (about 1.6 km a
+//! pixel, from the same sources): it shows at once, before and between the streamed
+//! tiles, so a fast zoom never shows a gap; the tiles stream only for the levels finer
+//! than it. The caps render on the CPU: a view that shows one is not given to the GPU
+//! path.
 use crate::{Local, pixel::Surface, tuning::LOD_SHARPNESS_BIAS};
 use emath::{Pos2, Rect};
 use glam::Vec4;
 use globecraft_core::{camera::Basis, polar::Pole};
-use globecraft_data::tiles::{Lookup, Provider, TileKey, make_key};
+use globecraft_data::tiles::{Lookup, Provider, Tile, TileKey, make_key};
+use std::sync::LazyLock;
 
 /// The polar imagery fades in from this latitude (over about 230 km, so the change
 /// of tone between the two imageries is gradual)…
@@ -21,6 +25,22 @@ const CAP_FULL_DEG: f64 = crate::tuning::WEB_MERCATOR_MAX_LATITUDE_DEG;
 const GRID_HALF_EXTENT_M: f64 = 4_194_304.0;
 const LEVEL0_TILES: f64 = 2.0;
 const TILE_PX: f64 = 512.0;
+/// The built-in pictures: the square ±820 km around each pole in its projection (the
+/// cap starts 760 km out), 1,024 pixels a side; built from GIBS level 4 tiles on
+/// 2026-11-05 (MODIS of 21 December 2025 in the south, Blue Marble in the north).
+const BAKED_HALF_EXTENT_M: f64 = 820_000.0;
+const BAKED_PX: f64 = 1024.0;
+static BAKED: LazyLock<[Tile; 2]> = LazyLock::new(|| {
+    [
+        include_bytes!("../assets/polar/north.jpg").as_slice(),
+        include_bytes!("../assets/polar/south.jpg").as_slice(),
+    ]
+    .map(|bytes| Tile::decode(bytes).expect("built-in polar picture"))
+});
+/// Streamed tiles are used from this level on: coarser ones are no sharper than the
+/// built-in picture (level 3 is 1 km a pixel).
+const FIRST_STREAMED_LEVEL: i32 = 3;
+
 /// Rays per side of the coarse grid that finds whether a view shows a cap.
 const VIEW_PROBES: usize = 24;
 
@@ -51,11 +71,14 @@ const NORTH_MATCH: ColourMatch = ColourMatch {
     contrast: Vec4::new(1.07, 0.85, 0.66, 0.0),
     water_only: true,
 };
-/// MODIS's summer ice is a little greyer than Esri's: lifted, its relief kept.
+/// MODIS's summer ice is greyer and more textured than Esri's near the pole, which is
+/// a smooth bluish white (measured on Esri's zoom 6, where the seam is seen, on
+/// 2026-11-05: zoom 3 is whiter, and matching it made the cap a flat white disc). The
+/// relief is softened to 70 %, not to Esri's flatness.
 const SOUTH_MATCH: ColourMatch = ColourMatch {
-    polar_mean: Vec4::new(0.891, 0.895, 0.910, 0.0),
-    esri_mean: Vec4::new(0.959, 0.971, 0.998, 0.0),
-    contrast: Vec4::new(1.0, 1.0, 1.0, 0.0),
+    polar_mean: Vec4::new(0.883, 0.888, 0.903, 0.0),
+    esri_mean: Vec4::new(0.926, 0.941, 0.983, 0.0),
+    contrast: Vec4::new(0.7, 0.7, 0.7, 0.0),
     water_only: false,
 };
 /// Water: darker than this luma is matched fully, brighter than the second not at all.
@@ -121,8 +144,8 @@ fn level_for(metres_per_pixel: f64, max_level: i32) -> i32 {
     (level.floor() as i32).clamp(0, max_level)
 }
 
-/// The polar imagery under a surface pixel, from the finest loaded level at or
-/// above its own (missing tiles are asked for); `None` while nothing has loaded.
+/// The polar imagery under a surface pixel: the finest streamed level loaded at or
+/// above its own (missing tiles are asked for), else the built-in picture.
 pub(crate) fn sample(
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
     surface: &Surface,
@@ -132,14 +155,33 @@ pub(crate) fn sample(
     let (x, y) = pole.project(surface.lat, surface.lon);
     let position = grid_position(x, y);
     let mut level = level_for(surface.metres_per_pixel, i32::from(provider.max_zoom()));
-    while level >= 0 {
+    while level >= FIRST_STREAMED_LEVEL {
         let (key, u, v) = tile_at(provider, level, position);
         if let Some(colour) = loc.tile_color(key, surface.dist, u, v, 1.0) {
             return Some(matched(pole, colour));
         }
         level -= 1;
     }
-    None
+    baked(pole, x, y, surface.metres_per_pixel).map(|colour| matched(pole, colour))
+}
+
+/// The built-in picture at a projected point, area-averaged when the screen's pixels
+/// are larger than its own; `None` outside it.
+fn baked(pole: Pole, x_m: f64, y_m: f64, metres_per_pixel: f64) -> Option<Vec4> {
+    let side = 2.0 * BAKED_HALF_EXTENT_M;
+    let (u, v) = (
+        (x_m + BAKED_HALF_EXTENT_M) / side,
+        (BAKED_HALF_EXTENT_M - y_m) / side,
+    );
+    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+        return None;
+    }
+    let picture = &BAKED[match pole {
+        Pole::North => 0,
+        Pole::South => 1,
+    }];
+    let stride = (metres_per_pixel / (side / BAKED_PX)) as f32;
+    Some(picture.sample(u, v, stride.max(1.0)))
 }
 
 /// Whether a `width` × `height` view shows any of a polar cap.
@@ -216,6 +258,21 @@ mod tests {
         };
         assert!(u < 0.5 && v < 0.5, "({u}, {v})");
         // Level 4 is Blue Marble's finest (512 m a pixel), 5 MODIS's (256 m).
+        // The built-in pictures cover both caps out past 83°.
+        for pole in [Pole::North, Pole::South] {
+            let lat = if pole == Pole::North { 82.9 } else { -82.9 };
+            for lon in [0.0, 90.0, -135.0] {
+                let (x, y) = pole.project(lat, lon);
+                let colour = baked(pole, x, y, 2_000.0).expect("inside the picture");
+                assert!(colour.max_element() <= 1.0 && colour.w == 0.0);
+            }
+            assert!(baked(pole, 900_000.0, 0.0, 2_000.0).is_none());
+        }
+        // The North Pole is open ocean (blue), the South Pole ice (white).
+        let north = baked(Pole::North, 0.0, 0.0, 2_000.0).unwrap();
+        assert!(north.z > north.x + 0.1, "{north:?}");
+        let south = baked(Pole::South, 0.0, 0.0, 2_000.0).unwrap();
+        assert!(south.truncate().min_element() > 0.8, "{south:?}");
         assert_eq!(level_for(400.0, 4), 4);
         assert_eq!(level_for(200.0, 5), 5);
         assert_eq!(level_for(20_000.0, 4), 0);

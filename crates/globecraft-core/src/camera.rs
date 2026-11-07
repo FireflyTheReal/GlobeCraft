@@ -371,19 +371,55 @@ impl Cam {
     /// keeping the heading: zooming toward a point never turns north away (user,
     /// 2026-10-25). Each step turns the camera rigidly toward the target, then restores
     /// the heading; the next step corrects what that moved. Where a fixed heading cannot
-    /// hold the point exactly (near the globe's edge, or the pole), the closest match is
-    /// kept: north stays locked and the point may slip by a little.
+    /// hold the point exactly (near the globe's edge), the closest match is kept: north
+    /// stays locked and the point may slip by a little. Near a pole, or toward a point
+    /// across it, a fixed heading would carry the view far round the globe (the user's
+    /// recording of 2026-11-05 jumped from the Arctic to Japan): then the camera turns
+    /// rigidly, as a globe held in the hand.
     fn anchor_keeping_heading(
         &mut self,
         target: (f64, f64),
         pick: impl Fn(&Self) -> Option<(f64, f64)>,
     ) {
-        const MAX_ANCHOR_ITERATIONS: usize = 24;
-        const ANCHOR_TOLERANCE_KM: f64 = 1e-8;
         /// Within a degree of a pole north points every way: the camera turns rigidly.
         const FREE_HEADING_MIN_LATITUDE_DEG: f64 = 89.0;
+        /// The heading is given up when keeping it moves the view's centre this many
+        /// times further than turning freely does, or holds the point less well.
+        const HEADING_DETOUR_FACTOR: f64 = 2.0;
+        const HEADING_DETOUR_SLACK_KM: f64 = 1.0;
+        let start = *self;
+        let rigid = {
+            let mut cam = start;
+            let error = cam.anchor(target, &pick, false);
+            (error, cam)
+        };
+        if start.lat.abs() >= FREE_HEADING_MIN_LATITUDE_DEG {
+            *self = rigid.1;
+            return;
+        }
+        let kept_error = self.anchor(target, &pick, true);
+        let moved =
+            |cam: &Self| crate::math::haversine_km((start.lat, start.lon), (cam.lat, cam.lon));
+        let detour =
+            moved(self) > HEADING_DETOUR_FACTOR * moved(&rigid.1) + HEADING_DETOUR_SLACK_KM;
+        let slipped = kept_error > rigid.0 + HEADING_DETOUR_SLACK_KM;
+        if detour || slipped {
+            *self = rigid.1;
+        }
+    }
+
+    /// The anchoring steps of `anchor_keeping_heading`, the heading kept or free; leaves
+    /// the camera at its best step and returns that step's distance from the target
+    /// (infinite when the point never showed).
+    fn anchor(
+        &mut self,
+        target: (f64, f64),
+        pick: &impl Fn(&Self) -> Option<(f64, f64)>,
+        keep_heading: bool,
+    ) -> f64 {
+        const MAX_ANCHOR_ITERATIONS: usize = 24;
+        const ANCHOR_TOLERANCE_KM: f64 = 1e-8;
         let heading = self.heading;
-        let keep_heading = self.lat.abs() < FREE_HEADING_MIN_LATITUDE_DEG;
         let mut best: Option<(f64, Self)> = None;
         for _ in 0..MAX_ANCHOR_ITERATIONS {
             let Some(p1) = pick(self) else {
@@ -401,8 +437,12 @@ impl Cam {
                 self.heading = heading;
             }
         }
-        if let Some((_, cam)) = best {
-            *self = cam;
+        match best {
+            Some((error, cam)) => {
+                *self = cam;
+                error
+            }
+            None => f64::INFINITY,
         }
     }
 
@@ -467,6 +507,44 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    /// Zooming toward a point across the North Pole moves the view toward it in
+    /// small steps, never round the globe (the user's recording of 2026-11-05).
+    #[test]
+    fn zooming_toward_a_point_across_the_pole_does_not_jump() {
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            let rect = Rect::from_min_size(emath::Pos2::ZERO, Vec2::new(1200.0, 800.0));
+            let aspect = 1.5;
+            let mut cam = Cam {
+                lat: 82.0,
+                lon: -34.0,
+                heading: 0.0,
+                alt: 7_000.0,
+                tilt: 0.0,
+            };
+            // Above the screen's middle, past the pole.
+            let cursor = Pos2::new(640.0, 160.0);
+            let target = cam
+                .basis_for_model(aspect, model)
+                .pick(rect, cursor)
+                .expect("the cursor is on the globe");
+            assert!(target.1.abs() > 90.0, "across the pole: {target:?}");
+            for _ in 0..20 {
+                let before = cam;
+                cam.zoom_at_for_model(0.85, Some(cursor), rect, aspect, model);
+                let step = crate::math::haversine_km((before.lat, before.lon), (cam.lat, cam.lon));
+                assert!(step < 600.0, "{model:?}: jumped {step:.0} km to {cam:?}");
+                let held = cam
+                    .basis_for_model(aspect, model)
+                    .pick(rect, cursor)
+                    .expect("the point stays on screen");
+                assert!(
+                    crate::math::haversine_km(held, target) < 5.0,
+                    "{model:?}: the point slipped to {held:?}"
+                );
+            }
+        }
+    }
 
     /// Dragging northwards goes straight over the North Pole and down the other side,
     /// on both Earth models, in small steps as a drag sends them.
@@ -932,7 +1010,7 @@ mod projection_tests {
                     tilt: 0.0,
                 }
                 .basis(aspect);
-                for fraction in [0.45, 0.5, 0.55] {
+                for fraction in [0.48, 0.5, 0.52] {
                     let cursor = Pos2::new(
                         rect.min.x + rect.width() * fraction,
                         rect.min.y + rect.height() * fraction,

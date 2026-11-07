@@ -263,6 +263,17 @@ impl App {
         } else if !ruler_captured
             && resp.clicked()
             && !self.ruler
+            && self.layer(MapLayer::Satellites)
+            && let Some(norad) = resp
+                .interact_pointer_pos()
+                .filter(|p| rect.contains(*p))
+                .and_then(|p| self.satellite_selection.at(p, self.settings.map_scale))
+                .map(str::to_owned)
+        {
+            self.run_reporting("satellite.select", serde_json::json!({"norad": norad}));
+        } else if !ruler_captured
+            && resp.clicked()
+            && !self.ruler
             && self.layer(MapLayer::Flights)
             && let Some(plane) = resp
                 .interact_pointer_pos()
@@ -276,10 +287,16 @@ impl App {
         } else if !ruler_captured
             && resp.clicked()
             && !self.ruler
-            && self.flight_selection.selected().is_some()
+            && (self.flight_selection.selected().is_some()
+                || self.satellite_selection.selected().is_some())
         {
-            // A click beside the planes closes the selected flight.
-            self.run_reporting("flight.clear", serde_json::json!({}));
+            // A click beside the planes and satellites closes what was selected.
+            if self.flight_selection.selected().is_some() {
+                self.run_reporting("flight.clear", serde_json::json!({}));
+            }
+            if self.satellite_selection.selected().is_some() {
+                self.run_reporting("satellite.clear", serde_json::json!({}));
+            }
         } else if !ruler_captured
             && resp.clicked()
             && self.ruler
@@ -628,6 +645,9 @@ impl App {
         }
         self.timeline_bar(&ui.ctx().clone(), rect);
         self.selected_flight_card(&ui.ctx().clone(), rect);
+        if self.layer(MapLayer::Satellites) {
+            self.selected_satellite_card(&ui.ctx().clone(), rect);
+        }
         self.legend_window(&ui.ctx().clone(), rect);
 
         // scale bar

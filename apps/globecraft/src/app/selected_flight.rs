@@ -56,6 +56,8 @@ pub(super) fn flown_on(
     .0
 }
 
+const KM_PER_FOOT: f64 = 0.000_304_8;
+
 /// The track's colour at an altitude: orange near the ground, through green and
 /// blue to violet at cruise, grey on the ground.
 pub(super) fn altitude_color(altitude_feet: Option<f64>) -> Color32 {
@@ -273,19 +275,41 @@ impl App {
             .map(|aircraft| flown_on(aircraft, basis.model, now))
             .or_else(|| flight.track.last().map(|p| (p.lat, p.lon)));
         let mut shapes = Vec::new();
-        track_shapes(&mut shapes, basis, rect, &flight.track, current, scale);
+        let ends_at = TrackEnd {
+            ground: current,
+            plane: self.aircraft_overlay.plane_position(&flight.hex),
+        };
+        let heights = !self.settings.layers.flat_live_objects;
+        track_shapes(
+            &mut shapes,
+            basis,
+            rect,
+            &flight.track,
+            ends_at,
+            heights,
+            scale,
+        );
         if let (Some(route), Some(at)) = (&flight.route, current) {
             let to = (route.destination.lat, route.destination.lon);
             let steps = (globecraft_core::math::haversine_km(at, to) / REMAINING_STEP_KM)
                 .ceil()
                 .clamp(2.0, 2000.0) as usize;
-            let line = globecraft_core::math::great_circle(at, to, steps)
-                .into_iter()
-                .map(globecraft_core::math::v3_to_ll);
+            // From the plane at its height, coming down evenly to the destination.
+            let height = flight
+                .position
+                .as_ref()
+                .and_then(|aircraft| aircraft.altitude_feet)
+                .or_else(|| flight.track.last().and_then(|p| p.altitude_feet));
+            let line = globecraft_core::math::great_circle(at, to, steps);
+            let last = line.len().saturating_sub(1).max(1) as f64;
+            let line = line.into_iter().enumerate().map(|(i, point)| {
+                let feet = height.map(|feet| feet * (1.0 - i as f64 / last));
+                (globecraft_core::math::v3_to_ll(point), feet)
+            });
             let stroke = Stroke::new(REMAINING_POINTS * scale, REMAINING);
             let casing = Stroke::new((REMAINING_POINTS + CASING_POINTS) * scale, CASING);
             let (dash, gap) = (DASH_POINTS * scale, GAP_POINTS * scale);
-            for run in screen_runs(basis, rect, line) {
+            for run in raised_runs(basis, rect, line, heights) {
                 shapes.extend(Shape::dashed_line(&run, casing, dash, gap));
                 shapes.extend(Shape::dashed_line(&run, stroke, dash, gap));
             }
@@ -364,14 +388,69 @@ impl App {
     }
 }
 
+/// A line of points at their heights on screen, cut where it leaves the view or goes
+/// behind the Earth.
+fn raised_runs(
+    basis: &Basis,
+    rect: Rect,
+    line: impl IntoIterator<Item = ((f64, f64), Option<f64>)>,
+    heights: bool,
+) -> Vec<Vec<Pos2>> {
+    let clip = rect.expand(SEGMENT_CLIP_MARGIN_POINTS);
+    let mut runs: Vec<Vec<Pos2>> = Vec::new();
+    let mut previous = None;
+    for (at, feet) in line {
+        let here = track_point(basis, rect, at, feet, heights);
+        if let Some([a, b]) = previous
+            .zip(here)
+            .and_then(|(a, b)| clip_segment([a, b], clip))
+        {
+            match runs.last_mut() {
+                Some(run) if run.last() == Some(&a) => run.push(b),
+                _ => runs.push(vec![a, b]),
+            }
+        }
+        previous = here;
+    }
+    runs
+}
+
+/// Where the track ends: the plane's position now, and where it is drawn (its last
+/// segment then ends exactly at the symbol, whatever its height).
+struct TrackEnd {
+    ground: Option<(f64, f64)>,
+    plane: Option<Pos2>,
+}
+
+/// A track point on screen: at its height (as the planes are drawn), or on the ground.
+fn track_point(
+    basis: &Basis,
+    rect: Rect,
+    (lat, lon): (f64, f64),
+    altitude_feet: Option<f64>,
+    heights: bool,
+) -> Option<glam::DVec2> {
+    let km = altitude_feet.unwrap_or(0.0).max(0.0) * KM_PER_FOOT;
+    if heights && km > 0.0 {
+        basis
+            .project_above(basis.raised_position(lat, lon, km), rect)
+            .map(|at| glam::DVec2::new(f64::from(at.x), f64::from(at.y)))
+    } else {
+        project_unhidden(basis, rect, None, None, lat, lon)
+    }
+}
+
 /// The track so far: a dark casing under lines coloured by altitude, joined into
-/// runs (one per altitude band) so their corners stay round.
+/// runs (one per altitude band) so their corners stay round. Each point is at its
+/// own height, so climbs and descents show in a tilted view, and the line joins the
+/// plane where it is drawn.
 fn track_shapes(
     shapes: &mut Vec<Shape>,
     basis: &Basis,
     rect: Rect,
     track: &[TrackPoint],
-    current: Option<(f64, f64)>,
+    end: TrackEnd,
+    heights: bool,
     scale: f32,
 ) {
     let clip = rect.expand(SEGMENT_CLIP_MARGIN_POINTS);
@@ -379,12 +458,15 @@ fn track_shapes(
     let mut coloured: Vec<(Color32, Vec<Pos2>)> = Vec::new();
     let mut previous: Option<(glam::DVec2, Option<f64>)> = None;
     let last_altitude = track.last().and_then(|p| p.altitude_feet);
+    let plane = end
+        .plane
+        .map(|at| glam::DVec2::new(f64::from(at.x), f64::from(at.y)));
     let points = track
         .iter()
-        .map(|p| (p.lat, p.lon, p.altitude_feet))
-        .chain(current.map(|(lat, lon)| (lat, lon, last_altitude)));
-    for (lat, lon, altitude) in points {
-        let here = project_unhidden(basis, rect, None, None, lat, lon);
+        .map(|p| ((p.lat, p.lon), p.altitude_feet, None))
+        .chain(end.ground.map(|at| (at, last_altitude, plane)));
+    for (at, altitude, drawn) in points {
+        let here = drawn.or_else(|| track_point(basis, rect, at, altitude, heights));
         if let (Some((a, altitude_a)), Some(b)) = (previous, here)
             && let Some([a, b]) = clip_segment([a, b], clip)
         {

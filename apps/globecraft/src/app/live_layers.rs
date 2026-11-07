@@ -8,7 +8,7 @@ pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
 mod poi;
 mod poi_icons;
 pub(super) use poi_icons::Group as PoiGroup;
-pub(super) use world::{VesselClass, satellite_symbol, vessel_symbol};
+pub(super) use world::{VesselClass, satellite_colour, satellite_symbol, vessel_symbol};
 mod poi_memory;
 mod shapes;
 pub(super) use shapes::class_symbol;
@@ -146,6 +146,16 @@ impl AircraftOverlay {
         if let Some(geometry) = &self.drawn {
             draw_hover(painter, geometry, lang);
         }
+    }
+
+    /// Where the plane with this address is drawn this frame.
+    pub(super) fn plane_position(&self, hex: &str) -> Option<egui::Pos2> {
+        let geometry = self.drawn.as_ref()?;
+        geometry
+            .flights
+            .iter()
+            .find(|flight| &*geometry.data.aircraft[flight.source_index].hex == hex)
+            .map(|flight| flight.position)
     }
 
     /// The plane with this address as drawn this frame, in the selected colours.
@@ -391,6 +401,19 @@ impl App {
                 .satellites(painter, geometry)
                 .iter()
                 .cloned(),
+        );
+        self.satellite_selection
+            .set_drawn(geometry.satellites.iter().map(|projected| {
+                (
+                    projected.position,
+                    satellites[projected.source_index].norad.clone(),
+                )
+            }));
+        self.paint_selected_satellite(
+            painter,
+            &geometry.input.view.basis,
+            rect,
+            geometry.input.satellite_heights,
         );
         for projected in geometry.satellites.iter() {
             let sat = &satellites[projected.source_index];

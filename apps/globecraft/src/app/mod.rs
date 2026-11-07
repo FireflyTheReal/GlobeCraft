@@ -59,6 +59,7 @@ mod roads;
 mod ruler_history;
 mod search;
 mod selected_flight;
+mod selected_satellite;
 mod still_shot;
 mod time;
 mod timezones;
@@ -157,6 +158,7 @@ pub(crate) struct App {
     legend: legend::Legend,
     /// The flight picked on the globe, with its track and route.
     flight_selection: globecraft_data::aircraft::route::FlightSelection,
+    satellite_selection: selected_satellite::SatelliteSelection,
     /// The flights with the selected one's newest position: (list it was made from,
     /// that position's time, flights).
     selected_snapshot: Option<(
@@ -412,6 +414,7 @@ impl App {
             aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
             legend: Default::default(),
             flight_selection: Default::default(),
+            satellite_selection: Default::default(),
             selected_snapshot: None,
             live_geometry: live_geometry::LiveOverlay::new(
                 cc.egui_ctx.clone(),
