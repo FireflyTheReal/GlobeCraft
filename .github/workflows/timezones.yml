@@ -206,7 +206,11 @@ jobs:
           # sides would cross the globe. Zones on the same standard time merge, sea
           # and land alike, so only the borders where the time changes remain. Areas
           # off the whole hour larger than 10,000 km² get a label, largest first.
+          # -clean first: it cuts the source's sides where another zone's corner lies
+          # on them, or a land zone and the ocean zone beside it share no points and
+          # their border is lost (gaps north of Greenland, user 2026-11-08).
           NODE_OPTIONS=--max-old-space-size=6144 npx --yes mapshaper@0.6.102 -i keyed.json name=all \
+            -clean \
             -simplify dp interval=500 keep-shapes \
             -filter-fields tzid,key,whole,label \
             -o zones.json target=all format=geojson precision=0.001 \
@@ -222,8 +226,56 @@ jobs:
           python3 - <<'PY'
           import json, sys
           zones = json.load(open("zones.json"))["features"]
+          # Simplified on the sphere, the corners at the poles go: (180, 90) and (172.5, 90)
+          # are one point there. Without them a zone's side runs diagonally to the pole in
+          # longitude and latitude, and half the polar end of the ocean's zones belonged to
+          # none. They come back here.
+          def with_pole_corners(ring):
+              out = [ring[0]]
+              for (x1, y1), (x2, y2) in zip(ring, ring[1:]):
+                  for pole in (90.0, -90.0):
+                      if y2 == pole and y1 != pole and x1 != x2:
+                          out.append([x1, pole])
+                      elif y1 == pole and y2 != pole and x1 != x2:
+                          out.append([x2, pole])
+                  out.append([x2, y2])
+              return out
+          for f in zones:
+              g = f["geometry"]
+              polygons = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+              for polygon in polygons:
+                  polygon[:] = [with_pole_corners(ring) for ring in polygon]
+          # The date line: mapshaper knows no neighbours across 180°, so the zones' sides on
+          # it, east and west, are compared here, and where the standard time differs a line
+          # runs along it.
+          sides = {180.0: [], -180.0: []}
+          for f in zones:
+              g = f["geometry"]
+              polygons = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+              for polygon in polygons:
+                  for ring in polygon:
+                      for (x1, y1), (x2, y2) in zip(ring, ring[1:]):
+                          for side in sides:
+                              if x1 == side and x2 == side and y1 != y2:
+                                  sides[side].append((min(y1, y2), max(y1, y2), f["properties"]["key"]))
+          def key_at(side, lat):
+              return next((k for s, n, k in sides[side] if s <= lat <= n), None)
+          cuts = sorted({y for side in sides.values() for s, n, _ in side for y in (s, n)})
+          runs = []
+          for south, north in zip(cuts, cuts[1:]):
+              middle = (south + north) / 2
+              east, west = key_at(180.0, middle), key_at(-180.0, middle)
+              if east is None or west is None or east == west:
+                  continue
+              if runs and runs[-1][-1] == south:
+                  runs[-1].append(north)
+              else:
+                  runs.append([south, north])
+          date_line = [{"type": "LineString", "coordinates": [[180.0, lat] for lat in run]}
+                       for run in runs]
+          print(len(date_line), "parts of the date line")
           lines = json.load(open("lines.json"))
-          lines = lines.get("geometries") or [f["geometry"] for f in lines.get("features", [])]
+          lines = (lines.get("geometries") or [f["geometry"] for f in lines.get("features", [])]) + date_line
           # Antarctica's sector labels first: they keep their places.
           labels = (json.load(open("antarctic-labels.json"))["features"]
                     + json.load(open("labels.json"))["features"])
@@ -248,6 +300,17 @@ jobs:
           # Inside 80° S the Peninsula's sector meets the interior along 20° W.
           if not any(near(-20.0, -85.0, g) for g in lines):
               sys.exit("no sector line at 20 W inside 80 S: shared edges lost?")
+          # The date line between +12 and −12 on the equator.
+          if not any(near(180.0, 0.0, g) for g in lines):
+              sys.exit("no date line at the equator")
+          # Every line ends on another, at a pole or on 180°: none stops in the open.
+          from collections import Counter
+          ends = Counter(tuple(part[i]) for g in lines
+                         for part in (g["coordinates"] if g["type"] == "MultiLineString" else [g["coordinates"]])
+                         for i in (0, -1))
+          open_ends = [e for e, n in ends.items() if n == 1 and abs(e[0]) < 179.99 and abs(e[1]) < 89.99]
+          if open_ends:
+              sys.exit(f"lines end in the open (lost shared sides?): {open_ends[:10]}")
           if len(names) < 300 or len(lines) < 20 or len(labels) < 5:
               sys.exit("too few zones, lines or labels: the source changed?")
           features = [

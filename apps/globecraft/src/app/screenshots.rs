@@ -1617,6 +1617,10 @@ fn time_zones_screenshot() {
         for (name, lat, lon, altitude) in [
             ("28-time-zones-americas", 25.0, -90.0, 9000.0),
             ("28-time-zones-asia", 30.0, 95.0, 9000.0),
+            // North of Greenland and the date line (user, 2026-11-08).
+            ("28-time-zones-greenland", 80.0, -40.0, 4000.0),
+            ("28-time-zones-date-line", 0.0, 180.0, 9000.0),
+            ("28-time-zones-date-line-north", 62.0, -175.0, 4000.0),
         ] {
             h.state_mut()
                 .run(
