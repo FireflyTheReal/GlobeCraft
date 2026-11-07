@@ -1,17 +1,14 @@
 //! The Time zones layer (roadmap 5, `REF-05`): zone borders over the globe and the
 //! local time under the cursor, at the app's time, in the status bar.
 use super::App;
-use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke};
+use eframe::egui::{self, Color32, Pos2, Rect, Shape};
 use globecraft_core::camera::Basis;
 use globecraft_core::layers::MapLayer;
+use globecraft_data::settings::map_style::{LabelType, LineStyle, LineType};
 use globecraft_data::timezones::TimeZones;
 use std::sync::Arc;
 
-const BORDER: Color32 = Color32::from_rgba_premultiplied(200, 150, 60, 200);
-const BORDER_POINTS: f32 = 1.2;
-const LABEL: Color32 = Color32::from_rgb(255, 205, 110);
 const LABEL_HALO: Color32 = Color32::from_rgba_premultiplied(10, 12, 16, 220);
-const LABEL_POINTS: f32 = 12.0;
 /// The row of whole-hour labels sits this far above the bottom of the view…
 const ROW_INSET_POINTS: f32 = 70.0;
 /// …or, when the globe does not reach the bottom, this share of the view's height
@@ -22,8 +19,24 @@ const ROW_SEARCH_STEP_POINTS: f32 = 10.0;
 /// of their stations, not the meridians' whole hours, and carry their own labels.
 const ROW_MAX_LAT_DEG: f64 = 58.0;
 
-/// What the borders were drawn for: the view, the zones and the map scale.
-type BordersKey = (Basis, Rect, usize, u32);
+/// How the zones are drawn: the line in the user's map style (Settings → Map style),
+/// the labels at its size in the line's colour, opaque, all at the map scale.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Look {
+    line: LineStyle,
+    label_points: f32,
+    scale: f32,
+}
+
+impl Look {
+    fn label_colour(&self) -> Color32 {
+        let [r, g, b, _] = self.line.color.0;
+        Color32::from_rgb(r, g, b)
+    }
+}
+
+/// What the borders were drawn for: the view, the zones and their look.
+type BordersKey = (Basis, Rect, usize, Look);
 
 /// The borders drawn for one view.
 #[derive(Default)]
@@ -38,11 +51,11 @@ impl TimeZoneShapes {
         basis: &Basis,
         rect: Rect,
         zones: &Arc<TimeZones>,
-        (scale, view): (f32, (f64, f64, f64)),
+        (look, view): (Look, (f64, f64, f64)),
     ) {
-        let key = (*basis, rect, Arc::as_ptr(zones) as usize, scale.to_bits());
+        let key = (*basis, rect, Arc::as_ptr(zones) as usize, look);
         if self.built.as_ref().is_none_or(|(built, _)| *built != key) {
-            self.built = Some((key, borders(painter, basis, rect, zones, scale, view)));
+            self.built = Some((key, borders(painter, basis, rect, zones, &look, view)));
         }
         if let Some((_, shapes)) = &self.built {
             // Labels are laid out again: kept galleys go stale when the font atlas
@@ -161,16 +174,14 @@ fn borders(
     basis: &Basis,
     rect: Rect,
     zones: &TimeZones,
-    scale: f32,
+    look: &Look,
     view: (f64, f64, f64),
 ) -> Vec<Shape> {
+    let scale = look.scale;
     let clip = rect.expand(globecraft_render::overlays::SEGMENT_CLIP_MARGIN_POINTS);
-    let stroke = Stroke::new(BORDER_POINTS * scale, BORDER);
     let mut shapes = Vec::new();
     let mut flush = |run: &mut Vec<Pos2>| {
-        if run.len() >= 2 {
-            shapes.push(Shape::line(std::mem::take(run), stroke));
-        }
+        super::live_layers::styled_line(&mut shapes, run, &look.line, scale, 1.0);
         run.clear();
     };
     for line in zones
@@ -202,7 +213,8 @@ fn borders(
     // whole hour, largest first), then the whole hours in a row across the lower part
     // of the view, as along the bottom of a time zone map. The file's come first: a
     // whole hour of the row nearby must not hide a sector's label of the same text.
-    let font = super::fonts::map_font(painter.ctx(), LABEL_POINTS * scale);
+    let font = super::fonts::map_font(painter.ctx(), look.label_points * scale);
+    let colour = look.label_colour();
     let mut taken: Vec<Rect> = Vec::new();
     let mut placed: Vec<(Pos2, &str)> = Vec::new();
     let row = row_latitude(basis, rect, scale)
@@ -228,7 +240,7 @@ fn borders(
         if !rect.contains(at) {
             continue;
         }
-        let galley = painter.layout_no_wrap(text.to_string(), font.clone(), LABEL);
+        let galley = painter.layout_no_wrap(text.to_string(), font.clone(), colour);
         let bounds = Rect::from_center_size(at, galley.size()).expand(4.0 * scale);
         let repeated = placed.iter().any(|(other, label)| {
             *label == &**text && other.distance(at) < SAME_LABEL_APART_POINTS * scale
@@ -263,10 +275,15 @@ impl App {
         let Some(zones) = self.live_time_zones.zones() else {
             return;
         };
-        let scale = self.settings.map_scale;
+        let style = &self.settings.map_style;
+        let look = Look {
+            line: *style.line(LineType::TimeZone),
+            label_points: style.labels.get(LabelType::TimeZone),
+            scale: self.settings.map_scale,
+        };
         let view = (self.cam.lat, self.cam.lon, self.cam.alt);
         self.time_zone_shapes
-            .paint(painter, basis, rect, &zones, (scale, view));
+            .paint(painter, basis, rect, &zones, (look, view));
     }
 
     /// The local time under the cursor at the app's time, as the status bar shows it:
@@ -333,8 +350,13 @@ mod tests {
             let mut shapes = 0;
             let _ = crate::app::test_ui::run(&ctx, raw, |ui| {
                 for _ in 0..10 {
+                    let look = Look {
+                        line: LineType::TimeZone.default_style(),
+                        label_points: 12.0,
+                        scale: 1.0,
+                    };
                     shapes =
-                        borders(ui.painter(), &basis, rect, &zones, 1.0, (48.0, 10.0, alt)).len();
+                        borders(ui.painter(), &basis, rect, &zones, &look, (48.0, 10.0, alt)).len();
                 }
             });
             println!(

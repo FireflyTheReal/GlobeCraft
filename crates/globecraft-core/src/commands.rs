@@ -738,7 +738,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "symbology",
         Settings,
         View,
-        r##"{"type":"object","properties":{"line":{"type":"string","enum":["country","state","municipal","disputed","major_road","minor_road","roadworks","railway","service_rail","subway","tram","ferry","runway","taxiway","river","canal","park"],"description":"Borders (country, state/province, municipal, disputed), roads (motorway to secondary, smaller roads, roadworks), transport (railways, yards and sidings, subways, trams, ferries, runways, taxiways), rivers, canals or park outlines"},"color":{"type":"string","description":"Hex colour #rrggbb or #rrggbbaa (aa is opacity)"},"width":{"type":"number","description":"Line width in points, 0.5..6"},"dash":{"type":"string","enum":["solid","dashed","dotted"]}},"required":["line"]}"##
+        r##"{"type":"object","properties":{"line":{"type":"string","enum":["country","state","municipal","disputed","major_road","minor_road","roadworks","railway","service_rail","subway","tram","ferry","runway","taxiway","river","canal","park","time_zone"],"description":"Borders (country, state/province, municipal, disputed), roads (motorway to secondary, smaller roads, roadworks), transport (railways, yards and sidings, subways, trams, ferries, runways, taxiways), rivers, canals, park outlines or time zone lines"},"color":{"type":"string","description":"Hex colour #rrggbb or #rrggbbaa (aa is opacity)"},"width":{"type":"number","description":"Line width in points, 0.5..6"},"dash":{"type":"string","enum":["solid","dashed","dotted"]}},"required":["line"]}"##
     ),
     command!(
         "style.labelSize",
@@ -746,7 +746,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "label_properties",
         Settings,
         View,
-        r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city","road"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
+        r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city","road","time_zone"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
     ),
     command!(
         "style.reset",

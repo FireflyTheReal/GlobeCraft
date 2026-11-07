@@ -403,19 +403,25 @@ impl App {
                 .cloned(),
         );
         self.satellite_selection
-            .set_drawn(geometry.satellites.iter().map(|projected| {
-                (
-                    projected.position,
-                    satellites[projected.source_index].norad.clone(),
-                )
-            }));
+            .set_drawn(
+                geometry
+                    .satellites
+                    .iter()
+                    .filter(|p| p.in_view)
+                    .map(|projected| {
+                        (
+                            projected.position,
+                            satellites[projected.source_index].norad.clone(),
+                        )
+                    }),
+            );
         self.paint_selected_satellite(
             painter,
             &geometry.input.view.basis,
             rect,
             geometry.input.satellite_heights,
         );
-        for projected in geometry.satellites.iter() {
+        for projected in geometry.satellites.iter().filter(|p| p.in_view) {
             let sat = &satellites[projected.source_index];
             let at = projected.position;
             if let Some(h) = hover {

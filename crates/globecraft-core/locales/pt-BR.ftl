@@ -1182,6 +1182,7 @@ settings-map-style-group-borders = Fronteiras
 settings-map-style-group-roads = Estradas
 settings-map-style-group-transport = Ferrovias, balsas e aeroportos
 settings-map-style-group-water-parks = Rios e parques
+settings-map-style-group-time-zones = Fusos horários
 settings-map-style-line-major-road = Rodovias e vias principais
 settings-map-style-line-minor-road = Vias menores e ruas
 settings-map-style-line-roadworks = Obras na via
@@ -1195,6 +1196,7 @@ settings-map-style-line-taxiway = Pistas de táxi
 settings-map-style-line-river = Rios
 settings-map-style-line-canal = Canais
 settings-map-style-line-park = Parques e áreas protegidas
+settings-map-style-line-time-zone = Linhas dos fusos horários
 
 settings-map-style-line-help = Limites municipais sobre uma divisa estadual usam o estilo dos estados, para que a troca de perto mantenha o mesmo visual.
 
@@ -1218,13 +1220,14 @@ settings-map-style-label-state = Estados e províncias
 
 settings-map-style-label-city = Cidades e municípios
 settings-map-style-label-road = Nomes de ruas
+settings-map-style-label-time-zone = Diferenças dos fusos horários
 
 settings-map-style-reset-action = Restaurar estilo do mapa
 
-cmd-style-line = Estilo dos limites
-cmd-style-line-help = Define a cor, a espessura e o traço das fronteiras de países, estados, municípios ou disputadas.
+cmd-style-line = Estilo das linhas do mapa
+cmd-style-line-help = Define a cor, a espessura e o traço de um tipo de linha do mapa: fronteiras, estradas, ferrovias e outros transportes, rios, contornos de parques ou linhas dos fusos horários.
 cmd-style-label-size = Tamanho dos nomes
-cmd-style-label-size-help = Define o tamanho da fonte dos nomes de países, estados ou cidades.
+cmd-style-label-size-help = Define o tamanho da fonte dos nomes de países, estados, cidades ou ruas, ou das diferenças dos fusos horários.
 cmd-style-reset = Restaurar estilo do mapa
 cmd-style-reset-help = Restaura as cores, espessuras, traços e tamanhos de nomes padrão.
 

@@ -182,6 +182,10 @@ pub struct ProjectedSatellite {
     /// The point on the ground below it, when that is in front of the camera.
     pub ground: Option<Pos2>,
     pub altitude_km: f64,
+    /// Whether the satellite itself is in the view. Satellites out of it are kept
+    /// when the ground below them is in it, for the line down to it (user,
+    /// 2026-11-08): only that line is drawn.
+    pub in_view: bool,
 }
 pub struct LiveGeometry {
     pub input: LiveInput,
@@ -415,17 +419,18 @@ fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
                 view.basis
                     .project(view.basis.surface_position(at.lat, at.lon), view.rect)?
             };
-            if !view.rect.contains(position) {
-                return None;
-            }
             let ground = view
                 .basis
                 .project(view.basis.surface_position(at.lat, at.lon), view.rect);
-            Some(ProjectedSatellite {
+            let in_view = view.rect.contains(position);
+            let ground_in_view =
+                input.satellite_heights && ground.is_some_and(|ground| view.rect.contains(ground));
+            (in_view || ground_in_view).then_some(ProjectedSatellite {
                 source_index,
                 position,
                 ground,
                 altitude_km: at.altitude_km,
+                in_view,
             })
         })
         .collect()

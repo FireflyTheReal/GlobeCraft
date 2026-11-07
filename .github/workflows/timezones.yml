@@ -66,8 +66,20 @@ jobs:
           # and mid-July of this year (summer time only ever adds).
           python3 - "$source" land.geojson ice-shelves.geojson <<'PY'
           import datetime, json, sys, zoneinfo
-          from shapely.geometry import box, mapping, shape
+          import shapely
+          from shapely import set_precision
+          from shapely.geometry import box as plain_box, mapping, shape
           from shapely.ops import unary_union
+
+          # Sectors share their straight edges only if both sides have the same points along
+          # them: the lines between zones are their shared edges. So every box has a point
+          # each half degree, and every result is snapped to a micro-degree grid.
+          STEP_DEG = 0.5
+          GRID_DEG = 1e-6
+          def box(west, south, east, north):
+              return plain_box(west, south, east, north).segmentize(STEP_DEG)
+          def snapped(geometry):
+              return set_precision(geometry, GRID_DEG)
 
           data = json.load(open(sys.argv[1]))
           year = datetime.date.today().year
@@ -124,13 +136,26 @@ jobs:
                       if isinstance(p, Polygon) and p.area >= MIN_LAND_DEG2]
               return unary_union(kept)
 
+          # The land data stops just short of the pole: everything beyond 89° S is ice.
           land = solid(unary_union([
               shape(f["geometry"]).intersection(box(-180, -90, 180, LIMIT))
               for name in sys.argv[2:]
               for f in json.load(open(name))["features"]
               if shape(f["geometry"]).bounds[1] < LIMIT
-          ]).buffer(0))
+          ] + [box(-180, -90, 180, -89)]).buffer(0))
+          # Its coasts end a few metres short of the antimeridian in places: on it they are.
+          def to_antimeridian(coords):
+              import numpy
+              coords = coords.copy()
+              near = numpy.abs(coords[:, 0]) > 179.999
+              coords[near, 0] = numpy.sign(coords[near, 0]) * 180.0
+              return coords
+          land = snapped(shapely.transform(land, to_antimeridian).buffer(0))
           south = box(-180, -90, 180, LIMIT)
+          # Likewise inlets of sea smaller than that join the land around them.
+          inlets = south.difference(land)
+          inlets = [p for p in getattr(inlets, "geoms", [inlets]) if p.area < MIN_LAND_DEG2]
+          land = snapped(unary_union([land] + inlets))
           features = []
           for feature in data["features"]:
               tz = feature["properties"]["tzid"]
@@ -144,17 +169,17 @@ jobs:
                   features.append(keyed(tz, feature["geometry"]))
           taken = None
           for west, east, low, high, tz, _ in REGIONS:
-              area = land.intersection(box(west, low, east, high))
+              area = snapped(land.intersection(box(west, low, east, high)))
               if taken is not None:
-                  area = area.difference(taken)
+                  area = snapped(area.difference(taken))
               if area.is_empty:
                   continue
               taken = area if taken is None else unary_union([taken, area])
               features.append(keyed(tz, area))
-          sea = south.difference(land)
+          sea = snapped(south.difference(land))
           for hour in range(-12, 13):
               west, east = max(hour * 15 - 7.5, -180), min(hour * 15 + 7.5, 180)
-              part = sea.intersection(box(west, -90, east, LIMIT))
+              part = snapped(sea.intersection(box(west, -90, east, LIMIT)))
               if not part.is_empty:
                   # Etc/GMT has the sign the other way round.
                   tz = "Etc/GMT" if hour == 0 else f"Etc/GMT{'-' if hour > 0 else '+'}{abs(hour)}"
@@ -220,6 +245,9 @@ jobs:
                          for part in parts for a, b in zip(part, part[1:]))
           if not any(near(-22.5, 0.0, g) for g in lines):
               sys.exit("no ocean meridian at 22.5 W: ocean zones missing?")
+          # Inside 80° S the Peninsula's sector meets the interior along 20° W.
+          if not any(near(-20.0, -85.0, g) for g in lines):
+              sys.exit("no sector line at 20 W inside 80 S: shared edges lost?")
           if len(names) < 300 or len(lines) < 20 or len(labels) < 5:
               sys.exit("too few zones, lines or labels: the source changed?")
           features = [

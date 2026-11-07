@@ -1182,6 +1182,7 @@ settings-map-style-group-borders = Borders
 settings-map-style-group-roads = Roads
 settings-map-style-group-transport = Railways, ferries and airports
 settings-map-style-group-water-parks = Rivers and parks
+settings-map-style-group-time-zones = Time zones
 settings-map-style-line-major-road = Motorways and main roads
 settings-map-style-line-minor-road = Smaller roads and streets
 settings-map-style-line-roadworks = Roadworks
@@ -1195,6 +1196,7 @@ settings-map-style-line-taxiway = Taxiways
 settings-map-style-line-river = Rivers
 settings-map-style-line-canal = Canals
 settings-map-style-line-park = Parks and protected areas
+settings-map-style-line-time-zone = Time zone lines
 
 settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
 
@@ -1218,13 +1220,14 @@ settings-map-style-label-state = States and provinces
 
 settings-map-style-label-city = Cities and towns
 settings-map-style-label-road = Street names
+settings-map-style-label-time-zone = Time zone offsets
 
 settings-map-style-reset-action = Reset map style
 
-cmd-style-line = Border style
-cmd-style-line-help = Set the color, width and dash of country, state, municipal or disputed borders.
+cmd-style-line = Map line style
+cmd-style-line-help = Set the color, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines.
 cmd-style-label-size = Name size
-cmd-style-label-size-help = Set the font size of country, state or city names.
+cmd-style-label-size-help = Set the font size of country, state, city or street names, or of the time zones' offsets.
 cmd-style-reset = Reset map style
 cmd-style-reset-help = Restore the default border colors, widths, dashes and name sizes.
 

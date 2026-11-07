@@ -37,6 +37,8 @@ pub enum LineType {
     Canal,
     /// Outlines of parks and protected areas.
     Park,
+    /// Where the standard time changes (the Time zones layer).
+    TimeZone,
 }
 
 /// How the line types are grouped in the settings.
@@ -46,18 +48,20 @@ pub enum LineGroup {
     Roads,
     Transport,
     WaterAndParks,
+    TimeZones,
 }
 impl LineGroup {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Borders,
         Self::Roads,
         Self::Transport,
         Self::WaterAndParks,
+        Self::TimeZones,
     ];
 }
 
 impl LineType {
-    pub const COUNT: usize = 17;
+    pub const COUNT: usize = 18;
     pub const ALL: [Self; Self::COUNT] = [
         Self::Country,
         Self::State,
@@ -76,6 +80,7 @@ impl LineType {
         Self::River,
         Self::Canal,
         Self::Park,
+        Self::TimeZone,
     ];
     pub fn code(self) -> &'static str {
         match self {
@@ -96,6 +101,7 @@ impl LineType {
             Self::River => "river",
             Self::Canal => "canal",
             Self::Park => "park",
+            Self::TimeZone => "time_zone",
         }
     }
     pub fn from_code(code: &str) -> Option<Self> {
@@ -113,6 +119,7 @@ impl LineType {
             | Self::Runway
             | Self::Taxiway => LineGroup::Transport,
             Self::River | Self::Canal | Self::Park => LineGroup::WaterAndParks,
+            Self::TimeZone => LineGroup::TimeZones,
         }
     }
     fn index(self) -> usize {
@@ -143,6 +150,8 @@ impl LineType {
             Self::River => line([78, 150, 235, 255], 1.6, DashStyle::Solid),
             Self::Canal => line([78, 150, 235, 255], 1.1, DashStyle::Solid),
             Self::Park => line([92, 180, 96, 204], 1.2, DashStyle::Dashed),
+            // Amber, as on time zone maps; its names take the same colour.
+            Self::TimeZone => line([255, 190, 76, 200], 1.2, DashStyle::Solid),
         }
     }
 }
@@ -155,15 +164,24 @@ pub enum LabelType {
     City,
     /// Street and road names, written along the roads.
     Road,
+    /// The time zones' offsets (`+1`, `−3:30`).
+    TimeZone,
 }
 impl LabelType {
-    pub const ALL: [Self; 4] = [Self::Country, Self::State, Self::City, Self::Road];
+    pub const ALL: [Self; 5] = [
+        Self::Country,
+        Self::State,
+        Self::City,
+        Self::Road,
+        Self::TimeZone,
+    ];
     pub fn code(self) -> &'static str {
         match self {
             Self::Country => "country",
             Self::State => "state",
             Self::City => "city",
             Self::Road => "road",
+            Self::TimeZone => "time_zone",
         }
     }
     pub fn from_code(code: &str) -> Option<Self> {
@@ -259,6 +277,7 @@ pub struct LabelSizes {
     pub state_points: f32,
     pub city_points: f32,
     pub road_points: f32,
+    pub time_zone_points: f32,
 }
 impl LabelSizes {
     pub fn get(self, kind: LabelType) -> f32 {
@@ -267,6 +286,7 @@ impl LabelSizes {
             LabelType::State => self.state_points,
             LabelType::City => self.city_points,
             LabelType::Road => self.road_points,
+            LabelType::TimeZone => self.time_zone_points,
         }
     }
     pub fn set(&mut self, kind: LabelType, size: f32) {
@@ -275,6 +295,7 @@ impl LabelSizes {
             LabelType::State => &mut self.state_points,
             LabelType::City => &mut self.city_points,
             LabelType::Road => &mut self.road_points,
+            LabelType::TimeZone => &mut self.time_zone_points,
         } = size;
     }
 }
@@ -301,6 +322,7 @@ impl Default for MapStyle {
                 state_points: 10.0,
                 city_points: 9.0,
                 road_points: 9.5,
+                time_zone_points: 12.0,
             },
         }
     }
@@ -363,7 +385,9 @@ mod tests {
         style.line_mut(LineType::Country).width_points = 3.0;
         style.line_mut(LineType::Ferry).dash = DashStyle::Solid;
         style.line_mut(LineType::Park).color = Rgba([1, 2, 3, 4]);
+        style.line_mut(LineType::TimeZone).width_points = 2.5;
         style.labels.city_points = 14.0;
+        style.labels.time_zone_points = 16.0;
         let json = serde_json::to_value(style).unwrap();
         let mut restored = MapStyle::default();
         restored.apply(&json);

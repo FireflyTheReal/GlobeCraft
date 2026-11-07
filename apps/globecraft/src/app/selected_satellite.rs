@@ -19,7 +19,6 @@ const GAP_POINTS: f32 = 6.0;
 /// The selected satellite's symbol, this much larger than the others.
 const SELECTED_SCALE: f32 = 1.8;
 const SYMBOL_POINTS: f32 = 5.0;
-const RING: Color32 = Color32::WHITE;
 /// Clicks this close to a satellite pick it.
 const PICK_RADIUS_POINTS: f32 = 13.0;
 const CARD_MARGIN_POINTS: f32 = 12.0;
@@ -160,11 +159,6 @@ impl App {
             .and_then(|at| orbit_point(basis, rect, &at, heights))
         {
             let size = SYMBOL_POINTS * SELECTED_SCALE * scale;
-            shapes.push(Shape::circle_stroke(
-                at,
-                size * 1.6,
-                Stroke::new(1.5 * scale, RING),
-            ));
             shapes.extend(satellite_symbol(satellite.group, at, size, scale));
         }
         painter.extend(shapes);

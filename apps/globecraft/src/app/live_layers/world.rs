@@ -458,15 +458,29 @@ fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Sha
         if projected.altitude_km > LEASH_MAX_ALTITUDE_KM {
             continue;
         }
-        if (ground - projected.position).length() >= LEASH_MIN_POINTS * scale {
+        if (ground - projected.position).length() < LEASH_MIN_POINTS * scale {
+            continue;
+        }
+        // Drawn whenever the ground below is in view, the satellite in it or not.
+        let clip = geometry
+            .input
+            .view
+            .rect
+            .expand(globecraft_render::overlays::SEGMENT_CLIP_MARGIN_POINTS);
+        let ends = [ground, projected.position].map(|p| glam::DVec2::new(p.x.into(), p.y.into()));
+        if let Some(segment) = globecraft_render::overlays::clip_segment(ends, clip) {
             let colour = satellite_colour(satellites[projected.source_index].group);
             shapes.push(Shape::line_segment(
-                [ground, projected.position],
+                segment,
                 Stroke::new(scale, colour.gamma_multiply(LEASH_ALPHA)),
             ));
         }
     }
-    for (index, projected) in geometry.satellites.iter().enumerate() {
+    let in_view = geometry
+        .satellites
+        .iter()
+        .filter(|projected| projected.in_view);
+    for (index, projected) in in_view.enumerate() {
         let satellite = &satellites[projected.source_index];
         shapes.extend(satellite_symbol(
             satellite.group,

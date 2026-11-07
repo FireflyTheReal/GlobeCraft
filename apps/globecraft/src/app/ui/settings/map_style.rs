@@ -1,5 +1,5 @@
-//! Map style: colour, width and dash per line type (borders, roads, transport, rivers
-//! and parks), and name sizes.
+//! Map style: colour, width and dash per line type (borders, roads, transport, rivers,
+//! parks and time zones), and name sizes.
 use crate::app::App;
 use eframe::egui::{self, Color32};
 use globecraft_data::settings::map_style::{
@@ -30,6 +30,7 @@ fn line_name(kind: LineType) -> &'static str {
         LineType::River => "settings-map-style-line-river",
         LineType::Canal => "settings-map-style-line-canal",
         LineType::Park => "settings-map-style-line-park",
+        LineType::TimeZone => "settings-map-style-line-time-zone",
     }
 }
 
@@ -39,6 +40,7 @@ fn group_name(group: LineGroup) -> &'static str {
         LineGroup::Roads => "settings-map-style-group-roads",
         LineGroup::Transport => "settings-map-style-group-transport",
         LineGroup::WaterAndParks => "settings-map-style-group-water-parks",
+        LineGroup::TimeZones => "settings-map-style-group-time-zones",
     }
 }
 
@@ -56,6 +58,7 @@ fn label_name(kind: LabelType) -> &'static str {
         LabelType::State => "settings-map-style-label-state",
         LabelType::City => "settings-map-style-label-city",
         LabelType::Road => "settings-map-style-label-road",
+        LabelType::TimeZone => "settings-map-style-label-time-zone",
     }
 }
 
@@ -78,15 +81,18 @@ pub(super) const KEYWORDS: &[&str] = &[
     "settings-map-style-line-river",
     "settings-map-style-line-canal",
     "settings-map-style-line-park",
+    "settings-map-style-line-time-zone",
     "settings-map-style-group-roads",
     "settings-map-style-group-transport",
     "settings-map-style-group-water-parks",
+    "settings-map-style-group-time-zones",
     "settings-map-style-color-label",
     "settings-map-style-width-label",
     "settings-map-style-dash-label",
     "settings-map-style-labels-title",
     "settings-map-style-label-city",
     "settings-map-style-label-road",
+    "settings-map-style-label-time-zone",
 ];
 
 impl App {
