@@ -82,6 +82,9 @@ impl App {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             credits.push(OSM_TILES_CREDIT.to_owned());
         }
+        if earth && self.layer(MapLayer::SeaNames) && self.live_marine_names.names().is_some() {
+            credits.push(lg.text("sea-names-credit").to_owned());
+        }
         if self.layer(MapLayer::TimeZones) && self.live_time_zones.zones().is_some() {
             credits.push(lg.text("timezones-credit").to_owned());
         }

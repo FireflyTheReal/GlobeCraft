@@ -1478,12 +1478,25 @@ fn ocean_presets_screenshot() {
             .run("data.add", json!({"preset": preset}))
             .expect("preset");
     }
-    let _ = h.state_mut().run(
-        "camera.set",
-        json!({"lat": 50.0, "lon": -10.0, "altitude_km": 4500.0}),
-    );
-    settle(&mut h, 12.0);
-    save(&mut h, &dir, "ocean-presets");
+    // GLOBECRAFT_SHOT_VIEWS: `lat,lon,alt;…` (default: the North Atlantic).
+    let views = std::env::var("GLOBECRAFT_SHOT_VIEWS").unwrap_or_else(|_| "50,-10,4500".into());
+    for (index, view) in views.split(';').enumerate() {
+        let v: Vec<f64> = view
+            .split(',')
+            .filter_map(|n| n.trim().parse().ok())
+            .collect();
+        let _ = h.state_mut().run(
+            "camera.set",
+            json!({"lat": v[0], "lon": v[1], "altitude_km": v[2]}),
+        );
+        settle(&mut h, 12.0);
+        let name = if index == 0 {
+            "ocean-presets".to_owned()
+        } else {
+            format!("ocean-presets-{index}")
+        };
+        save(&mut h, &dir, &name);
+    }
 }
 
 /// The About window with the logo, light and dark (`about-<theme>`).

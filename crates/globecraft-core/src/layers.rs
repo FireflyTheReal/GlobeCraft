@@ -45,6 +45,9 @@ pub enum MapLayer {
     Aurora,
     /// Time zone borders, and the local time under the cursor.
     TimeZones,
+    /// Names of the oceans, seas, exclusive economic zones and undersea features
+    /// (Marine Regions).
+    SeaNames,
 }
 
 /// Where a layer is listed in the Layers pane and the ribbon.
@@ -81,7 +84,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -110,6 +113,7 @@ impl MapLayer {
         Self::PointsOfInterest,
         Self::Peaks,
         Self::Waters,
+        Self::SeaNames,
         Self::Parks,
     ];
 
@@ -132,6 +136,7 @@ impl MapLayer {
             Self::Clouds => "clouds",
             Self::Aurora => "aurora",
             Self::TimeZones => "time_zones",
+            Self::SeaNames => "sea_names",
             Self::Flights => "flights",
             Self::Vessels => "vessels",
             Self::Satellites => "satellites",
@@ -171,6 +176,7 @@ impl MapLayer {
             Self::Clouds => "layers-clouds-toggle",
             Self::Aurora => "layers-aurora-toggle",
             Self::TimeZones => "layers-timezones-toggle",
+            Self::SeaNames => "layers-sea-names-toggle",
             Self::Flights => "layers-flights-toggle",
             Self::Vessels => "layers-vessels-toggle",
             Self::Satellites => "layers-satellites-toggle",
@@ -216,6 +222,7 @@ impl MapLayer {
             Self::PointsOfInterest => "poi",
             Self::Peaks => "peak",
             Self::Waters => "river",
+            Self::SeaNames => "river",
             Self::Parks => "park",
         }
     }
@@ -229,6 +236,7 @@ impl MapLayer {
             | Self::PointsOfInterest
             | Self::Peaks
             | Self::Waters
+            | Self::SeaNames
             | Self::Parks => LayerGroup::Geography,
             Self::Terrain | Self::Grid | Self::GridLabels | Self::TimeZones => LayerGroup::Globe,
             Self::Atmosphere

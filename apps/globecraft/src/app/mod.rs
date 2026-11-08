@@ -59,6 +59,7 @@ mod live_geometry;
 mod live_layers;
 mod live_maps;
 mod long_press;
+mod marine_names;
 mod measure;
 #[cfg(any(target_os = "macos", test))]
 mod menu;
@@ -167,6 +168,7 @@ pub(crate) struct App {
     live_aurora: globecraft_data::aurora::LiveAurora,
     live_airports: globecraft_data::airports::LiveAirports,
     live_time_zones: globecraft_data::timezones::LiveTimeZones,
+    live_marine_names: globecraft_data::marine_names::LiveMarineNames,
     time_zone_shapes: timezones::TimeZoneShapes,
     aurora_shapes: live_layers::AuroraShapes,
     traffic: traffic::TrafficOverlay,
@@ -415,6 +417,7 @@ impl App {
             live_aurora: globecraft_data::aurora::LiveAurora::default(),
             live_airports: globecraft_data::airports::LiveAirports::default(),
             live_time_zones: globecraft_data::timezones::LiveTimeZones::default(),
+            live_marine_names: globecraft_data::marine_names::LiveMarineNames::default(),
             time_zone_shapes: timezones::TimeZoneShapes::default(),
             aurora_shapes: live_layers::AuroraShapes::default(),
             traffic: traffic::TrafficOverlay::default(),
@@ -663,6 +666,7 @@ impl eframe::App for App {
             move || airports_wake.request_repaint(),
         );
         self.update_time_zones(ctx, earth);
+        self.update_marine_names(ctx, earth);
         let transport_wake = ctx.clone();
         self.transport_tiles.update(
             &self.runtime,

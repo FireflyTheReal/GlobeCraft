@@ -82,6 +82,45 @@ fn styled(template: String, style: &str) -> String {
     template.replace("&STYLES=&", &format!("&STYLES={style}&"))
 }
 
+/// A Marine Regions layer in one of its line styles (`""` keeps its own style).
+fn marine_regions(layer: &str, style: &str, max_zoom: u8) -> UserSource {
+    let template = wms_template(MARINE_REGIONS_WMS, &format!("MarineRegions:{layer}"));
+    UserSource::Tiles {
+        template: if style.is_empty() {
+            template
+        } else {
+            styled(template, style)
+        },
+        min_zoom: 0,
+        max_zoom,
+        tile_px: 256,
+    }
+}
+
+fn territorial_seas() -> UserSource {
+    marine_regions("eez_12nm", "line_orange", 12)
+}
+
+fn contiguous_zones() -> UserSource {
+    marine_regions("eez_24nm", "Line_blue_green", 12)
+}
+
+fn continental_shelves() -> UserSource {
+    marine_regions("ecs_boundaries", "", 10)
+}
+
+fn marine_ecosystems() -> UserSource {
+    marine_regions("lme", "", 9)
+}
+
+fn fishing_areas() -> UserSource {
+    marine_regions("fao", "Line_green", 9)
+}
+
+fn marine_heritage() -> UserSource {
+    marine_regions("worldheritagemarineprogramme", "", 12)
+}
+
 fn eez_boundaries() -> UserSource {
     UserSource::Tiles {
         template: styled(
@@ -240,6 +279,90 @@ pub static PRESETS: &[Preset] = &[
         source: sea_areas,
     },
     Preset {
+        code: "territorial_seas",
+        name_key: "preset-territorial",
+        help_key: "preset-territorial-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org Maritime Boundaries",
+        opacity: 1.0,
+        key: None,
+        color: "#ff9a3c",
+        source: territorial_seas,
+    },
+    Preset {
+        code: "contiguous_zones",
+        name_key: "preset-contiguous",
+        help_key: "preset-contiguous-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org Maritime Boundaries",
+        opacity: 1.0,
+        key: None,
+        color: "#2fb5b0",
+        source: contiguous_zones,
+    },
+    Preset {
+        code: "continental_shelves",
+        name_key: "preset-shelves",
+        help_key: "preset-shelves-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org Extended Continental Shelves",
+        opacity: 1.0,
+        key: None,
+        color: "#c8c8c8",
+        source: continental_shelves,
+    },
+    Preset {
+        code: "marine_ecosystems",
+        name_key: "preset-lme",
+        help_key: "preset-lme-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org Large Marine Ecosystems",
+        opacity: 1.0,
+        key: None,
+        color: "#e0303c",
+        source: marine_ecosystems,
+    },
+    Preset {
+        code: "fishing_areas",
+        name_key: "preset-fao",
+        help_key: "preset-fao-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org FAO Major Fishing Areas",
+        opacity: 1.0,
+        key: None,
+        color: "#4fd04f",
+        source: fishing_areas,
+    },
+    Preset {
+        code: "marine_heritage",
+        name_key: "preset-heritage-marine",
+        help_key: "preset-heritage-marine-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org World Marine Heritage Sites",
+        opacity: 1.0,
+        key: None,
+        color: "#40e0e0",
+        source: marine_heritage,
+    },
+    Preset {
         code: "gibs_true_colour",
         name_key: "preset-gibs",
         help_key: "preset-gibs-help",
@@ -351,7 +474,15 @@ mod tests {
                         "{}",
                         preset.code
                     );
-                    if preset.code.starts_with("eez") || preset.code.starts_with("iho") {
+                    if [
+                        "eez_boundaries",
+                        "iho_sea_areas",
+                        "territorial_seas",
+                        "contiguous_zones",
+                        "fishing_areas",
+                    ]
+                    .contains(&preset.code)
+                    {
                         assert!(!template.contains("&STYLES=&"), "{}: unstyled", preset.code);
                     }
                 }

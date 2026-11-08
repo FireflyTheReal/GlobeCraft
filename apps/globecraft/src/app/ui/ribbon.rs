@@ -361,6 +361,7 @@ impl App {
             });
             col(ui, |ui| {
                 self.layer_small(ui, MapLayer::Waters);
+                self.layer_small(ui, MapLayer::SeaNames);
                 self.layer_small(ui, MapLayer::Parks);
             });
         });
@@ -905,6 +906,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::PointsOfInterest => "ribbon-layer-poi",
         MapLayer::Peaks => "ribbon-layer-peaks",
         MapLayer::Waters => "ribbon-layer-waters",
+        MapLayer::SeaNames => "ribbon-layer-sea-names",
         MapLayer::Parks => "ribbon-layer-parks",
     })
 }

@@ -544,6 +544,10 @@ Every item not fully done, in the order to take them. Done and superseded items 
 not repeated here; the numbers point to the rows above. Reorder freely: this is a
 working queue, not a promise.
 
+**0. Immediate: layout redesign** (user, 2026-11-08; plan `docs/plans/2026-11-08-layout-redesign.md`)
+
+0. Keep the look, reorganise the layout: ribbon groups with Fusion 360 style drop-downs (every tool of a group with its shortcut, `⋮` to pin to the toolbar or to shortcuts and to change the shortcut), one panel system (docked panes, anchored cards, dialogs with one look) replacing the eleven floating windows (Settings, Add Data, flight and satellite cards, legend, …), and fixed zones around the globe's own controls
+
 **1. Check on the Mac what just landed** (needs the user)
 
 1. Flights: updates across the view, a selected flight's route and card (5); time zones as a classic map (5)
@@ -582,7 +586,7 @@ working queue, not a promise.
 
 **6. Layers (section 5) and the adapters they need**
 
-22. Quick presets: Natural Earth urban areas glow, ~~EEZ and high seas borders~~ (2026-11-08: Marine Regions EEZ boundaries and IHO sea areas in the library; the EEZ's outer limits mark the high seas, whose own layer draws nothing visible), undersea feature names (no keyless map service found: Marine Regions and GEBCO serve none), ~~GIBS daily imagery and the GEBCO seafloor~~ (library presets since 2026-11-01); the urban glow needs filled polygons, which user layers do not draw yet
+22. Quick presets: Natural Earth urban areas glow, ~~EEZ and high seas borders~~ (2026-11-08: Marine Regions EEZ boundaries and IHO sea areas in the library; the EEZ's outer limits mark the high seas, whose own layer draws nothing visible), ~~undersea feature names~~ (2026-11-08: the Marine Regions gazetteer has them with the names of oceans, seas and EEZs; `marine-names.yml` publishes them into map-data and the Sea and undersea names layer draws them by size; six more Marine Regions layers joined the library: territorial seas, contiguous zones, extended continental shelves, large marine ecosystems, FAO fishing areas, World Heritage marine sites), ~~GIBS daily imagery and the GEBCO seafloor~~ (library presets since 2026-11-01); the urban glow needs filled polygons, which user layers do not draw yet
 23. ~~D key manager, then active fires (FIRMS)~~ done 2026-11-08; the other keyed sources (OpenWeatherMap, AISstream, OpenAQ, ENTSO-E) remain
 24. ~~Hurricane tracks~~ (2026-11-08: GDACS disaster alerts in the library, cyclones with earthquakes, floods, volcanoes, droughts and wildfires, one point per event; NHC track lines need KMZ per storm), lightning (Blitzortung's terms forbid reuse; no open alternative found), ~~power plants~~ (WRI Global Power Plant Database, 35,000 plants) and wind turbines (only the US database is open), ~~forest loss~~ (library since 2026-11-01), port traffic (needs a keyed AIS source)
 25. Heritage (GeoNames filter, Pleiades, Wikidata sites), species at the cursor, the Stonehenge LiDAR showcase

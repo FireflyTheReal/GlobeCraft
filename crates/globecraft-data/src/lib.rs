@@ -32,6 +32,7 @@ pub mod aurora;
 pub mod keys;
 pub mod links;
 pub mod live_maps;
+pub mod marine_names;
 pub mod model_http;
 pub mod planet;
 pub mod poi;

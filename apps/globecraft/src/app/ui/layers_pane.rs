@@ -900,6 +900,18 @@ impl App {
                     "https://www.digitraffic.fi/en/marine-traffic/",
                 );
             }
+            MapLayer::SeaNames => {
+                if let Some(error) = self.live_marine_names.error() {
+                    note(ui, t, &error);
+                } else {
+                    note(ui, t, lang.text("sea-names-help"));
+                }
+                credit(
+                    ui,
+                    lang.text("sea-names-source"),
+                    "https://www.marineregions.org/",
+                );
+            }
             MapLayer::TimeZones => {
                 note(ui, t, &self.live_time_zones.status(lang));
                 credit(

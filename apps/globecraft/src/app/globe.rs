@@ -584,6 +584,7 @@ impl App {
             };
             self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect);
             self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
+            self.paint_marine_names(&painter, &display_basis, rect);
             self.paint_antarctic_claims(&painter, &display_basis, rect);
             // All map names share one screen, placed in priority order, each layer
             // where the ones before it left room (painting keeps its own order):
