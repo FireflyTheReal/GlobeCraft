@@ -410,7 +410,12 @@ impl App {
         };
         let ms = self.settings.map_scale;
         let hover = painter.ctx().pointer_hover_pos();
-        let mut nearest: Option<(&globecraft_data::satellites::Satellite, egui::Pos2, f64)> = None;
+        let mut nearest: Option<(
+            &globecraft_data::satellites::Satellite,
+            egui::Pos2,
+            f64,
+            &Vec<usize>,
+        )> = None;
         let mut distance = (13.0 * ms).powi(2);
         painter.extend(
             self.world_shapes
@@ -444,12 +449,16 @@ impl App {
                 let d = (h - at).length_sq();
                 if d < distance {
                     distance = d;
-                    nearest = Some((sat, at, projected.altitude_km));
+                    nearest = Some((sat, at, projected.altitude_km, &projected.together));
                 }
             }
         }
-        if let Some((sat, at, altitude_km)) = nearest {
-            let text = world::satellite_tooltip(self.lang, sat, Some(altitude_km));
+        if let Some((sat, at, altitude_km, together)) = nearest {
+            let together: Vec<&str> = together
+                .iter()
+                .map(|index| satellites[*index].name.as_str())
+                .collect();
+            let text = world::satellite_tooltip(self.lang, sat, Some(altitude_km), &together);
             hover_label(painter, rect, at, &text, ms);
         }
     }

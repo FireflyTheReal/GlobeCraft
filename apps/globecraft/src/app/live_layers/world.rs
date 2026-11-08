@@ -412,6 +412,7 @@ pub(super) fn satellite_tooltip(
     lang: Lang,
     satellite: &Satellite,
     altitude_km: Option<f64>,
+    together: &[&str],
 ) -> String {
     let period = satellite
         .orbit
@@ -421,7 +422,7 @@ pub(super) fn satellite_tooltip(
         .or_else(|| satellite.orbit.altitude_km())
         .map_or_else(|| "—".to_owned(), |km| format!("{km:.0} km"));
     let inclination = format!("{:.1}°", satellite.orbit.inclination_deg);
-    lang.format(
+    let text = lang.format(
         "satellites-hover-tooltip",
         &[
             ("name", satellite.name.as_str().into()),
@@ -440,7 +441,15 @@ pub(super) fn satellite_tooltip(
                 .into(),
             ),
         ],
-    )
+    );
+    if together.is_empty() {
+        return text;
+    }
+    let with = lang.format(
+        "satellites-together",
+        &[("names", together.join(", ").into())],
+    );
+    format!("{text}\n{with}")
 }
 
 fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape> {
@@ -491,10 +500,16 @@ fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Sha
         if geometry.input.view.altitude_km < SATELLITE_LABEL_ALTITUDE_KM
             && index < SATELLITE_LABEL_LIMIT
         {
+            // Docked craft are drawn as the station: "+2" says how many.
+            let name = if projected.together.is_empty() {
+                satellite.name.clone()
+            } else {
+                format!("{} +{}", satellite.name, projected.together.len())
+            };
             shapes.push(label(
                 painter,
                 projected.position,
-                &satellite.name,
+                &name,
                 scale,
                 satellite_colour(satellite.group),
             ));
@@ -592,7 +607,7 @@ mod tests {
             group: SatelliteGroup::Station,
             sgp4: None,
         };
-        let text = satellite_tooltip(Lang::En, &satellite, None);
+        let text = satellite_tooltip(Lang::En, &satellite, None, &[]);
         assert!(text.contains("Period 96.0 min"), "{text}");
         assert!(text.contains("Altitude 574 km"), "{text}");
         assert!(text.contains("Inclination 51.6°"), "{text}");

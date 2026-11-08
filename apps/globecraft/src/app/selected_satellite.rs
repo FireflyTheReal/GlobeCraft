@@ -221,6 +221,27 @@ impl App {
                 lines.push(lang.format("satellite-card-over", &[("place", place.into())]));
             }
         }
+        // The craft docked to it (or flying with it), drawn as this one.
+        if let Some(here) = position {
+            let together: Vec<&str> = self
+                .live_satellites
+                .snapshot()
+                .iter()
+                .filter(|other| other.norad != satellite.norad)
+                .filter(|other| {
+                    other.position(now).is_some_and(|there| {
+                        here.distance_km(&there) < globecraft_data::satellites::TOGETHER_KM
+                    })
+                })
+                .map(|other| other.name.as_str())
+                .collect();
+            if !together.is_empty() {
+                lines.push(lang.format(
+                    "satellites-together",
+                    &[("names", together.join(", ").into())],
+                ));
+            }
+        }
         if let Some(minutes) = satellite.orbit.period_minutes() {
             lines.push(lang.format(
                 "satellite-card-orbit",

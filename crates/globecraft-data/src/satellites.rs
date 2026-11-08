@@ -105,6 +105,77 @@ pub struct SatellitePosition {
     pub altitude_km: f64,
 }
 
+/// Craft closer than this fly together: docked to a station (a Soyuz, a Progress or a
+/// Dragon at the ISS share its orbit to within metres) or in close formation. They
+/// are drawn as one (user, 2026-11-08: the ISS and a docked Soyuz overlapped).
+pub const TOGETHER_KM: f64 = 5.0;
+
+impl SatellitePosition {
+    /// The straight distance to another, km (on a round Earth: plenty for "together").
+    pub fn distance_km(&self, other: &Self) -> f64 {
+        let point = |at: &Self| {
+            let (lat, lon) = (at.lat.to_radians(), at.lon.to_radians());
+            let radius = MEAN_EARTH_RADIUS_KM + at.altitude_km;
+            [
+                radius * lat.cos() * lon.cos(),
+                radius * lat.cos() * lon.sin(),
+                radius * lat.sin(),
+            ]
+        };
+        let (a, b) = (point(self), point(other));
+        ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+    }
+}
+
+/// Which of `positions` fly together (within [`TOGETHER_KM`]): for each, the index
+/// of the one its group is drawn as (the oldest, lowest catalogue number: the station
+/// rather than the craft docked to it), itself when alone. `norads` gives each
+/// catalogue number.
+pub fn together(positions: &[SatellitePosition], norads: &[&str]) -> Vec<usize> {
+    let mut leader: Vec<usize> = (0..positions.len()).collect();
+    fn root(leader: &mut [usize], mut i: usize) -> usize {
+        while leader[i] != i {
+            leader[i] = leader[leader[i]];
+            i = leader[i];
+        }
+        i
+    }
+    // Only neighbours in height can be together: sorted by it, each is compared with
+    // those less than TOGETHER_KM higher.
+    let mut order: Vec<usize> = (0..positions.len()).collect();
+    order.sort_by(|a, b| {
+        positions[*a]
+            .altitude_km
+            .total_cmp(&positions[*b].altitude_km)
+    });
+    for (k, &i) in order.iter().enumerate() {
+        for &j in &order[k + 1..] {
+            if positions[j].altitude_km - positions[i].altitude_km > TOGETHER_KM {
+                break;
+            }
+            if positions[i].distance_km(&positions[j]) < TOGETHER_KM {
+                let (a, b) = (root(&mut leader, i), root(&mut leader, j));
+                if a != b {
+                    leader[b] = a;
+                }
+            }
+        }
+    }
+    // Each group drawn as its member with the lowest catalogue number.
+    let number = |i: usize| norads[i].parse::<u64>().unwrap_or(u64::MAX);
+    let mut drawn_as: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for i in 0..positions.len() {
+        let group = root(&mut leader, i);
+        let best = drawn_as.entry(group).or_insert(i);
+        if (number(i), i) < (number(*best), *best) {
+            *best = i;
+        }
+    }
+    (0..positions.len())
+        .map(|i| drawn_as[&root(&mut leader, i)])
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub struct Satellite {
     pub name: String,
@@ -298,6 +369,25 @@ fn merged(groups: impl IntoIterator<Item = Vec<Satellite>>) -> Arc<[Satellite]> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn docked_craft_are_drawn_as_the_station() {
+        let at = |lat: f64, lon: f64, altitude_km: f64| SatellitePosition {
+            lat,
+            lon,
+            altitude_km,
+        };
+        // The ISS, a Soyuz 300 m away, a Progress 2 km away, and a satellite 50 km off.
+        let positions = [
+            at(10.0, 20.0, 420.3),
+            at(10.0, 20.0, 420.0),
+            at(10.0, 20.018, 420.1),
+            at(10.45, 20.0, 420.0),
+        ];
+        let norads = ["63204", "25544", "62030", "40000"];
+        assert_eq!(together(&positions, &norads), [1, 1, 1, 3]);
+        assert!((positions[0].distance_km(&positions[1]) - 0.3).abs() < 1e-9);
+    }
+
     use super::*;
 
     /// An ISS element set (CelesTrak OMM JSON) propagated by Vallado's SGP4 in Python

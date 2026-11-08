@@ -2038,6 +2038,12 @@ fn live_symbols_screenshot() {
                 "32-satellite-orbit-tilted",
                 json!({"lat": at.lat, "lon": at.lon, "altitude_km": 2_500.0, "tilt_deg": 65.0}),
             ),
+            // The craft docked to it drawn as the ISS, "+n" and the card listing them
+            // (user, 2026-11-08).
+            (
+                "32-satellite-docked",
+                json!({"lat": at.lat, "lon": at.lon, "altitude_km": 800.0, "tilt_deg": 0.0}),
+            ),
         ] {
             h.state_mut().run("camera.set", camera).expect("camera");
             settle(&mut h, 4.0);

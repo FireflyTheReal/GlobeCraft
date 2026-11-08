@@ -570,6 +570,7 @@ vessels-fallback-status = { $count } navios • contingência Fintraffic (só Fi
 vessels-fallback-source = Fintraffic (contingência)
 satellites-loading-status = Carregando órbitas…
 satellites-loaded-status = { $count } satélites • previsões SGP4 a partir dos elementos da CelesTrak (não telemetria)
+satellites-together = Junto com: { $names }
 satellite-group-station = Estações espaciais
 satellite-group-navigation = Navegação (GPS, Galileo, GLONASS, BeiDou)
 satellite-group-weather = Meteorológicos

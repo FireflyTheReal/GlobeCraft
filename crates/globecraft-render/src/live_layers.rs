@@ -186,6 +186,9 @@ pub struct ProjectedSatellite {
     /// when the ground below them is in it, for the line down to it (user,
     /// 2026-11-08): only that line is drawn.
     pub in_view: bool,
+    /// The craft flying with it (docked, or in close formation), drawn as this one:
+    /// their indices in the satellites.
+    pub together: Vec<usize>,
 }
 pub struct LiveGeometry {
     pub input: LiveInput,
@@ -405,11 +408,29 @@ fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
         return Vec::new();
     };
     let view = input.view;
-    satellites
+    // Craft flying together are drawn once, as the station they are docked to.
+    let now: Vec<(usize, globecraft_data::satellites::SatellitePosition)> = satellites
         .iter()
         .enumerate()
-        .filter_map(|(source_index, sat)| {
-            let at = sat.position(input.unix_secs)?;
+        .filter_map(|(index, sat)| sat.position(input.unix_secs).map(|at| (index, at)))
+        .collect();
+    let positions: Vec<_> = now.iter().map(|(_, at)| *at).collect();
+    let norads: Vec<&str> = now
+        .iter()
+        .map(|(index, _)| satellites[*index].norad.as_str())
+        .collect();
+    let drawn_as = globecraft_data::satellites::together(&positions, &norads);
+    let mut together: Vec<Vec<usize>> = vec![Vec::new(); now.len()];
+    for (member, leader) in drawn_as.iter().enumerate() {
+        if member != *leader {
+            together[*leader].push(now[member].0);
+        }
+    }
+    now.iter()
+        .enumerate()
+        .filter(|(k, _)| drawn_as[*k] == *k)
+        .filter_map(|(k, (source_index, at))| {
+            let (source_index, at) = (*source_index, *at);
             let position = if input.satellite_heights {
                 view.basis.project_above(
                     view.basis.raised_position(at.lat, at.lon, at.altitude_km),
@@ -431,6 +452,7 @@ fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
                 ground,
                 altitude_km: at.altitude_km,
                 in_view,
+                together: std::mem::take(&mut together[k]),
             })
         })
         .collect()

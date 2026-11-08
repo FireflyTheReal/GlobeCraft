@@ -570,6 +570,7 @@ vessels-fallback-status = { $count } vessels • Fintraffic fallback (Finland on
 vessels-fallback-source = Fintraffic (fallback)
 satellites-loading-status = Loading orbits…
 satellites-loaded-status = { $count } satellites • SGP4 predictions from CelesTrak elements (not telemetry)
+satellites-together = Together with: { $names }
 satellite-group-station = Space stations
 satellite-group-navigation = Navigation (GPS, Galileo, GLONASS, BeiDou)
 satellite-group-weather = Weather
