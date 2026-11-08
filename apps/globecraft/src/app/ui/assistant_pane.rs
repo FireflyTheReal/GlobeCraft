@@ -60,8 +60,42 @@ fn note_key(template: &str) -> Option<&'static str> {
         "The model sent an empty reply; ask again, or try another model." => "assistant-note-empty",
         "Stopped after {steps} steps; say \"continue\" to go on." => "assistant-note-step-limit",
         "Stopped." => "assistant-note-stopped",
+        "Stopped after {calls} actions for one message; say \"continue\" to go on." => {
+            "assistant-note-call-limit"
+        }
+        "Stopped: the model asked for the same action {count} times in a row." => {
+            "assistant-note-repeat-limit"
+        }
         _ => return None,
     })
+}
+
+/// A turn's tokens, with its estimated cost when the model's price is known.
+fn usage_text(lang: Lang, turn: &globecraft_assistant::TurnUsage) -> String {
+    let input = turn.usage.all_input_tokens().to_string();
+    let output = turn.usage.output_tokens.to_string();
+    match turn.cost_usd {
+        Some(cost) => {
+            // Cents for most turns; more digits for the cheap ones, so they don't read as free.
+            let cost = if cost < 0.01 {
+                format!("{cost:.4}")
+            } else {
+                format!("{cost:.2}")
+            };
+            lang.format(
+                "assistant-usage-cost",
+                &[
+                    ("input", input.into()),
+                    ("output", output.into()),
+                    ("cost", cost.into()),
+                ],
+            )
+        }
+        None => lang.format(
+            "assistant-usage",
+            &[("input", input.into()), ("output", output.into())],
+        ),
+    }
 }
 
 impl App {
@@ -320,6 +354,13 @@ impl App {
         let id = egui::Id::new("assistant_input");
         let focused = ui.memory(|m| m.has_focus(id));
         let mut submit = false;
+        // Escape in the input box stops a run (before the box sees it and gives up focus).
+        if focused
+            && busy
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.run_reporting("assistant.stop", serde_json::json!({}));
+        }
         if focused && !busy {
             // Enter sends; Shift+Enter starts a new line.
             submit = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -371,19 +412,24 @@ impl App {
         ui.horizontal(|ui| {
             let w = (ui.available_width() - 84.0).max(0.0);
             ui.allocate_ui(vec2(w, 20.0), |ui| {
+                let help = if busy {
+                    "assistant-input-help-busy"
+                } else {
+                    "assistant-input-help"
+                };
                 ui.add(
-                    egui::Label::new(
-                        RichText::new(lang.text("assistant-input-help"))
-                            .small()
-                            .color(t.text_dim),
-                    )
-                    .truncate(),
+                    egui::Label::new(RichText::new(lang.text(help)).small().color(t.text_dim))
+                        .truncate(),
                 );
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if busy {
-                    if ui.button(lang.text("assistant-stop")).clicked() {
-                        self.assistant_stop();
+                    if ui
+                        .button(lang.text("assistant-stop"))
+                        .on_hover_text(lang.text("cmd-assistant-stop-help"))
+                        .clicked()
+                    {
+                        self.run_reporting("assistant.stop", serde_json::json!({}));
                     }
                 } else {
                     let can = !self.assistant.input.trim().is_empty();
@@ -498,6 +544,16 @@ impl App {
                             .italics()
                             .color(t.text_dim),
                     );
+                }
+                Entry::Usage(turn) => {
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                        ui.label(
+                            RichText::new(usage_text(lang, turn))
+                                .small()
+                                .color(t.text_dim),
+                        )
+                        .on_hover_text(lang.text("assistant-usage-tooltip"));
+                    });
                 }
             }
         }
@@ -707,6 +763,30 @@ mod tests {
                     lang.code()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn turn_usage_shows_tokens_and_the_estimate_when_priced() {
+        let mut turn = globecraft_assistant::TurnUsage {
+            usage: globecraft_assistant::Usage {
+                input_tokens: 1200,
+                cached_input_tokens: 800,
+                output_tokens: 150,
+            },
+            cost_usd: Some(0.0042),
+        };
+        for lang in Lang::ALL {
+            let text = usage_text(lang, &turn);
+            assert!(text.contains("2000") && text.contains("150"), "{text}");
+            assert!(text.contains("0.0042") && !text.contains('{'), "{text}");
+        }
+        turn.cost_usd = Some(0.25);
+        assert!(usage_text(Lang::En, &turn).contains("$0.25"));
+        turn.cost_usd = None;
+        for lang in Lang::ALL {
+            let text = usage_text(lang, &turn);
+            assert!(!text.contains('$') && !text.contains('{'), "{text}");
         }
     }
 

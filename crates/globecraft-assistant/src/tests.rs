@@ -244,6 +244,85 @@ fn stop_discards_late_replies() {
 }
 
 #[test]
+fn a_model_repeating_the_same_command_is_stopped() {
+    let mut host = FakeHost::default();
+    let mut agent = Agent::new(config("anthropic"));
+    let _ = agent.ask("Zoom in", &host);
+    let zoom = || {
+        ok(anthropic_tool_use(
+            "run_command",
+            json!({"command": "camera.zoomIn", "params": {}}),
+        ))
+    };
+    for _ in 0..crate::limits::MAX_IDENTICAL_CALLS {
+        let step = agent.receive(agent.generation(), zoom(), &mut host);
+        assert!(matches!(step, Step::Send(_)));
+    }
+    let g = agent.generation();
+    assert_eq!(agent.receive(g, zoom(), &mut host), Step::Done);
+    assert!(!agent.busy());
+    assert_eq!(
+        host.ran.len(),
+        crate::limits::MAX_IDENTICAL_CALLS as usize,
+        "the repeat over the limit never runs"
+    );
+    assert!(matches!(agent.transcript.last(), Some(Entry::Note(n))
+        if n.template == "Stopped: the model asked for the same action {count} times in a row."));
+    // The refused call has a result that tells the model why.
+    let Some(Turn::Results(results)) = agent.turns().last() else {
+        panic!()
+    };
+    assert!(results[0].error && results[0].content.contains("Don't repeat it"));
+    // A response to the ended run is dropped; a new message starts counting afresh.
+    assert_eq!(agent.receive(g, zoom(), &mut host), Step::Done);
+    let _ = agent.ask("continue", &host);
+    assert!(matches!(
+        agent.receive(agent.generation(), zoom(), &mut host),
+        Step::Send(_)
+    ));
+}
+
+#[test]
+fn each_turn_ends_with_its_token_usage_and_cost() {
+    let mut host = FakeHost::default();
+    let mut c = config("anthropic");
+    c.model = "claude-haiku-5".into();
+    let mut agent = Agent::new(c);
+    let _ = agent.ask("Fly to Paris", &host);
+    let mut call = anthropic_tool_use(
+        "run_command",
+        json!({"command": "camera.flyTo", "params": {"lat": 48.85, "lon": 2.35}}),
+    );
+    call["usage"] = json!({"input_tokens": 1000, "output_tokens": 100});
+    let step = agent.receive(agent.generation(), ok(call), &mut host);
+    assert!(matches!(step, Step::Send(_)));
+    assert!(
+        !agent
+            .transcript
+            .iter()
+            .any(|e| matches!(e, Entry::Usage(_))),
+        "shown once the turn ends"
+    );
+    let mut answer = anthropic_text("You're over Paris.");
+    answer["usage"] = json!({"input_tokens": 1000, "output_tokens": 100});
+    assert_eq!(
+        agent.receive(agent.generation(), ok(answer), &mut host),
+        Step::Done
+    );
+    let Some(Entry::Usage(turn)) = agent.transcript.last() else {
+        panic!("{:?}", agent.transcript.last())
+    };
+    assert_eq!(turn.usage.input_tokens, 2000);
+    assert_eq!(turn.usage.output_tokens, 200);
+    let cost = turn.cost_usd.unwrap();
+    assert!((cost - 0.003).abs() < 1e-12, "{cost}");
+    // A stopped request's usage is never known; what came before it still shows.
+    let _ = agent.ask("and now?", &host);
+    agent.stop();
+    assert!(matches!(agent.transcript.last(), Some(Entry::Note(_))));
+}
+
+#[test]
 fn a_missing_key_is_reported_before_any_request() {
     let host = FakeHost::default();
     let mut c = config("anthropic");

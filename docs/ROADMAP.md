@@ -299,7 +299,7 @@ and timeline (H) and the point-layer engine (I).
 | 7.4 | **Local models** first-class: an Ollama preset with auto-discovery, and an "offline mode" that never sends coordinates out | S | The preset already exists; add discovery and a privacy badge |
 | 7.5 | Saved conversations per project or placemark file | S | |
 | 7.6 | Assistant-proposed layers: "show me where wind farms are" searches the Add Data library (section 2) and offers to enable one, with its licence | M | |
-| 7.7 | Guardrails review: a rate limit on `run_command` loops, a cost estimate per turn, and a clear "stop" everywhere | S | |
+| 7.7 | Guardrails review: a rate limit on `run_command` loops, a cost estimate per turn, and a clear "stop" everywhere | S | **Done 2026-11-08:** besides the existing 16 model requests per message, one message may now run at most 64 tool calls, and a call identical to the 4 before it (same tool and arguments, across replies) is refused (`globecraft_assistant::limits`); the run ends with a transcript note, and the refused calls get results telling the model why. Each turn ends with its tokens (input incl. cached, output incl. reasoning) read from the providers' usage (Anthropic `usage`, Chat Completions `usage` via `stream_options` for OpenAI/OpenRouter, Gemini `usageMetadata`) and, for known model families, "about $…" from one approximate price table dated 2026-11 (`usage::PRICES`; unknown models and Ollama show tokens only). Stop: new `assistant.stop` command (Command Search), the pane's Stop button runs it, Escape in the input box does too; late replies are dropped by the generation counter and a queued palette question is discarded. Checked with unit tests (limits, usage parsing per format, pricing, the agent loop stopping a repeating model and ending a turn with its usage) and the manual `assistant_runs_commands_end_to_end` screenshot showing the usage line |
 
 ## 8. Rendering and engine
 
@@ -571,7 +571,7 @@ working queue, not a promise.
 14. 10.1 CI on macOS, Linux and Windows with the screenshot tests; 10.3 a settings fixture per release
 15. 10.2 split the `App` struct into feature states
 16. ~~10.6 network policy table and a "hosts contacted" page~~ done 2026-11-05
-17. 7.7 assistant guardrails (rate limit, cost per turn, stop everywhere)
+17. ~~7.7 assistant guardrails (rate limit, cost per turn, stop everywhere)~~ done 2026-11-08
 
 **5. Foundation, remaining parts**
 

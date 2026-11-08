@@ -6,6 +6,8 @@
 //! - [`tools`]: what the model may call, and which calls need the user's approval.
 //! - [`agent`]: the conversation loop, without I/O, so the desktop and the tests drive the
 //!   same code. The desktop sends requests on its service runtime.
+//! - [`limits`]: caps on the tool calls one message may set off; [`usage`]: tokens and the
+//!   estimated cost of each turn.
 //!
 //! The design follows RustGIS's assistant (Apache-2.0); see CREDITS.md.
 #![deny(
@@ -20,12 +22,15 @@
 pub mod agent;
 pub mod compact;
 pub mod error;
+pub mod limits;
 pub mod provider;
 #[cfg(test)]
 mod tests;
 pub mod tools;
+pub mod usage;
 
 pub use agent::{Agent, Entry, Step};
 pub use error::{Error, TransportFailure};
 pub use provider::{Api, Config, HttpRequest, HttpResponse, Note, PRESETS, Preset};
 pub use tools::Host;
+pub use usage::{TurnUsage, Usage};

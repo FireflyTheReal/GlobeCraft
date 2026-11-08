@@ -354,9 +354,10 @@ fn assistant_runs_commands_end_to_end() {
                 "arguments": "{\"command\":\"camera.flyTo\",\"params\":{\"lat\":48.8566,\"lon\":2.3522,\"altitude_km\":15}}"}},
             {"id": "b", "type": "function", "function": {"name": "run_command",
                 "arguments": "{\"command\":\"layer.show\",\"params\":{\"layer\":\"grid\",\"visible\":true}}"}}
-        ]}}]}),
+        ]}}], "usage": {"prompt_tokens": 1500, "completion_tokens": 60}}),
         json!({"choices": [{"finish_reason": "stop", "message": {"role": "assistant",
-            "content": "You're over **Paris** at 15 km, with the latitude/longitude grid on."}}]}),
+            "content": "You're over **Paris** at 15 km, with the latitude/longitude grid on."}}],
+            "usage": {"prompt_tokens": 1700, "completion_tokens": 25}}),
     ]);
     let mut h = harness(ThemePreference::Light);
     let app = h.state_mut();
@@ -385,6 +386,12 @@ fn assistant_runs_commands_end_to_end() {
         transcript
             .iter()
             .any(|e| matches!(e, globecraft_assistant::Entry::Assistant(t) if t.contains("Paris"))),
+        "{transcript:?}"
+    );
+    // The turn ends with its tokens (no price: the fake model's family is unknown).
+    assert!(
+        matches!(transcript.last(), Some(globecraft_assistant::Entry::Usage(u))
+            if u.usage.all_input_tokens() == 3200 && u.cost_usd.is_none()),
         "{transcript:?}"
     );
     settle(&mut h, 5.0);
