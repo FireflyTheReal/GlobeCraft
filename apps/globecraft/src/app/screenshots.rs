@@ -1378,6 +1378,26 @@ fn aurora_screenshot() {
     save(&mut h, &dir, "24-aurora-without-sunlight");
 }
 
+/// The About window with the logo, light and dark (`about-<theme>`).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn about_window() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    for (theme, name) in [
+        (ThemePreference::Light, "about-light"),
+        (ThemePreference::Dark, "about-dark"),
+    ] {
+        let mut h = harness(theme);
+        settle(&mut h, 0.5);
+        h.state_mut().run("ui.about", json!({})).expect("ui.about");
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, name);
+    }
+}
+
 /// Every icon the ribbon, the Layers pane and the timeline show, with drafts beside
 /// each (`name~a`, `~b`, `~c` when drawn). `GLOBECRAFT_ICON_NAMES` lists the names,
 /// `GLOBECRAFT_ICON_DRAFTS=1` adds the drafts. Manual.
