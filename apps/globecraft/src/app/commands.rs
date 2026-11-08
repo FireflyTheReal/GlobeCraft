@@ -362,6 +362,12 @@ impl App {
                 self.ruler_drag = None;
                 self.ruler_json()
             }
+            "ruler.profile" => {
+                let profile = self
+                    .ruler_profile()
+                    .ok_or("the ruler needs two points on the Earth for a profile")?;
+                profile.to_json()
+            }
             "ruler.unit" => {
                 let unit = str_param(p, "unit")
                     .and_then(RulerUnit::from_code)

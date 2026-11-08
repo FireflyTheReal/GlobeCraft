@@ -2058,3 +2058,61 @@ fn live_symbols_screenshot() {
         save(&mut h, &dir, name);
     }
 }
+
+/// The ruler's elevation profile (roadmap 1.10): Geneva over Mont Blanc to Aosta,
+/// the Measure pane open, then the pointer on the profile's highest point.
+#[test]
+#[ignore = "manual: downloads elevation tiles"]
+fn ruler_profile_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.cam.lat = 45.95;
+    app.cam.lon = 6.75;
+    app.cam.alt = 180.0;
+    app.settings.workspace.open_right(RightPane::Measure);
+    for (lat, lon) in [(46.204, 6.143), (45.833, 6.865), (45.737, 7.320)] {
+        let _ = app.run("ruler.addPoint", json!({"lat": lat, "lon": lon}));
+    }
+    // Until every sample has its height (or 30 s).
+    let start = std::time::Instant::now();
+    let mut answer = Value::Null;
+    while start.elapsed() < std::time::Duration::from_secs(30) {
+        settle(&mut h, 0.5);
+        answer = h
+            .state_mut()
+            .run("ruler.profile", Value::Null)
+            .expect("profile");
+        if answer["loaded"] == answer["sampled"] {
+            break;
+        }
+    }
+    println!(
+        "profile: {} of {} samples, lowest {} m, highest {} m, up {} m, down {} m",
+        answer["loaded"],
+        answer["sampled"],
+        answer["lowest_m"],
+        answer["highest_m"],
+        answer["ascent_m"],
+        answer["descent_m"]
+    );
+    let highest = answer["highest_m"].as_f64().expect("heights");
+    assert!(
+        (4_000.0..4_900.0).contains(&highest),
+        "Mont Blanc is 4,806 m: {highest}"
+    );
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "33-ruler-profile");
+    // The pointer on the plot, a little right of the middle: Mont Blanc's side.
+    let plot = {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label("Elevation profile").rect()
+    };
+    let at = egui::pos2(plot.center().x + 30.0, plot.bottom() + 60.0);
+    h.hover_at(at);
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "33-ruler-profile-hover");
+}

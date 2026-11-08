@@ -293,6 +293,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "ruler.profile",
+        "ruler-profile",
+        "measure",
+        Home,
+        View,
+        NO_PARAMS
+    ),
+    command!(
         "ruler.unit",
         "ruler-unit",
         "measure",

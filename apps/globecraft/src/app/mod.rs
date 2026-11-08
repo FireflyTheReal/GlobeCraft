@@ -58,6 +58,7 @@ mod rendering;
 mod road_names;
 mod roads;
 mod ruler_history;
+mod ruler_profile;
 mod search;
 mod selected_flight;
 mod selected_satellite;
@@ -206,6 +207,8 @@ pub(crate) struct App {
     kml_path: String,
     kml_session: files::KmlSession,
     menu_pick: Option<(f64, f64)>,
+    /// The point of the ruler's elevation profile under the pointer, marked on the globe.
+    ruler_profile_hover: Option<(f64, f64)>,
 
     ruler: bool,
     ruler_reveal_requested: bool,
@@ -452,6 +455,7 @@ impl App {
             kml_path: "placemarks.kml".into(),
             kml_session: files::KmlSession::default(),
             menu_pick: None,
+            ruler_profile_hover: None,
             ruler: false,
             ruler_reveal_requested: false,
             ruler_drag: None,

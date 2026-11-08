@@ -1,4 +1,5 @@
-//! The Measure pane: the ruler's switch, unit, totals, bearing and history.
+//! The Measure pane: the ruler's switch, unit, totals, bearing, elevation profile
+//! and history.
 use super::theme::{Tokens, semibold};
 use super::widgets::{section_heading, small};
 use crate::app::App;
@@ -61,6 +62,8 @@ impl App {
                         .on_hover_text(lg.text("ruler-bearing-tooltip"));
                 }
             });
+        ui.add_space(6.0);
+        self.elevation_profile(ui);
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             small(ui, self, "edit.undo", Value::Null);

@@ -276,6 +276,13 @@ impl App {
                 painter.circle_stroke(s, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(255, 80, 80)));
             }
         }
+        // The point of the elevation profile under the pointer.
+        if let Some((lat, lon)) = self.ruler_profile_hover
+            && let Some(s) = basis.project(on_ground(lat, lon), rect)
+        {
+            painter.circle_filled(s, 5.0 * ms, Color32::from_rgb(255, 230, 120));
+            painter.circle_stroke(s, 5.0 * ms, Stroke::new(1.5_f32, Color32::BLACK));
+        }
         // placemarks
         for pm in self.placemarks.markers(true) {
             if visibility
