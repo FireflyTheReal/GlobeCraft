@@ -182,7 +182,8 @@ jobs:
                       lon = (lon + 180) % 360 - 180
                       add(name, "undersea", row["attributes"].get("TYPE") or "", lon, lat,
                           max(POINT_SIZE_KM, span_km(lat, west, south, east, north)), "gebco")
-                  if not page.get("exceededTransferLimit") or not rows:
+                  # The service does not always say there is more: a full page means ask on.
+                  if not rows or (len(rows) < 1000 and not page.get("exceededTransferLimit")):
                       break
                   offset += len(rows)
                   time.sleep(0.2)
