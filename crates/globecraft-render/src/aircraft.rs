@@ -31,7 +31,6 @@ const LANDING_HEIGHT_FEET: f64 = 5_000.0;
 const LANDING_EXTRAPOLATION_MAX_SECS: f64 = 45.0;
 const SECONDS_PER_MINUTE: f64 = 60.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
-const KM_PER_FOOT: f64 = 0.000_304_8;
 const SECONDS_PER_HOUR: f64 = 3600.0;
 const HEADING_PROBE_KM: f64 = 3.0;
 /// A plane reported turning keeps turning for at most this long (a standard-rate
@@ -44,6 +43,82 @@ const WING_REAR_OFFSET_RATIO: f32 = 0.25;
 const TAIL_OFFSET_RATIO: f32 = 0.85;
 const TRAIL_START_RATIO: f32 = 0.5;
 const TRAIL_END_RATIO: f32 = 1.1;
+
+/// The elevation level planes are put on the ground from: tiles about 160 km wide,
+/// samples 600 m apart, few enough to load for every plane in view.
+const PLANE_GROUND_ZOOM: u8 = 8;
+/// Below this camera altitude the elevation tiles under planes are requested; above,
+/// only those already loaded are used (the difference is too small to see there).
+const PLANE_GROUND_REQUEST_KM: f64 = 2_000.0;
+const METRES_PER_FOOT: f64 = 0.3048;
+
+/// How high a plane is drawn (user, 2026-11-08: the heights took no account of the
+/// relief being on or off). The feeds report the height above the sea; the ground
+/// under the plane is drawn at its elevation times the exaggeration with relief on,
+/// and at sea level with relief off. A plane is drawn that far above the ground as
+/// drawn as it is above the real ground, so it lands on the runway either way.
+#[derive(Clone, Copy)]
+pub struct PlaneGround<'a> {
+    /// Off: every plane on the ground below it (the flat setting).
+    pub heights: bool,
+    cache: Option<&'a globecraft_data::tiles::TileCache>,
+    /// The relief's exaggeration while relief is drawn, else 0.
+    exaggeration: f64,
+    request: bool,
+}
+
+impl<'a> PlaneGround<'a> {
+    pub fn new(
+        heights: bool,
+        cache: Option<&'a globecraft_data::tiles::TileCache>,
+        relief: Option<crate::overlays::OverlayGround>,
+        camera_altitude_km: f64,
+    ) -> Self {
+        Self {
+            heights,
+            cache,
+            exaggeration: relief.map_or(0.0, |relief| f64::from(relief.exaggeration)),
+            request: camera_altitude_km < PLANE_GROUND_REQUEST_KM,
+        }
+    }
+    /// Planes at their reported heights over a sea-level ground (no elevation data).
+    pub fn sea_level(heights: bool) -> Self {
+        Self {
+            heights,
+            cache: None,
+            exaggeration: 0.0,
+            request: false,
+        }
+    }
+    /// The real ground's height in metres (the sea's surface over the sea), 0 while
+    /// its tile is not loaded.
+    pub fn elevation_m(&self, lat: f64, lon: f64) -> f64 {
+        let Some(cache) = self.cache else {
+            return 0.0;
+        };
+        let metres = if self.request {
+            cache.elevation_m(lat, lon, PLANE_GROUND_ZOOM)
+        } else {
+            cache.loaded_elevation_m(lat, lon, PLANE_GROUND_ZOOM)
+        };
+        metres.map_or(0.0, |metres| f64::from(metres).max(0.0))
+    }
+    /// How far above the sea-level surface to draw a plane reported at `feet` (no
+    /// report: on the ground), in km; 0 with heights off.
+    pub fn drawn_km(&self, lat: f64, lon: f64, feet: Option<f64>) -> f64 {
+        if !self.heights {
+            return 0.0;
+        }
+        drawn_m(feet, self.elevation_m(lat, lon), self.exaggeration) / 1000.0
+    }
+}
+
+/// A plane reported at `feet` over ground `ground_m` high, drawn that far above the
+/// ground as drawn (`ground_m` times `exaggeration`), in metres above the sea level.
+fn drawn_m(feet: Option<f64>, ground_m: f64, exaggeration: f64) -> f64 {
+    let above_ground = (feet.unwrap_or(0.0) * METRES_PER_FOOT - ground_m).max(0.0);
+    above_ground + ground_m * exaggeration
+}
 
 pub struct ProjectedFlight {
     pub source_index: usize,
@@ -60,7 +135,7 @@ pub fn project_flights(
     aircraft: &[Aircraft],
     unix_secs: f64,
     map_scale: f32,
-    heights: bool,
+    ground: &PlaneGround,
 ) -> Vec<ProjectedFlight> {
     aircraft
         .iter()
@@ -83,12 +158,9 @@ pub fn project_flights(
                 speed_km_s,
                 age.min(reckoning_limit_secs(flight)),
             );
-            // At its height (barometric, near enough), hidden only behind the Earth.
-            let km = if heights {
-                flight.altitude_feet.unwrap_or(0.0).max(0.0) * KM_PER_FOOT
-            } else {
-                0.0
-            };
+            // At its height (barometric, near enough) over the ground as drawn,
+            // hidden only behind the Earth.
+            let km = ground.drawn_km(lat, lon, flight.altitude_feet);
             let at = |lat: f64, lon: f64| {
                 if km > 0.0 {
                     basis.project_above(basis.raised_position(lat, lon, km), rect)
@@ -237,11 +309,32 @@ mod tests {
                 std::slice::from_ref(&landing),
                 1000.0 + secs,
                 1.0,
-                false,
+                &PlaneGround::sea_level(false),
             )[0]
             .position
         };
         assert_eq!(at(30.0), at(120.0));
+    }
+
+    /// Over Denver (1,600 m), a plane reported at 6,000 ft is 229 m above the ground:
+    /// with relief off it is drawn 229 m over the sea-level globe, with relief on 229 m
+    /// over the relief as drawn (exaggerated too), and once landed on the ground.
+    #[test]
+    fn planes_keep_their_height_above_the_ground_as_drawn() {
+        let feet = Some(6_000.0);
+        let above = 6_000.0 * METRES_PER_FOOT - 1_600.0;
+        assert!((drawn_m(feet, 1_600.0, 0.0) - above).abs() < 1e-9);
+        assert!((drawn_m(feet, 1_600.0, 1.0) - 6_000.0 * METRES_PER_FOOT).abs() < 1e-9);
+        assert!((drawn_m(feet, 1_600.0, 2.0) - (above + 3_200.0)).abs() < 1e-9);
+        assert_eq!(drawn_m(Some(5_000.0), 1_600.0, 0.0), 0.0);
+        assert_eq!(drawn_m(None, 1_600.0, 1.5), 2_400.0);
+        // Without elevation data, the reported height over the sea, as before.
+        let sea = PlaneGround::sea_level(true);
+        assert!((sea.drawn_km(0.0, 0.0, Some(10_000.0)) - 3.048).abs() < 1e-9);
+        assert_eq!(
+            PlaneGround::sea_level(false).drawn_km(0.0, 0.0, Some(10_000.0)),
+            0.0
+        );
     }
 
     /// A plane at cruising height, seen from the side, is drawn above the point it
@@ -278,7 +371,7 @@ mod tests {
                 std::slice::from_ref(&flight),
                 1000.0,
                 1.0,
-                true,
+                &PlaneGround::sea_level(true),
             );
             let flat = project_flights(
                 &basis,
@@ -286,7 +379,7 @@ mod tests {
                 std::slice::from_ref(&flight),
                 1000.0,
                 1.0,
-                false,
+                &PlaneGround::sea_level(false),
             );
             let ground = basis
                 .project(basis.surface_position(47.0, 8.0), rect)

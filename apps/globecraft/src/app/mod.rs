@@ -415,7 +415,10 @@ impl App {
                 let ctx = cc.egui_ctx.clone();
                 move || ctx.request_repaint()
             }),
-            aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
+            aircraft_overlay: live_layers::AircraftOverlay::with_elevation(
+                cc.egui_ctx.clone(),
+                cache.clone(),
+            ),
             legend: Default::default(),
             flight_selection: Default::default(),
             satellite_selection: Default::default(),

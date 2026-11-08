@@ -156,6 +156,28 @@ jobs:
           inlets = south.difference(land)
           inlets = [p for p in getattr(inlets, "geoms", [inlets]) if p.area < MIN_LAND_DEG2]
           land = snapped(unary_union([land] + inlets))
+          # And so do channels and slivers of sea narrower than about 30 km: where the land's
+          # and the ice shelves' outlines leave a gap or a sound the imagery shows as ice, the
+          # sea's 15° meridians and their coasts would run across the ice (user, 2026-11-08,
+          # George VI Sound). Measured with longitudes scaled by the latitude's cosine, so a
+          # degree is about as long either way.
+          NARROW_SEA_DEG = 0.14  # half the width, in degrees of latitude (about 15 km)
+          def scaled(geometry, forward):
+              import numpy
+              def move(coords):
+                  coords = coords.copy()
+                  factor = numpy.cos(numpy.radians(coords[:, 1]))
+                  coords[:, 0] = coords[:, 0] * factor if forward else coords[:, 0] / factor
+                  return coords
+              return shapely.transform(geometry, move)
+          sea = south.difference(land)
+          open_sea = scaled(scaled(sea, True).buffer(-NARROW_SEA_DEG, join_style="mitre")
+                            .buffer(NARROW_SEA_DEG, join_style="mitre"), False)
+          narrow = sea.difference(open_sea.buffer(1e-9))
+          land = snapped(unary_union([land, narrow]).buffer(0))
+          inlets = south.difference(land)
+          inlets = [p for p in getattr(inlets, "geoms", [inlets]) if p.area < MIN_LAND_DEG2]
+          land = snapped(unary_union([land] + inlets))
           features = []
           for feature in data["features"]:
               tz = feature["properties"]["tzid"]

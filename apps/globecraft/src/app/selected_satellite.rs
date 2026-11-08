@@ -1,5 +1,8 @@
 //! The satellite picked on the globe (user, 2026-11-07): one full revolution of its
 //! orbit at its height, the half it has flown solid and the half to come dashed, the
+//! orbit as it lies in space now (user, 2026-11-08: drawn fixed to the turning Earth,
+//! a 12-hour orbit came out as an open, twisted loop, since the Earth turns half a
+//! round under it),
 //! satellite itself enlarged, and a card with what it is and how it moves. The orbit
 //! is predicted with SGP4 from the elements already loaded: nothing is downloaded.
 use super::App;
@@ -25,6 +28,19 @@ const CARD_MARGIN_POINTS: f32 = 12.0;
 const CARD_WIDTH_POINTS: f32 = 260.0;
 const SECONDS_PER_DAY: f64 = 86_400.0;
 const KM_PER_MILE: f64 = 1.609_344;
+/// The Earth's turn relative to the stars, degrees a second (one sidereal day).
+const EARTH_TURN_DEG_PER_SEC: f64 = 360.0 / 86_164.090_5;
+
+/// Where the orbit's point at `at` lies under the Earth as it is `now`: the Earth
+/// turns east under the orbit, so a point `at - now` seconds later is that much
+/// further east of the ground it is over then.
+fn in_space(at: f64, now: f64, position: &SatellitePosition) -> SatellitePosition {
+    let lon = position.lon + EARTH_TURN_DEG_PER_SEC * (at - now);
+    SatellitePosition {
+        lon: (lon + 180.0).rem_euclid(360.0) - 180.0,
+        ..*position
+    }
+}
 
 /// Which satellite is selected, and where the satellites were drawn last (to pick).
 #[derive(Default)]
@@ -132,7 +148,11 @@ impl App {
         };
         let scale = self.settings.map_scale;
         let now = now_unix();
-        let path = satellite.orbit_path(now, ORBIT_SAMPLES);
+        let path: Vec<_> = satellite
+            .orbit_path(now, ORBIT_SAMPLES)
+            .into_iter()
+            .map(|(at, position)| (at, in_space(at, now, &position)))
+            .collect();
         let colour = satellite_colour(satellite.group);
         let width = ORBIT_POINTS * scale;
         let casing = Stroke::new(width + CASING_POINTS * scale, CASING);
@@ -275,6 +295,21 @@ mod tests {
         );
         assert_eq!(cut.len(), 2, "{cut:?}");
         assert_eq!(cut[1].len(), 3);
+    }
+
+    #[test]
+    fn the_orbit_is_drawn_in_space_not_on_the_turning_earth() {
+        let over = SatellitePosition {
+            lat: 10.0,
+            lon: 170.0,
+            altitude_km: 20_000.0,
+        };
+        // Half a sidereal day later the Earth has turned half a round under it.
+        let later = in_space(1000.0 + 43_082.045_25, 1000.0, &over);
+        assert!((later.lon - -10.0).abs() < 1e-6, "{later:?}");
+        assert_eq!(in_space(1000.0, 1000.0, &over).lon, 170.0);
+        let earlier = in_space(0.0, 3_600.0, &over);
+        assert!((earlier.lon - (170.0 - 15.041)).abs() < 0.01, "{earlier:?}");
     }
 
     #[test]

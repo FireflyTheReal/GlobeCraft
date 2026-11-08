@@ -1621,6 +1621,10 @@ fn time_zones_screenshot() {
             ("28-time-zones-greenland", 80.0, -40.0, 4000.0),
             ("28-time-zones-date-line", 0.0, 180.0, 9000.0),
             ("28-time-zones-date-line-north", 62.0, -175.0, 4000.0),
+            // The Antarctic Peninsula's base, where the coast lines strayed (user,
+            // 2026-11-08).
+            ("28-time-zones-peninsula", -72.3, -71.2, 520.0),
+            ("28-time-zones-peninsula-wide", -72.0, -70.0, 2500.0),
         ] {
             h.state_mut()
                 .run(
@@ -2039,6 +2043,37 @@ fn live_symbols_screenshot() {
             settle(&mut h, 4.0);
             save(&mut h, &dir, name);
         }
+        h.state_mut()
+            .run("satellite.clear", json!({}))
+            .expect("clear");
+    }
+    // Far orbits, closed loops in space (user, 2026-11-08): a GLONASS satellite (12 h,
+    // round) and Arktika-M 1 (12 h, very eccentric), from 50,000 km.
+    for (name, norad) in [
+        ("32-satellite-orbit-glonass", "32395"),
+        ("32-satellite-orbit-arktika", "47719"),
+    ] {
+        let loaded = h
+            .state()
+            .live_satellites
+            .snapshot()
+            .iter()
+            .any(|satellite| satellite.norad == norad);
+        if !loaded {
+            println!("{norad} not in the recorded groups: {name} skipped");
+            continue;
+        }
+        h.state_mut()
+            .run("satellite.select", json!({"norad": norad}))
+            .expect("select");
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": 0.0, "lon": -60.0, "altitude_km": 50_000.0}),
+            )
+            .expect("camera");
+        settle(&mut h, 3.0);
+        save(&mut h, &dir, name);
         h.state_mut()
             .run("satellite.clear", json!({}))
             .expect("clear");
