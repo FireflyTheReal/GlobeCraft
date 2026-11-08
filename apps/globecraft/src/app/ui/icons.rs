@@ -584,11 +584,8 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
     let amber = Color32::from_rgb(0xE5, 0x9E, 0x1A);
     let teal = Color32::from_rgb(0x0E, 0x93, 0x84);
     match name {
-        "logo" => {
-            p.earth_disc(11.0, 13.0, 8.5);
-            p.pin_shape(17.0, 1.5, 3.8, Some(RED), Some((1.0, W)));
-            p.circle(17.0, 5.3, 1.3, Some(W), None);
-        }
+        // The GlobeCraft logo (Bloom), drawn from its generated mask in the icon's ink.
+        "logo" => super::brand::paint_bloom(painter, r, ink),
         "settings" => {
             p.gear_shape(12.0, 12.0, 9.5, 8, None, Some((1.4, ink)));
             p.circle(12.0, 12.0, 3.0, None, Some((1.4, accent)));

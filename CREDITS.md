@@ -11,6 +11,14 @@ the app shows the matching attribution on screen while a source is in use.
   @therichronicles and @PixelSoftwareStudios (MIT). Its copyright notice is kept in
   [LICENSE](LICENSE).
 
+## Logo
+
+| Source | Used for | Terms |
+| --- | --- | --- |
+| Bohème Star projection by Dr.-Ing. Rolf Böhm ([boehmwanderkarten.de](https://www.boehmwanderkarten.de/kartographie/is_netze_stars.html)) | The geometry of both logos: Bloom (5 tips) and the app icon (infinitely many tips), computed by `scripts/generate_logos.py` | Projection formulas published by the author |
+| [Natural Earth](https://www.naturalearthdata.com/) 1:110m physical land | The continents in the logos, downloaded by the logo script from the official site | Public domain |
+| [Manrope](https://github.com/sharanda/manrope) by Mikhail Sharanda | The GlobeCraft wordmark, converted to outlines | SIL Open Font License 1.1 |
+
 ## Imagery and terrain
 
 | Source | Used for | Terms |
