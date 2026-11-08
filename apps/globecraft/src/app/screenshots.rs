@@ -2212,3 +2212,71 @@ fn ruler_profile_screenshot() {
     settle(&mut h, 1.0);
     save(&mut h, &dir, "33-ruler-area");
 }
+
+/// A view link (roadmap 2.6) copied, the view changed, then the link pasted into the
+/// search box: the camera, basemap, layers and web data come back.
+#[test]
+#[ignore = "manual: builds the whole app"]
+fn view_link_round_trip() {
+    use globecraft_core::layers::MapLayer;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": 27.988, "lon": 86.925, "altitude_km": 40.0, "heading_deg": 200.0, "tilt_deg": 60.0}),
+    )
+    .expect("camera");
+    app.run("layer.basemap", json!({"basemap": "topo"}))
+        .expect("basemap");
+    app.run("layer.show", json!({"layer": "peaks", "visible": true}))
+        .expect("peaks");
+    app.run(
+        "layer.show",
+        json!({"layer": "country_borders", "visible": false}),
+    )
+    .expect("borders");
+    app.run("data.add", json!({"preset": "earthquakes"}))
+        .expect("data");
+    let link = app.run("view.copyLink", Value::Null).expect("copy")["link"]
+        .as_str()
+        .expect("link")
+        .to_owned();
+    println!("{link}");
+    // Somewhere else entirely, with the layers changed and the data removed.
+    app.run(
+        "camera.set",
+        json!({"lat": 0.0, "lon": 0.0, "altitude_km": 9000.0, "tilt_deg": 0.0}),
+    )
+    .expect("camera");
+    app.run("layer.basemap", json!({"basemap": "satellite"}))
+        .expect("basemap");
+    app.run("layer.show", json!({"layer": "peaks", "visible": false}))
+        .expect("peaks");
+    app.run(
+        "layer.show",
+        json!({"layer": "country_borders", "visible": true}),
+    )
+    .expect("borders");
+    let id = app.settings.user_layers[0].id;
+    app.run("data.remove", json!({"id": id})).expect("remove");
+    // The link, typed into the search box.
+    app.query = link.clone();
+    let ctx = app.ctx.clone();
+    app.start_search(&ctx);
+    let app = h.state();
+    assert!((app.cam.lat - 27.988).abs() < 1e-4 && (app.cam.lon - 86.925).abs() < 1e-4);
+    assert!((app.cam.alt - 40.0).abs() < 1e-6 && (app.cam.tilt - 60.0).abs() < 0.1);
+    assert_eq!(app.settings.layers.basemap.code(), "topo");
+    assert!(app.layer(MapLayer::Peaks) && !app.layer(MapLayer::CountryBorders));
+    assert_eq!(app.settings.user_layers.len(), 1);
+    assert_eq!(
+        app.settings.user_layers[0].preset.as_deref(),
+        Some("earthquakes")
+    );
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "34-view-link-opened");
+}

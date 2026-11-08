@@ -70,7 +70,7 @@ class NativePackagingTests(unittest.TestCase):
                     self.assertEqual(Path(executable["path"]).read_bytes(), binary.read_bytes())
                     self.assertIn("GLOBECRAFT_UPDATE_MODE=manual", Path(main["path"]).read_text())
                     desktop = Path(config["deb"]["desktopTemplate"])
-                    self.assertIn(f"Exec={launcher.name}\n", desktop.read_text())
+                    self.assertIn(f"Exec={launcher.name} %u\n", desktop.read_text())
                     self.assertEqual(desktop.stem, launcher.stem)
                     self.assertIn(f"Icon={tools.APP_ID}", desktop.read_text())
                     self.assertEqual(config["appimage"]["linuxdeployPlugins"].keys(), {"gtk"})

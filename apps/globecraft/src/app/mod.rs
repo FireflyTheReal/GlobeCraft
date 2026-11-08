@@ -71,6 +71,7 @@ mod traffic;
 mod ui;
 mod update_restart;
 mod user_layers;
+mod view_links;
 mod wayback;
 pub(crate) use update_restart::RestartRequest;
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
@@ -216,6 +217,8 @@ pub(crate) struct App {
     menu_pick: Option<(f64, f64)>,
     /// The point of the ruler's elevation profile under the pointer, marked on the globe.
     ruler_profile_hover: Option<(f64, f64)>,
+    /// A `globecraft://view` link from the command line, opened on the first frame.
+    pending_view_link: Option<String>,
     /// The layer shown alone (`layer.solo`), and what was visible before.
     solo: Option<(
         globecraft_core::layers::MapLayer,
@@ -470,6 +473,7 @@ impl App {
             kml_session: files::KmlSession::default(),
             menu_pick: None,
             ruler_profile_hover: None,
+            pending_view_link: view_links::link_from_args(),
             solo: None,
             ruler: false,
             ruler_reveal_requested: false,
@@ -634,6 +638,12 @@ impl eframe::App for App {
         );
         if self.settings.sky.enabled && self.sky.image.is_some() {
             ctx.request_repaint_after(SKY_CLOCK_REPAINT_INTERVAL);
+        }
+        // A view link from the command line opens once the window is up.
+        if let Some(link) = self.pending_view_link.take()
+            && let Err(error) = self.run("view.openLink", serde_json::json!({"link": link}))
+        {
+            self.status = error;
         }
         self.updater.start_once();
         self.updater.poll();

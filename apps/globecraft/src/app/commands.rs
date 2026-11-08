@@ -525,6 +525,11 @@ impl App {
                 }
                 json!({"layer": layer.code(), "visible": visible})
             }
+            "view.copyLink" => self.copy_view_link(&ctx),
+            "view.openLink" => {
+                let link = str_param(p, "link").ok_or("link is required")?.to_owned();
+                self.open_view_link(&link)?
+            }
             "layer.opacity" => {
                 let layer = str_param(p, "layer")
                     .and_then(MapLayer::from_code)

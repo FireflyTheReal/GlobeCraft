@@ -103,6 +103,7 @@ impl App {
             }
             ui.separator();
             menu_item(ui, self, "file.screenshot", Value::Null);
+            menu_item(ui, self, "view.copyLink", Value::Null);
             ui.separator();
             menu_item(ui, self, "ui.settings", Value::Null);
             menu_item(ui, self, "ui.about", Value::Null);

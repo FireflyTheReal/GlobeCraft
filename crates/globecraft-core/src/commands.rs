@@ -327,6 +327,22 @@ pub const COMMANDS: &[CommandSpec] = &[
     command!("edit.undo", "edit-undo", "undo", Home, View, NO_PARAMS),
     command!("edit.redo", "edit-redo", "redo", Home, View, NO_PARAMS),
     command!(
+        "view.copyLink",
+        "view-copy-link",
+        "copy",
+        Home,
+        View,
+        NO_PARAMS
+    ),
+    command!(
+        "view.openLink",
+        "view-open-link",
+        "goto_xy",
+        Home,
+        View,
+        r#"{"type":"object","properties":{"link":{"type":"string","description":"A globecraft://view?lat=…&lon=… link (optional alt, heading, tilt, basemap, layers, data)"}},"required":["link"]}"#
+    ),
+    command!(
         "file.screenshot",
         "file-screenshot",
         "camera",

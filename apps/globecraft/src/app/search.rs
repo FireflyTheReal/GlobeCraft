@@ -155,6 +155,13 @@ impl App {
             self.unlock_flat_earth(ctx);
             return;
         }
+        // A view link pasted into the search box opens that view (roadmap 2.6).
+        if q.starts_with(globecraft_core::view_link::PREFIX) {
+            if let Err(error) = self.run("view.openLink", serde_json::json!({"link": q})) {
+                self.status = error;
+            }
+            return;
+        }
         match parse_coordinate_query(&q) {
             Ok(Some((lat, lon))) => {
                 self.fly_to(lat, lon, 3.0);
