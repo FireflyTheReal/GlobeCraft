@@ -1,11 +1,14 @@
 //! "What's here?" (roadmap 6.12): everything GlobeCraft knows about a point, from data
 //! already in memory: its coordinates in every format, the ground height, the country,
-//! the nearest named place, the time and the sun. Shown as a card from the globe's
-//! context menu, and as `info.here` for the assistant.
+//! state and municipality, the nearest named place, the time and the sun. Shown as a
+//! card (`ui.here`: the globe's context menu, or press and hold on the globe), and as
+//! `info.here` for the assistant.
 use super::App;
 use eframe::egui;
 use globecraft_core::coordinates::{CoordinateDisplay, CoordinateFormat};
+use globecraft_core::language::Lang;
 use globecraft_core::math::{haversine_km, ll_to_v3, subsolar};
+use globecraft_data::boundaries::{AdminAreas, AdminLookup};
 use serde_json::{Value, json};
 
 /// Named places farther than this are not called "nearest".
@@ -25,6 +28,8 @@ pub(super) struct HereInfo {
     pub coordinates: Vec<(CoordinateFormat, String)>,
     pub elevation_m: Option<f32>,
     pub country: Option<String>,
+    /// The state and municipality, from the border tiles in memory.
+    pub admin: AdminAreas,
     /// The nearest named place, and its distance (km) and bearing (degrees).
     pub nearest: Option<(String, f64, f64)>,
     /// Hours and minutes of UTC, and of mean solar time at the point.
@@ -56,6 +61,38 @@ fn compass_point(bearing: f64) -> &'static str {
     POINTS[((bearing + 22.5).rem_euclid(360.0) / 45.0) as usize % 8]
 }
 
+/// An administrative level's name for `info.here`, or null and why (in English, for
+/// the model).
+fn admin_json(lookup: &AdminLookup, lang: Lang, not_loaded: &str) -> (Value, Option<String>) {
+    match lookup {
+        AdminLookup::Found(label) => (json!(label.text(lang)), None),
+        AdminLookup::NotLoaded => (Value::Null, Some(not_loaded.to_owned())),
+        AdminLookup::NoName => (
+            Value::Null,
+            Some(
+                "no name lies inside the same borders as the point in the loaded border tiles"
+                    .into(),
+            ),
+        ),
+    }
+}
+
+/// The card's line for an administrative level: the name, or a dash and why.
+fn admin_row(ui: &mut egui::Ui, lang: Lang, lookup: &AdminLookup, not_loaded_help: &str) {
+    match lookup {
+        AdminLookup::Found(label) => {
+            ui.label(label.text(lang));
+        }
+        AdminLookup::NotLoaded => {
+            ui.label("—").on_hover_text(lang.text(not_loaded_help));
+        }
+        AdminLookup::NoName => {
+            ui.label("—")
+                .on_hover_text(lang.text("here-admin-no-name-help"));
+        }
+    }
+}
+
 /// The sun's height above the horizon at a point and time, degrees.
 pub(super) fn sun_altitude_deg(lat: f64, lon: f64, unix: f64) -> f64 {
     let (sun_lat, sun_lon) = subsolar(unix);
@@ -66,7 +103,7 @@ pub(super) fn sun_altitude_deg(lat: f64, lon: f64, unix: f64) -> f64 {
 }
 
 impl App {
-    pub(super) fn here_info(&self, lat: f64, lon: f64) -> HereInfo {
+    pub(super) fn here_info(&self, lat: f64, lon: f64, admin: AdminAreas) -> HereInfo {
         let coordinates = CoordinateFormat::ALL
             .into_iter()
             .filter_map(|format| {
@@ -108,6 +145,7 @@ impl App {
                 .boundaries
                 .country_name_at(lat, lon, self.lang)
                 .map(str::to_owned),
+            admin,
             nearest,
             utc: clock(seconds_of_day),
             solar: clock(seconds_of_day + lon / 15.0 * 3_600.0),
@@ -118,18 +156,32 @@ impl App {
 
     /// `info.here`: what is known about a point, as JSON.
     pub(super) fn here_json(&self, lat: f64, lon: f64) -> Value {
-        let info = self.here_info(lat, lon);
+        let admin = self.boundary_loader.admin_areas_at(lat, lon);
+        let info = self.here_info(lat, lon, admin);
+        let (state, state_unavailable) = admin_json(
+            &info.admin.state,
+            self.lang,
+            "state borders around this point are not loaded: they load around the view",
+        );
+        let (municipality, municipality_unavailable) = admin_json(
+            &info.admin.municipality,
+            self.lang,
+            "municipal borders load only while the view is zoomed in close to the point",
+        );
         let coordinates: serde_json::Map<String, Value> = info
             .coordinates
             .iter()
             .map(|(format, text)| (format.code().to_owned(), json!(text)))
             .collect();
-        json!({
+        let mut out = json!({
             "lat": lat,
             "lon": lon,
             "coordinates": coordinates,
             "elevation_m": info.elevation_m,
             "country": info.country,
+            "state": state,
+            // Named after the most important place inside the same municipal borders.
+            "municipality": municipality,
             "nearest_place": info.nearest.as_ref().map(|(name, km, bearing)| json!({
                 "name": name,
                 "distance_km": (km * 10.0).round() / 10.0,
@@ -139,7 +191,30 @@ impl App {
             "mean_solar_time": format!("{:02}:{:02}", info.solar.0, info.solar.1),
             "nautical_time_zone": format!("UTC{:+}", info.nautical_zone),
             "sun_altitude_deg": (info.sun_altitude_deg * 10.0).round() / 10.0,
-        })
+        });
+        for (key, reason) in [
+            ("state_unavailable", state_unavailable),
+            ("municipality_unavailable", municipality_unavailable),
+        ] {
+            if let Some(reason) = reason {
+                out[key] = json!(reason);
+            }
+        }
+        out
+    }
+
+    /// The card's state and municipality, looked up again only when the point or the
+    /// border tiles in memory change.
+    fn here_admin(&mut self, card: HereCard) -> AdminAreas {
+        let revision = self.boundary_loader.border_tiles_revision();
+        match &self.here_admin {
+            Some((at, seen, admin)) if *at == card && *seen == revision => admin.clone(),
+            _ => {
+                let admin = self.boundary_loader.admin_areas_at(card.lat, card.lon);
+                self.here_admin = Some((card, revision, admin.clone()));
+                admin
+            }
+        }
     }
 
     /// The card, while one is open.
@@ -148,7 +223,8 @@ impl App {
             return;
         };
         let lang = self.lang;
-        let info = self.here_info(card.lat, card.lon);
+        let admin = self.here_admin(card);
+        let info = self.here_info(card.lat, card.lon, admin);
         if info.elevation_m.is_none() {
             ctx.request_repaint_after(ELEVATION_POLL);
         }
@@ -196,6 +272,18 @@ impl App {
                             info.country
                                 .clone()
                                 .unwrap_or_else(|| lang.text("here-no-country").to_owned()),
+                        );
+                        ui.end_row();
+                        ui.weak(lang.text("here-state-label"));
+                        admin_row(ui, lang, &info.admin.state, "here-state-not-loaded-help");
+                        ui.end_row();
+                        ui.weak(lang.text("here-municipality-label"))
+                            .on_hover_text(lang.text("here-municipality-help"));
+                        admin_row(
+                            ui,
+                            lang,
+                            &info.admin.municipality,
+                            "here-municipality-not-loaded-help",
                         );
                         ui.end_row();
                         ui.weak(lang.text("here-nearest-label"));

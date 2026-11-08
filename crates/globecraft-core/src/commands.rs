@@ -604,6 +604,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         TOGGLE
     ),
     command!(
+        "ui.here",
+        "ui-here",
+        "identify",
+        Home,
+        Interface,
+        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"}},"required":["lat","lon"]}"#
+    ),
+    command!(
         "flight.select",
         "flight-select",
         "plane",
@@ -848,7 +856,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "identify",
         Home,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"}},"required":["lat","lon"],"description":"What is known about a point: coordinates in every format, ground height, country, nearest named place, local times and the sun's height"}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"}},"required":["lat","lon"],"description":"What is known about a point: coordinates in every format, ground height, country, state and municipality (null with a reason when their border tiles are not loaded), nearest named place, local times and the sun's height"}"#
     ),
 ];
 

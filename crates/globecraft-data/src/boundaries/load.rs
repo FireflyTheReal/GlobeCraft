@@ -32,6 +32,17 @@ impl BoundaryLoader {
         self.osm_tiles.has_tiles()
     }
 
+    /// The state and municipality a point lies in, from the border tiles in memory.
+    pub fn admin_areas_at(&self, lat: f64, lon: f64) -> super::AdminAreas {
+        self.osm_tiles.admin_areas_at(lat, lon)
+    }
+
+    /// Changes whenever the border tiles in memory change, so a caller can keep
+    /// `admin_areas_at`'s answer until then.
+    pub fn border_tiles_revision(&self) -> u64 {
+        self.osm_tiles.revision()
+    }
+
     /// Bytes the border tile cache uses on disk.
     pub fn border_cache_usage(&self) -> u64 {
         self.osm_tiles.cache_usage()
