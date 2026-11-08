@@ -82,12 +82,121 @@ fn the_view_disc_grows_with_altitude_up_to_the_visible_hemisphere() {
     assert!(view_cap_fraction(2_000.0, 0.5) < mid);
 }
 
+/// The view footprint on a mini globe of radius 60 at (100, 100).
+fn footprint(cam: &globecraft_core::camera::Cam, rect: Rect) -> Vec<Pos2> {
+    let globe = MiniGlobe::new(Pos2::new(100.0, 100.0), 60.0, cam.lat, cam.lon, cam.heading);
+    globe.view_outline(&cam.basis(f64::from(rect.width() / rect.height())), rect)
+}
+
+/// The polygon's area by the shoelace formula (positive either way round).
+fn area(outline: &[Pos2]) -> f32 {
+    let twice: f32 = (0..outline.len())
+        .map(|i| {
+            let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum();
+    twice.abs() / 2.0
+}
+
 #[test]
-fn a_straight_down_view_keeps_the_cap_disc() {
-    assert!(!shows_view_footprint(0.0));
-    assert!(!shows_view_footprint(TILTED_VIEW_THRESHOLD_DEG));
-    assert!(shows_view_footprint(55.0));
-    assert!(shows_view_footprint(75.0));
+fn the_footprint_is_convex_and_inside_the_mini_globe_at_every_tilt() {
+    let centre = Pos2::new(100.0, 100.0);
+    for (width, height) in [(900.0, 700.0), (1600.0, 900.0), (600.0, 900.0)] {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, height));
+        for alt in [0.3, 5.0, 120.0, 900.0, 4_000.0, 12_000.0, 40_000.0] {
+            for tilt in [
+                0.0,
+                0.5,
+                1.5,
+                15.0,
+                35.0,
+                55.0,
+                70.0,
+                globecraft_core::camera::MAX_TILT_DEG,
+            ] {
+                for (lat, heading) in [(46.5, 20.0), (-75.0, 200.0), (89.0, 0.0)] {
+                    let cam = globecraft_core::camera::Cam {
+                        lat,
+                        lon: 8.0,
+                        heading,
+                        alt,
+                        tilt,
+                    };
+                    let outline = footprint(&cam, rect);
+                    let case = format!("{width}x{height} alt {alt} tilt {tilt} lat {lat}");
+                    // Close in the footprint is too small to keep its shape (it is
+                    // drawn as a dot).
+                    assert!(outline.len() >= 3 || alt < 1.0, "{case}");
+                    let mut sign = 0.0_f32;
+                    for i in 0..outline.len() {
+                        let a = outline[i];
+                        let b = outline[(i + 1) % outline.len()];
+                        let c = outline[(i + 2) % outline.len()];
+                        assert!((a - centre).length() <= 60.0 + 0.01, "{case}: {a:?}");
+                        let cross = (b - a).x * (c - b).y - (b - a).y * (c - b).x;
+                        if cross.abs() > 1e-3 {
+                            assert!(sign * cross >= 0.0, "{case}: not convex at {b:?}");
+                            sign = cross.signum();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_footprint_grows_smoothly_as_the_view_tilts() {
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
+    for alt in [50.0, 900.0, 6_000.0] {
+        let mut previous: Option<f32> = None;
+        // Past the old switch at 1° from the cap disc to the polygon, in small steps.
+        for step in 0..=8 {
+            let cam = globecraft_core::camera::Cam {
+                lat: 30.0,
+                lon: 100.0,
+                heading: 10.0,
+                alt,
+                tilt: f64::from(step) * 0.5,
+            };
+            let now = area(&footprint(&cam, rect));
+            if let Some(before) = previous {
+                assert!(
+                    (now - before).abs() <= before * 0.1,
+                    "alt {alt} tilt {}: {before} -> {now}",
+                    f64::from(step) * 0.5
+                );
+            }
+            previous = Some(now);
+        }
+    }
+}
+
+#[test]
+fn a_straight_down_footprint_is_the_view_rectangle_on_the_ground() {
+    let centre = Pos2::new(100.0, 100.0);
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
+    let aspect = f64::from(rect.width() / rect.height());
+    let cam = globecraft_core::camera::Cam {
+        lat: 10.0,
+        lon: 20.0,
+        heading: 0.0,
+        alt: 900.0,
+        tilt: 0.0,
+    };
+    let outline = footprint(&cam, rect);
+    let half = |axis: Vec2| {
+        outline
+            .iter()
+            .map(|p| (*p - centre).dot(axis))
+            .fold(0.0_f32, f32::max)
+    };
+    let (up, right) = (half(-Vec2::Y), half(Vec2::X));
+    // The short side reaches the cap the drag uses; the long side is wider.
+    let cap = 60.0 * view_cap_fraction(cam.alt, aspect) as f32;
+    assert!((up - cap).abs() < cap * 0.05, "{up} {cap}");
+    assert!(right > up * 1.4, "{right} {up}");
 }
 
 #[test]

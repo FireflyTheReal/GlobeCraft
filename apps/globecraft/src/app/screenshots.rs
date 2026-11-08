@@ -171,6 +171,36 @@ fn interface_screenshots() {
     save(&mut h, &dir, "08-tile-diagnostics-dark");
 }
 
+/// The navigator's view footprint across altitudes and tilts (user, 2026-11-08: the
+/// tilt representation was buggy): one screenshot per case, `nav-<alt>-<tilt>`.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn navigator_tilt_sweep() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    settle(&mut h, 1.0);
+    for alt in [20_000.0, 6_000.0, 900.0, 60.0, 2.0] {
+        for tilt in [
+            0.0,
+            1.0,
+            20.0,
+            45.0,
+            65.0,
+            globecraft_core::camera::MAX_TILT_DEG,
+        ] {
+            let _ = h.state_mut().run(
+                "camera.set",
+                json!({"lat": 30.0, "lon": 105.0, "altitude_km": alt, "heading_deg": 15.0, "tilt_deg": tilt}),
+            );
+            settle(&mut h, 0.2);
+            save(&mut h, &dir, &format!("nav-{alt}-{tilt}"));
+        }
+    }
+}
+
 /// The Settings window's outer rectangle: the widest node labelled with its title,
 /// because the ribbon also has a "Settings" command with the same label.
 fn settings_window_rect(h: &Harness<'static, App>) -> egui::Rect {

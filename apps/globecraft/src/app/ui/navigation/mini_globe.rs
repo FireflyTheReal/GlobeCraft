@@ -5,8 +5,14 @@ use glam::DVec3;
 use globecraft_core::camera::Basis;
 use globecraft_core::math::{ll_to_v3, v3_to_ll};
 
-/// Boundary samples per side of the view rectangle for the tilted footprint.
-const VIEW_EDGE_SAMPLES: usize = 12;
+/// Boundary samples per side of the view rectangle for the footprint.
+const VIEW_EDGE_SAMPLES: usize = 32;
+/// A footprint point this far out (in globe radii) lies on the rim.
+const RIM_FRACTION: f32 = 0.999;
+/// The step along the rim where the footprint follows it.
+const RIM_STEP_RAD: f32 = 0.05;
+/// Footprint points closer than this (in globe radii) count as one.
+const HULL_EPSILON: f32 = 1e-4;
 
 /// Where the mini globe puts the Earth: centred on the camera's ground point, turned
 /// by its heading, seen from far away (orthographic).
@@ -43,10 +49,8 @@ impl MiniGlobe {
     /// The screen position of a point on the Earth, if it faces the viewer.
     pub(super) fn project(&self, lat: f64, lon: f64) -> Option<Pos2> {
         let p = ll_to_v3(lat, lon);
-        (p.dot(self.up) > 0.0).then(|| {
-            let (x, y) = (p.dot(self.east) as f32, p.dot(self.north) as f32);
-            self.centre + (self.east_screen * x + self.north_screen * y) * self.radius
-        })
+        (p.dot(self.up) > 0.0)
+            .then(|| self.to_screen(Vec2::new(p.dot(self.east) as f32, p.dot(self.north) as f32)))
     }
 
     /// A line of latitude or longitude, cut where it turns to the far side.
@@ -73,38 +77,103 @@ impl MiniGlobe {
         }
     }
 
-    /// The ground area the view shows, as a closed polygon on the mini globe. A
-    /// tilted view reaches forward to the horizon, so its boundary follows the
-    /// horizon where the view looks past it; a top-down view keeps the caller's
-    /// circle instead.
+    /// The ground area the view shows, as a convex polygon on the mini globe, for
+    /// every tilt. The view rectangle's edge is sampled; a ray that misses the Earth
+    /// takes the horizon in its direction. Ground on the mini globe's far side is
+    /// pushed onto its rim, the outline is the convex hull of the samples, and a
+    /// stretch along the rim follows the rim. So it is always convex and stays
+    /// inside the mini globe, however the view is tilted or turned.
     pub(super) fn view_outline(&self, basis: &Basis, rect: egui::Rect) -> Vec<Pos2> {
-        let mut points = Vec::with_capacity(4 * VIEW_EDGE_SAMPLES);
-        let edges = [
-            (rect.left_bottom(), rect.right_bottom()),
-            (rect.right_bottom(), rect.right_top()),
-            (rect.right_top(), rect.left_top()),
-            (rect.left_top(), rect.left_bottom()),
+        let corners = [
+            rect.left_bottom(),
+            rect.right_bottom(),
+            rect.right_top(),
+            rect.left_top(),
         ];
-        for (from, to) in edges {
-            for i in 0..VIEW_EDGE_SAMPLES {
-                let t = i as f32 / VIEW_EDGE_SAMPLES as f32;
-                let screen = from + (to - from) * t;
+        let mut points = Vec::with_capacity(4 * VIEW_EDGE_SAMPLES);
+        for (i, &from) in corners.iter().enumerate() {
+            let to = corners[(i + 1) % corners.len()];
+            for step in 0..VIEW_EDGE_SAMPLES {
+                let screen = from + (to - from) * (step as f32 / VIEW_EDGE_SAMPLES as f32);
                 let ground = basis
                     .pick(rect, screen)
                     .or_else(|| horizon_point(basis, rect, screen));
                 if let Some((lat, lon)) = ground
-                    && let Some(point) = self.project(lat, lon)
-                    && points.last() != Some(&point)
+                    && let Some(local) = self.local(ll_to_v3(lat, lon))
                 {
-                    points.push(point);
+                    points.push(local);
                 }
             }
         }
-        if points.first() == points.last() {
-            points.pop();
+        let hull = convex_hull(points);
+        let mut outline = Vec::with_capacity(hull.len() * 2);
+        for (i, &a) in hull.iter().enumerate() {
+            let b = hull[(i + 1) % hull.len()];
+            outline.push(self.to_screen(a));
+            // Both ends on the rim: the area runs round the far side between them.
+            if hull.len() > 2 && a.length() > RIM_FRACTION && b.length() > RIM_FRACTION {
+                let (from, to) = (a.angle(), b.angle());
+                let turn = (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+                let steps = (turn.abs() / RIM_STEP_RAD).ceil() as usize;
+                for step in 1..steps {
+                    let angle = from + turn * step as f32 / steps as f32;
+                    outline.push(self.to_screen(Vec2::angled(angle)));
+                }
+            }
         }
-        points
+        outline
     }
+
+    /// A point of the Earth (unit vector) on the mini globe; on the far side, on the
+    /// rim in its direction.
+    pub(super) fn place(&self, p: DVec3) -> Option<Pos2> {
+        self.local(p).map(|local| self.to_screen(local))
+    }
+
+    /// A point of the Earth (unit vector) on the mini globe, in globe radii with x
+    /// east and y north; the far side is pushed onto the rim.
+    fn local(&self, p: DVec3) -> Option<Vec2> {
+        let local = Vec2::new(p.dot(self.east) as f32, p.dot(self.north) as f32);
+        if p.dot(self.up) >= 0.0 {
+            Some(local)
+        } else {
+            (local.length_sq() > 0.0).then(|| local.normalized())
+        }
+    }
+
+    fn to_screen(&self, local: Vec2) -> Pos2 {
+        self.centre + (self.east_screen * local.x + self.north_screen * local.y) * self.radius
+    }
+}
+
+/// The convex hull of `points` (Andrew's monotone chain), counter-clockwise, without
+/// repeated or collinear points.
+fn convex_hull(mut points: Vec<Vec2>) -> Vec<Vec2> {
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    points.dedup_by(|a, b| (*a - *b).length_sq() < HULL_EPSILON * HULL_EPSILON);
+    if points.len() < 3 {
+        return points;
+    }
+    let mut hull: Vec<Vec2> = Vec::with_capacity(points.len() + 1);
+    half_hull(&mut hull, points.iter().copied());
+    half_hull(&mut hull, points.iter().rev().copied());
+    hull
+}
+
+/// Adds one chain of the monotone-chain hull (lower or upper) to `hull`, without its
+/// last point, which starts the other chain.
+fn half_hull(hull: &mut Vec<Vec2>, points: impl Iterator<Item = Vec2>) {
+    let cross = |o: Vec2, a: Vec2, b: Vec2| (a - o).x * (b - o).y - (a - o).y * (b - o).x;
+    let start = hull.len();
+    for p in points {
+        while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0
+        {
+            hull.pop();
+        }
+        hull.push(p);
+    }
+    hull.pop();
 }
 
 /// The horizon point in the direction of a view ray that misses the Earth: the

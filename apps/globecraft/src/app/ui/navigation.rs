@@ -51,9 +51,14 @@ const GRATICULE_SAMPLES: usize = 48;
 const GRID_OPACITY: f32 = 0.45;
 const EQUATOR_OPACITY: f32 = 0.7;
 const VIEW_FILL_OPACITY: f32 = 0.16;
-/// Above this tilt the mini globe shows the view's ground footprint instead of the
-/// top-down cap: the cap is only right when looking straight down.
-const TILTED_VIEW_THRESHOLD_DEG: f64 = 1.0;
+/// The smallest the view's footprint is drawn on the mini globe (its reach from the
+/// centre); smaller, it is a dot of this radius.
+const MIN_VIEW_POINTS: f32 = 2.5;
+/// The camera's mark on the mini globe, shown once it stands this far from the view
+/// centre, and its line of sight.
+const CAMERA_MARK_POINTS: f32 = 2.6;
+const CAMERA_MARK_MIN_POINTS: f32 = 4.0;
+const SIGHT_LINE_OPACITY: f32 = 0.7;
 const ZOOM_LEVEL_OPACITY: f32 = 0.55;
 
 /// How far one mini-globe radius of drag moves the camera, in degrees of arc: about
@@ -66,13 +71,6 @@ fn globe_drag_deg_per_radius(altitude_km: f64, aspect: f64) -> f64 {
         .asin()
         .to_degrees();
     (reach * GLOBE_DRAG_REACH_RATIO).min(MAX_GLOBE_DRAG_DEG_PER_RADIUS)
-}
-
-/// Whether the navigator draws the view's ground footprint instead of the top-down
-/// cap disc. A near-zero tilt keeps the disc: its shape barely differs and the
-/// polygon would only add sampling noise.
-fn shows_view_footprint(tilt_deg: f64) -> bool {
-    tilt_deg > TILTED_VIEW_THRESHOLD_DEG
 }
 
 /// The cardinal letters: heading that turns them up, label, tooltip.
@@ -381,16 +379,30 @@ impl App {
         let aspect = f64::from(rect.width() / rect.height().max(1.0));
         let view_fill = t.accent.gamma_multiply(VIEW_FILL_OPACITY);
         let view_stroke = Stroke::new(1.2 * k, t.accent);
-        let outline = shows_view_footprint(self.cam.tilt)
-            .then(|| globe.view_outline(&self.cam.basis(aspect), rect))
-            .filter(|outline| outline.len() >= 3);
-        if let Some(outline) = outline {
+        let basis = self.cam.basis(aspect);
+        let outline = globe.view_outline(&basis, rect);
+        let reach = outline
+            .iter()
+            .map(|p| p.distance(centre))
+            .fold(0.0_f32, f32::max);
+        if outline.len() >= 3 && reach >= MIN_VIEW_POINTS * k {
             painter.add(egui::Shape::convex_polygon(outline, view_fill, view_stroke));
         } else {
-            let view_radius =
-                (r_globe * view_cap_fraction(self.cam.alt, aspect) as f32).max(2.0 * k);
-            painter.circle_filled(centre, view_radius, view_fill);
-            painter.circle_stroke(centre, view_radius, view_stroke);
+            // Too small to show its shape: a dot where the view looks.
+            painter.circle_filled(centre, MIN_VIEW_POINTS * k, view_fill);
+            painter.circle_stroke(centre, MIN_VIEW_POINTS * k, view_stroke);
+        }
+        // A tilted camera stands back from the point it looks at: where it is over the
+        // ground, with its line of sight to the view centre.
+        if let Some(camera) = globe.place(basis.c.normalize())
+            && camera.distance(centre) >= CAMERA_MARK_MIN_POINTS * k
+        {
+            painter.line_segment(
+                [camera, centre],
+                Stroke::new(1.0 * k, t.accent.gamma_multiply(SIGHT_LINE_OPACITY)),
+            );
+            painter.circle_filled(camera, CAMERA_MARK_POINTS * k, t.accent);
+            painter.circle_stroke(camera, CAMERA_MARK_POINTS * k, Stroke::new(1.0 * k, fill));
         }
         painter.circle_stroke(
             centre,

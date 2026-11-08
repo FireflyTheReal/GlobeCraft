@@ -19,8 +19,9 @@ const THUMB_RADIUS_POINTS: f32 = 6.5;
 /// takes clicks in pieces) and their size.
 const HIT_BOXES: usize = 9;
 const HIT_BOX_POINTS: f32 = 15.0;
-/// The thumb's triangle, from its middle to its tip.
-const POINTER_POINTS: f32 = 3.4;
+/// The lens dot in the thumb and its opacity while not hovered.
+const LENS_POINTS: f32 = 2.4;
+const LENS_OPACITY: f32 = 0.85;
 /// Opacity of the stretch between straight down and the current tilt.
 const TILTED_OPACITY: f32 = 0.55;
 
@@ -145,18 +146,16 @@ impl App {
             THUMB_RADIUS_POINTS * k,
             Stroke::new(1.0, if hot { t.accent } else { t.border_strong }),
         );
-        let inward = (centre - thumb).normalized();
-        let across = inward.rot90();
-        let size = POINTER_POINTS * k;
-        painter.add(egui::Shape::convex_polygon(
-            vec![
-                thumb + inward * size,
-                thumb - inward * size * 0.7 + across * size * 0.8,
-                thumb - inward * size * 0.7 - across * size * 0.8,
-            ],
-            if hot { t.accent } else { t.icon },
-            Stroke::NONE,
-        ));
+        // A lens in the thumb: it is the camera, circling the point it looks at.
+        painter.circle_filled(
+            thumb,
+            LENS_POINTS * k,
+            if hot {
+                t.accent
+            } else {
+                t.accent.gamma_multiply(LENS_OPACITY)
+            },
+        );
         active
     }
 }
