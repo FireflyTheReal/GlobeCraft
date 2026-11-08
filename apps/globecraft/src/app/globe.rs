@@ -584,7 +584,6 @@ impl App {
             };
             self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect);
             self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
-            self.paint_marine_names(&painter, &display_basis, rect);
             self.paint_antarctic_claims(&painter, &display_basis, rect);
             // All map names share one screen, placed in priority order, each layer
             // where the ones before it left room (painting keeps its own order):
@@ -626,6 +625,9 @@ impl App {
             self.user_layers
                 .prepare_names(&painter, self.settings.map_scale, &taken);
             taken.add(self.user_layers.placed());
+            // Sea and undersea names where the land's names left room.
+            self.paint_marine_names(&painter, &display_basis, rect, &taken);
+            taken.add(&self.marine_placed.clone());
             if self.layer(MapLayer::Roads)
                 && let Some(geometry) = &live_geometry
             {

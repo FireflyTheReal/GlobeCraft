@@ -6,6 +6,7 @@ use super::App;
 use eframe::egui::{self, Color32, Pos2, Rect};
 use globecraft_core::{camera::Basis, layers::MapLayer};
 use globecraft_data::marine_names::{MarineKind, MarineName};
+use globecraft_render::overlays::LabelSpace;
 
 /// A name shows while the place spans between these fractions of the view's height
 /// (its ground, `VERTICAL_FOV_HALF_TAN` × 2 × altitude).
@@ -72,12 +73,21 @@ impl App {
         );
     }
 
-    /// The names, over the water: surface names first, then the undersea ones.
-    pub(super) fn paint_marine_names(&self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
-        if !self.layer(MapLayer::SeaNames) {
-            return;
-        }
-        let Some(names) = self.live_marine_names.names() else {
+    /// The names, where the place, user and road names left room: surface names
+    /// first, then the undersea ones. Their rectangles go to `marine_placed`.
+    pub(super) fn paint_marine_names(
+        &mut self,
+        painter: &egui::Painter,
+        basis: &Basis,
+        rect: Rect,
+        room: &LabelSpace,
+    ) {
+        let names = self
+            .live_marine_names
+            .names()
+            .filter(|_| self.layer(MapLayer::SeaNames));
+        let Some(names) = names else {
+            self.marine_placed.clear();
             return;
         };
         let scale = self.settings.map_scale;
@@ -112,7 +122,10 @@ impl App {
             let galley = layout(painter, name, scale);
             let bounds =
                 Rect::from_center_size(at, galley.size()).expand(LABEL_PADDING_POINTS * scale);
-            if !rect.contains_rect(bounds) || taken.iter().any(|other| other.intersects(bounds)) {
+            if !rect.contains_rect(bounds)
+                || !room.is_free(bounds)
+                || taken.iter().any(|other| other.intersects(bounds))
+            {
                 continue;
             }
             taken.push(bounds);
@@ -125,6 +138,7 @@ impl App {
             );
         }
         painter.extend(shapes);
+        self.marine_placed.replace(taken);
     }
 }
 

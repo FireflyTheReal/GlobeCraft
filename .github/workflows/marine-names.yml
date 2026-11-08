@@ -57,7 +57,7 @@ jobs:
           POINT_SIZE_KM = 15.0
           MAX_PAGES = int(sys.argv[2]) if len(sys.argv) > 2 else 10_000
           
-          def fetch(url):
+          def fetch(url, required=True):
               for attempt in range(6):
                   try:
                       with urllib.request.urlopen(url, timeout=90) as response:
@@ -69,6 +69,9 @@ jobs:
                       time.sleep(2 + attempt * 4)
                   except Exception:
                       time.sleep(2 + attempt * 4)
+              if not required:
+                  print(f"skipped: {url}")
+                  return []
               raise SystemExit(f"failed: {url}")
           
           def span_km(lat, west, south, east, north):
@@ -92,12 +95,17 @@ jobs:
               name = record.get("preferredGazetteerName") or ""
               if record.get("preferredGazetteerNameLang") == "English":
                   return name
-              names = fetch(MR + f"getGazetteerNamesByMRGID.json/{record['MRGID']}/")
+              # Optional: without its other names a place keeps its preferred one.
+              names = fetch(MR + f"getGazetteerNamesByMRGID.json/{record['MRGID']}/", required=False)
               time.sleep(0.1)
-              for candidate in names if isinstance(names, list) else []:
-                  if candidate and re.fullmatch(r"[\x20-\x7e]+", candidate):
+              latin = [c for c in (names if isinstance(names, list) else [])
+                       if c and re.fullmatch(r"[\x20-\x7e]+", c)]
+              # An English name says what the place is ("East China Sea", not "Tung Hai").
+              generic = re.compile(r"\b(Ocean|Sea|Gulf|Bay|Strait|Channel|Sound|Bight|Passage|Zone)\b")
+              for candidate in latin:
+                  if generic.search(candidate):
                       return candidate
-              return name
+              return latin[0] if latin else name
           
           features, seen, counts = [], set(), {}
           def add(name, kind, place_type, lon, lat, size_km, source):
@@ -201,6 +209,8 @@ jobs:
           print(len(data["features"]), "names;", sorted(kinds))
           for expected in ["Pacific Ocean", "Atlantic Ocean", "Mariana Trench", "Mid-Atlantic Ridge", "Strait of Gibraltar"]:
               assert expected in names, expected
+          # English names, not the gazetteer's first listed language ("Tung Hai").
+          assert any(name.startswith("East") and name.endswith("China Sea") for name in names)
           assert kinds == {"ocean", "sea", "eez", "undersea"}, kinds
           assert len(data["features"]) > 7000, len(data["features"])
           # No place wider than the Pacific (a box read across the date line would be).

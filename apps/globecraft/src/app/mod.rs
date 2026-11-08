@@ -169,6 +169,8 @@ pub(crate) struct App {
     live_airports: globecraft_data::airports::LiveAirports,
     live_time_zones: globecraft_data::timezones::LiveTimeZones,
     live_marine_names: globecraft_data::marine_names::LiveMarineNames,
+    /// Where the sea and undersea names went this frame.
+    marine_placed: globecraft_render::overlays::PlacedLabels,
     time_zone_shapes: timezones::TimeZoneShapes,
     aurora_shapes: live_layers::AuroraShapes,
     traffic: traffic::TrafficOverlay,
@@ -418,6 +420,7 @@ impl App {
             live_airports: globecraft_data::airports::LiveAirports::default(),
             live_time_zones: globecraft_data::timezones::LiveTimeZones::default(),
             live_marine_names: globecraft_data::marine_names::LiveMarineNames::default(),
+            marine_placed: Default::default(),
             time_zone_shapes: timezones::TimeZoneShapes::default(),
             aurora_shapes: live_layers::AuroraShapes::default(),
             traffic: traffic::TrafficOverlay::default(),

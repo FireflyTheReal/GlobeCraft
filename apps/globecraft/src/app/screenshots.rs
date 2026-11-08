@@ -1478,6 +1478,12 @@ fn ocean_presets_screenshot() {
             .run("data.add", json!({"preset": preset}))
             .expect("preset");
     }
+    // GLOBECRAFT_MARINE_NAMES_FILE: a names file to use instead of the published one.
+    if let Some(path) = std::env::var_os("GLOBECRAFT_MARINE_NAMES_FILE") {
+        let bytes = std::fs::read(path).expect("names file");
+        let names = globecraft_data::marine_names::MarineNames::from_gzip(&bytes).expect("names");
+        h.state_mut().live_marine_names.set(names);
+    }
     // GLOBECRAFT_SHOT_LAYERS: built-in layers to turn on too (codes, comma-separated).
     for code in std::env::var("GLOBECRAFT_SHOT_LAYERS")
         .unwrap_or_default()
