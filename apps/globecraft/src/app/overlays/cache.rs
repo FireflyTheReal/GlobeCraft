@@ -369,7 +369,12 @@ impl OverlayCache {
                     self.worker.submit(geometry_view, boundaries.clone());
                     self.requested = Some(request);
                 }
-                painter.ctx().request_repaint();
+                // The worker wakes the window when the shapes are ready; this only
+                // covers a job folded into a newer one (roadmap 14.6: an immediate
+                // repaint here spun at the display rate while borders streamed in).
+                painter
+                    .ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(100));
                 return true;
             } else {
                 let request = (geometry_view, Arc::as_ptr(boundaries) as usize);

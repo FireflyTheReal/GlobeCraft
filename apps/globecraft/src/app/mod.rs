@@ -40,7 +40,17 @@ mod flat_earth;
 /// State lines (which need border tiles of zoom 5 or finer) count as showing below this
 /// share of their threshold altitude, where their fade-in reaches about 6 %.
 const STATE_TILES_FROM_RATIO: f64 = 0.85;
-const SKY_CLOCK_REPAINT_INTERVAL: Duration = Duration::from_secs(30);
+/// Just after the scene's minute turns over (see [`clock_wake`]).
+const CLOCK_WAKE_MARGIN_SECS: f64 = 0.05;
+
+/// How long until the wall clock reaches the next scene minute, when something on
+/// screen shows it.
+fn clock_wake(now_unix: f64, shows_clock: bool) -> Option<Duration> {
+    let minute = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
+    shows_clock.then(|| {
+        Duration::from_secs_f64(minute - now_unix.rem_euclid(minute) + CLOCK_WAKE_MARGIN_SECS)
+    })
+}
 mod fonts;
 mod frame_timing;
 mod globe;
@@ -293,6 +303,18 @@ impl App {
             || self.layer(MapLayer::StateBorders)
             || self.layer(MapLayer::MunicipalBorders)
             || self.layer(MapLayer::PlaceLabels)
+    }
+    /// Whether a shown web data layer reloads on a timer (its refresh is checked
+    /// only when the interface runs).
+    fn user_layers_refresh(&self) -> bool {
+        self.settings.user_layers.iter().any(|layer| {
+            layer.visible
+                && matches!(
+                    layer.source,
+                    globecraft_data::user_data::UserSource::Features { refresh_minutes, .. }
+                        if refresh_minutes > 0
+                )
+        })
     }
     pub(crate) fn layer(&self, layer: MapLayer) -> bool {
         match layer {
@@ -636,8 +658,16 @@ impl eframe::App for App {
             self.settings.sky.enabled,
             move || sky_wake.request_repaint(),
         );
-        if self.settings.sky.enabled && self.sky.image.is_some() {
-            ctx.request_repaint_after(SKY_CLOCK_REPAINT_INTERVAL);
+        // Whatever shows the wall-clock time moves on with the minute: the sun and
+        // the sky, the timeline's clock, the local time under the cursor. One wake
+        // just after the next minute, and none while nothing shows it (roadmap 14.6).
+        let shows_clock = self.time.is_live()
+            && (self.layer(MapLayer::Sunlight)
+                || self.sky_ready()
+                || self.timeline_open
+                || (self.layer(MapLayer::TimeZones) && self.cursor.is_some()));
+        if let Some(after) = clock_wake(globecraft_core::math::now_unix(), shows_clock) {
+            ctx.request_repaint_after(after);
         }
         // A view link from the command line opens once the window is up.
         if let Some(link) = self.pending_view_link.take()
@@ -767,11 +797,15 @@ impl eframe::App for App {
             },
             move || traffic_wake.request_repaint(),
         );
+        // The services below refresh only when the interface runs: a heartbeat
+        // while one is on, so they do not wait for the user to move.
         if earth
             && (self.layer(MapLayer::Vessels)
                 || self.layer(MapLayer::Satellites)
                 || self.layer(MapLayer::Roads)
-                || self.layer(MapLayer::Traffic))
+                || self.layer(MapLayer::Traffic)
+                || self.layer(MapLayer::Aurora)
+                || self.user_layers_refresh())
         {
             ctx.request_repaint_after(Duration::from_secs(30));
         }
@@ -931,5 +965,22 @@ impl eframe::App for App {
             profile.values.resident_bytes = self.cache.resident_bytes();
             watchdog.finish(profile.values);
         }
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    #[test]
+    fn the_clock_wakes_just_after_the_next_minute_and_only_when_shown() {
+        assert_eq!(clock_wake(120.0, false), None);
+        let after = clock_wake(125.5, true).unwrap().as_secs_f64();
+        assert!(
+            (after - (54.5 + CLOCK_WAKE_MARGIN_SECS)).abs() < 1e-9,
+            "{after}"
+        );
+        let at_turn = clock_wake(180.0, true).unwrap().as_secs_f64();
+        assert!((at_turn - (60.0 + CLOCK_WAKE_MARGIN_SECS)).abs() < 1e-9);
     }
 }

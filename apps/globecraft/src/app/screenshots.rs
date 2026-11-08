@@ -2280,3 +2280,44 @@ fn view_link_round_trip() {
     settle(&mut h, 4.0);
     save(&mut h, &dir, "34-view-link-opened");
 }
+
+/// Idle cost (roadmap 14.6): once the default view has loaded, the window asks for
+/// no more repaints (the earlier 4 Hz gamepad poll kept it awake). Manual: needs the
+/// network to settle.
+#[test]
+#[ignore = "manual: idle repaint check; needs the network"]
+fn idle_window_requests_no_repaints() {
+    let size = egui::vec2(1480.0, 900.0);
+    let mut h = Harness::builder()
+        .with_size(size)
+        .with_step_dt(1.0 / 60.0)
+        .renderer(WgpuTestRenderer::new())
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let delay = |h: &Harness<'static, App>| {
+        h.output().viewport_output[&egui::ViewportId::ROOT].repaint_delay
+    };
+    // Settle: the first frame, tiles, border tiles and the overlay worker.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut quiet = 0;
+    while quiet < 40 && std::time::Instant::now() < until {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let app = h.state();
+        let loading =
+            !app.renderer.is_idle() || app.cache.inflight() > 0 || app.boundary_loader.is_loading();
+        quiet = if loading || delay(&h) < std::time::Duration::from_secs(5) {
+            0
+        } else {
+            quiet + 1
+        };
+    }
+    h.step();
+    h.step();
+    let causes = h.ctx.repaint_causes();
+    println!("repaint delay {:?}, causes {causes:?}", delay(&h));
+    assert!(
+        delay(&h) >= std::time::Duration::from_secs(5),
+        "an idle window still repaints soon: {:?} {causes:?}",
+        delay(&h)
+    );
+}

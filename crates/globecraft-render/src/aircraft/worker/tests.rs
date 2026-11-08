@@ -53,9 +53,12 @@ fn unchanged_view_reuses_geometry_and_time_data_dpi_and_scale_invalidate_it() {
     let first = preparer.prepare(request.clone());
     assert!(first.is_recent(1010.1) && first.is_recent(1011.9));
     assert!(!first.is_recent(1009.9) && !first.is_recent(1012.2));
-    request.unix_secs = 1010.9;
+    // Within the view's motion step the geometry is reused; the next step makes new.
+    let step = request.view.motion_step();
+    let start = (1010.1 / step).floor() * step;
+    request.unix_secs = start + step * 0.999;
     assert!(Arc::ptr_eq(&first, &preparer.prepare(request.clone())));
-    request.unix_secs = 1011.0;
+    request.unix_secs = start + step;
     let timed = preparer.prepare(request.clone());
     assert!(!Arc::ptr_eq(&first, &timed));
     request.view.pixels_per_point = 2.0;

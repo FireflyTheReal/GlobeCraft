@@ -6,7 +6,12 @@ use globecraft_core::controller::{ControllerAction, ControllerMotion, Controller
 use globecraft_data::settings::controllers::ControllerPreferences;
 use std::time::{Duration, Instant};
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
-const HOTPLUG_POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// A pad connected with its sticks and buttons at rest: a press answers within this.
+const REST_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// No pad connected: one plugged in is noticed within this, or at once with the
+/// next mouse or key input (which wakes the window anyway). Long, so an idle window
+/// with controllers on but none connected stays asleep.
+const HOTPLUG_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_EVENTS_PER_FRAME: usize = 512;
 const BIND_TIMEOUT: Duration = Duration::from_secs(10);
 const BIND_AXIS_THRESHOLD: f64 = 0.75;
@@ -224,11 +229,24 @@ impl Controllers {
                 }
             }
         }
-        ctx.request_repaint_after(if self.devices.is_empty() {
-            HOTPLUG_POLL_INTERVAL
-        } else {
-            ACTIVE_POLL_INTERVAL
+        let moving = self.devices.iter().any(|device| {
+            device
+                .state
+                .axes
+                .iter()
+                .any(|axis| axis.abs() >= NEUTRAL_THRESHOLD)
+                || device.state.buttons.iter().any(|button| *button)
         });
+        if let Some(after) = poll_interval(PollState {
+            enabled: prefs.enabled,
+            allowed,
+            backend: self.backend.is_some(),
+            devices: !self.devices.is_empty(),
+            moving,
+            capturing: self.capture.is_some(),
+        }) {
+            ctx.request_repaint_after(after);
+        }
         let Some(device) = self
             .devices
             .iter()
@@ -329,5 +347,91 @@ impl App {
             return true;
         }
         false
+    }
+}
+
+/// What decides how often the pads are polled.
+#[derive(Clone, Copy, Debug, Default)]
+struct PollState {
+    enabled: bool,
+    allowed: bool,
+    backend: bool,
+    devices: bool,
+    moving: bool,
+    capturing: bool,
+}
+
+/// How soon to poll the pads again: none while controllers are off or the window
+/// is in the background (roadmap 14.6: the 4 Hz poll kept an idle window busy),
+/// often while a pad moves or a binding is being captured, a little while one
+/// rests, and seldom while none is connected.
+fn poll_interval(state: PollState) -> Option<Duration> {
+    if !state.backend {
+        return None;
+    }
+    if state.capturing {
+        return Some(ACTIVE_POLL_INTERVAL);
+    }
+    if !state.enabled || !state.allowed {
+        return None;
+    }
+    Some(match (state.devices, state.moving) {
+        (false, _) => HOTPLUG_POLL_INTERVAL,
+        (true, true) => ACTIVE_POLL_INTERVAL,
+        (true, false) => REST_POLL_INTERVAL,
+    })
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::*;
+
+    #[test]
+    fn pads_are_polled_only_while_they_can_do_something() {
+        let on = PollState {
+            enabled: true,
+            allowed: true,
+            backend: true,
+            ..PollState::default()
+        };
+        assert_eq!(poll_interval(on), Some(HOTPLUG_POLL_INTERVAL));
+        let resting = PollState {
+            devices: true,
+            ..on
+        };
+        assert_eq!(poll_interval(resting), Some(REST_POLL_INTERVAL));
+        let moving = PollState {
+            moving: true,
+            ..resting
+        };
+        assert_eq!(poll_interval(moving), Some(ACTIVE_POLL_INTERVAL));
+        assert_eq!(
+            poll_interval(PollState {
+                enabled: false,
+                ..moving
+            }),
+            None
+        );
+        assert_eq!(
+            poll_interval(PollState {
+                allowed: false,
+                ..moving
+            }),
+            None
+        );
+        assert_eq!(
+            poll_interval(PollState {
+                backend: false,
+                ..moving
+            }),
+            None
+        );
+        // Binding a control in Settings listens closely, controllers on or off.
+        let capturing = PollState {
+            enabled: false,
+            capturing: true,
+            ..on
+        };
+        assert_eq!(poll_interval(capturing), Some(ACTIVE_POLL_INTERVAL));
     }
 }

@@ -1,15 +1,18 @@
 //! How often live objects (aircraft, vessels, satellites) are moved on screen
 //! (roadmap 1.8). Positions are dead-reckoned from time-stamped samples; this module
 //! picks the time step so the fastest object of a layer moves about half a point per
-//! step: frame rate when zoomed in, about once a second from orbit, where nothing
-//! visibly moves faster and re-projecting thousands of objects would only cost time.
+//! step: frame rate when zoomed in, every few seconds from orbit, where nothing
+//! visibly moves faster and re-projecting thousands of objects would only cost time
+//! (and keep an idle window awake: roadmap 14.6).
 use globecraft_core::VERTICAL_FOV_HALF_TAN;
 use std::time::Duration;
 
 /// The finest step: about frame rate.
 pub const MIN_STEP_SECS: f64 = 1.0 / 60.0;
-/// The coarsest step, used when objects move less than a point a second.
-pub const MAX_STEP_SECS: f64 = 1.0;
+/// The coarsest step, used when objects move less than a tenth of a point a second.
+pub const MAX_STEP_SECS: f64 = 5.0;
+/// The coarsest step while a selected object's card shows its live numbers.
+pub const SELECTED_MAX_STEP_SECS: f64 = 1.0;
 /// How far the fastest object may move between two steps.
 const STEP_MOTION_POINTS: f64 = 0.5;
 
@@ -58,7 +61,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn objects_step_at_frame_rate_close_up_and_once_a_second_from_orbit() {
+    fn objects_step_at_frame_rate_close_up_and_every_few_seconds_from_orbit() {
         // A street view: an airliner crosses many points a second.
         assert_eq!(step_secs(2.0, 800.0, AIRCRAFT_SPEED_KM_S), MIN_STEP_SECS);
         // The whole globe: aircraft and ships barely move.

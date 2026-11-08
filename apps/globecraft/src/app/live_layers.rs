@@ -31,9 +31,9 @@ use globecraft_render::aircraft::{
 use globecraft_render::motion;
 use std::{sync::Arc, time::Duration};
 
-/// Repaint cadence while flights are on but not drawn yet (no view); drawn flights
-/// repaint at their motion step.
-pub(super) const FLIGHT_REPAINT_INTERVAL: Duration = Duration::from_secs(1);
+/// A fallback wake while flights are on but not drawn yet (no view); drawn flights
+/// repaint at their motion step, and new reports wake the window themselves.
+pub(super) const FLIGHT_REPAINT_INTERVAL: Duration = Duration::from_secs(10);
 const HOVER_RADIUS_POINTS: f32 = 15.0;
 /// The other planes' opacity while a flight is selected.
 const OTHER_PLANES_OPACITY: f32 = 0.55;
@@ -214,6 +214,12 @@ impl App {
                 .draw(painter, input, self.lang, opacity);
             self.paint_selected_flight(painter, basis, rect);
             self.aircraft_overlay.hover(painter, self.lang);
+            // The selected flight's card counts on.
+            let step = if selected {
+                step.min(motion::SELECTED_MAX_STEP_SECS)
+            } else {
+                step
+            };
             painter
                 .ctx()
                 .request_repaint_after(motion::repaint_after(step));
@@ -231,9 +237,13 @@ impl App {
         {
             self.draw_satellite_overlay(painter, geometry);
             // Orbit predictions need to move even without another network fetch.
+            let mut step = geometry.input.view.satellite_step();
+            if self.satellite_selection.selected().is_some() {
+                step = step.min(motion::SELECTED_MAX_STEP_SECS);
+            }
             painter
                 .ctx()
-                .request_repaint_after(motion::repaint_after(geometry.input.view.satellite_step()));
+                .request_repaint_after(motion::repaint_after(step));
         }
     }
 }

@@ -72,7 +72,8 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
         panic!("refreshed mesh");
     };
     assert!(!Arc::ptr_eq(&first, translated));
-    input.unix_secs = 1011.0;
+    // The next motion step (5 s from this far away).
+    input.unix_secs = 1015.0;
     let newer = AircraftPreparer::default().prepare(input.clone());
     overlay.accept(newer.clone(), input.unix_secs);
     overlay.accept(original, input.unix_secs);
