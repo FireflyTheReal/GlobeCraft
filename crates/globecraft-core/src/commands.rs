@@ -538,6 +538,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         Interface,
         r#"{"type":"object","properties":{"ask":{"type":"string"}}}"#
     ),
+    // Closed to the assistant itself: stopping is the user's way out of a run.
+    command!(
+        "assistant.stop",
+        "assistant-stop",
+        "close",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
     command!(
         "ui.pane.measure",
         "ui-pane-measure",

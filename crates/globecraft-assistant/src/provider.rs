@@ -588,6 +588,8 @@ pub const NOTE_TEMPLATES: &[&str] = &[
     "The model sent an empty reply; ask again, or try another model.",
     "Stopped after {steps} steps; say \"continue\" to go on.",
     "Stopped.",
+    "Stopped after {calls} actions for one message; say \"continue\" to go on.",
+    "Stopped: the model asked for the same action {count} times in a row.",
 ];
 
 /// The note of a refused reply, with the model's explanation if it gave one.
@@ -1112,6 +1114,11 @@ fn openai_request(cfg: &Config, system: &str, turns: &[Turn], tools: &[ToolDef])
         .map(|t| json!({"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.schema}}))
         .collect();
     let mut body = json!({"model": cfg.model.trim(), "messages": messages, "stream": true});
+    // A stream carries its token usage only when asked to (for the cost shown per turn). Asked
+    // of OpenAI and OpenRouter only: some compatible servers refuse options they don't know.
+    if matches!(cfg.provider.as_str(), "openai" | "openrouter") {
+        body["stream_options"] = json!({"include_usage": true});
+    }
     // Some servers refuse an empty tool list.
     if !tools.is_empty() {
         body["tools"] = json!(tools);
@@ -1214,7 +1221,7 @@ fn openai_reply(v: &Value) -> Result<Reply, String> {
     })
 }
 
-fn sse_events(body: &str) -> Vec<Value> {
+pub(crate) fn sse_events(body: &str) -> Vec<Value> {
     let mut events = Vec::new();
     let normalized = body.replace("\r\n", "\n");
     for block in normalized.split("\n\n") {

@@ -7,8 +7,10 @@
 use std::collections::VecDeque;
 
 use crate::compact;
+use crate::limits::{self, CallLimiter, Limit};
 use crate::provider::{self, Config, HttpRequest, HttpResponse, Note, ToolCall, ToolResult, Turn};
 use crate::tools::{self, Host};
+use crate::usage::{self, TurnUsage};
 
 /// Model requests per user message before the agent stops and reports back.
 pub const MAX_STEPS: u32 = 16;
@@ -45,6 +47,8 @@ pub enum Entry {
     Error(crate::Error),
     /// A note from the app (a stop, a retry, a compaction), translated by the interface.
     Note(Note),
+    /// What the requests of one user message used, with their estimated cost; ends the turn.
+    Usage(TurnUsage),
 }
 
 enum State {
@@ -93,6 +97,10 @@ pub struct Agent {
     /// Learned upper bound for summary input; reduced on a summary overflow.
     summary_limit: usize,
     summary_input_len: usize,
+    /// The tool calls of the current user message (see [`limits`]).
+    limiter: CallLimiter,
+    /// The tokens the current user message used so far, shown when its run ends.
+    turn_usage: TurnUsage,
 }
 
 /// The provider, address and model a request goes to.
@@ -120,6 +128,8 @@ impl Agent {
             retrying_summary: None,
             summary_limit: compact::BUDGET,
             summary_input_len: 0,
+            limiter: CallLimiter::default(),
+            turn_usage: TurnUsage::new(),
         }
     }
 
@@ -172,6 +182,8 @@ impl Agent {
         self.retries = 0;
         self.retrying_summary = None;
         self.preview = None;
+        self.limiter.reset();
+        self.turn_usage = TurnUsage::new();
         self.generation += 1;
     }
 
@@ -209,6 +221,7 @@ impl Agent {
             _ => self.turns.push(Turn::User(message)),
         }
         self.steps = 0;
+        self.limiter.reset();
         self.retries = 0;
         self.overflow_compacted = false;
         self.send()
@@ -371,6 +384,9 @@ impl Agent {
             return Step::Done;
         }
         self.preview = None;
+        if let Some(used) = resp.as_ref().ok().and_then(|r| usage::read(&r.body)) {
+            self.turn_usage.add(used, &self.config);
+        }
         let parsed = resp
             .as_ref()
             .map_err(Clone::clone)
@@ -479,6 +495,11 @@ impl Agent {
                 return Step::Done;
             };
             let Some(call) = q.front() else { break };
+            // Checked before approval: a call that won't run isn't worth asking about.
+            if let Err(limit) = self.limiter.admit(call) {
+                self.limited(limit);
+                return Step::Done;
+            }
             if tools::gate(call).is_some() && !self.approved(call) {
                 return Step::Confirm;
             }
@@ -497,6 +518,28 @@ impl Agent {
             return Step::Done;
         }
         self.send()
+    }
+
+    /// Ends a run that reached a [`limits`] cap: the waiting calls don't run, and the model is
+    /// told why so the next message doesn't start the loop again.
+    fn limited(&mut self, limit: Limit) {
+        let (note, result) = match limit {
+            Limit::Calls => (
+                Note::with(
+                    "Stopped after {calls} actions for one message; say \"continue\" to go on.",
+                    [("calls", limits::MAX_CALLS_PER_MESSAGE.to_string())],
+                ),
+                "Not run: the limit of actions for one user message was reached. Tell the user what was done so far.",
+            ),
+            Limit::Repeats => (
+                Note::with(
+                    "Stopped: the model asked for the same action {count} times in a row.",
+                    [("count", (limits::MAX_IDENTICAL_CALLS + 1).to_string())],
+                ),
+                "Not run: this exact call already ran several times in a row. Don't repeat it; tell the user what happened.",
+            ),
+        };
+        self.halt(Some(Entry::Note(note)), result, result);
     }
 
     /// Runs (or declines) the first waiting call and records its result.
@@ -572,11 +615,29 @@ impl Agent {
             "Stopped by the user.",
             "Stopped by the user.",
         );
+        self.settle_usage();
+    }
+
+    /// Once a run has ended, however it ended, notes what its requests used.
+    fn settle_usage(&mut self) {
+        if self.busy() {
+            return;
+        }
+        let turn = std::mem::replace(&mut self.turn_usage, TurnUsage::new());
+        if !turn.usage.is_empty() {
+            self.transcript.push(Entry::Usage(turn));
+        }
     }
 
     /// Runs one step of the conversation. A bug that panics while reading a reply or running its
     /// calls ends the turn with an error instead of taking the app down.
     fn guard(&mut self, f: impl FnOnce(&mut Self) -> Step) -> Step {
+        let step = self.guard_unsettled(f);
+        self.settle_usage();
+        step
+    }
+
+    fn guard_unsettled(&mut self, f: impl FnOnce(&mut Self) -> Step) -> Step {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut *self))) {
             Ok(step) => step,
             Err(payload) => {

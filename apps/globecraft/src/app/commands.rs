@@ -608,6 +608,11 @@ impl App {
                 }
                 json!({})
             }
+            "assistant.stop" => {
+                let running = self.assistant.busy();
+                self.assistant_stop();
+                json!({"stopped": running})
+            }
             "ui.pane.measure" => {
                 self.settings.workspace.toggle_right(RightPane::Measure);
                 json!({})
@@ -841,6 +846,10 @@ impl App {
             },
             "file.cancelScreenshot" => CommandState {
                 enabled: self.screenshot_running(),
+                checked: false,
+            },
+            "assistant.stop" => CommandState {
+                enabled: self.assistant.busy(),
                 checked: false,
             },
             "layer.basemap" => CommandState {

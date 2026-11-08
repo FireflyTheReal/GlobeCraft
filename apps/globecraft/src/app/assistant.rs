@@ -232,12 +232,16 @@ impl App {
         self.follow(step);
     }
 
+    /// Stops the run (`assistant.stop`: the pane's Stop button, Escape in its input box, the
+    /// command palette). The request out is forgotten, so its late reply is dropped (the agent's
+    /// generation moved on too), and a question queued behind the run isn't sent.
     pub(in crate::app) fn assistant_stop(&mut self) {
         if let Some(agent) = self.assistant.agent.as_mut() {
             agent.stop();
         }
         self.assistant.inflight = None;
         self.assistant.retry = None;
+        self.assistant.queued = None;
     }
 
     pub(in crate::app) fn assistant_clear(&mut self) {
