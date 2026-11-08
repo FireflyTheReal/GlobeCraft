@@ -60,27 +60,12 @@ impl AircraftOverlay {
     pub(super) fn invalidate_text(&mut self) {
         self.shape_key = None;
     }
-    #[cfg(test)]
     pub(super) fn new(ctx: egui::Context) -> Self {
-        Self::with_worker(
-            AircraftWorker::new(move || ctx.request_repaint()).expect("start aircraft projection"),
-        )
-    }
-    /// Planes keep their height above the ground in `cache`.
-    pub(super) fn with_elevation(
-        ctx: egui::Context,
-        cache: Arc<globecraft_data::tiles::TileCache>,
-    ) -> Self {
-        Self::with_worker(
-            AircraftWorker::with_elevation(cache, move || ctx.request_repaint())
-                .expect("start aircraft projection"),
-        )
-    }
-    fn with_worker(worker: AircraftWorker) -> Self {
         Self {
             geometry: None,
             requested: None,
-            worker,
+            worker: AircraftWorker::new(move || ctx.request_repaint())
+                .expect("start aircraft projection"),
             shapes: Vec::new(),
             shape_key: None,
             drawn: None,
@@ -204,7 +189,6 @@ impl App {
                 map_scale: self.settings.map_scale,
                 pixels_per_point,
                 heights: !self.settings.layers.flat_live_objects,
-                relief: self.overlay_ground(),
             },
             data: self.aircraft_snapshot(),
             unix_secs: now_unix(),

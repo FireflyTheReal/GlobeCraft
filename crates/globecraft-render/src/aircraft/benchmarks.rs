@@ -19,27 +19,12 @@ fn aircraft_projection_cost() {
     }
     .basis(4.0 / 3.0);
     let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0));
-    let visible = project_flights(
-        &basis,
-        rect,
-        &flights,
-        1010.0,
-        1.0,
-        &super::PlaneGround::sea_level(true),
-    )
-    .len();
+    let visible = project_flights(&basis, rect, &flights, 1010.0, 1.0, true).len();
     let mut samples = Vec::new();
     for _ in 0..ROUNDS {
         let start = Instant::now();
         for _ in 0..ITERATIONS {
-            black_box(project_flights(
-                &basis,
-                rect,
-                &flights,
-                1010.0,
-                1.0,
-                &super::PlaneGround::sea_level(true),
-            ));
+            black_box(project_flights(&basis, rect, &flights, 1010.0, 1.0, true));
         }
         samples.push(start.elapsed().as_secs_f64() * 1000.0 / ITERATIONS as f64);
     }
@@ -68,7 +53,6 @@ fn aircraft_geometry_reuse_cost() {
         map_scale: 1.0,
         pixels_per_point: 1.0,
         heights: true,
-        relief: None,
     };
     let request = ProjectionInput {
         view,

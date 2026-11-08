@@ -34,7 +34,6 @@ fn aircraft_geometry_is_prepared_for_the_raster_camera_before_publication() {
         map_scale: 1.0,
         pixels_per_point: 2.0,
         heights: true,
-        relief: None,
     };
     view.aircraft = Some(ProjectionInput {
         view: expected,

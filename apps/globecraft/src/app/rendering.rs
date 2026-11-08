@@ -68,8 +68,7 @@ impl Renderer {
         let overlay_ctx = ctx.clone();
         let mut live_preparer =
             globecraft_render::live_layers::LivePreparer::with_elevation(cache.clone());
-        let mut aircraft_preparer =
-            globecraft_render::aircraft::AircraftPreparer::with_elevation(cache.clone());
+        let mut aircraft_preparer = globecraft_render::aircraft::AircraftPreparer::default();
         // The swipe compare renders in the same job as the main frame, right after it:
         // both images arrive together for the same camera, their missing tiles reach
         // the cache as one list, and a tile of either release wakes the next frame.

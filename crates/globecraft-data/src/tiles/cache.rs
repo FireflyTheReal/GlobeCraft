@@ -20,8 +20,6 @@ const FAILED_TILE_RETRY_DELAY: Duration = Duration::from_secs(15);
 pub const DEFAULT_TILE_CACHE_BUDGET_BYTES: usize = 256 * 1024 * 1024;
 const MAX_TILE_RESPONSE_BYTES: u64 = 8_000_000;
 pub const MAX_INFLIGHT: usize = 48;
-/// Downloads under way below which [`TileCache::sparing_elevation_m`] may add one.
-pub const SPARING_ELEVATION_INFLIGHT: usize = 4;
 
 enum RequestState {
     /// The disk epoch at admission, and whether the tile is loaded ahead of need (a
@@ -292,20 +290,13 @@ impl TileCache {
     /// tile at or below `zoom`, requesting the `zoom` tile when it is missing. `None`
     /// until any elevation covers the point.
     pub fn elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
-        self.elevation_at(lat, lon, zoom, Some(MAX_INFLIGHT - 1))
+        self.elevation_at(lat, lon, zoom, true)
     }
     /// `elevation_m` without requesting anything: overlays follow what the frames load.
     pub fn loaded_elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
-        self.elevation_at(lat, lon, zoom, None)
+        self.elevation_at(lat, lon, zoom, false)
     }
-    /// `elevation_m` for many points at once (every plane in view): the missing tile
-    /// is requested only while fewer than [`SPARING_ELEVATION_INFLIGHT`] downloads
-    /// run, so the imagery the view needs is never kept waiting behind them (user,
-    /// 2026-11-08: with planes asking, the satellite imagery stopped loading).
-    pub fn sparing_elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
-        self.elevation_at(lat, lon, zoom, Some(SPARING_ELEVATION_INFLIGHT))
-    }
-    fn elevation_at(&self, lat: f64, lon: f64, zoom: u8, request: Option<usize>) -> Option<f32> {
+    fn elevation_at(&self, lat: f64, lon: f64, zoom: u8, request: bool) -> Option<f32> {
         let lat = lat.clamp(-85.05, 85.05);
         let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
         let s = lat.to_radians().sin();
@@ -320,12 +311,10 @@ impl TileCache {
                     let size = elevation.size() as f64;
                     return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
                 }
-                Lookup::Absent if level == zoom => {
+                Lookup::Absent if request && level == zoom => {
                     // Admitted like a load ahead of need: the view's own admission
                     // (which may not sample this tile) must not stop it.
-                    if let Some(limit) = request {
-                        self.request_under_limit(key, limit);
-                    }
+                    self.request_under_limit(key, MAX_INFLIGHT - 1);
                 }
                 _ => {}
             }

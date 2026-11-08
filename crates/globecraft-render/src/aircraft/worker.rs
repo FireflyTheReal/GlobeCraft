@@ -1,7 +1,7 @@
 //! Coalesced aircraft projection; displayed-frame geometry uses the same preparer.
 #[cfg(test)]
 mod tests;
-use super::{PlaneGround, ProjectedFlight, project_flights};
+use super::{ProjectedFlight, project_flights};
 use crate::motion;
 use emath::Rect;
 use globecraft_core::camera::Basis;
@@ -22,8 +22,6 @@ pub struct ProjectionView {
     pub pixels_per_point: f32,
     /// Aircraft at their height; off, on the ground below them.
     pub heights: bool,
-    /// The relief, while it is drawn: planes keep their height above it.
-    pub relief: Option<crate::overlays::OverlayGround>,
 }
 impl ProjectionView {
     /// How often flights move in this view, in seconds (see [`crate::motion`]).
@@ -72,17 +70,8 @@ impl AircraftGeometry {
 #[derive(Default)]
 pub struct AircraftPreparer {
     latest: Option<Arc<AircraftGeometry>>,
-    /// Where the ground's heights under the planes come from.
-    elevation: Option<Arc<globecraft_data::tiles::TileCache>>,
 }
 impl AircraftPreparer {
-    /// A preparer that puts planes over the ground's real height from `cache`.
-    pub fn with_elevation(cache: Arc<globecraft_data::tiles::TileCache>) -> Self {
-        Self {
-            elevation: Some(cache),
-            ..Self::default()
-        }
-    }
     pub fn prepare(&mut self, input: ProjectionInput) -> Arc<AircraftGeometry> {
         if let Some(geometry) = &self.latest
             && geometry.matches(input.view, &input.data)
@@ -98,12 +87,7 @@ impl AircraftPreparer {
             &input.data.aircraft,
             input.unix_secs,
             input.view.map_scale,
-            &PlaneGround::new(
-                input.view.heights,
-                self.elevation.as_deref(),
-                input.view.relief,
-                input.view.altitude_km,
-            ),
+            input.view.heights,
         );
         let mut labels: Vec<usize> = Vec::new();
         if input.view.altitude_km <= LABEL_MAX_ALTITUDE_KM {
@@ -147,24 +131,12 @@ pub struct AircraftWorker {
 }
 impl AircraftWorker {
     pub fn new(repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
-        Self::start(AircraftPreparer::default(), repaint)
-    }
-    /// A worker whose planes keep their height above the ground in `cache`.
-    pub fn with_elevation(
-        cache: Arc<globecraft_data::tiles::TileCache>,
-        repaint: impl Fn() + Send + 'static,
-    ) -> std::io::Result<Self> {
-        Self::start(AircraftPreparer::with_elevation(cache), repaint)
-    }
-    fn start(
-        mut preparer: AircraftPreparer,
-        repaint: impl Fn() + Send + 'static,
-    ) -> std::io::Result<Self> {
         let shared = Arc::new(Shared::default());
         let worker = shared.clone();
         std::thread::Builder::new()
             .name("globecraft-aircraft".into())
             .spawn(move || {
+                let mut preparer = AircraftPreparer::default();
                 loop {
                     let input = {
                         let mut state = worker.mailbox.lock().unwrap();
