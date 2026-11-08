@@ -678,84 +678,8 @@ impl App {
             );
         }
         self.compare_split(ui, &painter, rect);
-        let mut attribution = self.settings.layers.basemap.attribution(lg).to_string();
-        if self.settings.layers.basemap == Provider::Wayback
-            && let Some(r) = self.wayback_list.get(self.wayback_idx)
-        {
-            attribution = lg.format(
-                "wayback-snapshot-attribution",
-                &[
-                    ("attribution", attribution.into()),
-                    ("date", r.date.as_str().into()),
-                ],
-            );
-        }
-        if self.layer(MapLayer::NightLights) {
-            attribution.push_str(" · ");
-            attribution.push_str(&self.night_lights_credit(lg));
-        }
-        // The polar caps show NASA's imagery past the Mercator limit.
-        if self.explorer.active == globecraft_core::body::Body::Earth
-            && globecraft_render::polar::under(self.effective_provider())
-            && globecraft_render::polar::shows_polar_cap(
-                &display_basis,
-                rect.width() as usize,
-                rect.height() as usize,
-            )
-        {
-            attribution.push_str(" · ");
-            attribution.push_str(lg.text("polar-imagery-attribution"));
-        }
-        if self.layer(MapLayer::TimeZones) && self.live_time_zones.zones().is_some() {
-            attribution.push_str(" · ");
-            attribution.push_str(lg.text("timezones-credit"));
-        }
-        if self.layer(MapLayer::Aurora) && self.live_aurora.grid().is_some() {
-            attribution.push_str(" · ");
-            attribution.push_str(lg.text("aurora-credit"));
-        }
-        let transport_drawn = (self.map_data_shown()
-            && self.cam.alt <= globecraft_data::transport::MAX_ALTITUDE_KM)
-            || (self.layer(MapLayer::Roads)
-                && self.cam.alt <= globecraft_data::roads::MAX_ALTITUDE_KM);
-        if (self.uses_border_tiles() && self.boundary_loader.has_osm_tiles()) || transport_drawn {
-            // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
-            attribution = lg.format(
-                "osm-tiles-combined-credit",
-                &[
-                    ("map", attribution.into()),
-                    ("tiles", OSM_TILES_CREDIT.into()),
-                ],
-            );
-        }
-        // Credits of the layers the user added, as their licences ask.
-        if self.explorer.active == globecraft_core::body::Body::Earth {
-            for layer in self
-                .settings
-                .user_layers
-                .iter()
-                .filter(|layer| layer.visible && !layer.attribution.is_empty())
-            {
-                attribution.push_str(" · ");
-                attribution.push_str(&layer.attribution);
-            }
-        }
-        if self.renderer.displayed_sky {
-            attribution = lg.format(
-                "sky-combined-credit",
-                &[
-                    ("map", attribution.into()),
-                    ("sky", lg.text("sky-short-credit").into()),
-                ],
-            );
-        }
-        painter.text(
-            rect.right_bottom() - Vec2::new(8.0, 6.0),
-            Align2::RIGHT_BOTTOM,
-            attribution,
-            FontId::proportional(11.0 * self.settings.map_scale),
-            Color32::from_white_alpha(200),
-        );
+        let credits = self.map_credits(lg, &display_basis, rect);
+        self.paint_credits(&painter, rect, &credits);
 
         if self.explorer.active == globecraft_core::body::Body::Earth
             && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))

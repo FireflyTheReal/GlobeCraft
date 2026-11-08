@@ -33,6 +33,7 @@ mod assistant;
 mod cache;
 mod commands;
 mod controllers;
+mod credits;
 mod explorer;
 mod files;
 mod flat_earth;

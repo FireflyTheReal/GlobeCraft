@@ -532,6 +532,11 @@ ribbon-layer-aurora = Aurora
 aurora-loading-status = Loading the aurora forecast…
 aurora-loaded-status = Forecast for { $time } (in { $minutes } min) • highest chance { $peak } % • shown near the present only
 aurora-credit = Aurora: NOAA SWPC
+aircraft-credit = Aircraft: OpenSky Network · ADSB.lol (ODbL)
+vessels-credit = Ships: OpenSeaFeed
+vessels-fallback-credit = Ships: Fintraffic Digitraffic (CC BY 4.0)
+satellites-credit = Satellites: CelesTrak
+traffic-credit = Traffic: © TomTom
 aurora-source = NOAA Space Weather Prediction Center (OVATION)
 layers-timezones-toggle = Time zones
 ribbon-layer-timezones = Time zones
@@ -827,9 +832,7 @@ sky-help = The Milky Way is NASA’s diffuse map, prepared as a 4K SDR backgroun
 sky-loading = Preparing celestial background…
 sky-retry = Retry background loading
 sky-short-credit = Sky: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
-sky-combined-credit = { $map }
     { $sky }
-osm-tiles-combined-credit = { $map } · { $tiles }
 sky-software-credits = Celestial transform software licenses
 
 # Native Rust renderer terrain (no browser)

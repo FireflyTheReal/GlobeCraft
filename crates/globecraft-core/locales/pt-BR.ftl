@@ -532,6 +532,11 @@ ribbon-layer-aurora = Aurora
 aurora-loading-status = Carregando a previsão de aurora…
 aurora-loaded-status = Previsão para { $time } (em { $minutes } min) • maior chance { $peak } % • mostrada só perto do presente
 aurora-credit = Aurora: NOAA SWPC
+aircraft-credit = Aeronaves: OpenSky Network · ADSB.lol (ODbL)
+vessels-credit = Navios: OpenSeaFeed
+vessels-fallback-credit = Navios: Fintraffic Digitraffic (CC BY 4.0)
+satellites-credit = Satélites: CelesTrak
+traffic-credit = Trânsito: © TomTom
 aurora-source = Centro de Previsão do Clima Espacial da NOAA (OVATION)
 layers-timezones-toggle = Fusos horários
 ribbon-layer-timezones = Fusos horários
@@ -827,9 +832,7 @@ sky-help = A Via Láctea é o mapa difuso da NASA, preparado como fundo SDR 4K; 
 sky-loading = Preparando fundo celeste…
 sky-retry = Tentar carregar o fundo novamente
 sky-short-credit = Céu: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
-sky-combined-credit = { $map }
     { $sky }
-osm-tiles-combined-credit = { $map } · { $tiles }
 sky-software-credits = Licenças do software de transformação celeste
 
 # Relevo diretamente no motor Rust (sem navegador)

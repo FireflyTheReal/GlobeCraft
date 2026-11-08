@@ -104,6 +104,19 @@ impl LiveVessels {
     pub fn shared_snapshot(&self) -> Option<Arc<[Vessel]>> {
         (!self.snapshot().is_empty()).then(|| self.current.clone())
     }
+    /// The message key of the credit the shown ships ask for: none while none are
+    /// loaded, or for the user's own feed.
+    pub fn credit_key(&self) -> Option<&'static str> {
+        if self.current.is_empty() {
+            return None;
+        }
+        match self.source {
+            Source::World => Some("vessels-credit"),
+            Source::Custom => None,
+            Source::FinlandFallback => Some("vessels-fallback-credit"),
+        }
+    }
+
     pub fn status(&self, lang: globecraft_core::language::Lang) -> String {
         if let Some(error) = &self.error {
             return format!("AIS: {error}");
