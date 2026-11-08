@@ -61,6 +61,24 @@ impl DistanceUnits {
             }
         }
     }
+    /// An area: square metres, hectares or square kilometres; acres or square miles.
+    pub fn area(self, km2: f64) -> String {
+        const KM2_PER_MI2: f64 = KM_PER_MILE * KM_PER_MILE;
+        const ACRES_PER_MI2: f64 = 640.0;
+        match self {
+            Self::Metric if km2 < 0.01 => format!("{:.0} m²", km2 * 1e6),
+            Self::Metric if km2 < 1.0 => format!("{:.2} ha", km2 * 100.0),
+            Self::Metric => format!("{} km²", grouped(km2)),
+            Self::Imperial => {
+                let mi2 = km2 / KM2_PER_MI2;
+                if mi2 < 1.0 {
+                    format!("{:.2} acres", mi2 * ACRES_PER_MI2)
+                } else {
+                    format!("{} mi²", grouped(mi2))
+                }
+            }
+        }
+    }
     /// A ground height: whole metres or feet.
     pub fn elevation(self, metres: f64) -> String {
         match self {
@@ -109,6 +127,22 @@ impl DistanceUnits {
     }
 }
 /// Select US-specific ruler naming independently of the UI language.
+/// Two decimals below 100, whole numbers with thousands separated above.
+fn grouped(value: f64) -> String {
+    if value < 100.0 {
+        return format!("{value:.2}");
+    }
+    let digits = format!("{value:.0}");
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 pub fn is_us_locale(locale: &str) -> bool {
     locale_region(locale).is_some_and(|region| region.as_str() == "US")
 }
@@ -125,6 +159,17 @@ fn locale_region(locale: &str) -> Option<unic_langid::subtags::Region> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn areas_read_in_fitting_units() {
+        let metric = DistanceUnits::Metric;
+        assert_eq!(metric.area(0.0045), "4500 m²");
+        assert_eq!(metric.area(0.25), "25.00 ha");
+        assert_eq!(metric.area(12.345), "12.35 km²");
+        assert_eq!(metric.area(12_308.8), "12,309 km²");
+        let imperial = DistanceUnits::Imperial;
+        assert_eq!(imperial.area(0.01), "2.47 acres");
+        assert_eq!(imperial.area(12_308.8), "4,752 mi²");
+    }
     #[test]
     fn region_not_ui_language_selects_default() {
         for locale in [

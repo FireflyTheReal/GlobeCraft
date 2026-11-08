@@ -305,6 +305,7 @@ impl App {
             col(ui, |ui| {
                 small(ui, self, "edit.undo", Value::Null);
                 small(ui, self, "edit.redo", Value::Null);
+                small(ui, self, "ruler.closeShape", Value::Null);
             });
         });
         group(ui, lang.text("ribbon-group-capture"), |ui| {

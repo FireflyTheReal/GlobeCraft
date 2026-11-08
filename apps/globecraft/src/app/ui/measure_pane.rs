@@ -13,6 +13,7 @@ impl App {
         ui.horizontal(|ui| {
             small(ui, self, "ruler.enable", Value::Null);
             small(ui, self, "ruler.editPoints", Value::Null);
+            small(ui, self, "ruler.closeShape", Value::Null);
         });
         let selected =
             super::ruler::unit_selector(ui, self.settings.ruler_unit, self.us_locale, lg);
@@ -53,6 +54,16 @@ impl App {
                     .size(11.5)
                     .color(t.text_dim),
                 );
+                if let Some(km2) = self.ruler_paths.area_km2(model) {
+                    ui.label(
+                        egui::RichText::new(lg.format(
+                            "measure-area-label",
+                            &[("area", self.distance_units().area(km2).into())],
+                        ))
+                        .font(semibold(15.0))
+                        .color(t.text),
+                    );
+                }
                 if let Some(pair) = self.ruler_paths.last_leg() {
                     let bearing = model
                         .initial_bearing(pair[0], pair[1])

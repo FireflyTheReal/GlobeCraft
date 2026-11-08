@@ -362,6 +362,11 @@ impl App {
                 self.ruler_drag = None;
                 self.ruler_json()
             }
+            "ruler.closeShape" => {
+                let closed = toggled(p, self.ruler_paths.closed());
+                self.ruler_paths.set_closed(closed);
+                self.ruler_json()
+            }
             "ruler.profile" => {
                 let profile = self
                     .ruler_profile()
@@ -805,6 +810,7 @@ impl App {
         match id {
             "camera.autoRotate" => on(self.auto_rotate),
             "ruler.enable" => on(self.ruler),
+            "ruler.closeShape" => on(self.ruler_paths.closed()),
             "edit.undo" => CommandState {
                 enabled: self.ruler_paths.can_undo(),
                 checked: false,
@@ -973,6 +979,8 @@ impl App {
             .and_then(|pair| model.initial_bearing(pair[0], pair[1]));
         json!({
             "enabled": self.ruler,
+            "closed_shapes": self.ruler_paths.closed(),
+            "area_km2": self.ruler_paths.area_km2(model),
             "points": self.ruler_paths.point_count(),
             "paths_lat_lon": paths,
             "total_km": total_km,

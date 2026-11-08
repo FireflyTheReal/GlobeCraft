@@ -25,8 +25,8 @@ pub fn project_ruler(
         ground_position(basis, ground, lat, lon)
     };
     points
-        .paths()
-        .flat_map(|path| path.array_windows::<2>())
+        .legs()
+        .iter()
         .map(|pair| {
             let projected: Vec<_> = basis
                 .model

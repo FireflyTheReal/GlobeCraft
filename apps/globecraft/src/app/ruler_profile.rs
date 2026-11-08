@@ -75,7 +75,8 @@ impl App {
             return None;
         }
         let model = self.active_earth_model();
-        let points = profile::sample(self.ruler_paths.paths(), model, SAMPLES);
+        let paths = self.ruler_paths.measured_paths();
+        let points = profile::sample(paths.iter().map(Vec::as_slice), model, SAMPLES);
         let total = points.last()?.distance_km;
         let zoom = profile_zoom(total);
         let heights = points

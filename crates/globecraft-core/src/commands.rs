@@ -293,6 +293,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "ruler.closeShape",
+        "ruler-close-shape",
+        "shape",
+        Home,
+        View,
+        TOGGLE
+    ),
+    command!(
         "ruler.profile",
         "ruler-profile",
         "measure",

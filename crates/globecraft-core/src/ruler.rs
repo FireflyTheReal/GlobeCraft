@@ -17,6 +17,9 @@ pub struct Ruler {
     undo: VecDeque<RulerPaths>,
     redo: Vec<RulerPaths>,
     move_before: Option<RulerPaths>,
+    /// Paths of three points or more are closed shapes: their last point joins
+    /// their first, and their area is measured (roadmap 1.10, "measuring area").
+    closed: bool,
 }
 
 impl Ruler {
@@ -34,6 +37,64 @@ impl Ruler {
     }
     pub fn paths(&self) -> impl Iterator<Item = &[(f64, f64)]> {
         self.paths.iter().map(Vec::as_slice)
+    }
+    pub fn closed(&self) -> bool {
+        self.closed
+    }
+    pub fn set_closed(&mut self, closed: bool) {
+        self.closed = closed;
+    }
+    /// Whether a path is drawn and measured as a closed shape.
+    fn shape(&self, path: &[(f64, f64)]) -> bool {
+        self.closed && path.len() >= 3
+    }
+    /// The paths as measured: a closed shape ends back at its first point.
+    pub fn measured_paths(&self) -> Vec<Vec<(f64, f64)>> {
+        self.paths
+            .iter()
+            .map(|path| {
+                let mut measured = path.clone();
+                if self.shape(path) {
+                    measured.push(path[0]);
+                }
+                measured
+            })
+            .collect()
+    }
+    /// Every leg measured, the closing legs of shapes included.
+    pub fn legs(&self) -> Vec<[(f64, f64); 2]> {
+        self.measured_paths()
+            .iter()
+            .flat_map(|path| path.array_windows::<2>().copied().collect::<Vec<_>>())
+            .collect()
+    }
+    /// The area enclosed by the closed shapes, km² (on the model's surface: the
+    /// ellipsoid's geodesic polygons, or the sphere's). `None` when nothing is closed.
+    pub fn area_km2(&self, model: crate::earth_model::EarthModel) -> Option<f64> {
+        use geographiclib_rs::{Geodesic, PolygonArea, Winding};
+        let geodesic = match model {
+            crate::earth_model::EarthModel::Wgs84 => Geodesic::wgs84(),
+            crate::earth_model::EarthModel::PerfectSphere => {
+                Geodesic::new(crate::EARTH_RADIUS_KM * 1000.0, 0.0)
+            }
+        };
+        let shapes: Vec<&Vec<(f64, f64)>> =
+            self.paths.iter().filter(|path| self.shape(path)).collect();
+        if shapes.is_empty() {
+            return None;
+        }
+        let area_m2: f64 = shapes
+            .iter()
+            .map(|path| {
+                let mut polygon = PolygonArea::new(&geodesic, Winding::CounterClockwise);
+                for (lat, lon) in path.iter() {
+                    polygon.add_point(*lat, *lon);
+                }
+                // Signed, so a shape drawn clockwise is not the rest of the Earth.
+                polygon.compute(true).1.abs()
+            })
+            .sum();
+        Some(area_m2 / 1e6)
     }
     pub fn points(&self) -> impl Iterator<Item = &(f64, f64)> {
         self.paths.iter().flatten()
@@ -139,8 +200,8 @@ impl Ruler {
         self.record(before);
     }
     pub fn angular_distance_degrees(&self, model: crate::earth_model::EarthModel) -> f64 {
-        self.paths()
-            .flat_map(|path| path.array_windows::<2>())
+        self.legs()
+            .iter()
             .map(|pair| model.central_angle_degrees(pair[0], pair[1]))
             .sum()
     }
@@ -148,8 +209,8 @@ impl Ruler {
         self.distance_km(crate::earth_model::EarthModel::PerfectSphere)
     }
     pub fn distance_km(&self, model: crate::earth_model::EarthModel) -> f64 {
-        self.paths()
-            .flat_map(|path| path.array_windows::<2>())
+        self.legs()
+            .iter()
             .map(|pair| model.distance_km(pair[0], pair[1]))
             .sum()
     }
@@ -163,6 +224,35 @@ impl Ruler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_closed_shape_measures_its_closing_leg_and_its_area() {
+        use crate::earth_model::EarthModel;
+        let mut ruler = Ruler::default();
+        for point in [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)] {
+            ruler.add_point(point, false);
+        }
+        let open = ruler.distance_km(EarthModel::PerfectSphere);
+        assert!(ruler.area_km2(EarthModel::Wgs84).is_none());
+        ruler.set_closed(true);
+        let closed = ruler.distance_km(EarthModel::PerfectSphere);
+        assert!((closed - open - 111.195080234).abs() < 1e-6);
+        // A one-degree square at the equator: 12,308 km² on WGS 84.
+        let area = ruler.area_km2(EarthModel::Wgs84).unwrap();
+        assert!((area - 12_308.8).abs() < 1.0, "{area}");
+        // Drawn the other way round, the same area (not the rest of the Earth).
+        let mut reverse = Ruler::default();
+        for point in [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)] {
+            reverse.add_point(point, false);
+        }
+        reverse.set_closed(true);
+        assert!((reverse.area_km2(EarthModel::Wgs84).unwrap() - area).abs() < 1e-6);
+        // Two points make no shape.
+        let mut line = Ruler::default();
+        line.add_point((0.0, 0.0), false);
+        line.add_point((0.0, 1.0), false);
+        line.set_closed(true);
+        assert!(line.area_km2(EarthModel::Wgs84).is_none());
+    }
     #[test]
     fn model_switch_remeasures_existing_paths_without_changing_history() {
         use crate::earth_model::EarthModel;

@@ -1256,6 +1256,36 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                 0.0,
             );
         }
+        "shape" => {
+            // A closed outline with its area shaded: the ruler measuring a shape.
+            p.polygon_shape(
+                &[
+                    (4.0, 18.0),
+                    (6.0, 6.0),
+                    (15.0, 3.0),
+                    (21.0, 12.0),
+                    (14.0, 20.0),
+                ],
+                60,
+            );
+            for (x, y) in [
+                (4.0, 18.0),
+                (6.0, 6.0),
+                (15.0, 3.0),
+                (21.0, 12.0),
+                (14.0, 20.0),
+            ] {
+                p.rect(
+                    x - 1.5,
+                    y - 1.5,
+                    3.0,
+                    3.0,
+                    Some(Color32::WHITE),
+                    Some((1.0, ink)),
+                    0.0,
+                );
+            }
+        }
         "dark" => {
             p.circle(
                 12.0,

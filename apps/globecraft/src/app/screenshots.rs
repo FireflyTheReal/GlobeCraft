@@ -2156,4 +2156,15 @@ fn ruler_profile_screenshot() {
     h.hover_at(at);
     settle(&mut h, 0.5);
     save(&mut h, &dir, "33-ruler-profile-hover");
+    // Closed: the third leg back to Geneva, and the area of the triangle.
+    let answer = h
+        .state_mut()
+        .run("ruler.closeShape", json!({"on": true}))
+        .expect("close");
+    let area = answer["area_km2"].as_f64().expect("an area");
+    println!("closed shape: {area:.0} km², {} points", answer["points"]);
+    // By hand (flat, 111 km a degree north, 77.5 east): about 430 km².
+    assert!((400.0..480.0).contains(&area), "{area}");
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "33-ruler-area");
 }
