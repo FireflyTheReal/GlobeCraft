@@ -89,6 +89,73 @@ jobs:
       - name: Lint profiling configuration
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+  other-platforms:
+    needs: select-checks
+    if: needs.select-checks.outputs.run == 'true'
+    # The same gate on macOS and Windows (roadmap 10.1): lints and tests, so a
+    # platform-specific break shows on the push, not at release time.
+    name: ${{ matrix.os }} / Rust 1.97
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97'
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-build-test-${{ matrix.os }}-1.97
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+
+  ui-screenshots:
+    needs: select-checks
+    if: needs.select-checks.outputs.run == 'true'
+    # The interface rendered offscreen on the CPU (Mesa lavapipe), as the manual
+    # screenshot tests do on a desktop (roadmap 10.1). Every request to the network
+    # goes to a dead proxy: the tests must not depend on public map services, and
+    # what they check (the interface, panels, cards, symbols) needs none. The
+    # pictures are uploaded for review.
+    name: ubuntu-latest / UI screenshots (lavapipe)
+    runs-on: ubuntu-latest
+    env:
+      GLOBECRAFT_SHOTS: ${{ github.workspace }}/ui-screenshots
+      HTTP_PROXY: http://127.0.0.1:9
+      HTTPS_PROXY: http://127.0.0.1:9
+      ALL_PROXY: http://127.0.0.1:9
+      NO_PROXY: 127.0.0.1,localhost
+      WGPU_BACKEND: vulkan
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: app-build-test-ui-screenshots-1.97
+      - name: Install Linux development libraries and lavapipe
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev mesa-vulkan-drivers
+      - name: Render the interface
+        run: >-
+          cargo test -p globecraft --release --locked --
+          --ignored --exact --test-threads=1
+          app::screenshots::interface_screenshots app::screenshots::timeline_screenshot
+          app::screenshots::point_layer_screenshot app::screenshots::selected_flight_screenshot
+          app::screenshots::legend_screenshot app::screenshots::add_data_screenshots
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-screenshots
+          path: ui-screenshots
+          if-no-files-found: warn
+
   release-toolchain:
     needs: select-checks
     if: needs.select-checks.outputs.run == 'true'
