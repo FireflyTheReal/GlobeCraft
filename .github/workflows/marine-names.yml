@@ -1,0 +1,185 @@
+name: Marine names
+
+# Publishes the names of the oceans, seas, EEZs and undersea features into the one
+# `map-data` pre-release as `globecraft-marine-names-<date>.geojson.gz` and the manifest
+# entry `marine_names`. Source: the Marine Regions gazetteer (Flanders Marine
+# Institute, marineregions.org, CC BY 4.0), one point per place with `name`, `kind`
+# (ocean, sea, eez, undersea), the gazetteer `type`, `size_km` (the larger of its
+# bounding box and twice its precision) and `mrgid`, largest first.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the file into the map-data release'
+        type: boolean
+        default: true
+  schedule:
+    # Twice a year: the gazetteer changes slowly.
+    - cron: '23 4 2 1,7 *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: map-data-marine-names
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Read the gazetteer
+        id: source
+        run: |
+          set -euo pipefail
+          version=$(date -u +%Y%m%d)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          cat > names.py <<'PY'
+          """Marine names from the Marine Regions gazetteer (marineregions.org, CC BY 4.0):
+          oceans, seas and sea areas, EEZs and undersea features, one point each, as GeoJSON."""
+          import gzip, json, math, sys, time, urllib.parse, urllib.request
+          
+          API = "https://www.marineregions.org/rest/getGazetteerRecordsByType.json/{}/?offset={}"
+          KINDS = {
+              "ocean": ["Ocean"],
+              "sea": ["Sea", "IHO Sea Area", "General Sea Area", "Gulf", "Strait", "Channel",
+                      "Sound", "Bight", "Bay", "Passage"],
+              "eez": ["EEZ"],
+              "undersea": ["Seamount(s)", "Seamount Chain", "Guyot(s)", "Tablemount", "Trench",
+                           "Ridge(s)", "Rise", "Abyssal Plain", "Plain", "Fracture Zone", "Basin",
+                           "Plateau", "Canyon(s)", "Trough", "Escarpment", "Fan", "Deep", "Hole",
+                           "Knoll(s)", "Hill(s)", "Spur", "Sill", "Terrace", "Seachannel", "Rift",
+                           "Bank", "Shelf", "Gap", "Saddle", "Valley", "Seamount Province"],
+          }
+          MAX_PAGES = int(sys.argv[2]) if len(sys.argv) > 2 else 10_000
+          
+          def fetch(url):
+              for attempt in range(5):
+                  try:
+                      with urllib.request.urlopen(url, timeout=60) as response:
+                          if response.status == 204:
+                              return []
+                          body = response.read()
+                          return json.loads(body) if body.strip() else []
+                  except urllib.error.HTTPError as error:
+                      if error.code == 404:
+                          return []
+                      time.sleep(2 + attempt * 3)
+                  except Exception:
+                      time.sleep(2 + attempt * 3)
+              raise SystemExit(f"failed: {url}")
+          
+          def size_km(r):
+              lat = r["latitude"]
+              spans = [0.0]
+              if None not in (r.get("minLatitude"), r.get("maxLatitude"), r.get("minLongitude"), r.get("maxLongitude")):
+                  dlat = (r["maxLatitude"] - r["minLatitude"]) * 111.2
+                  dlon = (r["maxLongitude"] - r["minLongitude"]) % 360 * 111.2 * math.cos(math.radians(lat))
+                  spans.append(max(dlat, dlon))
+              if r.get("precision"):
+                  spans.append(2 * r["precision"] / 1000)
+              return round(max(spans), 1)
+          
+          features, seen = [], set()
+          counts = {}
+          for kind, types in KINDS.items():
+              for place_type in types:
+                  offset, pages = 0, 0
+                  while pages < MAX_PAGES:
+                      batch = fetch(API.format(urllib.parse.quote(place_type), offset))
+                      if not batch:
+                          break
+                      for r in batch:
+                          if r.get("latitude") is None or r.get("longitude") is None:
+                              continue
+                          if r.get("accepted") not in (None, r["MRGID"]) or r.get("status") not in ("standard", None):
+                              continue
+                          if r["MRGID"] in seen:
+                              continue
+                          seen.add(r["MRGID"])
+                          name = r.get("preferredGazetteerName") or ""
+                          if not name:
+                              continue
+                          features.append({
+                              "type": "Feature",
+                              "geometry": {"type": "Point", "coordinates": [round(r["longitude"], 4), round(r["latitude"], 4)]},
+                              "properties": {"name": name, "kind": kind, "type": place_type,
+                                             "size_km": size_km(r), "mrgid": r["MRGID"]},
+                          })
+                          counts[place_type] = counts.get(place_type, 0) + 1
+                      offset += len(batch)
+                      pages += 1
+                      time.sleep(0.2)
+          for t, n in counts.items():
+              print(f"{t}: {n}")
+          print("total", len(features))
+          features.sort(key=lambda f: -f["properties"]["size_km"])
+          data = json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":"), ensure_ascii=False)
+          with gzip.open(sys.argv[1], "wt", encoding="utf-8") as out:
+              out.write(data)
+          PY
+          python3 names.py "globecraft-marine-names-$version.geojson.gz"
+          ls -la *.gz
+
+      - name: Check the names
+        run: |
+          set -euo pipefail
+          python3 - globecraft-marine-names-*.geojson.gz <<'PY'
+          import gzip, json, sys
+          data = json.load(gzip.open(sys.argv[1], "rt", encoding="utf-8"))
+          names = {f["properties"]["name"] for f in data["features"]}
+          kinds = {f["properties"]["kind"] for f in data["features"]}
+          print(len(data["features"]), "names;", sorted(kinds))
+          for expected in ["Pacific Ocean", "Mariana Trench"]:
+              assert any(expected in name for name in names), expected
+          assert kinds == {"ocean", "sea", "eez", "undersea"}, kinds
+          assert len(data["features"]) > 5000, len(data["features"])
+          PY
+
+      - name: Publish into the map data release
+        if: github.event_name == 'schedule' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.source.outputs.version }}
+          KEY: marine_names
+        # Same rules as the other sets (map-data.yml, airports.yml, timezones.yml).
+        run: |
+          set -euo pipefail
+          release=map-data
+          file="globecraft-marine-names-$VERSION.geojson.gz"
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber "$file"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$release"
+          cat > merge.py <<'PY'
+          import json, os, sys
+          base, version, key = sys.argv[1], os.environ["VERSION"], os.environ["KEY"]
+          manifest = json.load(open("old-manifest.json"))
+          old = manifest.get(key, {})
+          manifest[key] = {
+              "version": version,
+              "previous": old.get("version") if old.get("version") != version else old.get("previous"),
+              "file": f"{base}/globecraft-marine-names-{version}.geojson.gz",
+              "licence": "Marine Regions gazetteer, Flanders Marine Institute (CC BY 4.0)",
+          }
+          json.dump(manifest, open("manifest.json", "w"), indent=1)
+          PY
+          for attempt in 1 2 3 4 5; do
+            rm -f old-manifest.json check.json
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json \
+              --output old-manifest.json 2> /dev/null || echo '{}' > old-manifest.json
+            python3 merge.py "$base"
+            gh release upload "$release" --repo "$GITHUB_REPOSITORY" --clobber manifest.json
+            sleep $((RANDOM % 20 + 10))
+            gh release download "$release" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --output check.json
+            if python3 -c 'import json, os, sys; sys.exit(json.load(open("check.json")).get(os.environ["KEY"], {}).get("file") != json.load(open("manifest.json"))[os.environ["KEY"]]["file"])'; then
+              break
+            fi
+            echo "The manifest changed underneath; merging again ($attempt)"
+          done
+          previous=$(python3 -c 'import json, os; print(json.load(open("old-manifest.json")).get(os.environ["KEY"], {}).get("version") or "")')
+          stale=$(gh release view "$release" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            grep -E '^globecraft-marine-names-.*\.geojson\.gz$' |
+            grep -v -x -e "$file" -e "globecraft-marine-names-$previous.geojson.gz" || true)
+          for old in $stale; do
+            gh release delete-asset "$release" "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done
