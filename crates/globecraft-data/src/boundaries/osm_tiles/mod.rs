@@ -16,7 +16,9 @@ mod compact;
 pub(crate) mod content;
 mod join;
 mod loading;
+mod locate;
 use crate::mvt;
+pub use locate::{AdminAreas, AdminLookup};
 pub(crate) mod pick;
 mod store;
 
@@ -229,6 +231,33 @@ impl OsmTileStreamer {
             .store
             .lock()
             .is_ok_and(|store| !store.tiles.is_empty())
+    }
+
+    /// Bumped whenever the tiles in memory change (loaded or forgotten).
+    pub(super) fn revision(&self) -> u64 {
+        self.context.store.lock().map_or(0, |store| store.revision)
+    }
+
+    /// The state and municipality a point lies in, from the tiles in memory (see
+    /// `locate`). The tiles are taken out of the lock first: the lookup reads lines.
+    pub(super) fn admin_areas_at(&self, lat: f64, lon: f64) -> AdminAreas {
+        let tiles: HashMap<TileKey, Arc<TileContent>> = self
+            .context
+            .store
+            .lock()
+            .map(|store| {
+                store
+                    .tiles
+                    .iter()
+                    .filter(|(key, _)| key.z >= pick::STATE_MIN_ZOOM)
+                    .map(|(key, entry)| (*key, entry.content.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        AdminAreas {
+            state: locate::lookup(&tiles, locate::AdminLevel::State, lat, lon),
+            municipality: locate::lookup(&tiles, locate::AdminLevel::Municipality, lat, lon),
+        }
     }
 
     /// Bytes the disk cache uses.

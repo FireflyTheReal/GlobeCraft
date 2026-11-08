@@ -15,7 +15,10 @@ mod sources;
 mod updates;
 pub use geojson::dedupe_city_labels;
 pub use load::{BoundaryLoader, load_boundaries_async};
-pub use osm_tiles::{MUNICIPAL_MIN_ZOOM as OSM_MUNICIPAL_MIN_ZOOM, OsmBorderLines, OsmTileView};
+pub use osm_tiles::{
+    AdminAreas, AdminLookup, MUNICIPAL_MIN_ZOOM as OSM_MUNICIPAL_MIN_ZOOM, OsmBorderLines,
+    OsmTileView,
+};
 pub use updates::{BoundarySnapshot, BoundaryUpdates};
 pub type Line = Arc<Vec<(f64, f64)>>;
 
@@ -223,7 +226,7 @@ pub(crate) const PLACE_SUBURB_RANK: u8 = 14;
 pub(crate) const PLACE_NEIGHBOURHOOD_RANK: u8 = 15;
 pub(crate) const PLACE_LOCALITY_RANK: u8 = 16;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapLabel {
     pub lat: f64,
     pub lon: f64,

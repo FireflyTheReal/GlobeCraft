@@ -781,6 +781,11 @@ impl App {
                 let (lat, lon) = position(p)?;
                 self.here_json(lat, lon)
             }
+            "ui.here" => {
+                let (lat, lon) = position(p)?;
+                self.here_card = Some(super::here::HereCard { lat, lon });
+                json!({"lat": lat, "lon": lon})
+            }
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
             id if id.starts_with("time.") => self.run_time(id, p)?,
             id if id.starts_with("flight.") => self.run_flight(id, p)?,

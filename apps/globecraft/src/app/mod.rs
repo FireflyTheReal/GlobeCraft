@@ -49,6 +49,7 @@ mod legend;
 mod live_geometry;
 mod live_layers;
 mod live_maps;
+mod long_press;
 #[cfg(any(target_os = "macos", test))]
 mod menu;
 mod navigation;
@@ -145,6 +146,11 @@ pub(crate) struct App {
     add_data: Option<ui::add_data::AddDataDialog>,
     /// The "What's here?" card, while open.
     here_card: Option<here::HereCard>,
+    /// The card's state and municipality, with the border tile revision they were
+    /// looked up at (the lookup reads lines, so it is not repeated every frame).
+    here_admin: Option<(here::HereCard, u64, globecraft_data::boundaries::AdminAreas)>,
+    /// Press and hold on the globe opens the card (touch screens and trackpads).
+    long_press: long_press::LongPress,
     live_satellites: globecraft_data::satellites::LiveSatellites,
     live_aurora: globecraft_data::aurora::LiveAurora,
     live_airports: globecraft_data::airports::LiveAirports,
@@ -402,6 +408,8 @@ impl App {
             user_layers: Default::default(),
             add_data: None,
             here_card: None,
+            here_admin: None,
+            long_press: long_press::LongPress::default(),
             live_satellites: globecraft_data::satellites::LiveSatellites::default(),
             live_aurora: globecraft_data::aurora::LiveAurora::default(),
             live_airports: globecraft_data::airports::LiveAirports::default(),

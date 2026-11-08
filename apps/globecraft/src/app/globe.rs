@@ -44,8 +44,22 @@ impl App {
         let ruler_captured = self.edit_ruler(ui, &resp, rect, aspect);
 
         // ── input
+        // Press and hold opens "What's here?"; once it has, the press neither pans nor
+        // clicks.
+        let press = {
+            let (down, pos, now) =
+                ui.input(|i| (i.pointer.primary_down(), i.pointer.interact_pos(), i.time));
+            let on_globe = down && resp.is_pointer_button_down_on() && !ruler_captured;
+            self.long_press.update(on_globe, pos, now)
+        };
+        if let Some(secs) = press.wake_in_secs {
+            ui.ctx()
+                .request_repaint_after(Duration::from_secs_f64(secs));
+        }
         let mut interacting = self.controller_input(ui, rect.height());
-        if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
+        if press.swallow {
+            // The held press stays put.
+        } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
             let d =
                 ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
             self.fly = None;
@@ -248,7 +262,12 @@ impl App {
             .and_then(pick);
 
         let start_ruler_path = self.ruler && ruler_input::starts_new_path(&resp);
-        if !ruler_captured && !start_ruler_path && resp.double_clicked() {
+        if let Some((lat, lon)) = press.fire_at.filter(|p| rect.contains(*p)).and_then(pick) {
+            self.run_reporting("ui.here", serde_json::json!({"lat": lat, "lon": lon}));
+        }
+        if press.swallow {
+            // The long press's own release is not a click.
+        } else if !ruler_captured && !start_ruler_path && resp.double_clicked() {
             if let Some((la, lo)) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
@@ -307,7 +326,10 @@ impl App {
         {
             self.ruler_paths.add_point(pt, start_ruler_path);
         }
-        if resp.secondary_clicked() {
+        // On touch screens egui opens the context menu on its own, longer, long touch:
+        // the card has opened by then.
+        let menu_suppressed = press.swallow && resp.secondary_clicked();
+        if resp.secondary_clicked() && !menu_suppressed {
             self.menu_pick = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
@@ -712,7 +734,7 @@ impl App {
         // Context menu (right-click): every entry is a command at the picked position.
         let pick = self.menu_pick;
         let mut chosen: Option<(&str, serde_json::Value)> = None;
-        resp.context_menu(|ui| match pick {
+        let show_menu = |ui: &mut egui::Ui| match pick {
             Some((la, lo)) => {
                 match self.settings.coordinate_display.format(la, lo) {
                     Ok(text) => {
@@ -729,9 +751,14 @@ impl App {
                 for (icon, key, id, params) in [
                     ("places", "globe-placemark-action", "places.add", at.clone()),
                     ("fly", "globe-fly-to-action", "camera.flyTo", fly),
-                    ("measure", "globe-ruler-point-action", "ruler.addPoint", at.clone()),
+                    (
+                        "measure",
+                        "globe-ruler-point-action",
+                        "ruler.addPoint",
+                        at.clone(),
+                    ),
                     ("copy", "globe-copy-coordinates-action", "copy", at.clone()),
-                    ("identify", "globe-whats-here-action", "here", at),
+                    ("identify", "globe-whats-here-action", "ui.here", at),
                 ] {
                     if super::ui::icons::button(ui, icon, lg.text(key)).clicked() {
                         chosen = Some((id, params));
@@ -742,16 +769,16 @@ impl App {
             None => {
                 ui.label(lg.text("globe-context-menu-hint"));
             }
-        });
+        };
+        if !menu_suppressed {
+            resp.context_menu(show_menu);
+        }
         match (chosen, pick) {
             (Some(("copy", _)), Some((la, lo))) => {
                 match self.settings.coordinate_display.format(la, lo) {
                     Ok(text) => ui.copy_text(text),
                     Err(error) => self.status = error.to_string(),
                 }
-            }
-            (Some(("here", _)), Some((lat, lon))) => {
-                self.here_card = Some(super::here::HereCard { lat, lon });
             }
             (Some((id, params)), _) => self.run_reporting(id, params),
             _ => {}
