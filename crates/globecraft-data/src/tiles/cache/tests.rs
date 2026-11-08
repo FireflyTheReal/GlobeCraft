@@ -412,3 +412,22 @@ fn configured_budgets_reach_both_cache_implementations() {
         Some(budgets.decoded_bytes as u64)
     );
 }
+
+/// Elevation asked for under hundreds of planes takes only a few download slots: the
+/// imagery the view needs still gets the rest (user, 2026-11-08).
+#[test]
+fn elevation_under_many_points_leaves_the_downloads_to_the_view() {
+    let (cache, _rx) = test_cache(64);
+    for i in 0..400 {
+        let (lat, lon) = (
+            -60.0 + f64::from(i % 20) * 6.0,
+            -170.0 + f64::from(i / 20) * 17.0,
+        );
+        assert!(cache.sparing_elevation_m(lat, lon, 8).is_none());
+    }
+    assert_eq!(cache.inflight(), SPARING_ELEVATION_INFLIGHT);
+    let imagery = (1_000_000..1_000_000 + MAX_INFLIGHT as u64)
+        .filter(|key| cache.request(*key))
+        .count();
+    assert_eq!(imagery, MAX_INFLIGHT - SPARING_ELEVATION_INFLIGHT);
+}

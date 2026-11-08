@@ -97,7 +97,7 @@ impl<'a> PlaneGround<'a> {
             return 0.0;
         };
         let metres = if self.request {
-            cache.elevation_m(lat, lon, PLANE_GROUND_ZOOM)
+            cache.sparing_elevation_m(lat, lon, PLANE_GROUND_ZOOM)
         } else {
             cache.loaded_elevation_m(lat, lon, PLANE_GROUND_ZOOM)
         };
