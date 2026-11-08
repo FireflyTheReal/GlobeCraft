@@ -1,5 +1,7 @@
-//! The border tile cache on disk: one SQLite file, one row per tile in the compact
-//! format, kept under a byte limit by dropping the tiles used longest ago.
+//! A map data tile cache on disk: one SQLite file, one row per tile, kept under a byte
+//! limit by dropping the tiles used longest ago. The border tiles keep theirs in the
+//! compact format; the vector sets (transport, roads, points of interest) keep the
+//! vector tiles as downloaded (`crate::vector_tiles`).
 //!
 //! A tile is stored with the tile set version it came from (a new border tile build
 //! names new archives). A tile of an older version is still shown, and refetched when the
@@ -21,13 +23,15 @@ const BUSY_TIMEOUT_MS: u64 = 1_000;
 const TEMPLATE_KEY: &str = "tile_url_template";
 
 /// A stored tile and whether it belongs to the current tile set.
-pub(super) struct Stored {
-    pub(super) bytes: Vec<u8>,
-    pub(super) current: bool,
+pub(crate) struct Stored {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) current: bool,
 }
 
-pub(super) struct DiskStore {
+pub(crate) struct DiskStore {
     path: PathBuf,
+    /// What the stored bytes are: rows of another format are ignored.
+    format: u8,
     connection: tokio::sync::OnceCell<tokio_rusqlite::Connection>,
     /// The file's size after the last write, for the settings page.
     usage: Arc<AtomicU64>,
@@ -47,20 +51,21 @@ fn file_bytes(db: &rusqlite::Connection) -> rusqlite::Result<u64> {
 }
 
 impl DiskStore {
-    /// The cache in GlobeCraft's data folder.
+    /// The border tile cache in GlobeCraft's data folder.
     pub(super) fn in_data_folder() -> Self {
-        Self::at(crate::paths::cache_dir().join(FILE_NAME))
+        Self::at(crate::paths::cache_dir().join(FILE_NAME), FORMAT_VERSION)
     }
 
-    pub(super) fn at(path: PathBuf) -> Self {
+    pub(crate) fn at(path: PathBuf, format: u8) -> Self {
         Self {
             path,
+            format,
             connection: tokio::sync::OnceCell::new(),
             usage: Arc::default(),
         }
     }
 
-    pub(super) fn usage(&self) -> u64 {
+    pub(crate) fn usage(&self) -> u64 {
         self.usage.load(Ordering::Relaxed)
     }
 
@@ -106,17 +111,18 @@ impl DiskStore {
     }
 
     /// The stored tile, if any (of any tile set version, but only of this format).
-    pub(super) async fn read(
+    pub(crate) async fn read(
         &self,
         key: TileKey,
         version: String,
     ) -> Result<Option<Stored>, crate::Error> {
+        let format = self.format;
         self.call(move |db| {
             let row = db
                 .query_row(
                     "SELECT data, version, used FROM tiles
                      WHERE z = ?1 AND x = ?2 AND y = ?3 AND format = ?4",
-                    params![key.z, key.x, key.y, FORMAT_VERSION],
+                    params![key.z, key.x, key.y, format],
                     |r| {
                         Ok((
                             r.get::<_, Vec<u8>>(0)?,
@@ -146,7 +152,7 @@ impl DiskStore {
 
     /// Stores a tile, then drops the tiles used longest ago until the file fits
     /// `limit_bytes`, whose pages go back to the file system (`auto_vacuum`).
-    pub(super) async fn write(
+    pub(crate) async fn write(
         &self,
         key: TileKey,
         version: String,
@@ -154,19 +160,12 @@ impl DiskStore {
         limit_bytes: u64,
     ) -> Result<(), crate::Error> {
         let usage = self.usage.clone();
+        let format = self.format;
         self.call(move |db| {
             db.execute(
                 "INSERT OR REPLACE INTO tiles (z, x, y, version, format, data, used)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    key.z,
-                    key.x,
-                    key.y,
-                    version,
-                    FORMAT_VERSION,
-                    bytes,
-                    now_secs()
-                ],
+                params![key.z, key.x, key.y, version, format, bytes, now_secs()],
             )?;
             evict(db, limit_bytes)?;
             usage.store(file_bytes(db)?, Ordering::Relaxed);
@@ -176,7 +175,7 @@ impl DiskStore {
     }
 
     /// Applies a smaller limit at once (from the settings page).
-    pub(super) async fn shrink(&self, limit_bytes: u64) -> Result<(), crate::Error> {
+    pub(crate) async fn shrink(&self, limit_bytes: u64) -> Result<(), crate::Error> {
         let usage = self.usage.clone();
         self.call(move |db| {
             evict(db, limit_bytes)?;
@@ -187,7 +186,7 @@ impl DiskStore {
     }
 
     /// The tile set last read from the manifest, so an offline start can use the cache.
-    pub(super) async fn template(&self) -> Result<Option<String>, crate::Error> {
+    pub(crate) async fn template(&self) -> Result<Option<String>, crate::Error> {
         self.call(|db| {
             Ok(db
                 .query_row(
@@ -200,7 +199,7 @@ impl DiskStore {
         .await
     }
 
-    pub(super) async fn set_template(&self, template: String) -> Result<(), crate::Error> {
+    pub(crate) async fn set_template(&self, template: String) -> Result<(), crate::Error> {
         self.call(move |db| {
             db.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
@@ -236,7 +235,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        (DiskStore::at(dir.join(FILE_NAME)), dir)
+        (DiskStore::at(dir.join(FILE_NAME), FORMAT_VERSION), dir)
     }
 
     fn key(x: u32) -> TileKey {
@@ -263,7 +262,7 @@ mod tests {
             "an older set's tile is still shown, marked stale"
         );
         drop(store);
-        let reopened = DiskStore::at(dir.join(FILE_NAME));
+        let reopened = DiskStore::at(dir.join(FILE_NAME), FORMAT_VERSION);
         assert_eq!(
             reopened.template().await.unwrap().as_deref(),
             Some("https://x/v1/{z}/{x}/{y}.pbf")

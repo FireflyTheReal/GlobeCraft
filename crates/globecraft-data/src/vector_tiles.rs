@@ -1,12 +1,49 @@
 //! Streaming one of GlobeCraft's map data sets (`crate::map_data`) tile by tile for the
 //! view: a zoom level for the altitude, the tiles around the view nearest first, a few
 //! downloads at a time, decoded on the feature pool, kept in memory, and coarser loaded
-//! tiles drawn while finer ones arrive. Used by the transport and road layers.
+//! tiles drawn while finer ones arrive. Used by the transport, road, place name and
+//! point of interest layers.
+//!
+//! Tiles are kept on disk too (roadmap 3.4), one SQLite file per set in the cache
+//! folder, as downloaded, under the limit `set_disk_cache_limit` sets (the border tile
+//! cache's, in Settings -> Cache). A tile on disk shows at once; one of an older
+//! build of the set shows too and is downloaded again.
 use crate::boundaries::osm_tiles::content::TileKey;
 use crate::boundaries::osm_tiles::pick::{around, ideal_zoom, view_radius_deg};
+use crate::boundaries::osm_tiles::store::DiskStore;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// What the disk rows hold: a vector tile, gzip-compressed (rows of another format are
+/// ignored, so a change of storage starts the files afresh).
+const DISK_FORMAT: u8 = 1;
+/// Until the app sets it: the border tile cache's default.
+const DEFAULT_DISK_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
+static DISK_LIMIT_BYTES: AtomicU64 = AtomicU64::new(DEFAULT_DISK_LIMIT_BYTES);
+
+/// Each vector set's disk cache stays under this many bytes (applied at the next
+/// download, and at once to a smaller limit).
+pub fn set_disk_cache_limit(bytes: u64) {
+    DISK_LIMIT_BYTES.store(bytes, Ordering::Relaxed);
+}
+
+/// The vector sets cached on disk.
+const DISK_SETS: [&str; 4] = ["transport", "roads", "poi", "places"];
+
+fn disk_path(set: &str) -> std::path::PathBuf {
+    crate::paths::cache_dir().join(format!("map_data_{set}.sqlite"))
+}
+
+/// The bytes the vector sets' disk caches hold now (their files' sizes).
+pub fn disk_cache_usage() -> u64 {
+    DISK_SETS
+        .iter()
+        .filter_map(|set| std::fs::metadata(disk_path(set)).ok())
+        .map(|meta| meta.len())
+        .sum()
+}
 
 /// Tiles downloaded in one batch. A batch shares archive lookups and coalesced byte
 /// ranges, so a view's 64 tiles take a few requests instead of one per tile.
@@ -173,6 +210,9 @@ impl<T> Default for Shared<T> {
 pub(crate) struct TileStream<T: 'static> {
     spec: &'static Spec<T>,
     shared: Arc<Mutex<Shared<T>>>,
+    disk: Arc<DiskStore>,
+    /// The disk limit last applied, to shrink the file when it gets smaller.
+    disk_limit: u64,
     snapshot: Option<Arc<Snapshot<T>>>,
     /// What the snapshot was built from: the wanted tiles and the revision.
     built: Option<(Vec<TileKey>, u64)>,
@@ -182,9 +222,20 @@ pub(crate) struct TileStream<T: 'static> {
 
 impl<T: Send + Sync + 'static> TileStream<T> {
     pub(crate) fn new(spec: &'static Spec<T>) -> Self {
+        debug_assert!(
+            DISK_SETS.contains(&spec.set),
+            "{} has no disk file",
+            spec.set
+        );
+        Self::with_disk(spec, DiskStore::at(disk_path(spec.set), DISK_FORMAT))
+    }
+
+    fn with_disk(spec: &'static Spec<T>, disk: DiskStore) -> Self {
         Self {
             spec,
             shared: Arc::default(),
+            disk: Arc::new(disk),
+            disk_limit: DISK_LIMIT_BYTES.load(Ordering::Relaxed),
             snapshot: None,
             built: None,
             shown: HashMap::new(),
@@ -226,6 +277,14 @@ impl<T: Send + Sync + 'static> TileStream<T> {
         let spec = self.spec;
         let (zoom, wanted) = wanted(spec, view);
         let now = Instant::now();
+        let limit = DISK_LIMIT_BYTES.load(Ordering::Relaxed);
+        if limit < self.disk_limit {
+            let disk = self.disk.clone();
+            runtime.spawn(async move {
+                let _ = disk.shrink(limit).await;
+            });
+        }
+        self.disk_limit = limit;
         let Ok(mut shared) = self.shared.lock() else {
             return;
         };
@@ -235,9 +294,20 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                 .is_none_or(|at| now.duration_since(at) >= TEMPLATE_RETRY);
             if !shared.template_loading && due {
                 shared.template_loading = true;
-                let state = self.shared.clone();
+                let (state, disk) = (self.shared.clone(), self.disk.clone());
                 runtime.spawn(async move {
                     let result = crate::map_data::banded_template(spec.set, spec.bands).await;
+                    // Offline, the set last read still shows what the disk holds.
+                    let result = match result {
+                        Ok(template) => {
+                            let _ = disk.set_template(template.clone()).await;
+                            Ok(template)
+                        }
+                        Err(error) => match disk.template().await {
+                            Ok(Some(template)) => Ok(template),
+                            _ => Err(error),
+                        },
+                    };
                     if let Ok(mut shared) = state.lock() {
                         shared.template_loading = false;
                         match result {
@@ -358,6 +428,8 @@ impl<T: Send + Sync + 'static> TileStream<T> {
 }
 
 impl<T: Send + Sync + 'static> TileStream<T> {
+    /// Loads a batch: from disk what is there, then from the network what was not
+    /// (or was of an older build), stored to disk as it arrives.
     fn spawn_batch(
         &self,
         runtime: &crate::runtime::ServiceRuntime,
@@ -366,33 +438,91 @@ impl<T: Send + Sync + 'static> TileStream<T> {
         repaint: &(impl Fn() + Send + Sync + Clone + 'static),
     ) {
         let spec = self.spec;
-        let (state, template, repaint) = (self.shared.clone(), template.clone(), repaint.clone());
+        let (state, disk, template, repaint) = (
+            self.shared.clone(),
+            self.disk.clone(),
+            template.clone(),
+            repaint.clone(),
+        );
         runtime.spawn(async move {
-            let result = fetch_many(spec, &batch, &template).await;
+            let mut stored = Vec::new();
+            let mut download = Vec::new();
+            for &key in &batch {
+                match disk.read(key, template.to_string()).await {
+                    Ok(Some(tile)) => {
+                        if !tile.current {
+                            download.push(key);
+                        }
+                        stored.push((key, tile.bytes));
+                    }
+                    _ => download.push(key),
+                }
+            }
+            if !stored.is_empty() {
+                let decoded = crate::cpu::run(crate::cpu::Service::Features, move || {
+                    Ok::<_, crate::Error>(
+                        stored
+                            .into_iter()
+                            .filter_map(|(key, bytes)| {
+                                let bytes = crate::map_data::gunzip_if_needed(bytes).ok()?;
+                                Some((key, (spec.decode)(key, &bytes)?))
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .await
+                .unwrap_or_default();
+                if let Ok(mut shared) = state.lock() {
+                    let now = Instant::now();
+                    for (key, tile) in decoded {
+                        if !download.contains(&key) {
+                            shared.inflight.remove(&key);
+                        }
+                        shared.failed.remove(&key);
+                        insert(&mut shared, spec, key, tile, now);
+                    }
+                    shared.revision += 1;
+                    evict(
+                        &mut shared.tiles,
+                        spec.max_cached_tiles,
+                        spec.max_cached_bytes,
+                    );
+                }
+                repaint();
+            }
+            // A stored tile that did not decode is downloaded again.
+            if let Ok(shared) = state.lock() {
+                for key in &batch {
+                    if !download.contains(key) && !shared.tiles.contains_key(key) {
+                        download.push(*key);
+                    }
+                }
+                download.retain(|key| shared.inflight.contains(key));
+            }
+            if download.is_empty() {
+                return;
+            }
+            let result = fetch_many_stored(spec, &download, &template).await;
+            let mut to_store = Vec::new();
             if let Ok(mut shared) = state.lock() {
                 let now = Instant::now();
                 let mut arrived = false;
                 // Every key of the batch is settled here, whatever came back.
-                for key in &batch {
+                for key in &download {
                     shared.inflight.remove(key);
                 }
                 match result {
                     Ok(tiles) => {
                         for (key, tile) in tiles {
                             match tile {
-                                Ok(tile) => {
+                                Ok((tile, bytes)) => {
                                     shared.failed.remove(&key);
-                                    let bytes = (spec.size_bytes)(&tile);
-                                    shared.tiles.insert(
-                                        key,
-                                        Cached {
-                                            tile: Arc::new(tile),
-                                            used: now,
-                                            bytes,
-                                        },
-                                    );
+                                    insert(&mut shared, spec, key, tile, now);
+                                    to_store.push((key, bytes));
                                     arrived = true;
                                 }
+                                // A tile shown from disk stays; it is tried again later.
+                                Err(_) if shared.tiles.contains_key(&key) => {}
                                 Err(_) => {
                                     shared.failed.insert(key, now + FAILED_RETRY);
                                 }
@@ -400,8 +530,10 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                         }
                     }
                     Err(_) => {
-                        for key in &batch {
-                            shared.failed.insert(*key, now + BATCH_RETRY);
+                        for key in &download {
+                            if !shared.tiles.contains_key(key) {
+                                shared.failed.insert(*key, now + BATCH_RETRY);
+                            }
                         }
                     }
                 }
@@ -415,8 +547,24 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                 }
             }
             repaint();
+            let limit = DISK_LIMIT_BYTES.load(Ordering::Relaxed);
+            for (key, bytes) in to_store {
+                let _ = disk.write(key, template.to_string(), bytes, limit).await;
+            }
         });
     }
+}
+
+fn insert<T>(shared: &mut Shared<T>, spec: &Spec<T>, key: TileKey, tile: T, now: Instant) {
+    let bytes = (spec.size_bytes)(&tile);
+    shared.tiles.insert(
+        key,
+        Cached {
+            tile: Arc::new(tile),
+            used: now,
+            bytes,
+        },
+    );
 }
 
 /// The zoom level and the tiles around the view, nearest first.
@@ -473,11 +621,25 @@ fn evict<T>(tiles: &mut HashMap<TileKey, Cached<T>>, limit: usize, max_bytes: us
 /// Fetches and decodes several tiles at once. Their archive locations and exactly
 /// contiguous byte ranges are read in as few requests as possible; decoding stays on
 /// the feature pool. One failed tile does not discard the others.
+#[cfg(test)]
 pub(crate) async fn fetch_many<T: Send + 'static>(
     spec: &'static Spec<T>,
     keys: &[TileKey],
     template: &str,
 ) -> Result<Vec<(TileKey, Result<T, crate::Error>)>, crate::Error> {
+    Ok(fetch_many_stored(spec, keys, template)
+        .await?
+        .into_iter()
+        .map(|(key, tile)| (key, tile.map(|(tile, _)| tile)))
+        .collect())
+}
+
+/// [`fetch_many`], with each tile's bytes as the disk cache keeps them (gzip).
+async fn fetch_many_stored<T: Send + 'static>(
+    spec: &'static Spec<T>,
+    keys: &[TileKey],
+    template: &str,
+) -> Result<Vec<(TileKey, Result<(T, Vec<u8>), crate::Error>)>, crate::Error> {
     let archives = template
         .strip_prefix(crate::map_data::PMTILES_PREFIX)
         .ok_or("map data tiles need GlobeCraft's archives")?
@@ -495,12 +657,13 @@ pub(crate) async fn fetch_many<T: Send + 'static>(
                         for part in parts {
                             bytes.extend(crate::map_data::gunzip_if_needed(part)?);
                         }
-                        (spec.decode)(key, &bytes).ok_or_else(|| {
+                        let tile = (spec.decode)(key, &bytes).ok_or_else(|| {
                             crate::Error::from(format!(
                                 "malformed {} tile {}/{}/{}",
                                 spec.set, key.z, key.x, key.y
                             ))
-                        })
+                        })?;
+                        Ok((tile, gzip(&bytes)?))
                     })();
                     (key, result)
                 })
@@ -508,6 +671,16 @@ pub(crate) async fn fetch_many<T: Send + 'static>(
         )
     })
     .await
+}
+
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, crate::Error> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(
+        Vec::with_capacity(bytes.len() / 3),
+        flate2::Compression::fast(),
+    );
+    encoder.write_all(bytes)?;
+    Ok(encoder.finish()?)
 }
 
 #[cfg(test)]
@@ -520,6 +693,76 @@ mod tests {
             used,
             bytes,
         }
+    }
+
+    /// A tile's content in the test set: the bytes it was decoded from.
+    static TEST_SPEC: Spec<Vec<u8>> = Spec {
+        set: "test",
+        bands: &[],
+        min_zoom: 4,
+        max_zoom: 10,
+        skip_zoom: None,
+        tiles_across_view: 3.0,
+        max_tiles: 64,
+        max_floor_tiles: 64,
+        max_cached_tiles: 600,
+        max_cached_bytes: MAX_VECTOR_CACHE_BYTES,
+        size_bytes: Vec::len,
+        decode: |_, bytes| Some(bytes.to_vec()),
+    };
+
+    /// Tiles on disk show without a download: the stream's first update after the set
+    /// is known reads them (the template is an address no request could reach).
+    #[test]
+    fn tiles_on_disk_show_without_downloading() {
+        let dir =
+            std::env::temp_dir().join(format!("globecraft-vector-disk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let runtime = crate::runtime::ServiceRuntime::new().unwrap();
+        let view = View {
+            latitude: 48.1,
+            longitude: 11.6,
+            altitude_km: 400.0,
+            tilt_deg: 0.0,
+            floor: 4,
+        };
+        let (_, keys) = wanted(&TEST_SPEC, view);
+        let template = "pmtiles:http://127.0.0.1:9/unreachable-{z}.pmtiles";
+        let disk = DiskStore::at(dir.join("test.sqlite"), DISK_FORMAT);
+        runtime.handle().block_on(async {
+            for key in &keys {
+                let bytes = gzip(&[key.z, key.x as u8, key.y as u8]).unwrap();
+                disk.write(*key, template.to_owned(), bytes, u64::MAX)
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut stream = TileStream::with_disk(&TEST_SPEC, disk);
+        stream.shared.lock().unwrap().template = Some(template.into());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let shown = loop {
+            stream.update(&runtime, view, || {});
+            let count = stream
+                .shared_snapshot()
+                .map_or(0, |snapshot| snapshot.tiles.len());
+            if count == keys.len() || Instant::now() > deadline {
+                break count;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(shown, keys.len());
+        assert!(!stream.loading(), "nothing was left to download");
+        let snapshot = stream.shared_snapshot().unwrap();
+        let first = &keys[0];
+        assert!(
+            snapshot
+                .tiles
+                .iter()
+                .any(|tile| **tile == [first.z, first.x as u8, first.y as u8])
+        );
+        drop(stream);
+        drop(runtime);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

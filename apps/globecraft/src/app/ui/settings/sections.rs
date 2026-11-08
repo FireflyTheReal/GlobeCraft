@@ -313,11 +313,22 @@ impl App {
         ui.weak(
             lg.format(
                 "settings-cache-borders-usage",
-                &[(
-                    "size",
-                    crate::app::cache::cache_size_text(self.boundary_loader.border_cache_usage())
+                &[
+                    (
+                        "size",
+                        crate::app::cache::cache_size_text(
+                            self.boundary_loader.border_cache_usage(),
+                        )
                         .into(),
-                )],
+                    ),
+                    (
+                        "vector_size",
+                        crate::app::cache::cache_size_text(
+                            globecraft_data::vector_tiles::disk_cache_usage(),
+                        )
+                        .into(),
+                    ),
+                ],
             ),
         );
         {

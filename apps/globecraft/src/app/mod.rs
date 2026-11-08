@@ -835,6 +835,9 @@ impl eframe::App for App {
         watchdog.checkpoint("ui.slow.boundary");
         let earth_visible =
             self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
+        // The vector sets (transport, roads, places, points of interest) keep their
+        // tiles on disk under the same limit as the border tiles, each.
+        globecraft_data::vector_tiles::set_disk_cache_limit(self.settings.cache.border_bytes());
         // Borders and names stream from OpenStreetMap tiles around the view while any
         // border or name layer shows.
         self.boundary_loader

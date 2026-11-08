@@ -270,6 +270,13 @@ OpenStreetMap stores each border once, so no border is matched, cut or deduplica
 between sources. `admin_level` 2 draws as country, 3–4 as state, 5–8 as municipal
 (from zoom 11); disputed and claimed lines draw dashed, every side's. Small names appear with the municipal lines, below `municipal_detail_max_km`.
 
+The other map data sets (transport, roads, places, points of interest) stream through
+`vector_tiles::TileStream`. Each keeps its vector tiles, gzip-compressed as downloaded,
+in its own size-limited SQLite file on disk (`map_data_<set>.sqlite`, the same store
+code and limit as the border cache, least recently used dropped first): a tile on disk
+shows at once, one of an older build of the set shows and is downloaded again, and the
+set's archive addresses are kept for offline starts.
+
 The bundled Natural Earth 1:110m countries and places are the fallback: they draw
 a cold or offline start before the first tile arrives, and the country polygons'
 outer rings answer which country is under the camera (holes are drawn but excluded

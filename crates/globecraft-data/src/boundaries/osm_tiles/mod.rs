@@ -20,7 +20,7 @@ mod locate;
 use crate::mvt;
 pub use locate::{AdminAreas, AdminLookup};
 pub(crate) mod pick;
-mod store;
+pub(crate) mod store;
 
 use super::{Layer, Line, MapLabel, Patch, StatusLog};
 use content::{TileContent, TileKey};
