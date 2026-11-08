@@ -2,10 +2,12 @@ name: Marine names
 
 # Publishes the names of the oceans, seas, EEZs and undersea features into the one
 # `map-data` pre-release as `globecraft-marine-names-<date>.geojson.gz` and the manifest
-# entry `marine_names`. Source: the Marine Regions gazetteer (Flanders Marine
-# Institute, marineregions.org, CC BY 4.0), one point per place with `name`, `kind`
-# (ocean, sea, eez, undersea), the gazetteer `type`, `size_km` (the larger of its
-# bounding box and twice its precision) and `mrgid`, largest first.
+# entry `marine_names`. Sources: the Marine Regions gazetteer (Flanders Marine
+# Institute, marineregions.org, CC BY 4.0) for oceans, seas, sea areas and EEZs, in
+# English where it has an English name; the IHO-IOC GEBCO Gazetteer of Undersea
+# Feature Names (as NOAA NCEI serves it) for the undersea features. One point per
+# place with `name`, `kind` (ocean, sea, eez, undersea), the gazetteer `type`,
+# `size_km` (how far across it is) and `source`, largest first.
 on:
   workflow_dispatch:
     inputs:
@@ -27,7 +29,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - name: Read the gazetteer
         id: source
@@ -36,58 +38,83 @@ jobs:
           version=$(date -u +%Y%m%d)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           cat > names.py <<'PY'
-          """Marine names from the Marine Regions gazetteer (marineregions.org, CC BY 4.0):
-          oceans, seas and sea areas, EEZs and undersea features, one point each, as GeoJSON."""
-          import gzip, json, math, sys, time, urllib.parse, urllib.request
+          """Marine names, one point per place, as GeoJSON: oceans, seas and sea areas and EEZs
+          from the Marine Regions gazetteer (Flanders Marine Institute, CC BY 4.0), in English
+          where the gazetteer has an English name; undersea features from the IHO-IOC GEBCO
+          Gazetteer of Undersea Feature Names (as served by NOAA NCEI)."""
+          import gzip, json, math, re, sys, time, urllib.parse, urllib.request
           
-          API = "https://www.marineregions.org/rest/getGazetteerRecordsByType.json/{}/?offset={}"
+          MR = "https://www.marineregions.org/rest/"
+          GEBCO = ("https://services2.arcgis.com/C8EMgrsFcRFL6LrL/arcgis/rest/services/"
+                   "Undersea_Features/FeatureServer/{}/query")
           KINDS = {
               "ocean": ["Ocean"],
               "sea": ["Sea", "IHO Sea Area", "General Sea Area", "Gulf", "Strait", "Channel",
                       "Sound", "Bight", "Bay", "Passage"],
               "eez": ["EEZ"],
-              "undersea": ["Seamount(s)", "Seamount Chain", "Guyot(s)", "Tablemount", "Trench",
-                           "Ridge(s)", "Rise", "Abyssal Plain", "Plain", "Fracture Zone", "Basin",
-                           "Plateau", "Canyon(s)", "Trough", "Escarpment", "Fan", "Deep", "Hole",
-                           "Knoll(s)", "Hill(s)", "Spur", "Sill", "Terrace", "Seachannel", "Rift",
-                           "Bank", "Shelf", "Gap", "Saddle", "Valley", "Seamount Province"],
           }
+          # A point feature's size when the gazetteer gives none (a seamount, a hole…).
+          POINT_SIZE_KM = 15.0
           MAX_PAGES = int(sys.argv[2]) if len(sys.argv) > 2 else 10_000
           
           def fetch(url):
-              for attempt in range(5):
+              for attempt in range(6):
                   try:
-                      with urllib.request.urlopen(url, timeout=60) as response:
-                          if response.status == 204:
-                              return []
+                      with urllib.request.urlopen(url, timeout=90) as response:
                           body = response.read()
                           return json.loads(body) if body.strip() else []
                   except urllib.error.HTTPError as error:
-                      if error.code == 404:
+                      if error.code in (404, 204):
                           return []
-                      time.sleep(2 + attempt * 3)
+                      time.sleep(2 + attempt * 4)
                   except Exception:
-                      time.sleep(2 + attempt * 3)
+                      time.sleep(2 + attempt * 4)
               raise SystemExit(f"failed: {url}")
           
-          def size_km(r):
-              lat = r["latitude"]
-              spans = [0.0]
-              if None not in (r.get("minLatitude"), r.get("maxLatitude"), r.get("minLongitude"), r.get("maxLongitude")):
-                  dlat = (r["maxLatitude"] - r["minLatitude"]) * 111.2
-                  dlon = (r["maxLongitude"] - r["minLongitude"]) % 360 * 111.2 * math.cos(math.radians(lat))
-                  spans.append(max(dlat, dlon))
-              if r.get("precision"):
-                  spans.append(2 * r["precision"] / 1000)
-              return round(max(spans), 1)
+          def span_km(lat, west, south, east, north):
+              """How far across a box is (sides in either order; the shorter way round in
+              longitude, so a box across the date line is not taken for the whole world)."""
+              dlat = abs(north - south) * 111.2
+              dlon = abs(east - west) % 360
+              dlon = min(dlon, 360 - dlon) * 111.2 * math.cos(math.radians(lat))
+              return max(dlat, dlon)
           
-          features, seen = [], set()
-          counts = {}
+          def full_name(name, place_type):
+              """GEBCO keeps the generic term apart (`Mariana`, `Trench`): put it back."""
+              generic = place_type.strip()
+              if not generic or generic.upper() == "UNKNOWN" or generic.lower() in name.lower():
+                  return name
+              return f"{name} {generic}"
+          
+          def english(record):
+              """The English name: the preferred one when it is English, else the first
+              Latin-script name the gazetteer lists for the place (its English name first)."""
+              name = record.get("preferredGazetteerName") or ""
+              if record.get("preferredGazetteerNameLang") == "English":
+                  return name
+              names = fetch(MR + f"getGazetteerNamesByMRGID.json/{record['MRGID']}/")
+              time.sleep(0.1)
+              for candidate in names if isinstance(names, list) else []:
+                  if candidate and re.fullmatch(r"[\x20-\x7e]+", candidate):
+                      return candidate
+              return name
+          
+          features, seen, counts = [], set(), {}
+          def add(name, kind, place_type, lon, lat, size_km, source):
+              features.append({
+                  "type": "Feature",
+                  "geometry": {"type": "Point", "coordinates": [round(lon, 4), round(lat, 4)]},
+                  "properties": {"name": name, "kind": kind, "type": place_type,
+                                 "size_km": round(size_km, 1), "source": source},
+              })
+              counts[place_type] = counts.get(place_type, 0) + 1
+          
           for kind, types in KINDS.items():
               for place_type in types:
                   offset, pages = 0, 0
                   while pages < MAX_PAGES:
-                      batch = fetch(API.format(urllib.parse.quote(place_type), offset))
+                      batch = fetch(MR + "getGazetteerRecordsByType.json/"
+                                    f"{urllib.parse.quote(place_type)}/?offset={offset}")
                       if not batch:
                           break
                       for r in batch:
@@ -98,21 +125,62 @@ jobs:
                           if r["MRGID"] in seen:
                               continue
                           seen.add(r["MRGID"])
-                          name = r.get("preferredGazetteerName") or ""
+                          name = english(r).strip()
                           if not name:
                               continue
-                          features.append({
-                              "type": "Feature",
-                              "geometry": {"type": "Point", "coordinates": [round(r["longitude"], 4), round(r["latitude"], 4)]},
-                              "properties": {"name": name, "kind": kind, "type": place_type,
-                                             "size_km": size_km(r), "mrgid": r["MRGID"]},
-                          })
-                          counts[place_type] = counts.get(place_type, 0) + 1
+                          size = 2 * (r.get("precision") or 0) / 1000
+                          if None not in (r.get("minLatitude"), r.get("maxLatitude"), r.get("minLongitude"), r.get("maxLongitude")):
+                              size = max(size, span_km(r["latitude"], r["minLongitude"], r["minLatitude"], r["maxLongitude"], r["maxLatitude"]))
+                          place_kind = "ocean" if name.endswith(" Ocean") else kind
+                          add(name, place_kind, place_type, r["longitude"], r["latitude"], size, "marineregions")
                       offset += len(batch)
                       pages += 1
                       time.sleep(0.2)
-          for t, n in counts.items():
-              print(f"{t}: {n}")
+          
+          # GEBCO's undersea feature names: points, lines (ridges, trenches…) and areas.
+          for layer in (0, 1, 2):
+              offset = 0
+              while True:
+                  query = urllib.parse.urlencode({
+                      "where": "1=1", "outFields": "NAME,TYPE", "returnGeometry": "true",
+                      "outSR": 4326, "maxAllowableOffset": 0.05, "resultOffset": offset,
+                      "resultRecordCount": 1000, "f": "json",
+                  })
+                  page = fetch(GEBCO.format(layer) + "?" + query)
+                  rows = page.get("features", []) if isinstance(page, dict) else []
+                  for row in rows:
+                      name = (row["attributes"].get("NAME") or "").strip()
+                      geometry = row.get("geometry") or {}
+                      if not name:
+                          continue
+                      name = full_name(name, row["attributes"].get("TYPE") or "")
+                      if "x" in geometry:
+                          add(name, "undersea", row["attributes"].get("TYPE") or "", geometry["x"], geometry["y"], POINT_SIZE_KM, "gebco")
+                          continue
+                      parts = geometry.get("paths") or geometry.get("rings") or []
+                      points = [p for part in parts for p in part]
+                      if not points:
+                          continue
+                      lons = [p[0] for p in points]; lats = [p[1] for p in points]
+                      if max(lons) - min(lons) > 180:  # across the date line: count from 0° to 360°
+                          lons = [lon % 360 for lon in lons]
+                      west, east, south, north = min(lons), max(lons), min(lats), max(lats)
+                      if layer == 1:
+                          # A line's middle vertex lies on it; its box's centre may not.
+                          longest = max(parts, key=len)
+                          lon, lat = longest[len(longest) // 2]
+                      else:
+                          lon, lat = (west + east) / 2, (south + north) / 2
+                      lon = (lon + 180) % 360 - 180
+                      add(name, "undersea", row["attributes"].get("TYPE") or "", lon, lat,
+                          max(POINT_SIZE_KM, span_km(lat, west, south, east, north)), "gebco")
+                  if not page.get("exceededTransferLimit") or not rows:
+                      break
+                  offset += len(rows)
+                  time.sleep(0.2)
+          
+          for place_type, n in sorted(counts.items()):
+              print(f"{place_type}: {n}")
           print("total", len(features))
           features.sort(key=lambda f: -f["properties"]["size_km"])
           data = json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":"), ensure_ascii=False)
@@ -131,10 +199,12 @@ jobs:
           names = {f["properties"]["name"] for f in data["features"]}
           kinds = {f["properties"]["kind"] for f in data["features"]}
           print(len(data["features"]), "names;", sorted(kinds))
-          for expected in ["Pacific Ocean", "Mariana Trench"]:
-              assert any(expected in name for name in names), expected
+          for expected in ["Pacific Ocean", "Atlantic Ocean", "Mariana Trench", "Mid-Atlantic Ridge", "Strait of Gibraltar"]:
+              assert expected in names, expected
           assert kinds == {"ocean", "sea", "eez", "undersea"}, kinds
-          assert len(data["features"]) > 5000, len(data["features"])
+          assert len(data["features"]) > 7000, len(data["features"])
+          # No place wider than the Pacific (a box read across the date line would be).
+          assert max(f["properties"]["size_km"] for f in data["features"]) < 25000
           PY
 
       - name: Publish into the map data release
@@ -159,7 +229,7 @@ jobs:
               "version": version,
               "previous": old.get("version") if old.get("version") != version else old.get("previous"),
               "file": f"{base}/globecraft-marine-names-{version}.geojson.gz",
-              "licence": "Marine Regions gazetteer, Flanders Marine Institute (CC BY 4.0)",
+              "licence": "Marine Regions gazetteer, Flanders Marine Institute (CC BY 4.0); IHO-IOC GEBCO Gazetteer of Undersea Feature Names",
           }
           json.dump(manifest, open("manifest.json", "w"), indent=1)
           PY

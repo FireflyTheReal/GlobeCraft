@@ -1,7 +1,8 @@
-//! Names of the oceans, seas, exclusive economic zones and undersea features, from
-//! the Marine Regions gazetteer (Flanders Marine Institute, CC BY 4.0), published into
-//! the `map-data` release by `.github/workflows/marine-names.yml`: one point per place
-//! with its size, largest first.
+//! Names of the oceans, seas, exclusive economic zones and undersea features: the
+//! Marine Regions gazetteer (Flanders Marine Institute, CC BY 4.0) for the surface,
+//! the IHO-IOC GEBCO Gazetteer of Undersea Feature Names for the seafloor, published
+//! into the `map-data` release by `.github/workflows/marine-names.yml`: one point per
+//! place with its size, largest first.
 use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
