@@ -824,12 +824,26 @@ fn whats_here_screenshot() {
         "camera.set",
         json!({"lat": 48.2, "lon": 11.6, "altitude_km": 400.0}),
     );
-    h.state_mut().here_card = Some(super::here::HereCard {
-        lat: 48.1702,
-        lon: 11.6290,
-    });
+    h.state_mut()
+        .run("ui.here", json!({"lat": 48.1702, "lon": 11.6290}))
+        .expect("card");
     settle(&mut h, 8.0);
     save(&mut h, &dir, "10-whats-here");
+    // Close up, where the municipal borders and town names load (roadmap 6.12).
+    let _ = h.state_mut().run(
+        "layer.show",
+        json!({"layer": "municipal_borders", "visible": true}),
+    );
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 48.1702, "lon": 11.6290, "altitude_km": 12.0}),
+    );
+    settle(&mut h, 12.0);
+    let here = h
+        .state_mut()
+        .run("info.here", json!({"lat": 48.1702, "lon": 11.6290}));
+    println!("info.here: {here:?}");
+    save(&mut h, &dir, "10-whats-here-close");
 }
 
 /// Median CPU time of a whole interface frame (layout, widgets, overlays; no GPU work),
