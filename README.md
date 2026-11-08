@@ -5,8 +5,6 @@
   </picture>
 </p>
 
-# GlobeCraft
-
 **A small, fast 3D globe for your desktop.** Fly anywhere on Earth, look at satellite
 imagery, borders and names, follow live aircraft, ships and weather, and measure
 distances. Free and open source, for Windows, macOS and Linux.
