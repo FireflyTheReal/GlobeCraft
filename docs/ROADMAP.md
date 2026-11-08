@@ -582,7 +582,7 @@ working queue, not a promise.
 
 **6. Layers (section 5) and the adapters they need**
 
-22. Quick presets: Natural Earth urban areas glow, EEZ and high seas borders, undersea feature names, GIBS daily imagery and the GEBCO seafloor as proper layers
+22. Quick presets: Natural Earth urban areas glow, ~~EEZ and high seas borders~~ (2026-11-08: Marine Regions EEZ boundaries and IHO sea areas in the library; the EEZ's outer limits mark the high seas, whose own layer draws nothing visible), undersea feature names (no keyless map service found: Marine Regions and GEBCO serve none), ~~GIBS daily imagery and the GEBCO seafloor~~ (library presets since 2026-11-01); the urban glow needs filled polygons, which user layers do not draw yet
 23. D key manager, then active fires (FIRMS) and the other keyed sources
 24. Hurricane tracks, lightning, power plants and wind turbines, forest loss, port traffic
 25. Heritage (GeoNames filter, Pleiades, Wikidata sites), species at the cursor, the Stonehenge LiDAR showcase

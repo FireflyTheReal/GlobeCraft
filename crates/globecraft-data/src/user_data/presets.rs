@@ -72,6 +72,38 @@ fn emodnet() -> UserSource {
     }
 }
 
+/// Marine Regions' GeoServer (Flanders Marine Institute); its line styles keep the
+/// boundaries visible over imagery.
+const MARINE_REGIONS_WMS: &str = "https://geo.vliz.be/geoserver/MarineRegions/wms";
+
+fn styled(template: String, style: &str) -> String {
+    template.replace("&STYLES=&", &format!("&STYLES={style}&"))
+}
+
+fn eez_boundaries() -> UserSource {
+    UserSource::Tiles {
+        template: styled(
+            wms_template(MARINE_REGIONS_WMS, "MarineRegions:eez_boundaries"),
+            "Line_yellow",
+        ),
+        min_zoom: 0,
+        max_zoom: 12,
+        tile_px: 256,
+    }
+}
+
+fn sea_areas() -> UserSource {
+    UserSource::Tiles {
+        template: styled(
+            wms_template(MARINE_REGIONS_WMS, "MarineRegions:iho"),
+            "Line_blue_green",
+        ),
+        min_zoom: 0,
+        max_zoom: 10,
+        tile_px: 256,
+    }
+}
+
 fn gibs_true_colour() -> UserSource {
     UserSource::Tiles {
         template: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/\
@@ -133,6 +165,34 @@ pub static PRESETS: &[Preset] = &[
         opacity: 0.85,
         color: "#4aa3ff",
         source: emodnet,
+    },
+    Preset {
+        code: "eez_boundaries",
+        name_key: "preset-eez",
+        help_key: "preset-eez-help",
+        category: Category::Ocean,
+        // CC BY since Maritime Boundaries v11; meant for research and education, not
+        // navigation or resource exploration (marineregions.org/disclaimer.php).
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org Maritime Boundaries",
+        opacity: 1.0,
+        color: "#ffff66",
+        source: eez_boundaries,
+    },
+    Preset {
+        code: "iho_sea_areas",
+        name_key: "preset-iho",
+        help_key: "preset-iho-help",
+        category: Category::Ocean,
+        licence: "CC BY 4.0 (Marine Regions)",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "Flanders Marine Institute, MarineRegions.org IHO Sea Areas",
+        opacity: 1.0,
+        color: "#2fb5b0",
+        source: sea_areas,
     },
     Preset {
         code: "gibs_true_colour",
@@ -199,6 +259,9 @@ mod tests {
                         "{}",
                         preset.code
                     );
+                    if preset.code.starts_with("eez") || preset.code.starts_with("iho") {
+                        assert!(!template.contains("&STYLES=&"), "{}: unstyled", preset.code);
+                    }
                 }
                 UserSource::Features { location, .. } => {
                     assert!(location.starts_with("https://"), "{}", preset.code);

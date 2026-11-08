@@ -1445,6 +1445,29 @@ fn archive_layer_screenshot() {
     let _ = std::fs::remove_file(file);
 }
 
+/// The sea border and sea area presets over Europe and the North Atlantic
+/// (`ocean-presets`). Needs network; manual.
+#[test]
+#[ignore = "manual: needs network; renders the Marine Regions presets"]
+fn ocean_presets_screenshot() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    for preset in ["eez_boundaries", "iho_sea_areas"] {
+        h.state_mut()
+            .run("data.add", json!({"preset": preset}))
+            .expect("preset");
+    }
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 50.0, "lon": -10.0, "altitude_km": 4500.0}),
+    );
+    settle(&mut h, 12.0);
+    save(&mut h, &dir, "ocean-presets");
+}
+
 /// The About window with the logo, light and dark (`about-<theme>`).
 #[test]
 #[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
