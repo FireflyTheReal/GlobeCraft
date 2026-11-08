@@ -336,6 +336,11 @@ fn network_settings_screenshots() {
         h.query_by_label_contains("localhost:11434").is_some(),
         "no assistant host row"
     );
+    // The language choice is saved for the next start: leave it as it was.
+    let _ = h
+        .state_mut()
+        .run("settings.language", json!({"language": "en"}));
+    settle(&mut h, 0.5);
 }
 
 /// Answers OpenAI-compatible chat requests in order with `replies`, one connection each.
@@ -1456,7 +1461,8 @@ fn archive_layer_screenshot() {
 }
 
 /// The sea border and sea area presets over Europe and the North Atlantic
-/// (`ocean-presets`). Needs network; manual.
+/// (`ocean-presets`); `GLOBECRAFT_SHOT_PRESETS` (comma-separated codes) shows others.
+/// Needs network; manual.
 #[test]
 #[ignore = "manual: needs network; renders the Marine Regions presets"]
 fn ocean_presets_screenshot() {
@@ -1465,7 +1471,9 @@ fn ocean_presets_screenshot() {
     };
     std::fs::create_dir_all(&dir).expect("screenshot dir");
     let mut h = harness(ThemePreference::Dark);
-    for preset in ["eez_boundaries", "iho_sea_areas"] {
+    let presets = std::env::var("GLOBECRAFT_SHOT_PRESETS")
+        .unwrap_or_else(|_| "eez_boundaries,iho_sea_areas".into());
+    for preset in presets.split(',') {
         h.state_mut()
             .run("data.add", json!({"preset": preset}))
             .expect("preset");

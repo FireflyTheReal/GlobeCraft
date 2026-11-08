@@ -144,6 +144,30 @@ fn active_fires() -> UserSource {
     }
 }
 
+/// GDACS: the current and recent orange and red alerts for tropical cyclones,
+/// earthquakes, floods, volcanoes, droughts and wildfires, one point per event.
+fn disaster_alerts() -> UserSource {
+    UserSource::Features {
+        location: "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=TC;EQ;FL;VO;DR;WF"
+            .into(),
+        format: FeatureFormat::GeoJson,
+        refresh_minutes: 30,
+        value_field: Some("alertscore".into()),
+    }
+}
+
+/// The WRI Global Power Plant Database: about 35,000 plants of every fuel, sized by
+/// capacity (last updated 2021).
+fn power_plants() -> UserSource {
+    UserSource::Features {
+        location: "https://raw.githubusercontent.com/wri/global-power-plant-database/master/output_database/global_power_plant_database.csv"
+            .into(),
+        format: FeatureFormat::Csv,
+        refresh_minutes: 0,
+        value_field: Some("capacity_mw".into()),
+    }
+}
+
 fn earthquakes() -> UserSource {
     UserSource::Features {
         location: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson"
@@ -258,6 +282,36 @@ pub static PRESETS: &[Preset] = &[
         source: active_fires,
     },
     Preset {
+        code: "gdacs_alerts",
+        name_key: "preset-gdacs",
+        help_key: "preset-gdacs-help",
+        category: Category::Hazards,
+        // The European Commission's reuse policy (Decision 2011/833/EU): reuse with
+        // acknowledgement, commercial included.
+        licence: "European Commission reuse policy",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "GDACS, European Commission JRC and UN OCHA",
+        opacity: 1.0,
+        key: None,
+        color: "#ff3b30",
+        source: disaster_alerts,
+    },
+    Preset {
+        code: "power_plants",
+        name_key: "preset-power-plants",
+        help_key: "preset-power-plants-help",
+        category: Category::Earth,
+        licence: "CC BY 4.0 (WRI)",
+        commercial_use: true,
+        longevity: Longevity::Goodwill,
+        attribution: "Global Power Plant Database, World Resources Institute",
+        opacity: 1.0,
+        key: None,
+        color: "#ffd23f",
+        source: power_plants,
+    },
+    Preset {
         code: "earthquakes",
         name_key: "preset-earthquakes",
         help_key: "preset-earthquakes-help",
@@ -328,6 +382,12 @@ mod probe {
     async fn every_preset_answers() {
         let mut failed = Vec::new();
         for preset in PRESETS {
+            if let Some(id) = preset.key
+                && crate::keys::get(id).is_none()
+            {
+                println!("PRESET {}: skipped, no {id} key", preset.code);
+                continue;
+            }
             let result = match preset.source() {
                 UserSource::Tiles { template, .. } => super::super::test_tile(template, 2)
                     .await

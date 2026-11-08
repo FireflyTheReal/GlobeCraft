@@ -584,7 +584,7 @@ working queue, not a promise.
 
 22. Quick presets: Natural Earth urban areas glow, ~~EEZ and high seas borders~~ (2026-11-08: Marine Regions EEZ boundaries and IHO sea areas in the library; the EEZ's outer limits mark the high seas, whose own layer draws nothing visible), undersea feature names (no keyless map service found: Marine Regions and GEBCO serve none), ~~GIBS daily imagery and the GEBCO seafloor~~ (library presets since 2026-11-01); the urban glow needs filled polygons, which user layers do not draw yet
 23. ~~D key manager, then active fires (FIRMS)~~ done 2026-11-08; the other keyed sources (OpenWeatherMap, AISstream, OpenAQ, ENTSO-E) remain
-24. Hurricane tracks, lightning, power plants and wind turbines, forest loss, port traffic
+24. ~~Hurricane tracks~~ (2026-11-08: GDACS disaster alerts in the library, cyclones with earthquakes, floods, volcanoes, droughts and wildfires, one point per event; NHC track lines need KMZ per storm), lightning (Blitzortung's terms forbid reuse; no open alternative found), ~~power plants~~ (WRI Global Power Plant Database, 35,000 plants) and wind turbines (only the US database is open), ~~forest loss~~ (library since 2026-11-01), port traffic (needs a keyed AIS source)
 25. Heritage (GeoNames filter, Pleiades, Wikidata sites), species at the cursor, the Stonehenge LiDAR showcase
 26. B elevation decoders (Japan GSI, WebP Terrarium) and a hillshade-only overview mode; F cloud GeoTIFF windows (Copernicus DEM, WorldCover); field parcels for France
 
