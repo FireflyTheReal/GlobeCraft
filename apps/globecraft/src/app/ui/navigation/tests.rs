@@ -83,6 +83,88 @@ fn the_view_disc_grows_with_altitude_up_to_the_visible_hemisphere() {
 }
 
 #[test]
+fn a_straight_down_view_keeps_the_cap_disc() {
+    assert!(!shows_view_footprint(0.0));
+    assert!(!shows_view_footprint(TILTED_VIEW_THRESHOLD_DEG));
+    assert!(shows_view_footprint(55.0));
+    assert!(shows_view_footprint(75.0));
+}
+
+#[test]
+fn a_tilted_view_shows_a_forward_footprint() {
+    let centre = Pos2::new(100.0, 100.0);
+    let radius = 60.0;
+    let (lat, lon, heading) = (46.5, 8.0, 20.0);
+    let globe = MiniGlobe::new(centre, radius, lat, lon, heading);
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0));
+    let aspect = f64::from(rect.width() / rect.height());
+    let cam = globecraft_core::camera::Cam {
+        lat,
+        lon,
+        heading,
+        alt: 900.0,
+        tilt: 55.0,
+    };
+    let outline = globe.view_outline(&cam.basis(aspect), rect);
+    assert!(outline.len() >= 3);
+    let (north_screen, _) = screen_axes(heading);
+    let forward = outline
+        .iter()
+        .map(|p| (*p - centre).dot(north_screen))
+        .fold(f32::MIN, f32::max);
+    let backward = outline
+        .iter()
+        .map(|p| (*p - centre).dot(north_screen))
+        .fold(f32::MAX, f32::min);
+    let cap = radius * view_cap_fraction(cam.alt, aspect) as f32;
+    // A tilted view reaches much further forward than the top-down cap while its
+    // near edge stays close behind the view centre.
+    assert!(forward > cap * 2.0, "forward {forward}, cap {cap}");
+    assert!(
+        forward > -backward * 2.0,
+        "forward {forward}, backward {backward}"
+    );
+    for p in &outline {
+        assert!((*p - centre).length() <= radius + 0.01, "{p:?}");
+    }
+}
+
+#[test]
+fn a_tilted_footprint_follows_the_horizon_not_the_sky() {
+    let centre = Pos2::new(100.0, 100.0);
+    let radius = 60.0;
+    let (lat, lon, heading) = (46.5, 8.0, 20.0);
+    let globe = MiniGlobe::new(centre, radius, lat, lon, heading);
+    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0));
+    let aspect = f64::from(rect.width() / rect.height());
+    let cam = globecraft_core::camera::Cam {
+        lat,
+        lon,
+        heading,
+        alt: 60.0,
+        tilt: 75.0,
+    };
+    let basis = cam.basis(aspect);
+    let top = Pos2::new(rect.center().x, rect.top());
+    assert!(
+        basis.pick(rect, top).is_none(),
+        "the top edge looks at the sky"
+    );
+    let horizon = mini_globe::horizon_point(&basis, rect, top).unwrap();
+    let horizon_at = globe.project(horizon.0, horizon.1).unwrap();
+    // The boundary is the camera's horizon circle, well inside the mini globe.
+    assert!(
+        (horizon_at - centre).length() < radius * 0.25,
+        "{horizon_at:?}"
+    );
+    let outline = globe.view_outline(&basis, rect);
+    assert!(outline.len() >= 3);
+    for p in &outline {
+        assert!((*p - centre).length() < radius * 0.25, "{p:?}");
+    }
+}
+
+#[test]
 fn the_mini_globe_centres_the_camera_and_turns_with_the_heading() {
     let centre = Pos2::new(100.0, 100.0);
     let north_up = MiniGlobe::new(centre, 60.0, 48.0, 11.0, 0.0);

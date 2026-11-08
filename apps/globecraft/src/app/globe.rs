@@ -689,7 +689,7 @@ impl App {
             self.distance_units(),
         ) {
             let len = scale_bar.width_points;
-            let y = rect.bottom() - globecraft_render::scale_bar::SCALE_BOTTOM_INSET_POINTS;
+            let y = rect.bottom() - scale_bar.bottom_inset_points;
             let x0 = rect.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
             painter.line_segment(
                 [Pos2::new(x0, y), Pos2::new(x0 + len, y)],

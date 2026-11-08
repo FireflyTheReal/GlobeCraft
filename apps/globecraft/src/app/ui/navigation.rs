@@ -51,6 +51,9 @@ const GRATICULE_SAMPLES: usize = 48;
 const GRID_OPACITY: f32 = 0.45;
 const EQUATOR_OPACITY: f32 = 0.7;
 const VIEW_FILL_OPACITY: f32 = 0.16;
+/// Above this tilt the mini globe shows the view's ground footprint instead of the
+/// top-down cap: the cap is only right when looking straight down.
+const TILTED_VIEW_THRESHOLD_DEG: f64 = 1.0;
 const ZOOM_LEVEL_OPACITY: f32 = 0.55;
 
 /// How far one mini-globe radius of drag moves the camera, in degrees of arc: about
@@ -63,6 +66,13 @@ fn globe_drag_deg_per_radius(altitude_km: f64, aspect: f64) -> f64 {
         .asin()
         .to_degrees();
     (reach * GLOBE_DRAG_REACH_RATIO).min(MAX_GLOBE_DRAG_DEG_PER_RADIUS)
+}
+
+/// Whether the navigator draws the view's ground footprint instead of the top-down
+/// cap disc. A near-zero tilt keeps the disc: its shape barely differs and the
+/// polygon would only add sampling noise.
+fn shows_view_footprint(tilt_deg: f64) -> bool {
+    tilt_deg > TILTED_VIEW_THRESHOLD_DEG
 }
 
 /// The cardinal letters: heading that turns them up, label, tooltip.
@@ -369,13 +379,19 @@ impl App {
         );
         painter.extend(lines);
         let aspect = f64::from(rect.width() / rect.height().max(1.0));
-        let view_radius = (r_globe * view_cap_fraction(self.cam.alt, aspect) as f32).max(2.0 * k);
-        painter.circle_filled(
-            centre,
-            view_radius,
-            t.accent.gamma_multiply(VIEW_FILL_OPACITY),
-        );
-        painter.circle_stroke(centre, view_radius, Stroke::new(1.2 * k, t.accent));
+        let view_fill = t.accent.gamma_multiply(VIEW_FILL_OPACITY);
+        let view_stroke = Stroke::new(1.2 * k, t.accent);
+        let outline = shows_view_footprint(self.cam.tilt)
+            .then(|| globe.view_outline(&self.cam.basis(aspect), rect))
+            .filter(|outline| outline.len() >= 3);
+        if let Some(outline) = outline {
+            painter.add(egui::Shape::convex_polygon(outline, view_fill, view_stroke));
+        } else {
+            let view_radius =
+                (r_globe * view_cap_fraction(self.cam.alt, aspect) as f32).max(2.0 * k);
+            painter.circle_filled(centre, view_radius, view_fill);
+            painter.circle_stroke(centre, view_radius, view_stroke);
+        }
         painter.circle_stroke(
             centre,
             r_globe,

@@ -2,7 +2,11 @@
 //! how much of it the view shows.
 use eframe::egui::{self, Pos2, Stroke, Vec2};
 use glam::DVec3;
-use globecraft_core::math::ll_to_v3;
+use globecraft_core::camera::Basis;
+use globecraft_core::math::{ll_to_v3, v3_to_ll};
+
+/// Boundary samples per side of the view rectangle for the tilted footprint.
+const VIEW_EDGE_SAMPLES: usize = 12;
 
 /// Where the mini globe puts the Earth: centred on the camera's ground point, turned
 /// by its heading, seen from far away (orthographic).
@@ -68,6 +72,57 @@ impl MiniGlobe {
             out.push(egui::Shape::line(part, stroke));
         }
     }
+
+    /// The ground area the view shows, as a closed polygon on the mini globe. A
+    /// tilted view reaches forward to the horizon, so its boundary follows the
+    /// horizon where the view looks past it; a top-down view keeps the caller's
+    /// circle instead.
+    pub(super) fn view_outline(&self, basis: &Basis, rect: egui::Rect) -> Vec<Pos2> {
+        let mut points = Vec::with_capacity(4 * VIEW_EDGE_SAMPLES);
+        let edges = [
+            (rect.left_bottom(), rect.right_bottom()),
+            (rect.right_bottom(), rect.right_top()),
+            (rect.right_top(), rect.left_top()),
+            (rect.left_top(), rect.left_bottom()),
+        ];
+        for (from, to) in edges {
+            for i in 0..VIEW_EDGE_SAMPLES {
+                let t = i as f32 / VIEW_EDGE_SAMPLES as f32;
+                let screen = from + (to - from) * t;
+                let ground = basis
+                    .pick(rect, screen)
+                    .or_else(|| horizon_point(basis, rect, screen));
+                if let Some((lat, lon)) = ground
+                    && let Some(point) = self.project(lat, lon)
+                    && points.last() != Some(&point)
+                {
+                    points.push(point);
+                }
+            }
+        }
+        if points.first() == points.last() {
+            points.pop();
+        }
+        points
+    }
+}
+
+/// The horizon point in the direction of a view ray that misses the Earth: the
+/// tangent point on the camera's horizon circle at the ray's azimuth. It works for
+/// rays above the camera's horizon too, where the closest approach lies behind the
+/// camera, and keeps the footprint on the horizon circle rather than the limb.
+pub(super) fn horizon_point(basis: &Basis, rect: egui::Rect, screen: Pos2) -> Option<(f64, f64)> {
+    let d = basis.ray(rect, screen);
+    let up = basis.c.normalize();
+    let horizontal = d - up * d.dot(up);
+    let azimuth = horizontal.try_normalize()?;
+    let distance = basis.c.length();
+    if distance <= 1.0 {
+        return None;
+    }
+    let cos_horizon = 1.0 / distance;
+    let sin_horizon = (1.0 - cos_horizon * cos_horizon).sqrt();
+    Some(v3_to_ll(up * cos_horizon + azimuth * sin_horizon))
 }
 
 /// Screen directions of north and east for a heading (degrees clockwise from north).
