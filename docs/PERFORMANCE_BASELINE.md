@@ -490,6 +490,33 @@ Repeated runs on the fast link gave 0.17–0.26 s after against 0.53–0.56 s wi
 prefetch (`GLOBECRAFT_REPLAY_NO_ARRIVAL=1`). Holes while moving are unchanged
 (1.54 % and 3.54 %); the other paths have no flight and are not affected.
 
+### Loading ahead of a drag or zoom: not adopted (2026-11-08, roadmap 1.4)
+
+Tried: from the camera's last 0.15 s of motion, predict the view 0.5 s ahead and
+request its tiles through the speculative warmup (first at the view's own level, then
+two coarser levels first so one tile fills the leading edge for sixteen), relisting
+when the prediction moved a quarter of the view. Same replay benchmark, against the
+same build without it (`drag-pan`, the path it is for; two runs each):
+
+| Variant | Link | Holes while moving | Sharp after stop | MB |
+| --- | --- | --- | --- | --- |
+| off | 60 ms, 4 MB/s | 1.98–2.20 % | 0.28–0.31 s | 5.60–5.64 |
+| on, 2 slots, coarse first | 60 ms, 4 MB/s | 2.05–2.20 % | 0.23–0.31 s | 5.89–5.91 |
+| on, 4 slots | 60 ms, 4 MB/s | 1.96–2.03 % | 0.21–0.31 s | 6.34–6.41 |
+| on, 6 slots | 60 ms, 4 MB/s | 1.92–2.07 % | 0.29–0.30 s | 7.06–7.16 |
+| off | 150 ms, 1 MB/s | 4.71–4.95 % | 0.69–0.74 s | 4.02–4.15 |
+| on, 2 slots, coarse first | 150 ms, 1 MB/s | 4.76–4.81 % | 0.69–0.81 s | 4.04–4.11 |
+
+Reading: within the noise between runs, at 5–27 % more data on the fast link. A moving
+view keeps the link busy with its own tiles, so speculative requests (which give way to
+visible ones and are dropped from the queue when the view moves on) rarely run in time,
+and the holes at a pan's leading edge are the tiles the next frame requests anyway.
+With more slots they ran, but took bandwidth the visible view needed. The other paths
+were unchanged except the tilted descent's time to sharp on the fast link with 4 or 6
+slots (0.2 → 0.01 s), not worth the extra downloads on every drag. The coarser ring
+around the view is already loaded when the view rests (`zoom_out_tiles`, one tile of
+margin at each of the three coarser levels).
+
 ### Faster 3D terrain (2026-10-27, roadmap 8.1)
 
 One cone per 8×8 pixel block walks the open air before the pixels (it skips a block of
