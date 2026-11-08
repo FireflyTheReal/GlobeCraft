@@ -1,4 +1,8 @@
-use super::{KeyBuild, Tile, TileKey, disk::DiskCache, make_key, unkey};
+use super::{
+    KeyBuild, Tile, TileKey,
+    disk::{DiskCache, Validity, now_secs},
+    make_key, unkey,
+};
 use crate::paths::cache_dir;
 use moka::{policy::EvictionPolicy, sync::Cache};
 use std::{
@@ -19,6 +23,10 @@ const FAILED_TILE_RETRY_DELAY: Duration = Duration::from_secs(15);
 /// Best-effort decoded-pixel target; Moka may temporarily exceed it during eviction.
 pub const DEFAULT_TILE_CACHE_BUDGET_BYTES: usize = 256 * 1024 * 1024;
 const MAX_TILE_RESPONSE_BYTES: u64 = 8_000_000;
+/// Stored tiles waiting to be asked for again (roadmap 1.3), at most.
+const MAX_REVALIDATIONS_QUEUED: usize = 512;
+/// Revalidations running at once: one, and only while no tile waits for a slot.
+const MAX_REVALIDATIONS_RUNNING: usize = 1;
 pub const MAX_INFLIGHT: usize = 48;
 
 enum RequestState {
@@ -49,6 +57,8 @@ pub(super) enum TileFailure {
     /// The server asked to slow down (429 or 503): its source pauses this long and the
     /// tile waits in the queue.
     Throttled(Duration),
+    /// A stored tile asked for again is unchanged (304).
+    NotModified,
 }
 impl<E: Into<crate::Error>> From<E> for TileFailure {
     fn from(_: E) -> Self {
@@ -115,6 +125,10 @@ pub struct TileCache {
     downloading: Mutex<HashMap<TileKey, Arc<tokio::sync::Notify>, KeyBuild>>,
     /// Sources pausing after a throttling answer, until when (by source id).
     throttled: Mutex<HashMap<u64, Instant>>,
+    /// Stored tiles past their source's `revalidate_days`, shown and to be asked for
+    /// again with their validators. Lock after `downloading`.
+    revalidations: Mutex<VecDeque<(TileKey, Validity)>>,
+    revalidating: AtomicUsize,
 }
 
 /// One tile source's downloads (`TileCache::diagnostics`).
@@ -135,6 +149,8 @@ struct Job {
     epoch: u64,
     ahead: bool,
     cancel: Arc<tokio::sync::Notify>,
+    /// Ask again for a stored tile with these validators, instead of loading it.
+    revalidate: Option<Validity>,
 }
 
 impl TileCache {
@@ -185,6 +201,8 @@ impl TileCache {
             reserved: Mutex::new(HashSet::default()),
             downloading: Mutex::new(HashMap::default()),
             throttled: Mutex::new(HashMap::new()),
+            revalidations: Mutex::new(VecDeque::new()),
+            revalidating: AtomicUsize::new(0),
         }
     }
     pub fn new(
@@ -509,9 +527,52 @@ impl TileCache {
                 epoch,
                 ahead,
                 cancel,
+                revalidate: None,
             });
         }
-        None
+        // Stored tiles are asked for again only while nothing waits for a slot.
+        if !queue.is_empty()
+            || self.revalidating.load(Ordering::Relaxed) >= MAX_REVALIDATIONS_RUNNING
+        {
+            return None;
+        }
+        let mut revalidations = self.revalidations.lock().unwrap();
+        let index = revalidations.iter().position(|(key, _)| {
+            let provider = unkey(*key).0;
+            !downloading.contains_key(key)
+                && !matches!(requests.get(key), Some(RequestState::Loading(..)))
+                && active.get(&provider.id()).copied().unwrap_or(0)
+                    < usize::from(provider.source().max_parallel)
+                && host_active
+                    .get(&provider.host_group())
+                    .copied()
+                    .unwrap_or(0)
+                    < provider.host_limit()
+                && !throttled
+                    .get(&provider.host_group())
+                    .is_some_and(|until| *until > now)
+        })?;
+        let (key, validity) = revalidations.remove(index)?;
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        downloading.insert(key, cancel.clone());
+        self.revalidating.fetch_add(1, Ordering::Relaxed);
+        Some(Job {
+            key,
+            epoch: self.disk.epoch(),
+            ahead: true,
+            cancel,
+            revalidate: Some(validity),
+        })
+    }
+
+    /// Queues a stored tile to be asked for again (dropped when the queue is full).
+    fn queue_revalidation(&self, key: TileKey, validity: Validity) {
+        let mut revalidations = self.revalidations.lock().unwrap();
+        if revalidations.len() < MAX_REVALIDATIONS_QUEUED
+            && !revalidations.iter().any(|(queued, _)| *queued == key)
+        {
+            revalidations.push_back((key, validity));
+        }
     }
 
     /// A throttled download goes back to the front of the queue and its source pauses.
@@ -633,8 +694,27 @@ impl TileCache {
 
 struct FetchedTile {
     tile: Tile,
-    persistence: Option<(std::path::PathBuf, Vec<u8>)>,
+    persistence: Option<(std::path::PathBuf, Vec<u8>, Validity)>,
+    /// Shown from disk, but older than its source's `revalidate_days`.
+    stale: Option<Validity>,
 }
+
+/// Whether a stored tile fetched at `validity` should be asked for again: `None` when
+/// its source's tiles never change. A tile stored before validity was kept counts as
+/// fetched now (recorded by the caller), so an old cache is not asked for all at once.
+fn needs_revalidation(
+    provider: super::Provider,
+    validity: Option<&Validity>,
+    now_secs: i64,
+) -> Option<bool> {
+    let days = provider.source().revalidate_days?;
+    Some(
+        validity.is_some_and(|validity| {
+            now_secs - validity.fetched_secs > i64::from(days) * SECS_PER_DAY
+        }),
+    )
+}
+const SECS_PER_DAY: i64 = 86_400;
 async fn decode(
     bytes: Vec<u8>,
     provider: super::Provider,
@@ -669,10 +749,13 @@ async fn fetch_tile(
     disk: &DiskCache,
     fixture_source: Option<&str>,
     ahead: bool,
+    revalidate: Option<Validity>,
 ) -> Result<FetchedTile, TileFailure> {
     let (provider, zoom, x, y, release) = unkey(k);
     let path = disk.path(k)?;
-    if let Some(bytes) = disk.read(&path).await {
+    if revalidate.is_none()
+        && let Some((bytes, validity)) = disk.read(&path).await
+    {
         if is_placeholder(&bytes) {
             let _ = disk.invalidate(&path).await;
             return Err(TileFailure::Unavailable);
@@ -684,9 +767,23 @@ async fn fetch_tile(
                     crate::download_stats::DownloadKind::ImageryFromDisk,
                     read,
                 );
+                let now = now_secs();
+                let stale = match needs_revalidation(provider, validity.as_ref(), now) {
+                    Some(true) => validity,
+                    Some(false) if validity.is_none() => {
+                        let first_seen = Validity {
+                            fetched_secs: now,
+                            ..Validity::default()
+                        };
+                        let _ = disk.set_validity(&path, first_seen, disk.epoch()).await;
+                        None
+                    }
+                    _ => None,
+                };
                 return Ok(FetchedTile {
                     tile,
                     persistence: None,
+                    stale,
                 });
             }
             Err(_) => {
@@ -701,46 +798,69 @@ async fn fetch_tile(
     if url.is_empty() {
         return Err(crate::Error::from("empty tile URL").into());
     }
-    let bytes = match crate::http::body_or_retry_after(
-        crate::http::client(crate::http::Policy::Tile)?.get(url.as_str()),
-        MAX_TILE_RESPONSE_BYTES,
-    )
-    .await
-    {
-        Ok(crate::http::Fetched::RetryAfter(wait)) => {
-            report_first_failure(provider, &url, "throttled by the server");
-            return Err(TileFailure::Throttled(wait));
-        }
-        Ok(crate::http::Fetched::Body(bytes)) if is_placeholder(&bytes) => {
-            return Err(TileFailure::Unavailable);
-        }
-        Ok(crate::http::Fetched::Body(bytes)) => {
-            crate::download_stats::record(
-                if ahead {
-                    crate::download_stats::DownloadKind::ImageryAhead
-                } else {
-                    crate::download_stats::DownloadKind::Imagery
-                },
-                bytes.len(),
-            );
-            bytes
-        }
-        Err(crate::Error::Http(error))
-            if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
-        {
-            report_first_failure(provider, &url, "not found");
-            return Err(TileFailure::Unavailable);
-        }
-        Err(error) => {
-            report_first_failure(provider, &url, &error.to_string());
-            return Err(error.into());
-        }
+    let request = crate::http::client(crate::http::Policy::Tile)?.get(url.as_str());
+    let request = match &revalidate {
+        Some(validity) => conditional(request, validity),
+        None => request,
     };
+    let (bytes, etag, last_modified) =
+        match crate::http::conditional_body(request, MAX_TILE_RESPONSE_BYTES).await {
+            Ok(crate::http::Conditional::RetryAfter(wait)) => {
+                report_first_failure(provider, &url, "throttled by the server");
+                return Err(TileFailure::Throttled(wait));
+            }
+            Ok(crate::http::Conditional::NotModified) => {
+                return Err(TileFailure::NotModified);
+            }
+            Ok(crate::http::Conditional::Body { bytes, .. }) if is_placeholder(&bytes) => {
+                return Err(TileFailure::Unavailable);
+            }
+            Ok(crate::http::Conditional::Body {
+                bytes,
+                etag,
+                last_modified,
+            }) => {
+                crate::download_stats::record(
+                    if ahead {
+                        crate::download_stats::DownloadKind::ImageryAhead
+                    } else {
+                        crate::download_stats::DownloadKind::Imagery
+                    },
+                    bytes.len(),
+                );
+                (bytes, etag, last_modified)
+            }
+            Err(crate::Error::Http(error))
+                if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
+            {
+                report_first_failure(provider, &url, "not found");
+                return Err(TileFailure::Unavailable);
+            }
+            Err(error) => {
+                report_first_failure(provider, &url, &error.to_string());
+                return Err(error.into());
+            }
+        };
     let (tile, bytes) = decode(bytes, provider).await?;
+    let validity = Validity {
+        fetched_secs: now_secs(),
+        etag,
+        last_modified,
+    };
     Ok(FetchedTile {
         tile,
-        persistence: Some((path, bytes)),
+        persistence: Some((path, bytes, validity)),
+        stale: None,
     })
+}
+
+/// The request asking whether a stored tile changed: its `ETag`, else its date.
+fn conditional(request: reqwest::RequestBuilder, validity: &Validity) -> reqwest::RequestBuilder {
+    match (&validity.etag, &validity.last_modified) {
+        (Some(etag), _) => request.header(reqwest::header::IF_NONE_MATCH, etag),
+        (None, Some(date)) => request.header(reqwest::header::IF_MODIFIED_SINCE, date),
+        (None, None) => request,
+    }
 }
 async fn worker(
     cache: std::sync::Weak<TileCache>,
@@ -767,34 +887,94 @@ async fn worker(
 }
 
 async fn download(cache: &TileCache, job: Job, repaint: &Arc<dyn Fn() + Send + Sync>) {
+    let revalidating = job.revalidate.clone();
     let fetch = fetch_tile(
         job.key,
         &cache.disk,
         cache.fixture_source.as_deref(),
         job.ahead,
+        revalidating.clone(),
     );
     let outcome = tokio::select! {
         result = fetch => Some(result),
         () = job.cancel.notified() => None,
     };
     cache.downloading.lock().unwrap().remove(&job.key);
+    if let Some(validity) = revalidating {
+        cache.revalidating.fetch_sub(1, Ordering::Relaxed);
+        finish_revalidation(cache, &job, validity, outcome, repaint).await;
+        return;
+    }
     match outcome {
         // The tile left the view; its request was already retired.
         None => crate::download_stats::record_cancelled(),
         Some(Err(TileFailure::Throttled(wait))) => cache.throttle(job.key, wait),
-        Some(Ok(FetchedTile { tile, persistence })) => {
+        Some(Ok(FetchedTile {
+            tile,
+            persistence,
+            stale,
+        })) => {
             // Publish before optional SQLite persistence, so writes/eviction do
             // not delay imagery readiness. Persistence keeps its original epoch.
             cache.complete(job.key, Ok(tile));
             repaint();
-            if let Some((path, bytes)) = persistence {
-                let _ = cache.disk.write_owned(&path, bytes, job.epoch).await;
+            if let Some((path, bytes, validity)) = persistence {
+                let _ = cache
+                    .disk
+                    .write_owned(&path, bytes, Some(validity), job.epoch)
+                    .await;
+            }
+            if let Some(validity) = stale {
+                cache.queue_revalidation(job.key, validity);
             }
         }
         Some(Err(error)) => {
             cache.complete(job.key, Err(error));
             repaint();
         }
+    }
+}
+
+/// A stored tile asked for again: unchanged, it is marked current; changed, the new
+/// one replaces it on screen and on disk. Failures leave the stored tile as it is.
+async fn finish_revalidation(
+    cache: &TileCache,
+    job: &Job,
+    validity: Validity,
+    outcome: Option<Result<FetchedTile, TileFailure>>,
+    repaint: &Arc<dyn Fn() + Send + Sync>,
+) {
+    match outcome {
+        Some(Err(TileFailure::NotModified)) => {
+            if let Ok(path) = cache.disk.path(job.key) {
+                let confirmed = Validity {
+                    fetched_secs: now_secs(),
+                    ..validity
+                };
+                let _ = cache.disk.set_validity(&path, confirmed, job.epoch).await;
+            }
+            crate::download_stats::record_not_modified();
+        }
+        Some(Ok(FetchedTile {
+            tile,
+            persistence: Some((path, bytes, fresh)),
+            ..
+        })) => {
+            if tile.bytes() <= cache.budget {
+                cache.ready.insert(job.key, Arc::new(tile));
+                cache.generation.fetch_add(1, Ordering::Relaxed);
+                repaint();
+            }
+            let _ = cache
+                .disk
+                .write_owned(&path, bytes, Some(fresh), job.epoch)
+                .await;
+        }
+        Some(Err(TileFailure::Throttled(wait))) => {
+            cache.throttle(job.key, wait);
+            cache.queue_revalidation(job.key, validity);
+        }
+        _ => {}
     }
 }
 

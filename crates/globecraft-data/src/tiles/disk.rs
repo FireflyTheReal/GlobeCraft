@@ -8,6 +8,7 @@ use std::{
 };
 
 mod mbtiles;
+pub(super) use mbtiles::{Validity, now_secs};
 pub(super) const DEFAULT_DISK_BUDGET_BYTES: u64 =
     crate::settings::cache::DEFAULT_DISK_CACHE_MIB as u64 * 1024 * 1024;
 
@@ -76,9 +77,22 @@ impl DiskCache {
             .join(x.to_string())
             .join(format!("{y}.tile")))
     }
-    pub(super) async fn read(&self, path: &Path) -> Option<Vec<u8>> {
+    pub(super) async fn read(&self, path: &Path) -> Option<(Vec<u8>, Option<Validity>)> {
         let _guard = self.gate.read().await;
         self.tilesets.read(path).await.ok().flatten()
+    }
+    /// Records that a stored tile is still current.
+    pub(super) async fn set_validity(
+        &self,
+        path: &Path,
+        validity: Validity,
+        epoch: u64,
+    ) -> Result<(), crate::Error> {
+        let _guard = self.gate.read().await;
+        if epoch != self.epoch() {
+            return Ok(());
+        }
+        self.tilesets.set_validity(path, validity).await
     }
     #[cfg(test)]
     pub(super) async fn write(
@@ -87,12 +101,13 @@ impl DiskCache {
         bytes: &[u8],
         epoch: u64,
     ) -> Result<(), crate::Error> {
-        self.write_owned(path, bytes.to_vec(), epoch).await
+        self.write_owned(path, bytes.to_vec(), None, epoch).await
     }
     pub(super) async fn write_owned(
         &self,
         path: &Path,
         bytes: Vec<u8>,
+        validity: Option<Validity>,
         epoch: u64,
     ) -> Result<(), crate::Error> {
         self.writing.fetch_add(1, Ordering::AcqRel);
@@ -101,7 +116,7 @@ impl DiskCache {
         if epoch != self.epoch() {
             return Ok(());
         }
-        self.tilesets.write_owned(path, bytes).await
+        self.tilesets.write_owned(path, bytes, validity).await
     }
     /// Tile writes still running.
     pub(super) fn writes_in_progress(&self) -> usize {

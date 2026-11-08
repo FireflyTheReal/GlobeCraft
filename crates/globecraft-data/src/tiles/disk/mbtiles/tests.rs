@@ -32,7 +32,7 @@ async fn schema_uses_tms_rows_and_preserves_encoded_payload_across_restarts() {
     );
     drop(store);
     let reopened = Mbtiles::new(fixture.0.clone());
-    assert_eq!(reopened.read(&path).await.unwrap().unwrap(), bytes);
+    assert_eq!(reopened.read(&path).await.unwrap().unwrap().0, bytes);
 }
 #[tokio::test]
 async fn aggregate_file_budget_evicts_detail_before_overview_and_reclaims_disk() {
@@ -75,7 +75,7 @@ async fn legacy_tiles_migrate_without_a_network_fetch_and_invalid_tiles_can_be_r
     let path = fixture.0.join("esri_sat/2/1/1.tile");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, b"legacy").unwrap();
-    assert_eq!(store.read(&path).await.unwrap().unwrap(), b"legacy");
+    assert_eq!(store.read(&path).await.unwrap().unwrap().0, b"legacy");
     assert!(!path.exists());
     store.invalidate(&path).await.unwrap();
     assert!(store.read(&path).await.unwrap().is_none());
@@ -90,7 +90,10 @@ async fn providers_releases_and_payload_formats_have_distinct_tilesets() {
     }
     for scope in ["esri_sat", "osm", "opentopo", "wayback/42", "wayback/99"] {
         let path = fixture.0.join(format!("{scope}/0/0/0.tile"));
-        assert_eq!(store.read(&path).await.unwrap().unwrap(), scope.as_bytes());
+        assert_eq!(
+            store.read(&path).await.unwrap().unwrap().0,
+            scope.as_bytes()
+        );
     }
 }
 #[test]

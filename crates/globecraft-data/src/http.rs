@@ -139,6 +139,32 @@ pub(crate) async fn body_or_retry_after(
     request: reqwest::RequestBuilder,
     limit: u64,
 ) -> Result<Fetched, crate::Error> {
+    Ok(match conditional_body(request, limit).await? {
+        Conditional::Body { bytes, .. } => Fetched::Body(bytes),
+        Conditional::RetryAfter(wait) => Fetched::RetryAfter(wait),
+        Conditional::NotModified => {
+            return Err("304 Not Modified for an unconditional request".into());
+        }
+    })
+}
+/// A response to a request that may carry `If-None-Match` or `If-Modified-Since`.
+pub(crate) enum Conditional {
+    /// The body, with the validators to ask again with.
+    Body {
+        bytes: Vec<u8>,
+        etag: Option<String>,
+        last_modified: Option<String>,
+    },
+    /// 304: what the asker holds is still current.
+    NotModified,
+    RetryAfter(Duration),
+}
+/// Like [`body_or_retry_after`], keeping the response's `ETag` and `Last-Modified`
+/// and reporting a 304 answer.
+pub(crate) async fn conditional_body(
+    request: reqwest::RequestBuilder,
+    limit: u64,
+) -> Result<Conditional, crate::Error> {
     let mut response = request.send().await?;
     let status = response.status();
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS
@@ -150,9 +176,23 @@ pub(crate) async fn body_or_retry_after(
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok())
             .map_or(DEFAULT_RETRY_AFTER, Duration::from_secs);
-        return Ok(Fetched::RetryAfter(wait.min(MAX_RETRY_AFTER)));
+        return Ok(Conditional::RetryAfter(wait.min(MAX_RETRY_AFTER)));
+    }
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(Conditional::NotModified);
     }
     response = response.error_for_status()?;
+    let header = |name: reqwest::header::HeaderName| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+    let (etag, last_modified) = (
+        header(reqwest::header::ETAG),
+        header(reqwest::header::LAST_MODIFIED),
+    );
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         let remaining = (limit as usize).saturating_sub(bytes.len());
@@ -161,7 +201,11 @@ pub(crate) async fn body_or_retry_after(
             break;
         }
     }
-    Ok(Fetched::Body(bytes))
+    Ok(Conditional::Body {
+        bytes,
+        etag,
+        last_modified,
+    })
 }
 pub(crate) async fn parse_json(bytes: Vec<u8>) -> Result<serde_json::Value, crate::Error> {
     tokio::task::spawn_blocking(move || serde_json::from_slice(&bytes))

@@ -456,3 +456,149 @@ fn configured_budgets_reach_both_cache_implementations() {
         Some(budgets.decoded_bytes as u64)
     );
 }
+
+/// A 256 px PNG tile, as a tile server answers.
+fn png_tile(shade: u8) -> Vec<u8> {
+    let image = image::RgbaImage::from_pixel(256, 256, image::Rgba([shade, shade, shade, 255]));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+    bytes.into_inner()
+}
+
+/// Serves one tile with an `ETag`; a request carrying that tag gets 304. Every
+/// request's head is recorded.
+async fn etag_server(body: Vec<u8>, etag: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let seen = heads.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let (body, seen) = (body.clone(), seen.clone());
+            tokio::spawn(async move {
+                let mut buffer = vec![0; 4096];
+                let read = socket.read(&mut buffer).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buffer[..read]).to_lowercase();
+                let unchanged = head.contains(&format!("if-none-match: {etag}"));
+                seen.lock().unwrap().push(head);
+                let reply = if unchanged {
+                    format!(
+                        "HTTP/1.1 304 Not Modified\r\netag: {etag}\r\nconnection: close\r\n\r\n"
+                    )
+                    .into_bytes()
+                } else {
+                    let mut reply = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: image/png\r\netag: {etag}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .into_bytes();
+                    reply.extend_from_slice(&body);
+                    reply
+                };
+                let _ = socket.write_all(&reply).await;
+            });
+        }
+    });
+    (base, heads)
+}
+
+#[test]
+fn stored_tiles_past_their_age_are_asked_for_again_with_their_etag() {
+    let runtime = crate::runtime::ServiceRuntime::new().unwrap();
+    let dir = std::env::temp_dir().join(format!("globecraft-revalidate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (base, heads) = runtime
+        .handle()
+        .block_on(etag_server(png_tile(90), "\"v1\""));
+    let key = make_key(Provider::Streets, 12, 2_000, 1_400, 0);
+    let wait_for = |what: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !what() {
+            assert!(Instant::now() < deadline, "timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    // First visit: downloaded and stored with its tag.
+    {
+        let cache = TileCache::with_fixture_source(|| {}, runtime.handle(), dir.clone(), &base);
+        assert!(cache.request(key));
+        wait_for(&|| matches!(cache.lookup(key), Lookup::Ready(_)));
+        wait_for(&|| cache.disk.writes_in_progress() == 0);
+        let path = cache.disk.path(key).unwrap();
+        let (_, validity) = runtime.handle().block_on(cache.disk.read(&path)).unwrap();
+        let validity = validity.expect("a downloaded tile keeps its validity");
+        assert_eq!(validity.etag.as_deref(), Some("\"v1\""));
+        assert!(now_secs() - validity.fetched_secs < 60);
+        // Make it 31 days old: past OpenStreetMap's 30.
+        let old = Validity {
+            fetched_secs: now_secs() - 31 * SECS_PER_DAY,
+            ..validity
+        };
+        runtime
+            .handle()
+            .block_on(cache.disk.set_validity(&path, old, cache.disk.epoch()))
+            .unwrap();
+    }
+    assert_eq!(heads.lock().unwrap().len(), 1);
+    // Next session: shown from disk at once, then asked for with If-None-Match.
+    let cache = TileCache::with_fixture_source(|| {}, runtime.handle(), dir.clone(), &base);
+    let unchanged_before = crate::download_stats::not_modified();
+    assert!(cache.request(key));
+    wait_for(&|| matches!(cache.lookup(key), Lookup::Ready(_)));
+    wait_for(&|| heads.lock().unwrap().len() == 2);
+    assert!(heads.lock().unwrap()[1].contains("if-none-match: \"v1\""));
+    wait_for(&|| crate::download_stats::not_modified() > unchanged_before);
+    let path = cache.disk.path(key).unwrap();
+    wait_for(&|| {
+        runtime
+            .handle()
+            .block_on(cache.disk.read(&path))
+            .and_then(|(_, validity)| validity)
+            .is_some_and(|validity| now_secs() - validity.fetched_secs < 60)
+    });
+    drop(cache);
+    // A fresh tile is not asked for again.
+    let cache = TileCache::with_fixture_source(|| {}, runtime.handle(), dir.clone(), &base);
+    assert!(cache.request(key));
+    wait_for(&|| matches!(cache.lookup(key), Lookup::Ready(_)));
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(heads.lock().unwrap().len(), 2);
+    drop(cache);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn only_changing_sources_are_revalidated_and_old_caches_start_fresh() {
+    let now = 1_000_000_000;
+    let fetched = |days: i64| Validity {
+        fetched_secs: now - days * SECS_PER_DAY,
+        ..Validity::default()
+    };
+    assert_eq!(
+        needs_revalidation(Provider::Streets, Some(&fetched(31)), now),
+        Some(true)
+    );
+    assert_eq!(
+        needs_revalidation(Provider::Streets, Some(&fetched(29)), now),
+        Some(false)
+    );
+    assert_eq!(
+        needs_revalidation(Provider::Streets, None, now),
+        Some(false)
+    );
+    assert_eq!(
+        needs_revalidation(Provider::Satellite, Some(&fetched(181)), now),
+        Some(true)
+    );
+    for never in [
+        Provider::TerrainDem,
+        Provider::Wayback,
+        Provider::NightLights,
+    ] {
+        assert_eq!(needs_revalidation(never, Some(&fetched(10_000)), now), None);
+    }
+}

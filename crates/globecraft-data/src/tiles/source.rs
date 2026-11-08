@@ -67,6 +67,12 @@ pub struct TileSource {
     /// Downloads from this source at once.
     #[serde(default = "default_max_parallel")]
     pub max_parallel: u8,
+    /// Tiles kept on disk longer than this are shown and asked for again in the
+    /// background, with their `ETag` or date so an unchanged tile costs no download
+    /// (roadmap 1.3). None for sources whose tiles never change (dated editions,
+    /// Wayback releases, elevation).
+    #[serde(default)]
+    pub revalidate_days: Option<u32>,
     /// Dated editions (`YYYY-MM-DD`, newest first) that `{date}` in the template
     /// stands for; a tile key's release index picks one. Empty for undated sources.
     #[serde(default)]
@@ -269,6 +275,7 @@ mod tests {
             attribution_key: None,
             prefetch: Prefetch::Allowed,
             max_parallel: 4,
+            revalidate_days: None,
             editions: Vec::new(),
         };
         assert_eq!(

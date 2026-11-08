@@ -181,7 +181,7 @@ impl App {
         self.download_log = (Instant::now(), bytes);
         if bytes != logged_bytes {
             eprintln!(
-                "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles; {} downloads stopped (tile left the view)",
+                "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles ({} confirmed unchanged by the server); {} downloads stopped (tile left the view)",
                 cache_size_text(imagery.bytes),
                 imagery.responses,
                 cache_size_text(ahead.bytes),
@@ -190,6 +190,7 @@ impl App {
                 borders.responses,
                 cache_size_text(disk.bytes),
                 disk.responses,
+                globecraft_data::download_stats::not_modified(),
                 globecraft_data::download_stats::cancelled()
             );
         }

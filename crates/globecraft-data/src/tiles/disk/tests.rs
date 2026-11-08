@@ -62,7 +62,7 @@ async fn clear_blocks_old_jobs_from_writing_back_but_allows_new_downloads() {
     let path = fixture.0.join("esri_sat/0/0/0.tile");
     let old_epoch = disk.epoch();
     disk.write(&path, b"old download", old_epoch).await.unwrap();
-    assert_eq!(disk.read(&path).await.unwrap(), b"old download");
+    assert_eq!(disk.read(&path).await.unwrap().0, b"old download");
     disk.clear().await.unwrap();
     // A job that was still queued or fetching when clear began may finish later.
     disk.write(&path, b"late download", old_epoch)
@@ -72,7 +72,7 @@ async fn clear_blocks_old_jobs_from_writing_back_but_allows_new_downloads() {
     disk.write(&path, b"new download", disk.epoch())
         .await
         .unwrap();
-    assert_eq!(disk.read(&path).await.unwrap(), b"new download");
+    assert_eq!(disk.read(&path).await.unwrap().0, b"new download");
 }
 
 #[tokio::test]

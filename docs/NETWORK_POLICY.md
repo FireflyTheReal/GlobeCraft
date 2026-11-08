@@ -32,7 +32,11 @@ credit page, the Releases page) are not requests made by GlobeCraft.
 These rows are generated from `sources.json`. `max_parallel` is enforced per source by
 the tile downloader, and per host as well: sources on one host (NASA GIBS serves the
 night lights and both polar caps) share the largest of their limits, and a 429 or 503
-answer to one of them pauses all of them for its `Retry-After`. "Prefetch" means tiles just outside the view may be requested
+answer to one of them pauses all of them for its `Retry-After`. Stored tiles older than
+their source's `revalidate_days` (OpenStreetMap and OpenTopoMap 30 days, Esri imagery
+180) are shown at once and asked for again in the background, one at a time and only
+while no other tile waits, with `If-None-Match` or `If-Modified-Since`: an unchanged
+tile costs a 304 answer without a body. "Prefetch" means tiles just outside the view may be requested
 ahead; "visible only" means the source's policy forbids it.
 
 | Source | Host | Requests in flight | Prefetch | User agent |

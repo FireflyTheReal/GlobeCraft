@@ -17,6 +17,22 @@ const SQLITE_PAGE_CACHE_KIB: i32 = 256;
 #[cfg(test)]
 use super::DEFAULT_DISK_BUDGET_BYTES;
 
+/// When a stored tile was downloaded or last confirmed by its server, and the
+/// validators to ask again with (roadmap 1.3: conditional revalidation).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Validity {
+    /// Seconds since the Unix epoch.
+    pub(crate) fetched_secs: i64,
+    pub(crate) etag: Option<String>,
+    pub(crate) last_modified: Option<String>,
+}
+
+pub(crate) fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
 #[derive(Clone)]
 struct Address {
     directory: PathBuf,
@@ -107,7 +123,12 @@ impl Mbtiles {
             .await?;
         connection.call_raw(work).await?
     }
-    pub(super) async fn read(&self, path: &Path) -> Result<Option<Vec<u8>>, crate::Error> {
+    /// The stored tile and, when known, when it was fetched (tiles stored before
+    /// validity was kept, and legacy files, have none).
+    pub(super) async fn read(
+        &self,
+        path: &Path,
+    ) -> Result<Option<(Vec<u8>, Option<Validity>)>, crate::Error> {
         let address = Address::parse(&self.root, path)?;
         let root = self.root.clone();
         let legacy = path.to_path_buf();
@@ -117,12 +138,14 @@ impl Mbtiles {
             for (suffix,format) in FORMATS {
                 let file=address.database(suffix);
                 if !file.is_file() {continue;}
-                let bytes=with_database(connection,&root,&file,false,format,|db| {
+                let found=with_database(connection,&root,&file,false,format,|db| {
                     let bytes=db.query_row("SELECT tile_data FROM tile_cache.tiles WHERE zoom_level=?1 AND tile_column=?2 AND tile_row=?3",params![address.zoom,address.column,address.row],|row|row.get::<_,Vec<u8>>(0)).optional()?;
-                    if bytes.is_some() { touch(db,&address)?; }
-                    Ok(bytes)
+                    let Some(bytes)=bytes else { return Ok(None) };
+                    touch(db,&address)?;
+                    let validity=db.query_row("SELECT fetched,etag,last_modified FROM tile_cache.globecraft_validity WHERE zoom_level=?1 AND tile_column=?2 AND tile_row=?3",params![address.zoom,address.column,address.row],|row|Ok(Validity{fetched_secs:row.get(0)?,etag:row.get(1)?,last_modified:row.get(2)?})).optional()?;
+                    Ok(Some((bytes,validity)))
                 })?;
-                if bytes.is_some() {return Ok(bytes);}
+                if found.is_some() {return Ok(found);}
             }
             ensure_owned_path(&root,&legacy)?;
             let bytes=match std::fs::read(&legacy) {
@@ -131,26 +154,70 @@ impl Mbtiles {
                 Err(error)=>return Err(error.into()),
             };
             // Lazy migration retains legacy fallback if optional persistence fails.
-            if write(connection,&root,&address,&bytes,&budget,limit).is_ok() {
+            if write(connection,&root,&address,&bytes,None,&budget,limit).is_ok() {
                 let _=std::fs::remove_file(&legacy);
                 if let Some(budget)=budget.lock().unwrap().as_mut() {budget.refresh(&legacy)?;}
             }
-            Ok(Some(bytes))
+            Ok(Some((bytes,None)))
         }).await
+    }
+    /// Records that a stored tile is still current (a 304 answer, or first seen).
+    pub(super) async fn set_validity(
+        &self,
+        path: &Path,
+        validity: Validity,
+    ) -> Result<(), crate::Error> {
+        let address = Address::parse(&self.root, path)?;
+        let root = self.root.clone();
+        self.call(move |connection| {
+            for (suffix, format) in FORMATS {
+                let file = address.database(suffix);
+                if !file.is_file() {
+                    continue;
+                }
+                with_database(connection, &root, &file, false, format, |db| {
+                    let stored: bool = db
+                        .query_row(
+                            "SELECT 1 FROM tile_cache.tiles WHERE zoom_level=?1 AND tile_column=?2 AND tile_row=?3",
+                            params![address.zoom, address.column, address.row],
+                            |_| Ok(true),
+                        )
+                        .optional()?
+                        .unwrap_or(false);
+                    if stored {
+                        record_validity(db, &address, &validity)?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })
+        .await
     }
     #[cfg(test)]
     pub(super) async fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), crate::Error> {
-        self.write_owned(path, bytes.to_vec()).await
+        self.write_owned(path, bytes.to_vec(), None).await
     }
     pub(super) async fn write_owned(
         &self,
         path: &Path,
         bytes: Vec<u8>,
+        validity: Option<Validity>,
     ) -> Result<(), crate::Error> {
         let address = Address::parse(&self.root, path)?;
         let (root, budget, limit) = (self.root.clone(), self.budget.clone(), self.limit);
-        self.call(move |connection| write(connection, &root, &address, &bytes, &budget, limit))
-            .await
+        self.call(move |connection| {
+            write(
+                connection,
+                &root,
+                &address,
+                &bytes,
+                validity.as_ref(),
+                &budget,
+                limit,
+            )
+        })
+        .await
     }
     pub(super) async fn invalidate(&self, path: &Path) -> Result<(), crate::Error> {
         let address = Address::parse(&self.root, path)?;
@@ -217,11 +284,30 @@ fn touch(db: &rusqlite::Connection, address: &Address) -> Result<(), crate::Erro
     )?;
     Ok(())
 }
+fn record_validity(
+    db: &rusqlite::Connection,
+    address: &Address,
+    validity: &Validity,
+) -> Result<(), crate::Error> {
+    db.execute(
+        "INSERT OR REPLACE INTO tile_cache.globecraft_validity VALUES (?1,?2,?3,?4,?5,?6)",
+        params![
+            address.zoom,
+            address.column,
+            address.row,
+            validity.fetched_secs,
+            validity.etag,
+            validity.last_modified
+        ],
+    )?;
+    Ok(())
+}
 fn write(
     connection: &mut rusqlite::Connection,
     root: &Path,
     address: &Address,
     bytes: &[u8],
+    validity: Option<&Validity>,
     budget: &Arc<Mutex<Option<Budget>>>,
     limit: u64,
 ) -> Result<(), crate::Error> {
@@ -248,6 +334,9 @@ fn write(
             params![address.zoom, address.column, address.row, bytes],
         )?;
         touch(&transaction, address)?;
+        if let Some(validity) = validity {
+            record_validity(&transaction, address, validity)?;
+        }
         transaction.execute("INSERT OR REPLACE INTO tile_cache.metadata VALUES ('minzoom',(SELECT min(zoom_level) FROM tile_cache.tiles))",[])?;
         transaction.execute("INSERT OR REPLACE INTO tile_cache.metadata VALUES ('maxzoom',(SELECT max(zoom_level) FROM tile_cache.tiles))",[])?;
         transaction.commit()?;
@@ -302,7 +391,8 @@ fn with_database<T>(
             CREATE TABLE IF NOT EXISTS tile_cache.metadata (name TEXT PRIMARY KEY,value TEXT);
             CREATE TABLE IF NOT EXISTS tile_cache.tiles (zoom_level INTEGER,tile_column INTEGER,tile_row INTEGER,tile_data BLOB,PRIMARY KEY(zoom_level,tile_column,tile_row));
             CREATE TABLE IF NOT EXISTS tile_cache.earthcraft_access (zoom_level INTEGER,tile_column INTEGER,tile_row INTEGER,last_used INTEGER,overview INTEGER,PRIMARY KEY(zoom_level,tile_column,tile_row),FOREIGN KEY(zoom_level,tile_column,tile_row) REFERENCES tiles(zoom_level,tile_column,tile_row) ON DELETE CASCADE);
-            CREATE INDEX IF NOT EXISTS tile_cache.access_age ON earthcraft_access(overview,last_used);")?;
+            CREATE INDEX IF NOT EXISTS tile_cache.access_age ON earthcraft_access(overview,last_used);
+            CREATE TABLE IF NOT EXISTS tile_cache.globecraft_validity (zoom_level INTEGER,tile_column INTEGER,tile_row INTEGER,fetched INTEGER,etag TEXT,last_modified TEXT,PRIMARY KEY(zoom_level,tile_column,tile_row),FOREIGN KEY(zoom_level,tile_column,tile_row) REFERENCES tiles(zoom_level,tile_column,tile_row) ON DELETE CASCADE);")?;
         connection.pragma_update(Some("tile_cache"), "cache_size", -SQLITE_PAGE_CACHE_KIB)?;
         connection.execute(
             "INSERT OR IGNORE INTO tile_cache.metadata VALUES ('name',?1)",

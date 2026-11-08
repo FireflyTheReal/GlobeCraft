@@ -61,6 +61,18 @@ pub fn cancelled() -> u64 {
     CANCELLED.load(Ordering::Relaxed)
 }
 
+static NOT_MODIFIED: AtomicU64 = AtomicU64::new(0);
+
+/// A stored tile asked for again was unchanged (a 304 answer, no body).
+pub(crate) fn record_not_modified() {
+    NOT_MODIFIED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Stored tiles confirmed unchanged this session.
+pub fn not_modified() -> u64 {
+    NOT_MODIFIED.load(Ordering::Relaxed)
+}
+
 /// Bytes and responses of one kind so far this session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DownloadTotals {

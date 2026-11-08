@@ -1,5 +1,5 @@
 {
-  "comment": "Tile sources as data (roadmap 1.2). `id` is part of every tile key and of the disk cache: never reuse or renumber one. `kind`: imagery (photographs, faded smoothly between levels), map (drawn maps with text), elevation (Terrarium heights), overlay (drawn over the basemap). `access.template` takes {z}, {x} and {y}. Strings ending in `_key` name a translated text. `max_parallel` caps downloads from the source at once (the OpenStreetMap tile policy asks for at most two).",
+  "comment": "Tile sources as data (roadmap 1.2). `id` is part of every tile key and of the disk cache: never reuse or renumber one. `kind`: imagery (photographs, faded smoothly between levels), map (drawn maps with text), elevation (Terrarium heights), overlay (drawn over the basemap). `access.template` takes {z}, {x} and {y}. Strings ending in `_key` name a translated text. `max_parallel` caps downloads from the source at once (the OpenStreetMap tile policy asks for at most two). `revalidate_days`: tiles kept on disk longer are shown and asked for again in the background with their ETag or date; leave it out for tiles that never change.",
   "sources": [
     {
       "id": 0,
@@ -18,6 +18,7 @@
       "attribution_key": "provider-imagery-attribution",
       "prefetch": "allowed",
       "max_parallel": 6,
+      "revalidate_days": 180,
       "notes": "blankTile=false: missing tiles answer 404 instead of the 'Map data not yet available' image, so coarser imagery stands in. Distinct tiles exist past z17 (probed z18-z20)."
     },
     {
@@ -54,6 +55,7 @@
       "attribution_key": "provider-streets-attribution",
       "prefetch": "on_demand",
       "max_parallel": 2,
+      "revalidate_days": 30,
       "notes": "The OpenStreetMap tile usage policy forbids bulk prefetching."
     },
     {
@@ -71,7 +73,8 @@
       "cache_dir": "opentopo",
       "attribution": "© OpenTopoMap (CC-BY-SA), © OpenStreetMap",
       "prefetch": "on_demand",
-      "max_parallel": 2
+      "max_parallel": 2,
+      "revalidate_days": 30
     },
     {
       "id": 4,
