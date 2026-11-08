@@ -15,9 +15,9 @@ impl App {
         rect: Rect,
         aspect: f64,
     ) -> bool {
-        if !self.ruler || self.explorer.active != globecraft_core::body::Body::Earth {
-            self.ruler_paths.end_move();
-            self.ruler_drag = None;
+        if !self.measure.on || self.explorer.active != globecraft_core::body::Body::Earth {
+            self.measure.paths.end_move();
+            self.measure.drag = None;
             return false;
         }
         let basis = self.renderer.picking_basis(self.view_basis(aspect));
@@ -33,14 +33,14 @@ impl App {
                 globecraft_render::overlays::ruler::point_at(
                     &basis,
                     rect,
-                    &self.ruler_paths,
+                    &self.measure.paths,
                     p,
                     POINT_HIT_RADIUS_POINTS,
                     ground,
                 )
             });
-        if hovered.is_some() || self.ruler_drag.is_some() {
-            let starting_path = ui.input(|i| i.modifiers.alt) && self.ruler_drag.is_none();
+        if hovered.is_some() || self.measure.drag.is_some() {
+            let starting_path = ui.input(|i| i.modifiers.alt) && self.measure.drag.is_none();
             ui.output_mut(|o| {
                 o.cursor_icon = if starting_path {
                     egui::CursorIcon::Crosshair
@@ -55,19 +55,19 @@ impl App {
                     || i.consume_key(egui::Modifiers::NONE, Key::Backspace)
             })
         {
-            self.ruler_paths.remove_point(index);
-            self.ruler_drag = None;
+            self.measure.paths.remove_point(index);
+            self.measure.drag = None;
             return true;
         }
         if ui.input(|i| i.pointer.primary_pressed()) {
-            self.ruler_drag = pressed_handle(response, &basis, rect, &self.ruler_paths, ground);
-            if self.ruler_drag.is_some() {
-                self.ruler_paths.begin_move();
+            self.measure.drag = pressed_handle(response, &basis, rect, &self.measure.paths, ground);
+            if self.measure.drag.is_some() {
+                self.measure.paths.begin_move();
                 self.fly = None;
             }
         }
-        let captured = self.ruler_drag.is_some();
-        if let Some(index) = self.ruler_drag {
+        let captured = self.measure.drag.is_some();
+        if let Some(index) = self.measure.drag {
             if let Some(point) = pointer
                 .filter(|_| {
                     response.dragged_by(egui::PointerButton::Primary)
@@ -76,14 +76,14 @@ impl App {
                 .filter(|p| rect.contains(*p))
                 .and_then(|p| source.pick(&basis, rect, p))
             {
-                self.ruler_paths.move_point(index, point);
+                self.measure.paths.move_point(index, point);
             }
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Grabbing);
             ui.request_repaint();
         }
         if !ui.input(|i| i.pointer.primary_down()) {
-            self.ruler_paths.end_move();
-            self.ruler_drag = None;
+            self.measure.paths.end_move();
+            self.measure.drag = None;
         }
         captured
     }

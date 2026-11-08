@@ -275,7 +275,7 @@ impl App {
         };
         let prov = self.effective_provider();
         let rel = if prov == Provider::Wayback {
-            self.wayback_idx as u16
+            self.wayback.index as u16
         } else {
             0
         };
@@ -345,7 +345,7 @@ impl App {
                     },
                 });
         if compare.is_none() {
-            self.compare_texture = None;
+            self.wayback.compare_texture = None;
         }
         self.renderer.worker.submit(RenderRequest {
             width: size.width,
@@ -426,7 +426,7 @@ impl App {
         match compare {
             Some((image, rel)) => {
                 let size = image.size;
-                match &mut self.compare_texture {
+                match &mut self.wayback.compare_texture {
                     Some((texture, shown)) if texture.size() == size => {
                         texture.set_partial([0, 0], image, egui::TextureOptions::LINEAR);
                         *shown = rel;
@@ -438,11 +438,11 @@ impl App {
                     None => {
                         let texture =
                             ctx.load_texture("globe-compare", image, egui::TextureOptions::LINEAR);
-                        self.compare_texture = Some((texture, rel));
+                        self.wayback.compare_texture = Some((texture, rel));
                     }
                 }
             }
-            None => self.compare_texture = None,
+            None => self.wayback.compare_texture = None,
         }
         // A new frame of the view on screen (tiles arrived, or the view came to
         // rest) fades in over the picture it replaces instead of popping in (roadmap

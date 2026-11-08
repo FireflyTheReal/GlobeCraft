@@ -3,6 +3,7 @@ use eframe::egui;
 use globecraft_core::coordinates::parse_coordinate_query;
 use globecraft_core::language::{Lang, fold_name};
 use globecraft_data::search::merge_suggestions;
+use globecraft_data::search::{GeoResult, Suggestion};
 use globecraft_data::search::{geocode, photon_suggest};
 use std::{
     sync::mpsc,
@@ -13,53 +14,99 @@ const SUGGESTION_POLL_INTERVAL: Duration = Duration::from_millis(90);
 /// An airport found by its code is shown from this high: its runways in view.
 const AIRPORT_ALTITUDE_KM: f64 = 8.0;
 
+/// The place search box: its text, the results of the last search and the
+/// suggestions while typing.
+pub(super) struct SearchState {
+    pub(super) query: String,
+    pub(super) results: Vec<GeoResult>,
+    pub(super) rx: Option<mpsc::Receiver<Result<Vec<GeoResult>, globecraft_data::Error>>>,
+    /// Fly to the best result when a search completes.
+    pub(super) fly: bool,
+    /// Focus the place search field on the next frame.
+    pub(super) focus: bool,
+    pub(super) suggestions: Vec<Suggestion>,
+    pub(super) remote_suggestions: Vec<Suggestion>,
+    pub(super) suggestions_open: bool,
+    pub(super) selected: Option<usize>,
+    pub(super) last_edit: Instant,
+    pub(super) sent: String,
+    pub(super) suggestions_rx: Option<mpsc::Receiver<super::SuggestionResponse>>,
+    pub(super) local: globecraft_data::search::LocalSearch,
+}
+
+impl SearchState {
+    pub(super) fn new(local: globecraft_data::search::LocalSearch) -> Self {
+        Self {
+            query: String::new(),
+            results: vec![],
+            rx: None,
+            fly: true,
+            focus: false,
+            suggestions: vec![],
+            remote_suggestions: vec![],
+            suggestions_open: false,
+            selected: None,
+            last_edit: Instant::now(),
+            sent: String::new(),
+            suggestions_rx: None,
+            local,
+        }
+    }
+}
+
 impl App {
     pub(super) fn on_query_changed(&mut self) {
-        let q = self.query.trim().to_string();
+        let q = self.search.query.trim().to_string();
         // Results and their status belong to the query that produced them.
         // Dropping its receiver also prevents a late response restoring old results.
-        self.search_rx = None;
-        self.results.clear();
+        self.search.rx = None;
+        self.search.results.clear();
         self.status = self.lang.text("app-ready-status").into();
         if q.is_empty() {
-            self.sugg_rx = None;
-            self.sugg_sent.clear();
+            self.search.suggestions_rx = None;
+            self.search.sent.clear();
         }
-        self.sugg_sel = None;
-        self.sugg_last_edit = Instant::now();
+        self.search.selected = None;
+        self.search.last_edit = Instant::now();
         if q.is_empty() || !matches!(parse_coordinate_query(&q), Ok(None)) {
-            self.sugg_open = false;
-            self.suggestions.clear();
-            self.remote_sugg.clear();
+            self.search.suggestions_open = false;
+            self.search.suggestions.clear();
+            self.search.remote_suggestions.clear();
             return;
         }
-        self.sugg_open = true;
+        self.search.suggestions_open = true;
         let fq = fold_name(&q);
-        self.remote_sugg
+        self.search
+            .remote_suggestions
             .retain(|s| fold_name(&s.label).contains(&fq));
         self.rebuild_suggestions();
     }
 
     /// Instant local matches (countries, states, cities already loaded) + remote results.
     pub(super) fn rebuild_suggestions(&mut self) {
-        self.suggestions = self
-            .local_search
-            .merge(&self.query, self.lang, &self.remote_sugg)
+        self.search.suggestions = self
+            .search
+            .local
+            .merge(
+                &self.search.query,
+                self.lang,
+                &self.search.remote_suggestions,
+            )
             .unwrap_or_else(|| {
                 merge_suggestions(
-                    &self.query,
+                    &self.search.query,
                     self.lang,
                     &self.boundaries.labels,
-                    &self.remote_sugg,
+                    &self.search.remote_suggestions,
                 )
             });
         // An airport code (FRA, EDDF) goes first.
         if let Some(airport) = self
             .live_airports
             .airports()
-            .and_then(|airports| airports.by_code(&self.query).cloned())
+            .and_then(|airports| airports.by_code(&self.search.query).cloned())
         {
-            self.suggestions.insert(
+            self.search.suggestions.insert(
                 0,
                 globecraft_data::search::Suggestion {
                     label: super::live_layers::airport_label(&airport),
@@ -69,31 +116,38 @@ impl App {
                 },
             );
         }
-        if self.sugg_sel.is_some_and(|i| i >= self.suggestions.len()) {
-            self.sugg_sel = None;
+        if self
+            .search
+            .selected
+            .is_some_and(|i| i >= self.search.suggestions.len())
+        {
+            self.search.selected = None;
         }
     }
 
     pub(super) fn poll_suggestions(&mut self, ctx: &egui::Context) {
-        if let Some(rx) = &self.sugg_rx
+        if let Some(rx) = &self.search.suggestions_rx
             && let Ok((q, res)) = rx.try_recv()
         {
-            self.sugg_rx = None;
+            self.search.suggestions_rx = None;
             if let Ok(v) = res
-                && q == self.query.trim()
+                && q == self.search.query.trim()
             {
-                self.remote_sugg = v;
+                self.search.remote_suggestions = v;
                 self.rebuild_suggestions();
             }
             ctx.request_repaint();
         }
-        let q = self.query.trim().to_string();
-        if self.sugg_open && q.chars().count() >= 2 && q != self.sugg_sent && self.sugg_rx.is_none()
+        let q = self.search.query.trim().to_string();
+        if self.search.suggestions_open
+            && q.chars().count() >= 2
+            && q != self.search.sent
+            && self.search.suggestions_rx.is_none()
         {
-            if self.sugg_last_edit.elapsed() >= SUGGESTION_DEBOUNCE_DELAY {
-                self.sugg_sent = q.clone();
+            if self.search.last_edit.elapsed() >= SUGGESTION_DEBOUNCE_DELAY {
+                self.search.sent = q.clone();
                 let (tx, rx) = mpsc::channel();
-                self.sugg_rx = Some(rx);
+                self.search.suggestions_rx = Some(rx);
                 let (ctx2, lang) = (ctx.clone(), self.lang.code());
                 self.runtime.spawn(async move {
                     let r = photon_suggest(&q, lang).await;
@@ -107,13 +161,13 @@ impl App {
     }
 
     pub(super) fn choose_suggestion(&mut self, i: usize) {
-        if let Some(s) = self.suggestions.get(i).cloned() {
-            self.search_rx = None;
-            self.query = s.label.clone();
-            self.sugg_sent = s.label.clone();
-            self.sugg_open = false;
-            self.sugg_sel = None;
-            self.results.clear();
+        if let Some(s) = self.search.suggestions.get(i).cloned() {
+            self.search.rx = None;
+            self.search.query = s.label.clone();
+            self.search.sent = s.label.clone();
+            self.search.suggestions_open = false;
+            self.search.selected = None;
+            self.search.results.clear();
             self.fly_to(s.lat, s.lon, s.alt);
             self.status = self.lang.format(
                 "search-navigation-status",
@@ -124,16 +178,16 @@ impl App {
 
     pub(super) fn poll_search(&mut self) {
         let lg = self.lang;
-        let Some(rx) = &self.search_rx else { return };
+        let Some(rx) = &self.search.rx else { return };
         if let Ok(res) = rx.try_recv() {
-            self.search_rx = None;
+            self.search.rx = None;
             match res {
                 Ok(v) if v.is_empty() => self.status = lg.text("search-empty-status").into(),
                 Ok(v) => {
                     self.status = lg.format("search-results-status", &[("count", v.len().into())]);
                     let first = v[0].clone();
-                    self.results = v;
-                    if self.search_fly {
+                    self.search.results = v;
+                    if self.search.fly {
                         self.fly_to(first.lat, first.lon, first.alt);
                     }
                 }
@@ -146,7 +200,7 @@ impl App {
     }
 
     pub(super) fn start_search(&mut self, ctx: &egui::Context) {
-        let q = self.query.trim().to_string();
+        let q = self.search.query.trim().to_string();
         if q.is_empty() {
             return;
         }
@@ -187,7 +241,7 @@ impl App {
             .airports()
             .and_then(|airports| airports.by_code(&q).cloned())
         {
-            self.sugg_open = false;
+            self.search.suggestions_open = false;
             self.fly_to(airport.lat, airport.lon, AIRPORT_ALTITUDE_KM);
             self.status = self.lang.format(
                 "search-navigation-status",
@@ -199,7 +253,7 @@ impl App {
             return;
         }
         let (tx, rx) = mpsc::channel();
-        self.search_rx = Some(rx);
+        self.search.rx = Some(rx);
         self.status = self.lang.text("search-pending-status").into();
         let ctx = ctx.clone();
         let lang_code = self.lang.code();

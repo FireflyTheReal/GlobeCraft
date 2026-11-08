@@ -19,10 +19,9 @@ use globecraft_core::{
 };
 use globecraft_data::{
     boundaries::{BoundaryData, BoundaryUpdates, StatusLog, load_boundaries_async},
-    search::{GeoResult, Suggestion},
+    search::Suggestion,
     settings::{Settings, load_language_preference},
     tiles::{TileCache, TileWarmup},
-    wayback::WaybackRelease,
 };
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -61,6 +60,7 @@ mod live_geometry;
 mod live_layers;
 mod live_maps;
 mod long_press;
+mod measure;
 #[cfg(any(target_os = "macos", test))]
 mod menu;
 mod navigation;
@@ -104,10 +104,6 @@ pub(crate) struct App {
     /// zoom factor to reserve the same room in egui points.
     #[cfg(target_os = "macos")]
     traffic_lights_width_native: f32,
-    /// Fly to the best result when a search completes.
-    search_fly: bool,
-    /// Focus the place search field on the next frame.
-    focus_search: bool,
     #[cfg(target_os = "macos")]
     native_menu: Option<menu::NativeMenu>,
     runtime: globecraft_data::runtime::ServiceRuntime,
@@ -206,10 +202,6 @@ pub(crate) struct App {
     last_render: Instant,
     last_interact: Instant,
 
-    local_search: globecraft_data::search::LocalSearch,
-    query: String,
-    results: Vec<GeoResult>,
-    search_rx: Option<mpsc::Receiver<Result<Vec<GeoResult>, globecraft_data::Error>>>,
     status: String,
     status_file: Option<files::FileStatus>,
     system_units: globecraft_core::units::DistanceUnits,
@@ -225,8 +217,6 @@ pub(crate) struct App {
     kml_path: String,
     kml_session: files::KmlSession,
     menu_pick: Option<(f64, f64)>,
-    /// The point of the ruler's elevation profile under the pointer, marked on the globe.
-    ruler_profile_hover: Option<(f64, f64)>,
     /// A `globecraft://view` link from the command line, opened on the first frame.
     pending_view_link: Option<String>,
     /// The layer shown alone (`layer.solo`), and what was visible before.
@@ -235,13 +225,10 @@ pub(crate) struct App {
         globecraft_core::layers::LayerSet,
     )>,
 
-    ruler: bool,
-    ruler_reveal_requested: bool,
-    ruler_drag: Option<globecraft_core::ruler::RulerPointId>,
-    ruler_paths: globecraft_core::ruler::Ruler,
-    ruler_point_editor: Option<ui::ruler::PointEditor>,
     cursor: Option<(f64, f64)>,
 
+    /// The place search box: query, results and suggestions.
+    search: search::SearchState,
     settings: Settings,
     saved_settings: Settings,
     settings_writer: globecraft_data::settings::SettingsWriter,
@@ -249,36 +236,20 @@ pub(crate) struct App {
     show_settings: bool,
     show_about: bool,
     show_shortcuts: bool,
+    /// The ruler.
+    measure: measure::MeasureState,
+    /// Esri Wayback: the releases, the one shown and the swipe compare.
+    wayback: wayback::WaybackState,
 
-    wayback_list: Vec<WaybackRelease>,
     /// The app's time: live, a moment, or playing (roadmap 4.H).
     pub(super) time: globecraft_core::time::AppTime,
     /// The timeline bar is open, and the speed its play button runs at (scene
     /// seconds per second).
     pub(super) timeline_open: bool,
     pub(super) timeline_speed: f64,
-    wayback_idx: usize,
-    /// Wayback swipe compare: the release shown right of the split, and where the split
-    /// runs (a fraction of the view's width).
-    wayback_compare: Option<wayback::Compare>,
-    /// The swipe compare's release of the displayed view, and which release it is.
-    compare_texture: Option<(egui::TextureHandle, u16)>,
-    wayback_rx: Option<mpsc::Receiver<Result<Vec<WaybackRelease>, globecraft_data::Error>>>,
-    wayback_started: bool,
-    /// The day of the app's time the Wayback release was last picked for.
-    wayback_time_date: Option<String>,
     /// The moment dated imagery shows, and when it last moved (it trails a playing
     /// time, so tiles of each day can arrive).
     imagery_time: (f64, Instant),
-    wayback_err: Option<String>,
-
-    suggestions: Vec<Suggestion>,
-    remote_sugg: Vec<Suggestion>,
-    sugg_open: bool,
-    sugg_sel: Option<usize>,
-    sugg_last_edit: Instant,
-    sugg_sent: String,
-    sugg_rx: Option<mpsc::Receiver<SuggestionResponse>>,
 
     kml_drop_rect: Rect,
     ring_drag: bool,
@@ -390,8 +361,6 @@ impl App {
                     .filter(|width| *width > 0.0)
                     .unwrap_or(TRAFFIC_LIGHTS_WIDTH_FALLBACK_POINTS)
             },
-            search_fly: true,
-            focus_search: false,
             updater: globecraft_data::updater::UpdateService::new(runtime.handle(), {
                 let ctx = cc.egui_ctx.clone();
                 move || ctx.request_repaint()
@@ -475,10 +444,7 @@ impl App {
             layer_arrivals: overlays::LayerArrivals::default(),
             last_render: Instant::now(),
             last_interact: Instant::now(),
-            local_search,
-            query: String::new(),
-            results: vec![],
-            search_rx: None,
+            search: search::SearchState::new(local_search),
             status: lang.text("app-ready-status").into(),
             status_file: None,
             system_units: globecraft_core::units::DistanceUnits::for_locale(&system_locale),
@@ -494,14 +460,8 @@ impl App {
             kml_path: "placemarks.kml".into(),
             kml_session: files::KmlSession::default(),
             menu_pick: None,
-            ruler_profile_hover: None,
             pending_view_link: view_links::link_from_args(),
             solo: None,
-            ruler: false,
-            ruler_reveal_requested: false,
-            ruler_drag: None,
-            ruler_paths: globecraft_core::ruler::Ruler::default(),
-            ruler_point_editor: None,
             cursor: None,
             ui_scale_edit: settings.ui_scale,
             settings: settings.clone(),
@@ -514,25 +474,12 @@ impl App {
             show_settings: false,
             show_about: false,
             show_shortcuts: false,
-            wayback_list: vec![],
+            measure: measure::MeasureState::default(),
+            wayback: wayback::WaybackState::default(),
             time: globecraft_core::time::AppTime::default(),
             timeline_open: false,
             timeline_speed: globecraft_core::time::HOUR_SECS,
-            wayback_idx: 0,
-            wayback_compare: None,
-            compare_texture: None,
-            wayback_rx: None,
-            wayback_started: false,
-            wayback_time_date: None,
             imagery_time: (0.0, Instant::now()),
-            wayback_err: None,
-            suggestions: vec![],
-            remote_sugg: vec![],
-            sugg_open: false,
-            sugg_sel: None,
-            sugg_last_edit: Instant::now(),
-            sugg_sent: String::new(),
-            sugg_rx: None,
             kml_drop_rect: Rect::NOTHING,
             ring_drag: false,
             tilt_drag: false,
@@ -723,7 +670,7 @@ impl eframe::App for App {
         let airports_wake = ctx.clone();
         self.live_airports.update(
             &self.runtime,
-            self.flight_selection.selected().is_some() || !self.query.trim().is_empty(),
+            self.flight_selection.selected().is_some() || !self.search.query.trim().is_empty(),
             move || airports_wake.request_repaint(),
         );
         self.update_time_zones(ctx, earth);
@@ -816,7 +763,7 @@ impl eframe::App for App {
         self.poll_wayback();
         self.wayback_follow_time();
         self.poll_suggestions(ctx);
-        if let Some(error) = self.local_search.take_error() {
+        if let Some(error) = self.search.local.take_error() {
             self.status = format!("Local prefix index failed: {error}");
         }
         self.poll_search();

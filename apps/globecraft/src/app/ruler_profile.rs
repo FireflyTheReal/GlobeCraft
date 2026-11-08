@@ -75,7 +75,7 @@ impl App {
             return None;
         }
         let model = self.active_earth_model();
-        let paths = self.ruler_paths.measured_paths();
+        let paths = self.measure.paths.measured_paths();
         let points = profile::sample(paths.iter().map(Vec::as_slice), model, SAMPLES);
         let total = points.last()?.distance_km;
         let zoom = profile_zoom(total);
@@ -88,7 +88,7 @@ impl App {
 
     /// The profile's section of the Measure pane.
     pub(in crate::app) fn elevation_profile(&mut self, ui: &mut egui::Ui) {
-        self.ruler_profile_hover = None;
+        self.measure.profile_hover = None;
         let Some(profile) = self.ruler_profile() else {
             return;
         };
@@ -208,7 +208,7 @@ impl App {
                     font.clone(),
                     text,
                 );
-                self.ruler_profile_hover = Some((point.lat, point.lon));
+                self.measure.profile_hover = Some((point.lat, point.lon));
             }
         }
         ui.label(

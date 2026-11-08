@@ -258,8 +258,8 @@ impl App {
             && self.explorer.active == globecraft_core::body::Body::Earth
         {
             self.fly = None;
-            self.ruler_paths.end_move();
-            self.ruler_drag = None;
+            self.measure.paths.end_move();
+            self.measure.drag = None;
         }
         self.settings_ui = state;
         self.show_settings = open && !close_requested;

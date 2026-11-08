@@ -87,8 +87,8 @@ impl App {
         };
         MenuState {
             image: self.image.is_some(),
-            undo: ctx.egui_wants_keyboard_input() || self.ruler_paths.can_undo(),
-            redo: ctx.egui_wants_keyboard_input() || self.ruler_paths.can_redo(),
+            undo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_undo(),
+            redo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_redo(),
             sidebar: checked(Action::Sidebar),
             navigation: checked(Action::NavigationControls),
             grid: checked(Action::Grid),

@@ -231,7 +231,7 @@ impl App {
             height: h,
             aspect: render_aspect,
             provider: self.effective_provider(),
-            release_index: self.wayback_idx,
+            release_index: self.wayback.index,
             compare: self.active_compare().map(|compare| compare.index),
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
@@ -261,7 +261,7 @@ impl App {
             .filter(|p| rect.contains(*p))
             .and_then(pick);
 
-        let start_ruler_path = self.ruler && ruler_input::starts_new_path(&resp);
+        let start_ruler_path = self.measure.on && ruler_input::starts_new_path(&resp);
         if let Some((lat, lon)) = press.fire_at.filter(|p| rect.contains(*p)).and_then(pick) {
             self.run_reporting("ui.here", serde_json::json!({"lat": lat, "lon": lon}));
         }
@@ -281,7 +281,7 @@ impl App {
             }
         } else if !ruler_captured
             && resp.clicked()
-            && !self.ruler
+            && !self.measure.on
             && self.layer(MapLayer::Satellites)
             && let Some(norad) = resp
                 .interact_pointer_pos()
@@ -292,7 +292,7 @@ impl App {
             self.run_reporting("satellite.select", serde_json::json!({"norad": norad}));
         } else if !ruler_captured
             && resp.clicked()
-            && !self.ruler
+            && !self.measure.on
             && self.layer(MapLayer::Flights)
             && let Some(plane) = resp
                 .interact_pointer_pos()
@@ -305,7 +305,7 @@ impl App {
             );
         } else if !ruler_captured
             && resp.clicked()
-            && !self.ruler
+            && !self.measure.on
             && (self.flight_selection.selected().is_some()
                 || self.satellite_selection.selected().is_some())
         {
@@ -318,13 +318,13 @@ impl App {
             }
         } else if !ruler_captured
             && resp.clicked()
-            && self.ruler
+            && self.measure.on
             && let Some(pt) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
                 .and_then(pick)
         {
-            self.ruler_paths.add_point(pt, start_ruler_path);
+            self.measure.paths.add_point(pt, start_ruler_path);
         }
         // On touch screens egui opens the context menu on its own, longer, long touch:
         // the card has opened by then.
@@ -411,7 +411,7 @@ impl App {
                 {
                     let provider = self.effective_provider();
                     let mut releases = vec![if provider == Provider::Wayback {
-                        self.wayback_idx as u16
+                        self.wayback.index as u16
                     } else {
                         0
                     }];
@@ -446,7 +446,7 @@ impl App {
             {
                 let provider = self.effective_provider();
                 let mut releases = vec![if provider == Provider::Wayback {
-                    self.wayback_idx as u16
+                    self.wayback.index as u16
                 } else {
                     0
                 }];
@@ -498,7 +498,8 @@ impl App {
         // The swipe compare: the compare release's frame, right of the split.
         if let (Some(compare), Some((texture, _))) = (
             self.active_compare(),
-            self.compare_texture
+            self.wayback
+                .compare_texture
                 .as_ref()
                 .filter(|(_, shown)| *shown == compare_release(self)),
         ) {
@@ -866,7 +867,7 @@ impl App {
                 .clamp(super::wayback::MIN_SPLIT, 1.0 - super::wayback::MIN_SPLIT);
             if split != compare.split {
                 compare.split = split;
-                self.wayback_compare = Some(compare);
+                self.wayback.compare = Some(compare);
                 // Only the cut between the two finished frames moves: no new raster,
                 // and no switch to the lower-resolution frames of a moving camera.
                 ui.ctx().request_repaint();
@@ -902,7 +903,7 @@ impl App {
                 ),
                 egui::Layout::right_to_left(egui::Align::Center),
                 "split_left_date",
-                self.wayback_idx,
+                self.wayback.index,
                 "left_date",
             ),
             (
@@ -922,7 +923,7 @@ impl App {
         for (area, layout, id, current, param) in sides {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(layout));
             if let Some(index) = self.wayback_date_menu(&mut child, id, current) {
-                let date = self.wayback_list[index].date.clone();
+                let date = self.wayback.releases[index].date.clone();
                 self.run_reporting("layer.waybackCompare", serde_json::json!({ param: date }));
             }
         }

@@ -410,7 +410,7 @@ impl App {
         ui.add_space(14.0);
         ui.label(egui::RichText::new(lang.text("ribbon-imagery-date")).size(11.0));
         ui.horizontal(|ui| {
-            let loaded = !self.wayback_list.is_empty();
+            let loaded = !self.wayback.releases.is_empty();
             if ui
                 .add_enabled(loaded, egui::Button::new("◀").small())
                 .on_hover_text(lang.text("wayback-older-tooltip"))
@@ -418,9 +418,10 @@ impl App {
             {
                 self.run_reporting("layer.waybackRelease", json!({"step": 1}));
             }
-            if let Some(index) = self.wayback_date_menu(ui, "ribbon_wayback_date", self.wayback_idx)
+            if let Some(index) =
+                self.wayback_date_menu(ui, "ribbon_wayback_date", self.wayback.index)
             {
-                let date = self.wayback_list[index].date.clone();
+                let date = self.wayback.releases[index].date.clone();
                 self.run_reporting("layer.waybackRelease", json!({"date": date}));
             }
             if ui
@@ -433,7 +434,7 @@ impl App {
             let comparing = self.active_compare().is_some();
             if ui
                 .add_enabled(
-                    self.wayback_list.len() > 1,
+                    self.wayback.releases.len() > 1,
                     egui::Button::new("⇆").small().selected(comparing),
                 )
                 .on_hover_text(lang.text("wayback-compare-tooltip"))
@@ -454,20 +455,21 @@ impl App {
         current: usize,
     ) -> Option<usize> {
         let selected = self
-            .wayback_list
+            .wayback
+            .releases
             .get(current)
             .map_or_else(|| "—".to_string(), |r| r.date.clone());
         let mut picked = None;
         let year_of = |date: &str| date.get(..4).unwrap_or("").to_owned();
         // The list runs newest first, so the years do too.
         let mut years: Vec<String> = Vec::new();
-        for release in &self.wayback_list {
+        for release in &self.wayback.releases {
             let year = year_of(&release.date);
             if years.last() != Some(&year) {
                 years.push(year);
             }
         }
-        ui.add_enabled_ui(!self.wayback_list.is_empty(), |ui| {
+        ui.add_enabled_ui(!self.wayback.releases.is_empty(), |ui| {
             ui.push_id(id, |ui| {
                 let button = egui::RichText::new(format!("{selected} ⏷"))
                     .monospace()
@@ -483,7 +485,8 @@ impl App {
                                 }
                                 ui.menu_button(label, |ui| {
                                     let releases = self
-                                        .wayback_list
+                                        .wayback
+                                        .releases
                                         .iter()
                                         .enumerate()
                                         .filter(|(_, r)| year_of(&r.date) == *year);

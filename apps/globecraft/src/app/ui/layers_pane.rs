@@ -642,11 +642,11 @@ impl App {
     fn wayback_controls(&mut self, ui: &mut Ui, t: &Tokens) {
         let lang = self.lang;
         ui.indent("wayback_ui", |ui| {
-            if self.wayback_list.is_empty() {
+            if self.wayback.releases.is_empty() {
                 loading_note(ui, t, lang.text("wayback-loading-status"));
             } else {
-                let n = self.wayback_list.len();
-                let mut idx = self.wayback_idx;
+                let n = self.wayback.releases.len();
+                let mut idx = self.wayback.index;
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT);
                     if ui
@@ -658,14 +658,14 @@ impl App {
                         idx += 1;
                     }
                     egui::ComboBox::from_id_salt("wayback_date")
-                        .selected_text(self.wayback_list[idx].date.clone())
+                        .selected_text(self.wayback.releases[idx].date.clone())
                         .height(320.0)
                         .show_ui(ui, |ui| {
                             super::selection::size_menu(
                                 ui,
-                                self.wayback_list.iter().map(|r| r.date.as_str()),
+                                self.wayback.releases.iter().map(|r| r.date.as_str()),
                             );
-                            for (i, r) in self.wayback_list.iter().enumerate() {
+                            for (i, r) in self.wayback.releases.iter().enumerate() {
                                 super::selection::full_width_value(ui, &mut idx, i, &r.date);
                             }
                         });
@@ -693,7 +693,7 @@ impl App {
                         && let Some(index) =
                             self.wayback_date_menu(ui, "pane_wayback_compare", compare.index)
                     {
-                        let date = self.wayback_list[index].date.clone();
+                        let date = self.wayback.releases[index].date.clone();
                         self.run_reporting("layer.waybackCompare", json!({"date": date}));
                     }
                 });
@@ -708,7 +708,7 @@ impl App {
                 note(ui, t, lang.text("wayback-fallback-help"));
                 self.set_wayback(idx);
             }
-            if let Some(e) = &self.wayback_err {
+            if let Some(e) = &self.wayback.error {
                 ui.colored_label(t.red, e);
             }
         });

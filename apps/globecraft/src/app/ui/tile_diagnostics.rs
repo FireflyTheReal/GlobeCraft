@@ -88,7 +88,7 @@ impl App {
             provider,
             terrain: None,
             rel: if provider == globecraft_data::tiles::Provider::Wayback {
-                self.wayback_idx as u16
+                self.wayback.index as u16
             } else {
                 0
             },

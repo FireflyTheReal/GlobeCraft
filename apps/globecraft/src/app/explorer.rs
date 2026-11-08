@@ -135,10 +135,10 @@ impl App {
     fn explorer_location(&mut self, ui: &mut egui::Ui) -> String {
         let lg = self.lang;
         ui.heading(lg.text("explorer-selected-location"));
-        let selected = self.results.first();
+        let selected = self.search.results.first();
         let label = selected
             .map(|r| r.name.clone())
-            .unwrap_or_else(|| self.query.clone());
+            .unwrap_or_else(|| self.search.query.clone());
         ui.label(if label.trim().is_empty() {
             lg.text("explorer-search-place")
         } else {

@@ -48,7 +48,7 @@ impl App {
         let mut credits: Vec<String> = Vec::new();
         let mut base = self.settings.layers.basemap.attribution(lg).to_string();
         if self.settings.layers.basemap == Provider::Wayback
-            && let Some(release) = self.wayback_list.get(self.wayback_idx)
+            && let Some(release) = self.wayback.releases.get(self.wayback.index)
         {
             base = lg.format(
                 "wayback-snapshot-attribution",

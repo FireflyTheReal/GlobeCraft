@@ -94,13 +94,13 @@ impl App {
     }
 
     pub(super) fn unlock_flat_earth(&mut self, ctx: &egui::Context) {
-        self.search_rx = None;
-        self.sugg_rx = None;
-        self.sugg_open = false;
-        self.sugg_sel = None;
-        self.suggestions.clear();
-        self.remote_sugg.clear();
-        self.query.clear();
+        self.search.rx = None;
+        self.search.suggestions_rx = None;
+        self.search.suggestions_open = false;
+        self.search.selected = None;
+        self.search.suggestions.clear();
+        self.search.remote_suggestions.clear();
+        self.search.query.clear();
         self.flat_earth.open = true;
         self.status = self.lang.text("flat-earth-unlocked").into();
         ctx.request_repaint();

@@ -1480,7 +1480,7 @@ fn airport_search_screenshot() {
     let app = h.state_mut();
     app.live_airports
         .set(globecraft_data::airports::Airports::parse(sample).expect("sample"));
-    app.query = "fra".into();
+    app.search.query = "fra".into();
     app.on_query_changed();
     settle(&mut h, 1.0);
     save(&mut h, &dir, "25-airport-search");
@@ -2264,7 +2264,7 @@ fn view_link_round_trip() {
     let id = app.settings.user_layers[0].id;
     app.run("data.remove", json!({"id": id})).expect("remove");
     // The link, typed into the search box.
-    app.query = link.clone();
+    app.search.query = link.clone();
     let ctx = app.ctx.clone();
     app.start_search(&ctx);
     let app = h.state();

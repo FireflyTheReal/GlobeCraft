@@ -47,11 +47,11 @@ fn consume_shortcut(ctx: &egui::Context) -> Option<HistoryCommand> {
 impl App {
     pub(super) fn apply_ruler_history(&mut self, command: HistoryCommand, ctx: &egui::Context) {
         let changed = match command {
-            HistoryCommand::Undo => self.ruler_paths.undo(),
-            HistoryCommand::Redo => self.ruler_paths.redo(),
+            HistoryCommand::Undo => self.measure.paths.undo(),
+            HistoryCommand::Redo => self.measure.paths.redo(),
         };
         if changed {
-            self.ruler_drag = None;
+            self.measure.drag = None;
             ctx.request_repaint();
         }
     }

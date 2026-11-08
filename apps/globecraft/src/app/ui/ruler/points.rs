@@ -216,15 +216,15 @@ impl PointEditor {
 }
 impl App {
     pub(in crate::app) fn ruler_points_window(&mut self, ctx: &egui::Context) {
-        let Some(editor) = &mut self.ruler_point_editor else {
+        let Some(editor) = &mut self.measure.point_editor else {
             return;
         };
-        let action = editor.show(ctx, &self.ruler_paths, self.lang);
+        let action = editor.show(ctx, &self.measure.paths, self.lang);
         if action == Action::Close {
-            self.ruler_point_editor = None;
-        } else if editor.apply(action, &mut self.ruler_paths) {
-            self.ruler_drag = None;
-            self.ruler = true;
+            self.measure.point_editor = None;
+        } else if editor.apply(action, &mut self.measure.paths) {
+            self.measure.drag = None;
+            self.measure.on = true;
             ctx.request_repaint();
         }
     }

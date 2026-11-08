@@ -12,14 +12,14 @@ impl App {
         let lg = self.lang;
         let mut goto = None;
         section_heading(ui, lg.text("search-results-label"));
-        if self.results.is_empty() {
+        if self.search.results.is_empty() {
             ui.label(
                 egui::RichText::new(lg.text("explore-results-empty"))
                     .size(11.5)
                     .color(t.text_dim),
             );
         }
-        for r in &self.results {
+        for r in &self.search.results {
             let short: String = r.name.chars().take(64).collect();
             let resp = super::widgets::row_button(
                 ui,

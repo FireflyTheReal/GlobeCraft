@@ -193,15 +193,15 @@ impl App {
             }
             "search.place" => match str_param(p, "query") {
                 Some(query) if !query.is_empty() => {
-                    self.query = query.to_string();
-                    self.sugg_open = false;
-                    self.search_fly = bool_param(p, "fly").unwrap_or(true);
+                    self.search.query = query.to_string();
+                    self.search.suggestions_open = false;
+                    self.search.fly = bool_param(p, "fly").unwrap_or(true);
                     self.start_search(&ctx);
                     json!({"status": self.status, "note": "Results arrive in a moment; describe_view lists them."})
                 }
                 // Without a query (the ribbon button), the search box takes the focus.
                 _ => {
-                    self.focus_search = true;
+                    self.search.focus = true;
                     json!({})
                 }
             },
@@ -346,25 +346,26 @@ impl App {
             }
             // ── Ruler
             "ruler.enable" => {
-                self.ruler = toggled(p, self.ruler);
+                self.measure.on = toggled(p, self.measure.on);
                 self.reveal_ruler();
-                json!({"ruler": self.ruler})
+                json!({"ruler": self.measure.on})
             }
             "ruler.addPoint" => {
                 let point = position(p)?;
-                self.ruler = true;
-                self.ruler_paths
+                self.measure.on = true;
+                self.measure
+                    .paths
                     .add_point(point, bool_param(p, "new_path").unwrap_or(false));
                 self.ruler_json()
             }
             "ruler.clear" => {
-                self.ruler_paths.clear();
-                self.ruler_drag = None;
+                self.measure.paths.clear();
+                self.measure.drag = None;
                 self.ruler_json()
             }
             "ruler.closeShape" => {
-                let closed = toggled(p, self.ruler_paths.closed());
-                self.ruler_paths.set_closed(closed);
+                let closed = toggled(p, self.measure.paths.closed());
+                self.measure.paths.set_closed(closed);
                 self.ruler_json()
             }
             "ruler.profile" => {
@@ -381,9 +382,9 @@ impl App {
                 self.ruler_json()
             }
             "ruler.editPoints" => {
-                self.ruler_paths.end_move();
-                self.ruler_drag = None;
-                self.ruler_point_editor = Some(super::ui::ruler::PointEditor::new((
+                self.measure.paths.end_move();
+                self.measure.drag = None;
+                self.measure.point_editor = Some(super::ui::ruler::PointEditor::new((
                     self.cam.lat,
                     self.cam.lon,
                 )));
@@ -430,35 +431,37 @@ impl App {
                 json!({"basemap": basemap.code()})
             }
             "layer.waybackRelease" => {
-                if self.wayback_list.is_empty() {
+                if self.wayback.releases.is_empty() {
                     return Err(
                         "Wayback releases are still loading; show the wayback basemap first."
                             .into(),
                     );
                 }
                 let index = if let Some(date) = str_param(p, "date") {
-                    self.wayback_list
+                    self.wayback
+                        .releases
                         .iter()
                         .position(|r| r.date.starts_with(date))
                         .ok_or_else(|| format!("no release dated {date}"))?
                 } else {
                     let step = p.get("step").and_then(Value::as_i64).unwrap_or(1);
-                    (self.wayback_idx as i64 + step).clamp(0, self.wayback_list.len() as i64 - 1)
+                    (self.wayback.index as i64 + step)
+                        .clamp(0, self.wayback.releases.len() as i64 - 1)
                         as usize
                 };
                 self.settings.layers.basemap = globecraft_data::tiles::Provider::Wayback;
                 self.set_wayback(index);
-                json!({"release": self.wayback_list[index].date})
+                json!({"release": self.wayback.releases[index].date})
             }
             "layer.waybackCompare" => {
-                if self.wayback_list.len() < 2 {
+                if self.wayback.releases.len() < 2 {
                     return Err(
                         "Wayback releases are still loading; show the wayback basemap first."
                             .into(),
                     );
                 }
                 let enabled = bool_param(p, "enabled").unwrap_or(
-                    self.wayback_compare.is_none()
+                    self.wayback.compare.is_none()
                         || p.get("date").is_some()
                         || p.get("left_date").is_some()
                         || p.get("swap").is_some()
@@ -470,19 +473,20 @@ impl App {
                     self.set_wayback_compare(false);
                     return Ok(json!({"compare": false}));
                 }
-                if self.wayback_compare.is_none() {
+                if self.wayback.compare.is_none() {
                     self.set_wayback_compare(true);
                 }
-                let mut compare = self.wayback_compare.ok_or("nothing to compare")?;
+                let mut compare = self.wayback.compare.ok_or("nothing to compare")?;
                 if let Some(date) = str_param(p, "date") {
                     compare.index = self
-                        .wayback_list
+                        .wayback
+                        .releases
                         .iter()
                         .position(|r| r.date.starts_with(date))
                         .ok_or_else(|| format!("no release dated {date}"))?;
                 } else if let Some(step) = p.get("step").and_then(Value::as_i64) {
                     compare.index = (compare.index as i64 + step)
-                        .clamp(0, self.wayback_list.len() as i64 - 1)
+                        .clamp(0, self.wayback.releases.len() as i64 - 1)
                         as usize;
                 }
                 if let Some(split) = p.get("split").and_then(Value::as_f64) {
@@ -490,10 +494,11 @@ impl App {
                         .clamp(super::wayback::MIN_SPLIT, 1.0 - super::wayback::MIN_SPLIT);
                 }
                 // The left side is the shown release.
-                let mut left = self.wayback_idx;
+                let mut left = self.wayback.index;
                 if let Some(date) = str_param(p, "left_date") {
                     left = self
-                        .wayback_list
+                        .wayback
+                        .releases
                         .iter()
                         .position(|r| r.date.starts_with(date))
                         .ok_or_else(|| format!("no release dated {date}"))?;
@@ -501,15 +506,15 @@ impl App {
                 if bool_param(p, "swap") == Some(true) {
                     (left, compare.index) = (compare.index, left);
                 }
-                if left != self.wayback_idx {
+                if left != self.wayback.index {
                     self.set_wayback(left);
                 }
-                self.wayback_compare = Some(compare);
+                self.wayback.compare = Some(compare);
                 self.last_state = 0;
                 json!({
                     "compare": true,
-                    "left": self.wayback_list[self.wayback_idx].date,
-                    "right": self.wayback_list[compare.index].date,
+                    "left": self.wayback.releases[self.wayback.index].date,
+                    "right": self.wayback.releases[compare.index].date,
                     "split": compare.split,
                 })
             }
@@ -574,8 +579,8 @@ impl App {
                     self.settings.earth_model = model;
                     if earth {
                         self.fly = None;
-                        self.ruler_paths.end_move();
-                        self.ruler_drag = None;
+                        self.measure.paths.end_move();
+                        self.measure.drag = None;
                     }
                 }
                 json!({"model": model.code()})
@@ -838,14 +843,14 @@ impl App {
         let earth = self.explorer.active == Body::Earth;
         match id {
             "camera.autoRotate" => on(self.auto_rotate),
-            "ruler.enable" => on(self.ruler),
-            "ruler.closeShape" => on(self.ruler_paths.closed()),
+            "ruler.enable" => on(self.measure.on),
+            "ruler.closeShape" => on(self.measure.paths.closed()),
             "edit.undo" => CommandState {
-                enabled: self.ruler_paths.can_undo(),
+                enabled: self.measure.paths.can_undo(),
                 checked: false,
             },
             "edit.redo" => CommandState {
-                enabled: self.ruler_paths.can_redo(),
+                enabled: self.measure.paths.can_redo(),
                 checked: false,
             },
             "file.screenshot" => CommandState {
@@ -896,11 +901,11 @@ impl App {
                 checked: self.solo.is_some(),
             },
             "layer.waybackRelease" => CommandState {
-                enabled: !self.wayback_list.is_empty(),
+                enabled: !self.wayback.releases.is_empty(),
                 checked: false,
             },
             "layer.waybackCompare" => CommandState {
-                enabled: self.wayback_list.len() > 1,
+                enabled: self.wayback.releases.len() > 1,
                 checked: self.active_compare().is_some(),
             },
             "layer.terrainExaggeration" => CommandState {
@@ -1004,26 +1009,28 @@ impl App {
 
     pub(in crate::app) fn ruler_json(&self) -> Value {
         let model = self.active_earth_model();
-        let total_km = self.ruler_paths.distance_km(model);
+        let total_km = self.measure.paths.distance_km(model);
         let paths: Vec<Vec<[f64; 2]>> = self
-            .ruler_paths
+            .measure
+            .paths
             .paths()
             .map(|path| path.iter().map(|(lat, lon)| [*lat, *lon]).collect())
             .collect();
         let bearing = self
-            .ruler_paths
+            .measure
+            .paths
             .last_leg()
             .and_then(|pair| model.initial_bearing(pair[0], pair[1]));
         json!({
-            "enabled": self.ruler,
-            "closed_shapes": self.ruler_paths.closed(),
-            "area_km2": self.ruler_paths.area_km2(model),
-            "points": self.ruler_paths.point_count(),
+            "enabled": self.measure.on,
+            "closed_shapes": self.measure.paths.closed(),
+            "area_km2": self.measure.paths.area_km2(model),
+            "points": self.measure.paths.point_count(),
             "paths_lat_lon": paths,
             "total_km": total_km,
             "total_display": self.settings.ruler_unit.format_with_angle(
                 total_km,
-                self.ruler_paths.angular_distance_degrees(model),
+                self.measure.paths.angular_distance_degrees(model),
                 self.distance_units(),
                 Lang::En,
             ),
@@ -1045,6 +1052,7 @@ impl App {
             .map(MapLayer::code)
             .collect();
         let results: Vec<Value> = self
+            .search
             .results
             .iter()
             .take(5)
@@ -1062,7 +1070,7 @@ impl App {
             "earth_model": self.settings.earth_model.code(),
             "basemap": self.settings.layers.basemap.code(),
             "wayback_release": (self.settings.layers.basemap == globecraft_data::tiles::Provider::Wayback)
-                .then(|| self.wayback_list.get(self.wayback_idx).map(|r| r.date.clone())).flatten(),
+                .then(|| self.wayback.releases.get(self.wayback.index).map(|r| r.date.clone())).flatten(),
             "visible_layers": layers,
             "user_layers": self.user_layers_json(),
             "units": match self.distance_units() {
@@ -1070,8 +1078,8 @@ impl App {
                 globecraft_core::units::DistanceUnits::Imperial => "imperial",
             },
             "places": self.placemarks.len(),
-            "ruler_points": self.ruler_paths.point_count(),
-            "search_query": (!self.query.trim().is_empty()).then(|| self.query.trim().to_string()),
+            "ruler_points": self.measure.paths.point_count(),
+            "search_query": (!self.search.query.trim().is_empty()).then(|| self.search.query.trim().to_string()),
             "search_results": results,
             "status": self.status,
         })
@@ -1132,7 +1140,7 @@ pub(in crate::app) fn context_text(app: &App) -> String {
     lines.push(format!(
         "Places: {} · Ruler points: {}",
         app.placemarks.len(),
-        app.ruler_paths.point_count()
+        app.measure.paths.point_count()
     ));
     if let Some(results) = v["search_results"].as_array().filter(|r| !r.is_empty()) {
         let names: Vec<String> = results
@@ -1155,11 +1163,11 @@ impl App {
     pub(in crate::app) fn reveal_places(&mut self) {
         self.settings.sidebar.open = true;
         self.place_reveal_requested = true;
-        self.ruler_reveal_requested = false;
+        self.measure.reveal_requested = false;
     }
     pub(in crate::app) fn reveal_ruler(&mut self) {
-        self.ruler_reveal_requested = self.ruler;
-        if self.ruler {
+        self.measure.reveal_requested = self.measure.on;
+        if self.measure.on {
             self.place_reveal_requested = false;
         }
     }

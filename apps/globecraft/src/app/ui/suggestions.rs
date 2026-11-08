@@ -2,11 +2,14 @@ use super::super::App;
 use eframe::egui::{self, FontId, Pos2, Rect, Sense, Vec2};
 impl App {
     pub(in crate::app) fn suggestion_popup(&mut self, ctx: &egui::Context, field: Rect) {
-        if !self.sugg_open || self.suggestions.is_empty() || field == Rect::NOTHING {
+        if !self.search.suggestions_open
+            || self.search.suggestions.is_empty()
+            || field == Rect::NOTHING
+        {
             return;
         }
         let mut picked: Option<usize> = None;
-        let q = self.query.trim().to_lowercase();
+        let q = self.search.query.trim().to_lowercase();
         let ui_scale = self.settings.ui_scale;
         let width = field.width().max(320.0);
         let area = egui::Area::new(egui::Id::new("search_suggestions"))
@@ -19,14 +22,14 @@ impl App {
                     .show(ui, |ui| {
                         ui.set_width(width);
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        for (i, sg) in self.suggestions.iter().enumerate() {
+                        for (i, sg) in self.search.suggestions.iter().enumerate() {
                             let row_h = 28.0 * ui_scale;
                             let (rect, resp) =
                                 ui.allocate_exact_size(Vec2::new(width, row_h), Sense::click());
                             if resp.hovered() {
-                                self.sugg_sel = Some(i);
+                                self.search.selected = Some(i);
                             }
-                            if self.sugg_sel == Some(i) {
+                            if self.search.selected == Some(i) {
                                 ui.painter().rect_filled(
                                     rect,
                                     8.0,
@@ -101,7 +104,7 @@ impl App {
                     .is_some_and(|p| !field.contains(p) && !popup_rect.contains(p))
         });
         if clicked_away {
-            self.sugg_open = false;
+            self.search.suggestions_open = false;
         }
     }
 }

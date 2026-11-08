@@ -22,10 +22,10 @@ impl App {
         }
         ui.add_space(4.0);
         let model = self.active_earth_model();
-        let total = self.ruler_paths.distance_km(model);
+        let total = self.measure.paths.distance_km(model);
         let distance = self.settings.ruler_unit.format_with_angle(
             total,
-            self.ruler_paths.angular_distance_degrees(model),
+            self.measure.paths.angular_distance_degrees(model),
             self.distance_units(),
             lg,
         );
@@ -49,12 +49,12 @@ impl App {
                 ui.label(
                     egui::RichText::new(lg.format(
                         "measure-points-label",
-                        &[("count", self.ruler_paths.point_count().to_string().into())],
+                        &[("count", self.measure.paths.point_count().to_string().into())],
                     ))
                     .size(11.5)
                     .color(t.text_dim),
                 );
-                if let Some(km2) = self.ruler_paths.area_km2(model) {
+                if let Some(km2) = self.measure.paths.area_km2(model) {
                     ui.label(
                         egui::RichText::new(lg.format(
                             "measure-area-label",
@@ -64,7 +64,7 @@ impl App {
                         .color(t.text),
                     );
                 }
-                if let Some(pair) = self.ruler_paths.last_leg() {
+                if let Some(pair) = self.measure.paths.last_leg() {
                     let bearing = model
                         .initial_bearing(pair[0], pair[1])
                         .map(|bearing| globecraft_core::compass::heading_text(bearing, lg))

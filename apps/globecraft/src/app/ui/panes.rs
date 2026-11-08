@@ -132,9 +132,9 @@ impl App {
         let t = Tokens::get(ui.ctx());
         self.kml_drop_rect = Rect::NOTHING;
         // A placemark or ruler revealed from elsewhere brings its pane forward.
-        if self.ruler_reveal_requested {
+        if self.measure.reveal_requested {
             self.settings.workspace.open_right(RightPane::Measure);
-            self.ruler_reveal_requested = false;
+            self.measure.reveal_requested = false;
         }
         if self.place_reveal_requested {
             self.settings.sidebar.open = true;

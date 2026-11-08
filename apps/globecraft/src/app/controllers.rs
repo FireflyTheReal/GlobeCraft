@@ -308,7 +308,7 @@ impl App {
             && !self.show_shortcuts
             && !self.explorer.open
             && self.altitude_editor.is_none()
-            && self.ruler_point_editor.is_none()
+            && self.measure.point_editor.is_none()
             && !self.flat_earth.open
             && !self.update_restart.is_saving()
             && !egui::Popup::is_any_open(ctx);
@@ -324,8 +324,8 @@ impl App {
                 ControllerAction::Placemark => Some("places.addAtCenter"),
                 ControllerAction::Cancel => {
                     self.fly = None;
-                    self.ruler_paths.end_move();
-                    self.ruler_drag = None;
+                    self.measure.paths.end_move();
+                    self.measure.drag = None;
                     None
                 }
                 ControllerAction::None => None,
