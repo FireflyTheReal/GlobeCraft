@@ -181,6 +181,12 @@ its friendly platform name from the table above.
    artifact set, then publishes it. Versions containing a prerelease suffix are
    marked as prereleases.
 
+5. After tagging, add a settings fixture written by the tagged code to
+   `crates/globecraft-data/tests/fixtures/` (`settings-v<version>.json`, with many
+   values customised) and a `settings_written_by_v…_keep_every_value` test, so
+   later versions keep reading files that release wrote. The fixtures README
+   describes how the existing ones were made.
+
 A failed upload leaves a draft that can be completed by rerunning the workflow.
 A published release is not overwritten by a rerun; use a new version and tag.
 Only the tag-triggered publication job has `contents: write`; build and preview

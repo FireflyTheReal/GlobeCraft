@@ -334,11 +334,18 @@ impl Settings {
 mod tests {
     use super::*;
 
-    /// Every value a v0.3.0 settings file holds survives loading and saving it with
-    /// this version. The fixture was written by the v0.3.0 code itself (customised
-    /// theme, navigator, cache, sidebar, folders, text sizes, line style and layers).
+    /// Every value a settings file of each release holds survives loading and saving
+    /// it with this version (roadmap 10.3). Each fixture was written by that release's
+    /// code itself, with many values customised; add one per release.
     #[test]
     fn settings_written_by_v0_3_0_keep_every_value() {
+        keeps_every_value(include_bytes!("../tests/fixtures/settings-v0.3.0.json"));
+    }
+    #[test]
+    fn settings_written_by_v0_4_0_keep_every_value() {
+        keeps_every_value(include_bytes!("../tests/fixtures/settings-v0.4.0.json"));
+    }
+    fn keeps_every_value(old_bytes: &[u8]) {
         use serde_json::Value;
         fn leaves(path: &str, value: &Value, out: &mut Vec<(String, Value)>) {
             match value {
@@ -356,7 +363,6 @@ mod tests {
                 _ => out.push((path.to_owned(), value.clone())),
             }
         }
-        let old_bytes = include_bytes!("../tests/fixtures/settings-v0.3.0.json");
         let old: Value = serde_json::from_slice(old_bytes).unwrap();
         let mut settings = Settings::default();
         settings.apply_json(old_bytes).unwrap();
