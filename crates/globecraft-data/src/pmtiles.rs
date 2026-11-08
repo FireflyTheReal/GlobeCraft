@@ -72,6 +72,8 @@ pub(crate) struct Header {
     /// longitude bands to stay under GitHub's 2 GiB asset limit, and a tile outside
     /// a band is not looked up there. `None` when the header leaves them unset.
     longitudes: Option<(f64, f64)>,
+    /// The archive's suggested view: zoom, longitude, latitude.
+    center: (u8, f64, f64),
 }
 
 impl Header {
@@ -110,6 +112,14 @@ impl Header {
                 };
                 let (west, east) = (degrees(102), degrees(110));
                 (west < east).then_some((west, east))
+            },
+            center: {
+                let degrees = |at: usize| {
+                    f64::from(i32::from_le_bytes(
+                        bytes[at..at + 4].try_into().expect("4 bytes"),
+                    )) / 1e7
+                };
+                (bytes[118], degrees(119), degrees(123))
             },
         };
         if !matches!(
@@ -270,6 +280,7 @@ impl Archive {
                 min_zoom: 0,
                 max_zoom: 0,
                 longitudes: None,
+                center: (0, 0.0, 0.0),
             },
             root: Vec::new(),
             leaves: Mutex::new(HashMap::new()),
@@ -290,6 +301,32 @@ impl Archive {
         archive.root = parse_directory(&decompress(root_bytes, header.internal_compression)?)?;
         archive.header = header;
         Ok(archive)
+    }
+
+    /// The zoom levels the archive holds.
+    pub(crate) fn zooms(&self) -> (u8, u8) {
+        (self.header.min_zoom, self.header.max_zoom)
+    }
+
+    /// The archive's suggested view: zoom, longitude, latitude.
+    pub(crate) fn center(&self) -> (u8, f64, f64) {
+        self.header.center
+    }
+
+    /// Tile `z/x/y`'s bytes, unpacked, or `None` where the archive has no tile.
+    pub(crate) async fn tile(
+        &self,
+        z: u8,
+        x: u32,
+        y: u32,
+    ) -> Result<Option<Vec<u8>>, crate::Error> {
+        let Some(location) = self.locate(z, x, y).await? else {
+            return Ok(None);
+        };
+        let bytes = self
+            .range(location.offset, u64::from(location.length))
+            .await?;
+        decompress(bytes, self.header.tile_compression).map(Some)
     }
 
     /// Where the tile's bytes are, without reading them. A batch of tiles can group

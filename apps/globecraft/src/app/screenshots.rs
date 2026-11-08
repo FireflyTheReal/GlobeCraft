@@ -1378,6 +1378,73 @@ fn aurora_screenshot() {
     save(&mut h, &dir, "24-aurora-without-sunlight");
 }
 
+/// An MBTiles map as a layer (roadmap 1.2): a generated checkerboard archive over
+/// Europe at zoom 0-5, drawn over the imagery (`archive-layer`). Manual.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn archive_layer_screenshot() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let file = std::env::temp_dir().join("globecraft-archive-sample.mbtiles");
+    let _ = std::fs::remove_file(&file);
+    let db = rusqlite::Connection::open(&file).expect("mbtiles");
+    db.execute_batch(
+        "CREATE TABLE metadata (name TEXT, value TEXT);
+         CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB);",
+    )
+    .expect("schema");
+    for z in 0..=5u32 {
+        for x in 0..(1u32 << z) {
+            for y in 0..(1u32 << z) {
+                let shade = if (x + y + z) % 2 == 0 { 40 } else { 220 };
+                let colour = [shade, (z * 40) as u8, 255 - shade, 255];
+                let mut png = std::io::Cursor::new(Vec::new());
+                image::RgbaImage::from_fn(256, 256, |px, py| {
+                    if px < 3 || py < 3 {
+                        image::Rgba([255, 255, 255, 255])
+                    } else {
+                        image::Rgba(colour)
+                    }
+                })
+                .write_to(&mut png, image::ImageFormat::Png)
+                .expect("png");
+                db.execute(
+                    "INSERT INTO tiles VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![z, x, (1u32 << z) - 1 - y, png.into_inner()],
+                )
+                .expect("tile");
+            }
+        }
+    }
+    drop(db);
+    let mut h = harness(ThemePreference::Dark);
+    h.state_mut()
+        .add_user_layer(globecraft_data::user_data::UserLayer {
+            id: 0,
+            name: "Checkerboard".into(),
+            source: globecraft_data::user_data::UserSource::Tiles {
+                template: format!("mbtiles:{}", file.display()),
+                min_zoom: 0,
+                max_zoom: 5,
+                tile_px: 256,
+            },
+            visible: true,
+            opacity: 0.6,
+            attribution: String::new(),
+            color: "#ffb000".into(),
+            preset: None,
+        });
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": 48.0, "lon": 10.0, "altitude_km": 3000.0}),
+    );
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "archive-layer");
+    let _ = std::fs::remove_file(file);
+}
+
 /// The About window with the logo, light and dark (`about-<theme>`).
 #[test]
 #[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]

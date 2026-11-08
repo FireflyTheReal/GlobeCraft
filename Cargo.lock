@@ -2031,6 +2031,7 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "rstar",
+ "rusqlite",
  "self_update",
  "serde_json",
  "sys-locale",

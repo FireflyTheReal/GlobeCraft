@@ -14,6 +14,8 @@ mod vector;
 pub use capabilities::{WmsLayer, wms_layers};
 pub use legend::{legend_image, wms_legend_url};
 pub use properties::format_time_utc;
+mod archive;
+pub use archive::{ArchiveInfo, MBTILES_PREFIX, PMTILES_PREFIX, describe_archive};
 pub use raster::{RasterSnapshot, RasterTiles, test_tile};
 pub use saved::{SavedSources, export_sources, import_sources};
 pub use vector::{FeatureSet, NamedPoint, VectorLayer, load as load_features, parse_features};

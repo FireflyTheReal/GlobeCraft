@@ -37,6 +37,7 @@ self_update.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+rusqlite.workspace = true
 
 # Native file/folder dialogs. Linux and FreeBSD use GTK3 without a desktop portal.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]

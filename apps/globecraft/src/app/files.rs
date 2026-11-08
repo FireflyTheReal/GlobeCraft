@@ -258,8 +258,40 @@ impl App {
             let format = path
                 .to_str()
                 .and_then(globecraft_data::user_data::FeatureFormat::guess);
+            let is_mbtiles = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("mbtiles"));
             if is_kml {
                 self.load_kml_from(path);
+            } else if is_mbtiles && let Some(location) = path.to_str() {
+                // An MBTiles map becomes an image layer, as from Add Data → Web map.
+                let name = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or(location)
+                    .to_owned();
+                self.add_user_layer(globecraft_data::user_data::UserLayer {
+                    id: 0,
+                    name: name.clone(),
+                    source: globecraft_data::user_data::UserSource::Tiles {
+                        template: format!(
+                            "{}{location}",
+                            globecraft_data::user_data::MBTILES_PREFIX
+                        ),
+                        min_zoom: 0,
+                        max_zoom: 22,
+                        tile_px: 256,
+                    },
+                    visible: true,
+                    opacity: 1.0,
+                    attribution: String::new(),
+                    color: "#ffb000".into(),
+                    preset: None,
+                });
+                self.status = self
+                    .lang
+                    .format("add-data-added-status", &[("name", name.into())]);
             } else if let (Some(format), Some(location)) = (format, path.to_str()) {
                 // GeoJSON, GPX and CSV become a layer, as from Add Data → File.
                 let name = path

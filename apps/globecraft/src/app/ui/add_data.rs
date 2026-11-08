@@ -1,12 +1,14 @@
 //! The Add Data window (roadmap 2.1–2.3): the library of checked sources, a form for a
-//! web map (XYZ or WMTS REST tiles, or a WMS with its layer list), and a form for
+//! web map (XYZ or WMTS REST tiles, a WMS with its layer list, or a PMTiles or MBTiles
+//! archive of images), and a form for
 //! points and lines (GeoJSON, GPX, CSV) from a file or a URL. Each form can fetch a
 //! sample first ("Test") so a broken address shows before it becomes a layer.
 use crate::app::App;
 use eframe::egui;
 use globecraft_core::language::Lang;
 use globecraft_data::user_data::{
-    FeatureFormat, UserLayer, UserSource, WmsLayer, is_url,
+    ArchiveInfo, FeatureFormat, MBTILES_PREFIX, PMTILES_PREFIX, UserLayer, UserSource, WmsLayer,
+    is_url,
     presets::{self, Category, Longevity},
     wms_template,
 };
@@ -29,6 +31,27 @@ enum WebKind {
     #[default]
     Xyz,
     Wms,
+    /// A PMTiles archive on the web or an MBTiles file.
+    Archive,
+}
+
+/// The template an archive's address or path names: a web address of a `.pmtiles`
+/// file, or the path of an `.mbtiles` file on this computer.
+fn archive_template(location: &str) -> Option<String> {
+    let location = location.trim();
+    let extension = |name: &str| {
+        location
+            .split(['?', '#'])
+            .next()
+            .is_some_and(|path| path.to_ascii_lowercase().ends_with(name))
+    };
+    if is_url(location) && extension(".pmtiles") {
+        Some(format!("{PMTILES_PREFIX}{location}"))
+    } else if !is_url(location) && extension(".mbtiles") {
+        Some(format!("{MBTILES_PREFIX}{location}"))
+    } else {
+        None
+    }
 }
 
 /// Where a background request leaves its answer.
@@ -101,6 +124,8 @@ pub(in crate::app) struct AddDataDialog {
     name: String,
     attribution: String,
     web_test: Pending<(u32, u32)>,
+    /// An archive's zoom levels and a tile's size.
+    archive_test: Pending<(ArchiveInfo, (u32, u32))>,
     location: String,
     /// `None`: from the file name.
     format: Option<FeatureFormat>,
@@ -124,6 +149,7 @@ impl Default for AddDataDialog {
             name: String::new(),
             attribution: String::new(),
             web_test: Pending::default(),
+            archive_test: Pending::default(),
             location: String::new(),
             format: None,
             refresh_minutes: 0,
@@ -176,10 +202,14 @@ impl AddDataDialog {
     /// The web map form's layer, when its fields make one.
     fn web_layer(&self, lang: Lang) -> Option<UserLayer> {
         let url = self.url.trim();
+        if self.web_kind == WebKind::Archive {
+            return self.archive_layer(lang);
+        }
         if !is_url(url) {
             return None;
         }
         let template = match self.web_kind {
+            WebKind::Archive => return None,
             WebKind::Xyz => {
                 let tiled = ["{z}", "{x}"].iter().all(|p| url.contains(p))
                     && (url.contains("{y}") || url.contains("{-y}"));
@@ -198,7 +228,7 @@ impl AddDataDialog {
                 .and_then(|r| r.as_ref().ok())
                 .and_then(|layers| layers.get(self.wms_choice))
                 .map(|layer| layer.title.clone()),
-            WebKind::Xyz => None,
+            WebKind::Xyz | WebKind::Archive => None,
         };
         Some(UserLayer {
             id: 0,
@@ -211,6 +241,49 @@ impl AddDataDialog {
                 min_zoom: 0,
                 max_zoom: self.max_zoom,
                 tile_px: if self.tile_512 { 512 } else { 256 },
+            },
+            visible: true,
+            opacity: 1.0,
+            attribution: self.attribution.trim().to_owned(),
+            color: "#ffb000".into(),
+            preset: None,
+        })
+    }
+
+    /// The archive form's layer: the zoom levels and tile size from its test, when it
+    /// ran (else every level, as the archive answers).
+    fn archive_layer(&self, lang: Lang) -> Option<UserLayer> {
+        let template = archive_template(&self.url)?;
+        let tested = self
+            .archive_test
+            .result
+            .as_ref()
+            .and_then(|r| r.as_ref().ok());
+        let (min_zoom, max_zoom, tile_px) = tested.map_or((0, 22, 256), |(info, (width, _))| {
+            (
+                info.min_zoom,
+                info.max_zoom,
+                if *width >= 512 { 512 } else { 256 },
+            )
+        });
+        let file_name = self
+            .url
+            .trim()
+            .split(['?', '#'])
+            .next()
+            .and_then(|path| path.rsplit(['/', '\\']).next())
+            .and_then(|name| name.rsplit_once('.').map(|(stem, _)| stem.to_owned()));
+        Some(UserLayer {
+            id: 0,
+            name: Some(self.name.trim().to_owned())
+                .filter(|n| !n.is_empty())
+                .or(file_name)
+                .unwrap_or_else(|| lang.text("add-data-web-default-name").to_owned()),
+            source: UserSource::Tiles {
+                template,
+                min_zoom,
+                max_zoom,
+                tile_px,
             },
             visible: true,
             opacity: 1.0,
@@ -274,6 +347,7 @@ impl AddDataDialog {
     ) -> Action {
         self.wms_layers.poll();
         self.web_test.poll();
+        self.archive_test.poll();
         self.feature_test.poll();
         let mut action = Action::None;
         let mut open = true;
@@ -394,6 +468,11 @@ impl AddDataDialog {
                 WebKind::Wms,
                 lang.text("add-data-web-wms"),
             );
+            ui.radio_value(
+                &mut self.web_kind,
+                WebKind::Archive,
+                lang.text("add-data-web-archive"),
+            );
         });
         egui::Grid::new("add_data_web_form")
             .num_columns(2)
@@ -402,24 +481,44 @@ impl AddDataDialog {
                 ui.label(lang.text(match self.web_kind {
                     WebKind::Xyz => "add-data-web-template-label",
                     WebKind::Wms => "add-data-web-service-label",
+                    WebKind::Archive => "add-data-web-archive-label",
                 }));
                 let hint = match self.web_kind {
                     WebKind::Xyz => "https://…/{z}/{x}/{y}.png",
                     WebKind::Wms => "https://…/wms",
+                    WebKind::Archive => "https://…/map.pmtiles, …/map.mbtiles",
                 };
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.url)
-                            .hint_text(hint)
-                            .desired_width(380.0),
-                    )
-                    .changed()
-                {
-                    self.web_test.clear();
-                    self.wms_layers.clear();
-                }
+                ui.horizontal(|ui| {
+                    let width = if self.web_kind == WebKind::Archive {
+                        300.0
+                    } else {
+                        380.0
+                    };
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.url)
+                                .hint_text(hint)
+                                .desired_width(width),
+                        )
+                        .changed()
+                    {
+                        self.web_test.clear();
+                        self.archive_test.clear();
+                        self.wms_layers.clear();
+                    }
+                    if self.web_kind == WebKind::Archive
+                        && ui.button(lang.text("add-data-browse-action")).clicked()
+                        && let Some(path) = rfd::FileDialog::new()
+                            .add_filter("MBTiles", &["mbtiles"])
+                            .pick_file()
+                    {
+                        self.url = path.to_string_lossy().into_owned();
+                        self.archive_test.clear();
+                    }
+                });
                 ui.end_row();
                 match self.web_kind {
+                    WebKind::Archive => {}
                     WebKind::Xyz => {
                         ui.label(lang.text("add-data-web-tile-size-label"));
                         ui.horizontal(|ui| {
@@ -509,11 +608,19 @@ impl AddDataDialog {
                     template, max_zoom, ..
                 }) = layer.as_ref().map(|l| l.source.clone())
             {
-                self.web_test.start(runtime, ctx, async move {
-                    globecraft_data::user_data::test_tile(template, TEST_ZOOM.min(max_zoom))
-                        .await
-                        .map_err(|e| e.to_string())
-                });
+                if self.web_kind == WebKind::Archive {
+                    self.archive_test.start(runtime, ctx, async move {
+                        globecraft_data::user_data::describe_archive(template)
+                            .await
+                            .map_err(|e| e.to_string())
+                    });
+                } else {
+                    self.web_test.start(runtime, ctx, async move {
+                        globecraft_data::user_data::test_tile(template, TEST_ZOOM.min(max_zoom))
+                            .await
+                            .map_err(|e| e.to_string())
+                    });
+                }
             }
             if ui
                 .add_enabled(
@@ -532,7 +639,22 @@ impl AddDataDialog {
                 &[("width", (*w).into()), ("height", (*h).into())],
             )
         });
-        ui.weak(lang.text("add-data-web-help"));
+        result_line(ui, &self.archive_test, lang, |(info, (w, h))| {
+            lang.format(
+                "add-data-web-archive-test-ok",
+                &[
+                    ("min", info.min_zoom.into()),
+                    ("max", info.max_zoom.into()),
+                    ("width", (*w).into()),
+                    ("height", (*h).into()),
+                ],
+            )
+        });
+        ui.weak(lang.text(if self.web_kind == WebKind::Archive {
+            "add-data-web-archive-help"
+        } else {
+            "add-data-web-help"
+        }));
     }
 
     fn feature_form(
@@ -707,6 +829,27 @@ impl App {
                 self.run_reporting("places.open", serde_json::Value::Null);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+
+    #[test]
+    fn archives_are_named_by_their_extension() {
+        assert_eq!(
+            archive_template("https://example.org/maps/relief.pmtiles?key=1").as_deref(),
+            Some("pmtiles:https://example.org/maps/relief.pmtiles?key=1")
+        );
+        assert_eq!(
+            archive_template(" /Users/me/Maps/Alps.MBTiles ").as_deref(),
+            Some("mbtiles:/Users/me/Maps/Alps.MBTiles")
+        );
+        // A local PMTiles file and a web MBTiles file cannot be read.
+        assert!(archive_template("/Users/me/map.pmtiles").is_none());
+        assert!(archive_template("https://example.org/map.mbtiles").is_none());
+        assert!(archive_template("https://example.org/{z}/{x}/{y}.png").is_none());
     }
 }
 

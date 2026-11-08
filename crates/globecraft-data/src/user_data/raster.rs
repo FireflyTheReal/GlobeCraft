@@ -94,6 +94,8 @@ impl RasterSnapshot {
 /// One web map layer's tiles.
 pub struct RasterTiles {
     template: String,
+    /// The PMTiles or MBTiles archive the template names, read instead of a web address.
+    archive: Option<super::archive::TileArchive>,
     min_zoom: u8,
     max_zoom: u8,
     tile_px: u16,
@@ -107,6 +109,7 @@ impl RasterTiles {
     pub fn new(template: &str, min_zoom: u8, max_zoom: u8, tile_px: u16) -> Self {
         Self {
             template: template.to_owned(),
+            archive: super::archive::TileArchive::from_template(template),
             min_zoom,
             max_zoom: max_zoom.clamp(min_zoom, 22),
             tile_px: tile_px.max(64),
@@ -193,16 +196,26 @@ impl RasterTiles {
             inflight += 1;
             let url = super::tile_url(&self.template, key.z, key.x, key.y, &self.date);
             let (state, key, repaint) = (self.shared.clone(), *key, repaint.clone());
+            let archive = self.archive.clone();
             let day = shared.day;
             runtime.spawn(async move {
-                let result = fetch_tile(url).await;
+                let result = match archive {
+                    Some(archive) => archive_tile(&archive, key).await,
+                    None => fetch_tile(url).await.map(Some),
+                };
                 if let Ok(mut shared) = state.lock() {
                     if shared.day != day {
                         // Another day is showing by now.
                         return;
                     }
                     match result {
-                        Ok(image) => {
+                        // The archive has no tile here: coarser ones stand in.
+                        Ok(None) => {
+                            shared
+                                .tiles
+                                .insert(key, Entry::Failed { at: Instant::now() });
+                        }
+                        Ok(Some(image)) => {
                             shared.tiles.insert(
                                 key,
                                 Entry::Loaded {
@@ -294,6 +307,18 @@ fn evict(tiles: &mut HashMap<TileKey, Entry>) {
     for (_, key) in loaded.into_iter().take(tiles.len() - MAX_TILES) {
         tiles.remove(&key);
     }
+}
+
+async fn archive_tile(
+    archive: &super::archive::TileArchive,
+    key: TileKey,
+) -> Result<Option<RgbaImage>, crate::Error> {
+    let Some(bytes) = archive.tile(key).await? else {
+        return Ok(None);
+    };
+    crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes))
+        .await
+        .map(Some)
 }
 
 async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
