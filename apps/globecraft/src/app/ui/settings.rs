@@ -4,6 +4,7 @@ use eframe::egui;
 use globecraft_core::language::{Lang, fold_name};
 use globecraft_data::settings::Settings;
 mod controllers;
+mod keys;
 mod map_style;
 mod network;
 mod sections;
@@ -26,10 +27,11 @@ enum Category {
     Controllers,
     Cache,
     Network,
+    Keys,
     Files,
 }
 impl Category {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::General,
         Self::Appearance,
         Self::MapStyle,
@@ -39,6 +41,7 @@ impl Category {
         Self::Controllers,
         Self::Cache,
         Self::Network,
+        Self::Keys,
         Self::Files,
     ];
     fn name_id(self) -> &'static str {
@@ -52,6 +55,7 @@ impl Category {
             Self::Graphics => "settings-category-graphics",
             Self::Cache => "settings-category-cache",
             Self::Network => "settings-category-network",
+            Self::Keys => "settings-category-keys",
             Self::Files => "settings-category-files",
         }
     }
@@ -119,6 +123,12 @@ impl Category {
                 "settings-network-service-updates",
                 "settings-network-user-layer-help",
                 "settings-network-assistant-help",
+            ],
+            Self::Keys => &[
+                "settings-keys-intro",
+                "keys-tomtom",
+                "keys-firms",
+                "layers-traffic-key",
             ],
             Self::Files => &[
                 "settings-screenshot-folder-label",
@@ -219,6 +229,7 @@ impl App {
                                         self.settings_cache(ui, &mut state.confirm_cache)
                                     }
                                     Category::Network => self.settings_network(ui),
+                                    Category::Keys => self.settings_keys(ui),
                                     Category::Files => self.settings_files(ui),
                                 }
                                 ui.add_space(ui.spacing().item_spacing.y);

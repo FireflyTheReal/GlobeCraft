@@ -849,11 +849,16 @@ impl App {
             MapLayer::Traffic => {
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT + 46.0);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.tomtom_key)
-                            .password(true)
-                            .hint_text(lang.text("layers-traffic-key")),
-                    );
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.tomtom_key)
+                                .password(true)
+                                .hint_text(lang.text("layers-traffic-key")),
+                        )
+                        .changed()
+                    {
+                        self.store_key(globecraft_data::keys::TOMTOM);
+                    }
                 });
                 note(
                     ui,

@@ -420,6 +420,24 @@ impl AddDataDialog {
                                     lang.text(commercial),
                                     lang.text(longevity)
                                 ));
+                                if let Some(service) = preset.key.and_then(|id| {
+                                    globecraft_data::keys::SERVICES
+                                        .iter()
+                                        .find(|service| service.id == id)
+                                }) {
+                                    let note = if globecraft_data::keys::get(service.id).is_some() {
+                                        "add-data-key-ready"
+                                    } else {
+                                        "add-data-key-needed"
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(lang.format(
+                                            note,
+                                            &[("service", lang.text(service.name_key).into())],
+                                        ))
+                                        .color(egui::Color32::from_rgb(230, 170, 60)),
+                                    );
+                                }
                             });
                             let present = added.iter().any(|code| code == preset.code);
                             let label = if present {

@@ -141,3 +141,11 @@ The network table is descriptive. It does not intercept requests. Rate-limit
 enforcement remains in each service's refresh loop, and a provider can tighten its
 terms at any time. Review the provider terms linked from `CREDITS.md` before changing a
 host, cadence or user agent.
+
+## Keys
+
+Services that need a key get it from `GLOBECRAFT_<SERVICE>_KEY` in the environment or
+from Settings → Keys, which saves it in `service-keys.json` in the cache folder,
+readable by the user only, never in `settings.json`. A layer's address names its key as
+`{key:<service>}`; the key is filled in only when a request is made, and is sent only
+to that service. Keyed services: TomTom (traffic) and NASA FIRMS (active fires).

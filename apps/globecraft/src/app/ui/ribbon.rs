@@ -548,11 +548,16 @@ impl App {
             col(ui, |ui| {
                 ui.add_space(14.0);
                 ui.label(egui::RichText::new(lang.text("layers-traffic-key")).size(11.0));
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.tomtom_key)
-                        .password(true)
-                        .desired_width(150.0),
-                );
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.tomtom_key)
+                            .password(true)
+                            .desired_width(150.0),
+                    )
+                    .changed()
+                {
+                    self.store_key(globecraft_data::keys::TOMTOM);
+                }
             });
         });
         group(ui, lang.text("ribbon-group-pane"), |ui| {

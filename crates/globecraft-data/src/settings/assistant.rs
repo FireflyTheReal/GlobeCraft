@@ -44,43 +44,13 @@ fn keys_file() -> PathBuf {
 
 /// Saved API keys by provider id (empty when none were saved or the file is unreadable).
 pub fn load_keys() -> BTreeMap<String, String> {
-    std::fs::read(keys_file())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+    crate::keys::read_private(&keys_file())
 }
 
 /// Replaces the saved API keys; an empty map removes the file. Runs on the caller's thread:
 /// call it from a background task.
 pub fn save_keys(keys: &BTreeMap<String, String>) -> Result<(), crate::Error> {
-    let path = keys_file();
-    if keys.is_empty() {
-        return match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
-            _ => Ok(()),
-        };
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let bytes = serde_json::to_vec(keys)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    use std::io::Write;
-    let mut file = options.open(&path)?;
-    file.write_all(&bytes)?;
-    // An existing file keeps its old mode on open: tighten it too.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+    crate::keys::write_private(&keys_file(), keys)
 }
 
 #[cfg(test)]

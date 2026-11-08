@@ -144,6 +144,9 @@ pub(crate) struct App {
     boundary_log: StatusLog,
     auto_rotate: bool,
     tomtom_key: String,
+    /// Keys of the other keyed services as typed in Settings -> Keys (the TomTom key
+    /// is `tomtom_key`, also typed in the Layers pane).
+    service_keys: std::collections::BTreeMap<&'static str, String>,
     live_vessels: globecraft_data::vessels::LiveVessels,
     transport_tiles: globecraft_data::transport::TransportTiles,
     transport_shapes: live_layers::TransportShapes,
@@ -386,7 +389,18 @@ impl App {
             boundary_loader,
             boundary_log,
             auto_rotate: false,
-            tomtom_key: std::env::var("GLOBECRAFT_TOMTOM_KEY").unwrap_or_default(),
+            tomtom_key: globecraft_data::keys::get(globecraft_data::keys::TOMTOM)
+                .unwrap_or_default(),
+            service_keys: globecraft_data::keys::SERVICES
+                .iter()
+                .filter(|service| service.id != globecraft_data::keys::TOMTOM)
+                .map(|service| {
+                    (
+                        service.id,
+                        globecraft_data::keys::get(service.id).unwrap_or_default(),
+                    )
+                })
+                .collect(),
             live_vessels: globecraft_data::vessels::LiveVessels::default(),
             transport_tiles: globecraft_data::transport::TransportTiles::default(),
             transport_shapes: live_layers::TransportShapes::default(),

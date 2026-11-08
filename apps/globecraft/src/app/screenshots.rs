@@ -308,6 +308,16 @@ fn network_settings_screenshots() {
     scroll_settings(&mut h, rect.center(), true, 6);
     save(&mut h, &dir, "network-en-bottom");
     scroll_settings(&mut h, rect.center(), false, 10);
+    // The Keys page (adapter D): one field per keyed service.
+    h.get_by_label("Keys").click();
+    settle(&mut h, 0.5);
+    assert!(
+        h.query_by_label_contains("NASA FIRMS").is_some(),
+        "no FIRMS key row"
+    );
+    save(&mut h, &dir, "keys-en");
+    h.get_by_label("Network").click();
+    settle(&mut h, 0.5);
 
     let _ = h
         .state_mut()

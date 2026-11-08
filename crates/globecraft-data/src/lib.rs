@@ -29,6 +29,7 @@ pub mod profiling;
 pub mod airports;
 pub mod antarctic_claims;
 pub mod aurora;
+pub mod keys;
 pub mod links;
 pub mod live_maps;
 pub mod model_http;

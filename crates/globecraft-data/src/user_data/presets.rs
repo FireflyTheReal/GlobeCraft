@@ -27,6 +27,8 @@ pub struct Preset {
     /// The default opacity of its layer.
     pub opacity: f32,
     pub color: &'static str,
+    /// The keyed service (`crate::keys`) whose key its address needs, if any.
+    pub key: Option<&'static str>,
     source: fn() -> UserSource,
 }
 
@@ -127,6 +129,21 @@ fn forest_loss() -> UserSource {
     }
 }
 
+/// NASA FIRMS: fires and other hot spots VIIRS (Suomi NPP) saw in the last day,
+/// worldwide, as CSV. The key is filled in at each request (`crate::keys`).
+fn active_fires() -> UserSource {
+    UserSource::Features {
+        location:
+            "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key:firms}/VIIRS_SNPP_NRT/world/1"
+                .into(),
+        format: FeatureFormat::Csv,
+        // FIRMS updates within hours of each pass; its keys allow 5,000 requests in
+        // 10 minutes.
+        refresh_minutes: 30,
+        value_field: Some("frp".into()),
+    }
+}
+
 fn earthquakes() -> UserSource {
     UserSource::Features {
         location: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson"
@@ -150,6 +167,7 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Institutional,
         attribution: "GEBCO Compilation Group (2026) GEBCO 2026 Grid",
         opacity: 1.0,
+        key: None,
         color: "#4aa3ff",
         source: gebco,
     },
@@ -163,6 +181,7 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Institutional,
         attribution: "EMODnet Bathymetry Consortium",
         opacity: 0.85,
+        key: None,
         color: "#4aa3ff",
         source: emodnet,
     },
@@ -178,6 +197,7 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Institutional,
         attribution: "Flanders Marine Institute, MarineRegions.org Maritime Boundaries",
         opacity: 1.0,
+        key: None,
         color: "#ffff66",
         source: eez_boundaries,
     },
@@ -191,6 +211,7 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Institutional,
         attribution: "Flanders Marine Institute, MarineRegions.org IHO Sea Areas",
         opacity: 1.0,
+        key: None,
         color: "#2fb5b0",
         source: sea_areas,
     },
@@ -204,6 +225,7 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Institutional,
         attribution: "NASA EOSDIS GIBS, MODIS Terra",
         opacity: 1.0,
+        key: None,
         color: "#ffffff",
         source: gibs_true_colour,
     },
@@ -217,8 +239,23 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Goodwill,
         attribution: "Hansen/UMD/Google/USGS/NASA, Global Forest Watch",
         opacity: 1.0,
+        key: None,
         color: "#ff4fa0",
         source: forest_loss,
+    },
+    Preset {
+        code: "active_fires",
+        name_key: "preset-fires",
+        help_key: "preset-fires-help",
+        category: Category::Hazards,
+        licence: "NASA open data",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "NASA FIRMS (VIIRS, LANCE)",
+        opacity: 1.0,
+        key: Some(crate::keys::FIRMS),
+        color: "#ff7a1a",
+        source: active_fires,
     },
     Preset {
         code: "earthquakes",
@@ -230,6 +267,7 @@ pub static PRESETS: &[Preset] = &[
         longevity: Longevity::Institutional,
         attribution: "U.S. Geological Survey",
         opacity: 1.0,
+        key: None,
         color: "#ff5a3c",
         source: earthquakes,
     },
@@ -265,6 +303,15 @@ mod tests {
                 }
                 UserSource::Features { location, .. } => {
                     assert!(location.starts_with("https://"), "{}", preset.code);
+                    // A keyed address names its key, and only keyed presets do.
+                    assert_eq!(
+                        preset.key.map(|id| format!("{{key:{id}}}")),
+                        location
+                            .contains("{key:")
+                            .then(|| format!("{{key:{}}}", preset.key.unwrap_or_default())),
+                        "{}",
+                        preset.code
+                    );
                 }
             }
         }
