@@ -1,6 +1,10 @@
 //! About and controls help use normal app-owned egui windows.
 use crate::app::App;
 use eframe::egui;
+
+/// Size of the Bloom logo above the About window's title.
+const ABOUT_LOGO_POINTS: f32 = 72.0;
+
 impl App {
     pub(in crate::app) fn menu_windows(&mut self, ctx: &egui::Context) {
         let lang = self.lang;
@@ -9,6 +13,15 @@ impl App {
             .open(&mut self.show_about)
             .resizable(false)
             .show(ctx, |ui| {
+                let (logo, _) = ui.allocate_exact_size(
+                    egui::vec2(ABOUT_LOGO_POINTS, ABOUT_LOGO_POINTS),
+                    egui::Sense::hover(),
+                );
+                super::brand::paint_bloom(
+                    ui.painter(),
+                    logo,
+                    super::brand::logo_ink(ui.visuals().dark_mode),
+                );
                 ui.heading("GlobeCraft");
                 ui.label(lang.format(
                     "about-version-label",

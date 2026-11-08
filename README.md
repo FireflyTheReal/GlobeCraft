@@ -1,4 +1,11 @@
-# GlobeCraft 🌍
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/globecraft/logo/globecraft-lockup-horizontal-dark.svg">
+    <img src="assets/branding/globecraft/logo/globecraft-lockup-horizontal-light.svg" alt="GlobeCraft" width="420">
+  </picture>
+</p>
+
+# GlobeCraft
 
 **A small, fast 3D globe for your desktop.** Fly anywhere on Earth, look at satellite
 imagery, borders and names, follow live aircraft, ships and weather, and measure

@@ -22,5 +22,9 @@
       <caption>The globe with cloud imagery and navigation controls</caption>
     </screenshot>
   </screenshots>
+  <branding>
+    <color type="primary" scheme_preference="light">#e9edf1</color>
+    <color type="primary" scheme_preference="dark">#11171e</color>
+  </branding>
   <content_rating type="oars-1.1"/>
 </component>
