@@ -1473,10 +1473,19 @@ fn ocean_presets_screenshot() {
     let mut h = harness(ThemePreference::Dark);
     let presets = std::env::var("GLOBECRAFT_SHOT_PRESETS")
         .unwrap_or_else(|_| "eez_boundaries,iho_sea_areas".into());
-    for preset in presets.split(',') {
+    for preset in presets.split(',').filter(|code| !code.is_empty()) {
         h.state_mut()
             .run("data.add", json!({"preset": preset}))
             .expect("preset");
+    }
+    // GLOBECRAFT_SHOT_LAYERS: built-in layers to turn on too (codes, comma-separated).
+    for code in std::env::var("GLOBECRAFT_SHOT_LAYERS")
+        .unwrap_or_default()
+        .split(',')
+    {
+        if let Some(layer) = globecraft_core::layers::MapLayer::from_code(code.trim()) {
+            h.state_mut().settings.set_layer_visible(layer, true);
+        }
     }
     // GLOBECRAFT_SHOT_VIEWS: `lat,lon,alt;…` (default: the North Atlantic).
     let views = std::env::var("GLOBECRAFT_SHOT_VIEWS").unwrap_or_else(|_| "50,-10,4500".into());
