@@ -10,8 +10,8 @@ pub fn project_live_maps(
     rect: Rect,
     width: usize,
     height: usize,
-    cloud: Option<&RgbaImage>,
-    radar: Option<&RgbaImage>,
+    cloud: Option<(&RgbaImage, f32)>,
+    radar: Option<(&RgbaImage, f32)>,
 ) -> Vec<u8> {
     let mut rgba = vec![0u8; width * height * 4];
     let rsize = rect.size();
@@ -23,23 +23,31 @@ pub fn project_live_maps(
                 continue;
             };
             let i = (y * width + x) * 4;
-            if cloud.is_some()
-                && let Some(img) = cloud
-            {
+            // Each at the user's opacity (roadmap 6.1), times its own.
+            if let Some((img, opacity)) = cloud {
                 let c = equirect_pixel(img, lat, lon);
                 over(
                     &mut rgba[i..i + 4],
-                    [c[0], c[1], c[2], (c[3] as f32 * CLOUD_OPACITY) as u8],
+                    [
+                        c[0],
+                        c[1],
+                        c[2],
+                        (c[3] as f32 * CLOUD_OPACITY * opacity) as u8,
+                    ],
                 );
             }
-            if radar.is_some()
-                && lat.abs() < RADAR_LATITUDE_LIMIT_DEG
-                && let Some(img) = radar
+            if lat.abs() < RADAR_LATITUDE_LIMIT_DEG
+                && let Some((img, opacity)) = radar
             {
                 let r = mercator_pixel(img, lat, lon);
                 over(
                     &mut rgba[i..i + 4],
-                    [r[0], r[1], r[2], (r[3] as f32 * RADAR_OPACITY) as u8],
+                    [
+                        r[0],
+                        r[1],
+                        r[2],
+                        (r[3] as f32 * RADAR_OPACITY * opacity) as u8,
+                    ],
                 );
             }
         }
@@ -140,7 +148,7 @@ mod projection_tests {
         }
         .basis(1.0);
         let cloud = RgbaImage::from_pixel(4, 2, image::Rgba([123, 45, 67, 255]));
-        let pixels = project_live_maps(&basis, rect, 9, 9, Some(&cloud), None);
+        let pixels = project_live_maps(&basis, rect, 9, 9, Some((&cloud, 1.0)), None);
         assert_eq!(
             &pixels[(4 * 9 + 4) * 4..(4 * 9 + 5) * 4],
             &[123, 45, 67, 198]

@@ -525,6 +525,20 @@ impl App {
                 }
                 json!({"layer": layer.code(), "visible": visible})
             }
+            "layer.opacity" => {
+                let layer = str_param(p, "layer")
+                    .and_then(MapLayer::from_code)
+                    .ok_or("unknown layer; see the layer.opacity parameters")?;
+                let opacity = p
+                    .get("opacity")
+                    .and_then(Value::as_f64)
+                    .ok_or("opacity (0 to 1) is required")?;
+                if !self.settings.layers.opacity.set(layer, opacity as f32) {
+                    return Err(format!("{} has no opacity", layer.code()));
+                }
+                json!({"layer": layer.code(), "opacity": self.settings.layers.opacity.get(layer)})
+            }
+            "layer.solo" => self.solo_layer(str_param(p, "layer").map(str::to_owned))?,
             "layer.terrainExaggeration" => {
                 let value = required_f64(p, "value")? as f32;
                 self.settings.layers.terrain_exaggeration = value.clamp(
@@ -858,6 +872,10 @@ impl App {
                     checked: layer.is_some_and(|l| self.layer(l)),
                 }
             }
+            "layer.solo" => CommandState {
+                enabled: earth,
+                checked: self.solo.is_some(),
+            },
             "layer.waybackRelease" => CommandState {
                 enabled: !self.wayback_list.is_empty(),
                 checked: false,

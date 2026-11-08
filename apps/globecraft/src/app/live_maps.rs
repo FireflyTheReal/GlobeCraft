@@ -2,11 +2,14 @@
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, TextureHandle};
 use globecraft_core::{camera::Basis, language::Lang};
 use std::time::Duration;
+/// What the live maps were projected for: view, size, each layer's opacity bits
+/// (none while hidden) and the imagery's generation.
+type ProjectionKey = (Basis, usize, usize, Option<u32>, Option<u32>, u64);
 #[derive(Default)]
 pub(super) struct LiveMaps {
     service: globecraft_data::live_maps::LiveMaps,
     projected: Option<TextureHandle>,
-    projected_for: Option<(Basis, usize, usize, bool, bool, u64)>,
+    projected_for: Option<ProjectionKey>,
 }
 impl LiveMaps {
     pub fn update(
@@ -28,12 +31,13 @@ impl LiveMaps {
         painter: &egui::Painter,
         basis: &Basis,
         rect: Rect,
-        clouds: bool,
-        radar: bool,
+        clouds: Option<f32>,
+        radar: Option<f32>,
     ) {
-        let show_clouds = clouds && self.service.cloud().is_some();
-        let show_radar = radar && self.service.radar().is_some();
-        if !show_clouds && !show_radar {
+        // Each shown at its opacity (roadmap 6.1).
+        let clouds = clouds.filter(|_| self.service.cloud().is_some());
+        let radar = radar.filter(|_| self.service.radar().is_some());
+        if clouds.is_none() && radar.is_none() {
             return;
         }
         // Projection is cached and updated only when camera or imagery changes.
@@ -50,8 +54,8 @@ impl LiveMaps {
             *basis,
             width,
             height,
-            show_clouds,
-            show_radar,
+            clouds.map(f32::to_bits),
+            radar.map(f32::to_bits),
             self.service.generation(),
         );
         if self.projected_for != Some(key) {
@@ -60,16 +64,8 @@ impl LiveMaps {
                 rect,
                 width,
                 height,
-                if show_clouds {
-                    self.service.cloud()
-                } else {
-                    None
-                },
-                if show_radar {
-                    self.service.radar()
-                } else {
-                    None
-                },
+                self.service.cloud().zip(clouds),
+                self.service.radar().zip(radar),
             );
             let im = ColorImage::from_rgba_unmultiplied([width, height], &rgba);
             if let Some(tex) = self.projected.as_mut() {

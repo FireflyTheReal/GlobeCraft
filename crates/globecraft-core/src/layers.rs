@@ -292,6 +292,37 @@ impl MapLayer {
         self != Self::CinematicSky
     }
 
+    /// Whether the layer has its own opacity (roadmap 6.1): the ones laid over the
+    /// imagery as a whole picture, where seeing the map through them helps.
+    pub fn has_opacity(self) -> bool {
+        Self::WITH_OPACITY.contains(&self)
+    }
+
+    /// The layers with an opacity, in the order settings keep their values.
+    pub const WITH_OPACITY: [Self; 5] = [
+        Self::Clouds,
+        Self::Radar,
+        Self::Aurora,
+        Self::TimeZones,
+        Self::Traffic,
+    ];
+
+    /// Whether "solo" (show only this layer) hides the layer when another is soloed:
+    /// the map's content, not the globe's look (relief, atmosphere, light, sky).
+    pub fn soloable(self) -> bool {
+        self.listed()
+            && !matches!(
+                self,
+                Self::Terrain
+                    | Self::Atmosphere
+                    | Self::Sunlight
+                    | Self::Stars
+                    | Self::MilkyWay
+                    | Self::CinematicSky
+                    | Self::GridLabels
+            )
+    }
+
     fn bit(self) -> u32 {
         1 << (self as u32)
     }

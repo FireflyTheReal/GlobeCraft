@@ -1,6 +1,6 @@
 //! Visible map layers, the basemap and terrain exaggeration, kept across launches.
 use crate::tiles::Provider;
-use globecraft_core::layers::LayerSet;
+use globecraft_core::layers::{LayerSet, MapLayer};
 use serde::{Serialize, Serializer};
 
 pub const MIN_TERRAIN_EXAGGERATION: f32 = 0.5;
@@ -17,6 +17,52 @@ pub struct LayerPreferences {
     pub terrain_exaggeration: f32,
     /// Aircraft and satellites drawn on the ground below them, not at their height.
     pub flat_live_objects: bool,
+    /// The opacity of the layers that have one (`MapLayer::WITH_OPACITY`).
+    #[serde(serialize_with = "serialize_opacity")]
+    pub opacity: LayerOpacity,
+}
+
+/// Opacities from 0 (hidden) to 1, one for each of `MapLayer::WITH_OPACITY`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayerOpacity([f32; MapLayer::WITH_OPACITY.len()]);
+
+impl Default for LayerOpacity {
+    fn default() -> Self {
+        Self([1.0; MapLayer::WITH_OPACITY.len()])
+    }
+}
+
+impl LayerOpacity {
+    /// The layer's opacity; 1 for layers without one.
+    pub fn get(&self, layer: MapLayer) -> f32 {
+        Self::index(layer).map_or(1.0, |index| self.0[index])
+    }
+    /// Sets it, clamped to 0..=1; `false` for a layer without an opacity.
+    pub fn set(&mut self, layer: MapLayer, opacity: f32) -> bool {
+        match Self::index(layer) {
+            Some(index) if opacity.is_finite() => {
+                self.0[index] = opacity.clamp(0.0, 1.0);
+                true
+            }
+            _ => false,
+        }
+    }
+    fn index(layer: MapLayer) -> Option<usize> {
+        MapLayer::WITH_OPACITY
+            .iter()
+            .position(|other| *other == layer)
+    }
+}
+
+fn serialize_opacity<S: Serializer>(
+    opacity: &LayerOpacity,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_map(
+        MapLayer::WITH_OPACITY
+            .iter()
+            .map(|layer| (layer.code(), opacity.get(*layer))),
+    )
 }
 
 impl Default for LayerPreferences {
@@ -26,6 +72,7 @@ impl Default for LayerPreferences {
             basemap: Provider::Satellite,
             terrain_exaggeration: 1.0,
             flat_live_objects: false,
+            opacity: LayerOpacity::default(),
         }
     }
 }
@@ -53,6 +100,13 @@ impl LayerPreferences {
         {
             self.basemap = basemap;
         }
+        if let Some(opacity) = value.get("opacity").and_then(|v| v.as_object()) {
+            for (code, value) in opacity {
+                if let (Some(layer), Some(value)) = (MapLayer::from_code(code), value.as_f64()) {
+                    self.opacity.set(layer, value as f32);
+                }
+            }
+        }
         if let Some(flat) = value.get("flat_live_objects").and_then(|v| v.as_bool()) {
             self.flat_live_objects = flat;
         }
@@ -70,7 +124,23 @@ impl LayerPreferences {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use globecraft_core::layers::MapLayer;
+
+    #[test]
+    fn opacities_roundtrip_clamped_and_only_for_layers_that_have_one() {
+        let mut prefs = LayerPreferences::default();
+        assert!(prefs.opacity.set(MapLayer::Clouds, 0.4));
+        assert!(prefs.opacity.set(MapLayer::Radar, 7.0));
+        assert!(!prefs.opacity.set(MapLayer::CountryBorders, 0.5));
+        assert_eq!(prefs.opacity.get(MapLayer::Radar), 1.0);
+        assert_eq!(prefs.opacity.get(MapLayer::CountryBorders), 1.0);
+        let json = serde_json::to_value(prefs).unwrap();
+        assert!((json["opacity"]["clouds"].as_f64().unwrap() - 0.4).abs() < 1e-6);
+        let mut loaded = LayerPreferences::default();
+        loaded.apply(&json);
+        assert_eq!(loaded.opacity, prefs.opacity);
+        loaded.apply(&serde_json::json!({"opacity": {"clouds": "x", "nope": 0.1}}));
+        assert_eq!(loaded.opacity, prefs.opacity);
+    }
 
     #[test]
     fn layers_roundtrip_and_ignore_invalid_fields() {

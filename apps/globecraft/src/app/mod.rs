@@ -45,6 +45,7 @@ mod fonts;
 mod frame_timing;
 mod globe;
 mod here;
+mod layer_solo;
 mod legend;
 mod live_geometry;
 mod live_layers;
@@ -209,6 +210,11 @@ pub(crate) struct App {
     menu_pick: Option<(f64, f64)>,
     /// The point of the ruler's elevation profile under the pointer, marked on the globe.
     ruler_profile_hover: Option<(f64, f64)>,
+    /// The layer shown alone (`layer.solo`), and what was visible before.
+    solo: Option<(
+        globecraft_core::layers::MapLayer,
+        globecraft_core::layers::LayerSet,
+    )>,
 
     ruler: bool,
     ruler_reveal_requested: bool,
@@ -456,6 +462,7 @@ impl App {
             kml_session: files::KmlSession::default(),
             menu_pick: None,
             ruler_profile_hover: None,
+            solo: None,
             ruler: false,
             ruler_reveal_requested: false,
             ruler_drag: None,

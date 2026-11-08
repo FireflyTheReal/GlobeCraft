@@ -449,6 +449,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
+        "layer.opacity",
+        "layer-opacity",
+        "transparency",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["clouds","radar","aurora","time_zones","traffic"]},"opacity":{"type":"number","minimum":0,"maximum":1}},"required":["layer","opacity"]}"#
+    ),
+    command!(
+        "layer.solo",
+        "layer-solo",
+        "eye",
+        Layers,
+        View,
+        r#"{"type":"object","properties":{"layer":{"type":"string","description":"A layer code as in layer.show; omit to show again what was visible before"}}}"#
+    ),
+    command!(
         "layer.terrainExaggeration",
         "layer-terrain-exaggeration",
         "terrain",

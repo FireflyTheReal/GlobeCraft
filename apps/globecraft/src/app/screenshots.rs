@@ -1635,6 +1635,29 @@ fn time_zones_screenshot() {
             settle(&mut h, 3.0);
             save(&mut h, &dir, name);
         }
+        // Opacity and solo (roadmap 6.1): the zones at 35 %, shown alone, with the
+        // Layers pane open on them.
+        let app = h.state_mut();
+        app.settings.workspace.ribbon_tab = Tab::Layers;
+        let _ = app.run("ui.pane.layers", Value::Null);
+        app.run(
+            "layer.opacity",
+            json!({"layer": "time_zones", "opacity": 0.35}),
+        )
+        .expect("opacity");
+        app.run("layer.solo", json!({"layer": "time_zones"}))
+            .expect("solo");
+        assert!(!app.layer(globecraft_core::layers::MapLayer::CountryBorders));
+        app.run(
+            "camera.set",
+            json!({"lat": 48.0, "lon": 10.0, "altitude_km": 9000.0}),
+        )
+        .expect("camera");
+        settle(&mut h, 3.0);
+        save(&mut h, &dir, "28-time-zones-solo-faded");
+        let app = h.state_mut();
+        app.run("layer.solo", Value::Null).expect("show all");
+        assert!(app.layer(globecraft_core::layers::MapLayer::CountryBorders));
     }
 }
 

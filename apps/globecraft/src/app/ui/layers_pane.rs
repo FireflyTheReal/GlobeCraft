@@ -335,6 +335,22 @@ impl App {
         let active_only = self.layers_ui.active_only;
         let filtering = !query.is_empty() || active_only;
         let mut shown_any = false;
+        if let Some(layer) = self.soloed_layer() {
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(INDENT);
+                ui.label(
+                    egui::RichText::new(lang.format(
+                        "layers-solo-note",
+                        &[("layer", lang.text(layer.label_key()).into())],
+                    ))
+                    .size(11.5)
+                    .color(t.text_dim),
+                );
+                if ui.small_button(lang.text("layers-solo-show-all")).clicked() {
+                    self.run_reporting("layer.solo", serde_json::Value::Null);
+                }
+            });
+        }
         if !earth {
             ui.label(
                 egui::RichText::new(lang.text("layers-earth-only"))
@@ -451,10 +467,19 @@ impl App {
                         indent,
                     },
                 );
+                // Alt-click (Option-click) shows this layer alone (roadmap 6.1).
+                let solo = ui.input(|input| input.modifiers.alt);
                 if resp.clicked() && earth && parent_on {
-                    self.run_reporting("layer.show", json!({"layer": layer.code()}));
+                    if solo && layer.soloable() {
+                        self.run_reporting("layer.solo", json!({"layer": layer.code()}));
+                    } else {
+                        self.run_reporting("layer.show", json!({"layer": layer.code()}));
+                    }
                 }
                 if on {
+                    if layer.has_opacity() {
+                        self.layer_opacity_control(ui, layer);
+                    }
                     self.layer_details(ui, &t, layer);
                 }
             }
@@ -690,6 +715,29 @@ impl App {
     }
 
     /// Settings, status and credits of a visible layer.
+    /// The opacity slider of a layer that has one (roadmap 6.1).
+    fn layer_opacity_control(&mut self, ui: &mut Ui, layer: MapLayer) {
+        let lang = self.lang;
+        ui.horizontal(|ui| {
+            ui.add_space(INDENT + 24.0);
+            ui.spacing_mut().slider_width = 110.0;
+            let mut opacity = self.settings.layers.opacity.get(layer);
+            if ui
+                .add(
+                    egui::Slider::new(&mut opacity, 0.0..=1.0)
+                        .custom_formatter(|value, _| format!("{:.0} %", value * 100.0))
+                        .text(lang.text("layers-opacity-label")),
+                )
+                .changed()
+            {
+                self.run_reporting(
+                    "layer.opacity",
+                    json!({"layer": layer.code(), "opacity": opacity}),
+                );
+            }
+        });
+    }
+
     fn layer_details(&mut self, ui: &mut Ui, t: &Tokens, layer: MapLayer) {
         let lang = self.lang;
         match layer {

@@ -521,12 +521,21 @@ impl App {
         let (display_cam, display_basis) =
             self.renderer.displayed_view().unwrap_or((self.cam, basis));
         if self.explorer.active == globecraft_core::body::Body::Earth {
+            // Layers with an opacity (roadmap 6.1) draw through a faded painter.
+            let opacity = self.settings.layers.opacity;
+            let faded = |layer: MapLayer| {
+                let mut faded = painter.clone();
+                faded.multiply_opacity(opacity.get(layer));
+                faded
+            };
             self.live_maps.draw(
                 &painter,
                 &display_basis,
                 rect,
-                self.layer(MapLayer::Clouds),
-                self.layer(MapLayer::Radar),
+                self.layer(MapLayer::Clouds)
+                    .then(|| opacity.get(MapLayer::Clouds)),
+                self.layer(MapLayer::Radar)
+                    .then(|| opacity.get(MapLayer::Radar)),
             );
             self.user_layers.draw_rasters(
                 &painter,
@@ -550,8 +559,8 @@ impl App {
             } else {
                 None
             };
-            self.paint_aurora(&painter, &display_basis, rect);
-            self.paint_time_zones(&painter, &display_basis, rect);
+            self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect);
+            self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
             self.paint_antarctic_claims(&painter, &display_basis, rect);
             // All map names share one screen, placed in priority order, each layer
             // where the ones before it left room (painting keeps its own order):
@@ -608,7 +617,7 @@ impl App {
             if self.layer(MapLayer::Traffic)
                 && let Some(geometry) = &live_geometry
             {
-                self.traffic.draw(&painter, geometry);
+                self.traffic.draw(&faded(MapLayer::Traffic), geometry);
             }
             if let Some(geometry) = &live_geometry {
                 let style = self.settings.map_style;
