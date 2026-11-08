@@ -459,7 +459,8 @@ impl TileCache {
             .min()
     }
 
-    /// The first queued tile whose source has a free download slot and is not pausing.
+    /// The first queued tile whose source and host have a free download slot and are
+    /// not pausing.
     fn next_job(&self) -> Option<Job> {
         let requests = self.requests.lock().unwrap();
         let mut queue = self.queue.lock().unwrap();
@@ -467,8 +468,11 @@ impl TileCache {
         let throttled = self.throttled.lock().unwrap();
         let now = Instant::now();
         let mut active: HashMap<u64, usize> = HashMap::new();
+        let mut host_active: HashMap<u64, usize> = HashMap::new();
         for key in downloading.keys() {
-            *active.entry(unkey(*key).0.id()).or_default() += 1;
+            let provider = unkey(*key).0;
+            *active.entry(provider.id()).or_default() += 1;
+            *host_active.entry(provider.host_group()).or_default() += 1;
         }
         let mut index = 0;
         while index < queue.len() {
@@ -485,8 +489,13 @@ impl TileCache {
             let provider = unkey(key).0;
             let busy = active.get(&provider.id()).copied().unwrap_or(0)
                 >= usize::from(provider.source().max_parallel)
+                || host_active
+                    .get(&provider.host_group())
+                    .copied()
+                    .unwrap_or(0)
+                    >= provider.host_limit()
                 || throttled
-                    .get(&provider.id())
+                    .get(&provider.host_group())
                     .is_some_and(|until| *until > now);
             if busy {
                 index += 1;
@@ -514,7 +523,8 @@ impl TileCache {
         let provider = unkey(key).0;
         let until = Instant::now() + wait;
         let mut throttled = self.throttled.lock().unwrap();
-        let entry = throttled.entry(provider.id()).or_insert(until);
+        // The host pauses: its other sources would be answered the same.
+        let entry = throttled.entry(provider.host_group()).or_insert(until);
         *entry = (*entry).max(until);
     }
 
@@ -599,10 +609,9 @@ impl TileCache {
         }
         let now = Instant::now();
         for (&id, &until) in self.throttled.lock().unwrap().iter() {
-            if let Some(source) = sources
+            for source in sources
                 .iter_mut()
-                .find(|s| s.provider.id() == id)
-                .filter(|_| until > now)
+                .filter(|s| s.provider.host_group() == id && until > now)
             {
                 source.paused = true;
             }

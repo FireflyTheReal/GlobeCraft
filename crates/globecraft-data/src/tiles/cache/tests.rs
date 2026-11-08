@@ -343,6 +343,50 @@ fn each_source_downloads_at_most_its_parallel_limit() {
 }
 
 #[test]
+fn sources_on_one_host_share_its_downloads_and_its_pauses() {
+    let (cache, _tickets) = test_cache(4096);
+    // NASA GIBS serves the night lights and both polar caps, 4 at once each.
+    let limit = Provider::NightLights.host_limit();
+    assert_eq!(
+        limit,
+        usize::from(Provider::NightLights.source().max_parallel)
+    );
+    let lights: Vec<_> = (0..limit as u32)
+        .map(|x| make_key(Provider::NightLights, 5, x, 0, 0))
+        .collect();
+    let north = make_key(Provider::PolarNorth, 3, 0, 0, 0);
+    let imagery = make_key(Provider::Satellite, 12, 0, 0, 0);
+    for &key in lights.iter().chain([&north, &imagery]) {
+        assert!(cache.request(key));
+    }
+    let jobs: Vec<_> = (0..limit).map(|_| cache.next_job().unwrap()).collect();
+    assert!(
+        jobs.iter()
+            .all(|job| unkey(job.key).0 == Provider::NightLights)
+    );
+    // The polar tile has slots of its own source left, but not of the host.
+    assert_eq!(cache.next_job().unwrap().key, imagery);
+    assert!(cache.next_job().is_none());
+    cache.downloading.lock().unwrap().remove(&jobs[0].key);
+    cache.complete(jobs[0].key, Ok(tiny_tile(1)));
+    assert_eq!(cache.next_job().unwrap().key, north);
+    // A throttling answer to one of them pauses the host's other sources too.
+    let south = make_key(Provider::PolarSouth, 3, 0, 0, 0);
+    assert!(cache.request(south));
+    cache.downloading.lock().unwrap().remove(&north);
+    cache.throttle(north, Duration::from_secs(60));
+    assert!(cache.next_job().is_none(), "the host is pausing");
+    let paused: Vec<_> = cache
+        .diagnostics()
+        .into_iter()
+        .filter(|source| source.paused)
+        .map(|source| source.provider)
+        .collect();
+    assert!(paused.contains(&Provider::PolarSouth) && paused.contains(&Provider::NightLights));
+    assert!(!paused.contains(&Provider::Satellite));
+}
+
+#[test]
 fn a_throttled_source_pauses_and_its_tile_waits_at_the_front() {
     let (cache, _tickets) = test_cache(4096);
     let first = make_key(Provider::Topo, 9, 0, 0, 0);

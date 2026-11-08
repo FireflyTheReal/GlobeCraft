@@ -30,7 +30,9 @@ credit page, the Releases page) are not requests made by GlobeCraft.
 ## Built-in map and imagery sources
 
 These rows are generated from `sources.json`. `max_parallel` is enforced per source by
-the tile downloader. "Prefetch" means tiles just outside the view may be requested
+the tile downloader, and per host as well: sources on one host (NASA GIBS serves the
+night lights and both polar caps) share the largest of their limits, and a 429 or 503
+answer to one of them pauses all of them for its `Retry-After`. "Prefetch" means tiles just outside the view may be requested
 ahead; "visible only" means the source's policy forbids it.
 
 | Source | Host | Requests in flight | Prefetch | User agent |

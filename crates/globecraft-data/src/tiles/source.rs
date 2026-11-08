@@ -109,7 +109,50 @@ pub(super) static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
     Registry { by_id, order }
 });
 
+/// Downloads are limited per host as well as per source (roadmap 1.3): sources on one
+/// host share the largest of their limits, and a throttling answer pauses all of them.
+pub(super) struct HostSlots {
+    /// By source id: the smallest id among the sources on its host.
+    pub(super) group: [u8; MAX_SOURCES],
+    /// By source id: the downloads its host takes at once.
+    pub(super) limit: [usize; MAX_SOURCES],
+    /// By source id: another source shares its host.
+    pub(super) shared: [bool; MAX_SOURCES],
+}
+
+pub(super) static HOST_SLOTS: LazyLock<HostSlots> = LazyLock::new(|| {
+    let mut slots = HostSlots {
+        group: std::array::from_fn(|id| id as u8),
+        limit: [1; MAX_SOURCES],
+        shared: [false; MAX_SOURCES],
+    };
+    let sources: Vec<&TileSource> = REGISTRY.by_id.iter().flatten().collect();
+    for source in &sources {
+        let id = usize::from(source.id);
+        let peers: Vec<&&TileSource> = sources
+            .iter()
+            .filter(|other| other.host().is_some() && other.host() == source.host())
+            .collect();
+        slots.group[id] = peers.iter().map(|peer| peer.id).min().unwrap_or(source.id);
+        slots.limit[id] = peers
+            .iter()
+            .map(|peer| usize::from(peer.max_parallel))
+            .max()
+            .unwrap_or(usize::from(source.max_parallel));
+        slots.shared[id] = peers.len() > 1;
+    }
+    slots
+});
+
 impl TileSource {
+    /// The host its tiles come from (with a port when the template names one).
+    pub fn host(&self) -> Option<&str> {
+        match &self.access {
+            Access::Xyz { template } => crate::network::host_of_url(template),
+            Access::Wayback => Some(crate::network::WAYBACK_TILE_HOST),
+        }
+    }
+
     /// The address of tile `z/x/y`, for template sources.
     /// The edition shown on `date` (`YYYY-MM-DD`): the newest on or before it, the
     /// oldest for days before all of them; 0 for undated sources.
@@ -173,6 +216,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sources_on_one_host_share_its_downloads() {
+        let sources: Vec<&TileSource> = REGISTRY.by_id.iter().flatten().collect();
+        for a in &sources {
+            for b in &sources {
+                let (ia, ib) = (usize::from(a.id), usize::from(b.id));
+                assert_eq!(
+                    HOST_SLOTS.group[ia] == HOST_SLOTS.group[ib],
+                    a.host() == b.host(),
+                    "{} and {}",
+                    a.code,
+                    b.code
+                );
+            }
+            let id = usize::from(a.id);
+            assert!(HOST_SLOTS.limit[id] >= usize::from(a.max_parallel));
+        }
+        // NASA GIBS serves the night lights and both polar caps.
+        let gibs: Vec<_> = sources
+            .iter()
+            .filter(|source| source.host() == Some("gibs.earthdata.nasa.gov"))
+            .collect();
+        assert!(gibs.len() >= 3);
+        assert!(
+            gibs.iter()
+                .all(|source| HOST_SLOTS.shared[usize::from(source.id)])
+        );
+        let satellite = usize::from(crate::tiles::Provider::Satellite.id() as u8);
+        assert!(!HOST_SLOTS.shared[satellite]);
     }
 
     #[test]

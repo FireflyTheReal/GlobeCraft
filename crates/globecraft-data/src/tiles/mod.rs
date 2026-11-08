@@ -44,6 +44,19 @@ impl Provider {
             .as_ref()
             .expect("tile keys only name registered sources")
     }
+    /// The sources sharing this one's host share one set of downloads (its group is
+    /// the smallest of their ids).
+    pub(super) fn host_group(self) -> u64 {
+        u64::from(source::HOST_SLOTS.group[usize::from(self.0)])
+    }
+    /// The downloads this source's host takes at once, from all its sources.
+    pub fn host_limit(self) -> usize {
+        source::HOST_SLOTS.limit[usize::from(self.0)]
+    }
+    /// Whether another built-in source has the same host.
+    pub fn shares_host(self) -> bool {
+        source::HOST_SLOTS.shared[usize::from(self.0)]
+    }
     /// Every registered source, in listing order.
     pub fn all() -> impl Iterator<Item = Provider> {
         source::REGISTRY.order.iter().map(|&id| Provider(id))

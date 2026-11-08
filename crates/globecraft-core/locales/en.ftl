@@ -784,6 +784,7 @@ settings-network-limit-hours = Normally one request every { $hours } h
 settings-network-limit-on-demand = Only when needed
 settings-network-limit-once = Once per session
 settings-network-limit-user-controlled = At the interval you set
+settings-network-host-shared = Together with the other sources on { $host }: up to { $count } at once
 settings-network-tiles-on-demand = Visible tiles only
 settings-network-tiles-prefetch = Visible tiles first; nearby tiles may be prefetched
 settings-network-tile-agent = Tile requests send the user agent: { $agent }

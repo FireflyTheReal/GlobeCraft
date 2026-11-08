@@ -166,6 +166,12 @@ fn tile_service_row(ui: &mut egui::Ui, lang: Lang, service: &TileService) {
         }
     });
     ui.weak(limit_text(lang, service.limit));
+    if let (Some(count), Some(host)) = (service.host_limit, service.host) {
+        ui.weak(lang.format(
+            "settings-network-host-shared",
+            &[("count", count.to_string().into()), ("host", host.into())],
+        ));
+    }
     ui.weak(lang.text(if service.on_demand {
         "settings-network-tiles-on-demand"
     } else {

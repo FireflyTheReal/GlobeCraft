@@ -7,7 +7,7 @@
 //! assistant provider are dynamic, so the app lists their hosts from the saved
 //! addresses instead of pretending they are built in.
 
-use crate::tiles::{Access, Prefetch, Provider};
+use crate::tiles::{Prefetch, Provider};
 use globecraft_core::language::Lang;
 
 /// The public user agents. Keeping them here means the table and the HTTP clients
@@ -34,7 +34,7 @@ pub const ASSISTANT_USER_AGENT: &str =
     concat!("GlobeCraft/", env!("CARGO_PKG_VERSION"), " (AI assistant)");
 
 /// The host of Esri Wayback's tile service; its release list lives on S3.
-const WAYBACK_TILE_HOST: &str = "wayback.maptiles.arcgis.com";
+pub(crate) const WAYBACK_TILE_HOST: &str = "wayback.maptiles.arcgis.com";
 
 /// How often, or how many at once, a service is asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,6 +255,8 @@ pub struct TileService {
     pub host: Option<&'static str>,
     pub user_agent: &'static str,
     pub limit: RequestLimit,
+    /// When other sources share the host: the downloads from all of them at once.
+    pub host_limit: Option<u8>,
     /// The source's prefetch policy: on-demand sources request only visible tiles.
     pub on_demand: bool,
 }
@@ -268,15 +270,14 @@ impl TileService {
 pub fn tile_services() -> impl Iterator<Item = TileService> {
     Provider::all().map(|provider| {
         let source = provider.source();
-        let host = match &source.access {
-            Access::Xyz { template } => host_of_url(template),
-            Access::Wayback => Some(WAYBACK_TILE_HOST),
-        };
         TileService {
             provider,
-            host,
+            host: source.host(),
             user_agent: TILE_USER_AGENT,
             limit: RequestLimit::Parallel(source.max_parallel),
+            host_limit: provider
+                .shares_host()
+                .then(|| u8::try_from(provider.host_limit()).unwrap_or(u8::MAX)),
             on_demand: source.prefetch == Prefetch::OnDemand,
         }
     })
