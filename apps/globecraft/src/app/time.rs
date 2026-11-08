@@ -5,6 +5,27 @@ use globecraft_core::time::{HOUR_SECS, parse_iso};
 use globecraft_data::tiles::Provider;
 use serde_json::{Value, json};
 
+/// The timeline bar (roadmap 10.2: one of the feature states split out of `App`).
+pub(super) struct TimelineState {
+    /// The timeline bar is open, and the speed its play button runs at (scene
+    /// seconds per second).
+    pub(super) open: bool,
+    pub(super) speed: f64,
+    /// The moment dated imagery shows, and when it last moved (it trails a playing
+    /// time, so tiles of each day can arrive).
+    pub(super) imagery: (f64, std::time::Instant),
+}
+
+impl Default for TimelineState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            speed: HOUR_SECS,
+            imagery: (0.0, std::time::Instant::now()),
+        }
+    }
+}
+
 /// The night lights' credit for an edition, with its year.
 pub(super) fn night_lights_credit(edition: u16, lang: globecraft_core::language::Lang) -> String {
     let provider = Provider::NightLights;
@@ -43,11 +64,11 @@ impl App {
     /// every `IMAGERY_STEP` while the time plays.
     pub(super) fn imagery_time(&mut self) -> f64 {
         let scene = self.scene_unix();
-        let (shown, moved) = self.imagery_time;
+        let (shown, moved) = self.timeline.imagery;
         if self.time.speed() == 0.0 || moved.elapsed() >= IMAGERY_STEP || shown == 0.0 {
-            self.imagery_time = (scene, std::time::Instant::now());
+            self.timeline.imagery = (scene, std::time::Instant::now());
         }
-        self.imagery_time.0
+        self.timeline.imagery.0
     }
 
     /// The night-lights edition for the app's time: the newest composite on or
@@ -94,9 +115,9 @@ impl App {
                     .get("hours_per_second")
                     .and_then(Value::as_f64)
                     .filter(|s| s.is_finite())
-                    .map_or(self.timeline_speed, |hours| hours * HOUR_SECS);
+                    .map_or(self.timeline.speed, |hours| hours * HOUR_SECS);
                 if speed != 0.0 {
-                    self.timeline_speed = speed;
+                    self.timeline.speed = speed;
                 }
                 self.time.play(speed, wall);
             }
@@ -107,9 +128,9 @@ impl App {
                     .and_then(Value::as_f64)
                     .filter(|h| h.is_finite() && *h != 0.0)
                     .ok_or("hours_per_second must be a number other than 0")?;
-                self.timeline_speed = hours * HOUR_SECS;
+                self.timeline.speed = hours * HOUR_SECS;
                 if self.time.speed() != 0.0 {
-                    self.time.play(self.timeline_speed, wall);
+                    self.time.play(self.timeline.speed, wall);
                 }
             }
             "time.window" => {

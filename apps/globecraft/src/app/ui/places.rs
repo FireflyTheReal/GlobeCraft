@@ -193,9 +193,9 @@ fn nodes(
 impl App {
     pub(in crate::app) fn add_center_placemark(&mut self) {
         add_center_placemark(
-            &mut self.placemarks,
-            &mut self.place_selection,
-            &mut self.new_name,
+            &mut self.places.items,
+            &mut self.places.selection,
+            &mut self.places.new_name,
             (self.cam.lat, self.cam.lon),
             self.lang,
         );
@@ -203,21 +203,22 @@ impl App {
 
     pub(in crate::app) fn add_places_folder(&mut self) {
         let lang = self.lang;
-        let parent = self.place_selection.filter(|id| {
-            self.placemarks
+        let parent = self.places.selection.filter(|id| {
+            self.places
+                .items
                 .find_mut(*id)
                 .is_some_and(|node| matches!(node.item, PlaceItem::Folder { .. }))
         });
-        let name = if self.new_name.trim().is_empty() {
+        let name = if self.places.new_name.trim().is_empty() {
             lang.text("places-folder-name").into()
         } else {
-            self.new_name.trim().to_owned()
+            self.places.new_name.trim().to_owned()
         };
         let node = PlaceNode::folder(name, String::new(), false, Vec::new());
-        self.place_selection = Some(node.id());
-        self.placemarks.insert(parent, node);
-        self.new_name.clear();
-        self.place_reveal_requested = true;
+        self.places.selection = Some(node.id());
+        self.places.items.insert(parent, node);
+        self.places.new_name.clear();
+        self.places.reveal_requested = true;
     }
 
     pub(in crate::app) fn places_tree(
@@ -230,7 +231,7 @@ impl App {
         let mut action = None;
         ui.horizontal_wrapped(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.new_name)
+                egui::TextEdit::singleline(&mut self.places.new_name)
                     .hint_text(lang.text("placemarks-name-placeholder"))
                     .desired_width(110.0),
             );
@@ -249,13 +250,13 @@ impl App {
             let root = ui.add_sized(
                 [ui.available_width(), ui.spacing().interact_size.y],
                 egui::Button::selectable(
-                    self.place_selection.is_none(),
+                    self.places.selection.is_none(),
                     (lang.text("places-root-name"), egui::Atom::grow()),
                 )
                 .truncate(),
             );
             if root.clicked() {
-                self.place_selection = None;
+                self.places.selection = None;
             }
             if let Some(source) = root.dnd_release_payload::<u64>() {
                 action = Some(Action::Move(*source, None));
@@ -263,22 +264,22 @@ impl App {
             tree_scroll_area(tree_height_points).show(ui, |ui| {
                 nodes(
                     ui,
-                    &mut self.placemarks.roots,
-                    &mut self.place_selection,
+                    &mut self.places.items.roots,
+                    &mut self.places.selection,
                     &mut action,
                     &mut goto,
                     lang,
                 );
-                if self.placemarks.is_empty() {
+                if self.places.items.is_empty() {
                     ui.weak(lang.text("places-empty-help"));
                 }
             });
         });
-        if let Some(id) = self.place_selection
-            && let Some(node) = self.placemarks.find_mut(id)
+        if let Some(id) = self.places.selection
+            && let Some(node) = self.places.items.find_mut(id)
         {
             ui.add_space(4.0);
-            selected_name_editor(ui, node.name_mut(), self.place_reveal_requested);
+            selected_name_editor(ui, node.name_mut(), self.places.reveal_requested);
             description_editor(ui, id, node.description_mut(), lang);
             ui.horizontal(|ui| {
                 if let PlaceItem::Marker(pm) = &node.item
@@ -293,11 +294,11 @@ impl App {
         }
         match action {
             Some(Action::Delete(id)) => {
-                self.placemarks.remove(id);
-                self.place_selection = None;
+                self.places.items.remove(id);
+                self.places.selection = None;
             }
             Some(Action::Move(id, parent)) => {
-                self.placemarks.move_into(id, parent);
+                self.places.items.move_into(id, parent);
             }
             None => {}
         }

@@ -109,13 +109,13 @@ impl App {
             base.with("ring"),
             Sense::drag(),
         );
-        if ring.drag_started() && !self.tilt_drag {
-            self.ring_drag = ring
+        if ring.drag_started() && !self.nav.tilt_drag {
+            self.nav.ring_drag = ring
                 .interact_pointer_pos()
                 .is_some_and(|p| (p - c1).length() >= r_disc - 1.0);
         }
         if ring.dragged()
-            && self.ring_drag
+            && self.nav.ring_drag
             && let Some(cur) = ring.interact_pointer_pos()
         {
             let prev = cur - ui.input(|i| i.pointer.delta());
@@ -132,7 +132,7 @@ impl App {
             active = true;
         }
         if ring.drag_stopped() {
-            self.ring_drag = false;
+            self.nav.ring_drag = false;
         }
         let nb = ui.interact(
             Rect::from_center_size(n_pos, Vec2::splat(16.0 * k)),

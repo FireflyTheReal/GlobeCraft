@@ -20,7 +20,7 @@ const CLOCK_WIDEST: &str = "8888-88-88 88:88 UTC";
 
 impl App {
     pub(in crate::app) fn timeline_bar(&mut self, ctx: &egui::Context, globe: Rect) {
-        if !self.timeline_open {
+        if !self.timeline.open {
             return;
         }
         let lang = self.lang;
@@ -93,7 +93,7 @@ impl App {
                             // Speed.
                             let speed_key = SPEEDS
                                 .iter()
-                                .find(|(s, _)| *s == self.timeline_speed)
+                                .find(|(s, _)| *s == self.timeline.speed)
                                 .map_or("timeline-speed-hour", |(_, k)| k);
                             let speed_w = widest(ui, SPEEDS.iter().map(|(_, k)| lang.text(k)));
                             let speed_button = egui::Button::new(lang.text(speed_key))
@@ -105,7 +105,7 @@ impl App {
                                             .color(t.text_dim),
                                     );
                                     for (speed, key) in SPEEDS {
-                                        let on = speed == self.timeline_speed;
+                                        let on = speed == self.timeline.speed;
                                         if ui.radio(on, lang.text(key)).clicked() {
                                             run = Some((
                                                 "time.speed",

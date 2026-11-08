@@ -24,10 +24,10 @@ impl App {
                 open_dialog = true;
             }
         });
-        let files = files_footer(ui, lg, &mut self.kml_path, &self.settings.kml_dir);
+        let files = files_footer(ui, lg, &mut self.places.kml_path, &self.settings.kml_dir);
         self.kml_drop_rect = files.drop_rect;
         open_typed |= files.open_typed;
-        let details_height = if self.place_selection.is_some() {
+        let details_height = if self.places.selection.is_some() {
             PLACES_DETAILS_HEIGHT_POINTS
         } else {
             0.0
@@ -42,9 +42,9 @@ impl App {
         if files.clear.is_some_and(|response| response.clicked()) {
             self.clear_places();
         }
-        self.place_reveal_requested = false;
+        self.places.reveal_requested = false;
         if save_now {
-            let path = self.resolve_kml_path(&self.kml_path.clone());
+            let path = self.resolve_kml_path(&self.places.kml_path.clone());
             self.save_kml_to(path);
         }
         if save_as {
@@ -54,7 +54,7 @@ impl App {
             self.pick_kml_open();
         }
         if open_typed {
-            let path = self.resolve_kml_path(&self.kml_path.clone());
+            let path = self.resolve_kml_path(&self.places.kml_path.clone());
             if path.is_file() {
                 self.load_kml_from(&path);
             }

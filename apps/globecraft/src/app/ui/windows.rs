@@ -6,7 +6,7 @@ impl App {
         let lang = self.lang;
         egui::Window::new(lang.text("menu-about-action"))
             .id(egui::Id::new("about-globecraft"))
-            .open(&mut self.show_about)
+            .open(&mut self.windows.about)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.heading("GlobeCraft");
@@ -23,7 +23,7 @@ impl App {
             });
         egui::Window::new(lang.text("menu-controls-help"))
             .id(egui::Id::new("controls-help"))
-            .open(&mut self.show_shortcuts)
+            .open(&mut self.windows.shortcuts)
             .vscroll(true)
             .show(ctx, |ui| {
                 ui.label(lang.text("controls-help-text"));

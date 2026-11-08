@@ -79,7 +79,7 @@ impl App {
             return;
         }
         // Choose both destinations first. Canceling either leaves the app running.
-        let kml = if self.placemarks.is_empty() {
+        let kml = if self.places.items.is_empty() {
             None
         } else {
             let Some(path) = self.choose_kml_save_path() else {
@@ -110,8 +110,8 @@ impl App {
         };
         let result = (|| -> Result<(), globecraft_data::Error> {
             if let Some(path) = &kml {
-                self.file_jobs.save_kml(path.clone(), &self.placemarks)?;
-                self.kml_session.submitted();
+                self.file_jobs.save_kml(path.clone(), &self.places.items)?;
+                self.places.kml_session.submitted();
             }
             if let Some(path) = &planet {
                 self.file_jobs

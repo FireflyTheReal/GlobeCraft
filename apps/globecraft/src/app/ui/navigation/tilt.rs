@@ -62,7 +62,7 @@ impl App {
         let t = crate::app::ui::theme::Tokens::get(ui.ctx());
         let radius = r_ring + ARC_GAP_POINTS * k;
         let mut active = false;
-        let mut hot = self.tilt_drag;
+        let mut hot = self.nav.tilt_drag;
         let mut tooltip_shown = false;
         let max = MAX_TILT_DEG as f32;
         for i in 0..HIT_BOXES {
@@ -76,12 +76,12 @@ impl App {
             if response.double_clicked() {
                 self.cam.set_tilt(0.0);
                 self.fly = None;
-                self.tilt_drag = false;
+                self.nav.tilt_drag = false;
                 active = true;
             } else if (response.drag_started() || response.clicked())
                 && let Some(p) = response.interact_pointer_pos()
             {
-                self.tilt_drag = response.drag_started();
+                self.nav.tilt_drag = response.drag_started();
                 self.cam.tilt_zooming_out(tilt_at(centre, p));
                 self.fly = None;
                 active = true;
@@ -95,7 +95,7 @@ impl App {
             }
         }
         // A drag follows the pointer anywhere until the button is released.
-        if self.tilt_drag {
+        if self.nav.tilt_drag {
             match ui.input(|i| i.pointer.primary_down().then(|| i.pointer.interact_pos())) {
                 Some(Some(p)) => {
                     self.cam.tilt_zooming_out(tilt_at(centre, p));
@@ -103,7 +103,7 @@ impl App {
                     active = true;
                 }
                 Some(None) => active = true,
-                None => self.tilt_drag = false,
+                None => self.nav.tilt_drag = false,
             }
         }
         if hot {

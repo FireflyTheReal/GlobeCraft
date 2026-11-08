@@ -136,7 +136,7 @@ impl App {
             self.settings.workspace.open_right(RightPane::Measure);
             self.measure.reveal_requested = false;
         }
-        if self.place_reveal_requested {
+        if self.places.reveal_requested {
             self.settings.sidebar.open = true;
             if !self.settings.sidebar.places_pinned {
                 self.settings.sidebar.panel = SidebarPanel::Places;
@@ -234,7 +234,7 @@ impl App {
                     }
                 }
             });
-        self.place_reveal_requested = false;
+        self.places.reveal_requested = false;
         if !ui.input(|i| i.pointer.any_down()) {
             self.settings.sidebar.width_points = response.response.rect.width();
         }

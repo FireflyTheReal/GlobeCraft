@@ -284,7 +284,7 @@ impl App {
             painter.circle_stroke(s, 5.0 * ms, Stroke::new(1.5_f32, Color32::BLACK));
         }
         // placemarks
-        for pm in self.placemarks.markers(true) {
+        for pm in self.places.items.markers(true) {
             if visibility
                 .as_ref()
                 .is_some_and(|visibility| !visibility.visible(pm.lat, pm.lon))

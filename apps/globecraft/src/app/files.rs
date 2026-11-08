@@ -21,8 +21,8 @@ impl App {
     }
 
     pub(super) fn save_kml_to(&mut self, path: PathBuf) {
-        match self.file_jobs.save_kml(path, &self.placemarks) {
-            Ok(()) => self.kml_session.submitted(),
+        match self.file_jobs.save_kml(path, &self.places.items) {
+            Ok(()) => self.places.kml_session.submitted(),
             Err(error) => {
                 self.status =
                     Lang::En.format("kml-save-error", &[("error", error.to_string().into())])
@@ -32,7 +32,7 @@ impl App {
 
     pub(super) fn load_kml_from(&mut self, path: &std::path::Path) {
         match self.file_jobs.open_kml(path.to_path_buf(), self.lang) {
-            Ok(()) => self.kml_session.submitted(),
+            Ok(()) => self.places.kml_session.submitted(),
             Err(error) => {
                 self.status =
                     Lang::En.format("kml-open-error", &[("error", error.to_string().into())])
@@ -42,18 +42,19 @@ impl App {
 
     pub(super) fn restore_kml_session(&mut self) {
         match self.file_jobs.restore_kml(self.lang) {
-            Ok(()) => self.kml_session.submitted(),
+            Ok(()) => self.places.kml_session.submitted(),
             Err(error) => self.status = format!("Unable to restore open KML files: {error}"),
         }
     }
 
     pub(super) fn clear_places(&mut self) {
-        self.placemarks = Default::default();
-        self.place_selection = None;
-        self.place_reveal_requested = false;
-        self.kml_path = "placemarks.kml".into();
-        self.kml_session.clear();
-        self.settings_writer.kml_paths(&self.kml_session.paths);
+        self.places.items = Default::default();
+        self.places.selection = None;
+        self.places.reveal_requested = false;
+        self.places.kml_path = "placemarks.kml".into();
+        self.places.kml_session.clear();
+        self.settings_writer
+            .kml_paths(&self.places.kml_session.paths);
     }
 
     pub(super) fn poll_files(&mut self, ctx: &egui::Context) {
@@ -61,7 +62,7 @@ impl App {
             if matches!(
                 kind,
                 FileKind::OpenKml | FileKind::SaveKml | FileKind::RestoreKml
-            ) && !self.kml_session.completed()
+            ) && !self.places.kml_session.completed()
             {
                 continue;
             }
@@ -69,11 +70,11 @@ impl App {
             match result {
                 Ok(FileOutcome::KmlRestored { files }) => {
                     for file in files {
-                        self.kml_session.remember(file.path.clone());
+                        self.places.kml_session.remember(file.path.clone());
                         match file.result {
                             Ok(places) => {
-                                self.kml_path = file.path.to_string_lossy().into_owned();
-                                self.placemarks.extend(places);
+                                self.places.kml_path = file.path.to_string_lossy().into_owned();
+                                self.places.items.extend(places);
                             }
                             Err(error) => {
                                 self.status =
@@ -81,7 +82,8 @@ impl App {
                             }
                         }
                     }
-                    self.settings_writer.kml_paths(&self.kml_session.paths);
+                    self.settings_writer
+                        .kml_paths(&self.places.kml_session.paths);
                 }
                 Ok(FileOutcome::ImageLoaded {
                     target: globecraft_data::files::ImageTarget::FlatEarth,
@@ -100,9 +102,10 @@ impl App {
                 }
                 Ok(FileOutcome::KmlSaved { path }) => {
                     // A save contains the whole tree, so reopen that snapshot only.
-                    self.kml_session.paths = vec![path.clone()];
-                    self.settings_writer.kml_paths(&self.kml_session.paths);
-                    self.kml_path = path.to_string_lossy().into_owned();
+                    self.places.kml_session.paths = vec![path.clone()];
+                    self.settings_writer
+                        .kml_paths(&self.places.kml_session.paths);
+                    self.places.kml_path = path.to_string_lossy().into_owned();
                     self.status = self.lang.format(
                         "kml-save-success",
                         &[("path", path.display().to_string().into())],
@@ -113,8 +116,9 @@ impl App {
                     });
                 }
                 Ok(FileOutcome::KmlLoaded { path, placemarks }) => {
-                    self.kml_session.remember(path.clone());
-                    self.settings_writer.kml_paths(&self.kml_session.paths);
+                    self.places.kml_session.remember(path.clone());
+                    self.settings_writer
+                        .kml_paths(&self.places.kml_session.paths);
                     self.status = self.lang.format(
                         "kml-import-success",
                         &[
@@ -126,7 +130,7 @@ impl App {
                         message: self.status.clone(),
                         path: path.clone(),
                     });
-                    self.kml_path = path.to_string_lossy().into_owned();
+                    self.places.kml_path = path.to_string_lossy().into_owned();
                     if let Some(first) = placemarks.first() {
                         self.fly_to(
                             first.lat,
@@ -134,7 +138,7 @@ impl App {
                             if placemarks.len() == 1 { 3.0 } else { 2000.0 },
                         );
                     }
-                    self.placemarks.extend(placemarks);
+                    self.places.items.extend(placemarks);
                 }
                 Ok(FileOutcome::SourcesSaved { path, count }) => {
                     self.status = self.lang.format(
@@ -202,7 +206,7 @@ impl App {
 
     pub(super) fn choose_kml_save_path(&self) -> Option<PathBuf> {
         let dir = PathBuf::from(&self.settings.kml_dir);
-        let name = std::path::Path::new(&self.kml_path)
+        let name = std::path::Path::new(&self.places.kml_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("placemarks.kml")

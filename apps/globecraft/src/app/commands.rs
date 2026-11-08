@@ -249,13 +249,14 @@ impl App {
             // ── Places
             "places.addAtCenter" => {
                 if let Some(name) = str_param(p, "name") {
-                    self.new_name = name.to_string();
+                    self.places.new_name = name.to_string();
                 }
                 self.add_center_placemark();
                 if let Some(desc) = str_param(p, "description")
                     && let Some(node) = self
-                        .place_selection
-                        .and_then(|id| self.placemarks.find_mut(id))
+                        .places
+                        .selection
+                        .and_then(|id| self.places.items.find_mut(id))
                 {
                     *node.description_mut() = desc.to_string();
                 }
@@ -266,7 +267,8 @@ impl App {
                 let (lat, lon) = position(p)?;
                 let parent = match str_param(p, "folder").filter(|f| !f.is_empty()) {
                     Some(folder) => Some(
-                        self.placemarks
+                        self.places
+                            .items
                             .find_by_name(folder)
                             .filter(|n| matches!(n.item, PlaceItem::Folder { .. }))
                             .map(PlaceNode::id)
@@ -280,7 +282,7 @@ impl App {
                     .unwrap_or_else(|| {
                         self.lang.format(
                             "placemarks-generated-name",
-                            &[("number", (self.placemarks.len() + 1).to_string().into())],
+                            &[("number", (self.places.items.len() + 1).to_string().into())],
                         )
                     });
                 let node = PlaceNode::marker(Placemark {
@@ -289,13 +291,13 @@ impl App {
                     lat,
                     lon,
                 });
-                self.place_selection = Some(node.id());
-                self.placemarks.insert(parent, node);
+                self.places.selection = Some(node.id());
+                self.places.items.insert(parent, node);
                 json!({"added": name})
             }
             "places.addFolder" => {
                 if let Some(name) = str_param(p, "name") {
-                    self.new_name = name.to_string();
+                    self.places.new_name = name.to_string();
                 }
                 self.add_places_folder();
                 self.reveal_places();
@@ -304,7 +306,8 @@ impl App {
             "places.flyTo" => {
                 let name = str_param(p, "name").ok_or("name is required")?;
                 let node = self
-                    .placemarks
+                    .places
+                    .items
                     .find_by_name(name)
                     .ok_or_else(|| format!("no place named '{name}'"))?;
                 let PlaceItem::Marker(pm) = &node.item else {
@@ -317,13 +320,14 @@ impl App {
             "places.remove" => {
                 let name = str_param(p, "name").ok_or("name is required")?;
                 let id = self
-                    .placemarks
+                    .places
+                    .items
                     .find_by_name(name)
                     .map(PlaceNode::id)
                     .ok_or_else(|| format!("no place named '{name}'"))?;
-                self.placemarks.remove(id);
-                if self.place_selection == Some(id) {
-                    self.place_selection = None;
+                self.places.items.remove(id);
+                if self.places.selection == Some(id) {
+                    self.places.selection = None;
                 }
                 json!({"removed": name})
             }
@@ -332,7 +336,7 @@ impl App {
                 json!({})
             }
             "places.save" => {
-                let path = self.resolve_kml_path(&self.kml_path.clone());
+                let path = self.resolve_kml_path(&self.places.kml_path.clone());
                 self.save_kml_to(path.clone());
                 json!({"saving": path})
             }
@@ -692,7 +696,7 @@ impl App {
                 json!({})
             }
             "ui.settings" => {
-                self.show_settings = !self.show_settings;
+                self.windows.settings = !self.windows.settings;
                 json!({})
             }
             "settings.units" => {
@@ -778,11 +782,11 @@ impl App {
                 json!({})
             }
             "ui.shortcuts" => {
-                self.show_shortcuts = !self.show_shortcuts;
+                self.windows.shortcuts = !self.windows.shortcuts;
                 json!({})
             }
             "ui.about" => {
-                self.show_about = !self.show_about;
+                self.windows.about = !self.windows.about;
                 json!({})
             }
             "help.documentation" => {
@@ -801,9 +805,10 @@ impl App {
             "info.view" => self.view_json(),
             "info.places" => {
                 let mut places = Vec::new();
-                self.placemarks
+                self.places
+                    .items
                     .walk(|depth, node| places.push(place_json(depth, node)));
-                json!({"count": self.placemarks.len(), "items": places})
+                json!({"count": self.places.items.len(), "items": places})
             }
             "info.ruler" => self.ruler_json(),
             "info.here" => {
@@ -821,8 +826,8 @@ impl App {
             id if id.starts_with("satellite.") => self.run_satellite(id, p)?,
             "ui.legend" => self.run_legend(p),
             "ui.timeline" => {
-                self.timeline_open = bool_param(p, "visible").unwrap_or(!self.timeline_open);
-                json!({"visible": self.timeline_open})
+                self.timeline.open = bool_param(p, "visible").unwrap_or(!self.timeline.open);
+                json!({"visible": self.timeline.open})
             }
             _ => return Err(format!("unknown command '{id}'")),
         };
@@ -953,7 +958,7 @@ impl App {
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
             "ui.tileDiagnostics" => on(self.tile_diagnostics),
-            "ui.timeline" => on(self.timeline_open),
+            "ui.timeline" => on(self.timeline.open),
             "ui.legend" => on(self.legend_open()),
             "time.play" => on(self.time.speed() != 0.0),
             "time.pause" => CommandState {
@@ -970,7 +975,7 @@ impl App {
                 _ => false,
             }),
             "ui.fullscreen" => on(self.ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))),
-            "ui.settings" => on(self.show_settings),
+            "ui.settings" => on(self.windows.settings),
             "settings.units" => on(match str_param(params, "units") {
                 Some("system") => self.settings.distance_units == UnitPreference::System,
                 Some("metric") => self.settings.distance_units == UnitPreference::Metric,
@@ -1077,7 +1082,7 @@ impl App {
                 globecraft_core::units::DistanceUnits::Metric => "metric",
                 globecraft_core::units::DistanceUnits::Imperial => "imperial",
             },
-            "places": self.placemarks.len(),
+            "places": self.places.items.len(),
             "ruler_points": self.measure.paths.point_count(),
             "search_query": (!self.search.query.trim().is_empty()).then(|| self.search.query.trim().to_string()),
             "search_results": results,
@@ -1139,7 +1144,7 @@ pub(in crate::app) fn context_text(app: &App) -> String {
     lines.push(format!("Visible layers: {}", layers.join(", ")));
     lines.push(format!(
         "Places: {} · Ruler points: {}",
-        app.placemarks.len(),
+        app.places.items.len(),
         app.measure.paths.point_count()
     ));
     if let Some(results) = v["search_results"].as_array().filter(|r| !r.is_empty()) {
@@ -1162,13 +1167,13 @@ pub(in crate::app) fn context_text(app: &App) -> String {
 impl App {
     pub(in crate::app) fn reveal_places(&mut self) {
         self.settings.sidebar.open = true;
-        self.place_reveal_requested = true;
+        self.places.reveal_requested = true;
         self.measure.reveal_requested = false;
     }
     pub(in crate::app) fn reveal_ruler(&mut self) {
         self.measure.reveal_requested = self.measure.on;
         if self.measure.on {
-            self.place_reveal_requested = false;
+            self.places.reveal_requested = false;
         }
     }
     /// A check box that shows or hides `layer` through its command.

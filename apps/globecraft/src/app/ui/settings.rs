@@ -144,13 +144,13 @@ pub(in crate::app) struct SettingsUi {
 }
 impl App {
     pub(in crate::app) fn settings_window(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
+        if !self.windows.settings {
             return;
         }
         self.refresh_disk_usage(ctx);
         let lang = self.lang;
         let previous_model = self.settings.earth_model;
-        let mut open = self.show_settings;
+        let mut open = self.windows.settings;
         let mut close_requested = false;
         let mut language_preference = self.language_preference;
         let mut state = std::mem::take(&mut self.settings_ui);
@@ -241,7 +241,7 @@ impl App {
                     ui.horizontal(|ui| {
                         if ui.button(lang.text("settings-confirm-action")).clicked() {
                             self.settings = Settings::default();
-                            self.ui_scale_edit = self.settings.ui_scale;
+                            self.windows.ui_scale_edit = self.settings.ui_scale;
                             state.confirm_reset = false;
                         }
                         if ui.button(lang.text("settings-cancel-action")).clicked() {
@@ -262,7 +262,7 @@ impl App {
             self.measure.drag = None;
         }
         self.settings_ui = state;
-        self.show_settings = open && !close_requested;
+        self.windows.settings = open && !close_requested;
     }
 }
 

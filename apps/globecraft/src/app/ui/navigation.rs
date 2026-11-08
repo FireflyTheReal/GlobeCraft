@@ -86,15 +86,15 @@ impl App {
     /// is operating it (or a heading snap is still turning).
     pub(in crate::app) fn nav_controls(&mut self, ui: &mut egui::Ui, rect: Rect, dt: f64) -> bool {
         if self.settings.hide_navigation_controls {
-            self.ring_drag = false;
-            self.tilt_drag = false;
-            self.nav_snap_heading = None;
+            self.nav.ring_drag = false;
+            self.nav.tilt_drag = false;
+            self.nav.snap_heading = None;
             return false;
         }
         match self.settings.navigation.navigator {
             NavigatorStyle::Globe => self.globe_nav_controls(ui, rect, dt),
             NavigatorStyle::Classic => {
-                self.nav_snap_heading = None;
+                self.nav.snap_heading = None;
                 self.classic_nav_controls(ui, rect, dt)
             }
         }
@@ -130,9 +130,9 @@ impl App {
             Sense::drag(),
         );
         let on_ring = |p: Pos2| (p - centre).length() >= r_globe;
-        if dial.drag_started() && !self.tilt_drag {
-            self.ring_drag = dial.interact_pointer_pos().is_some_and(on_ring);
-            self.nav_snap_heading = None;
+        if dial.drag_started() && !self.nav.tilt_drag {
+            self.nav.ring_drag = dial.interact_pointer_pos().is_some_and(on_ring);
+            self.nav.snap_heading = None;
         }
         if dial.dragged()
             && let Some(cur) = dial.interact_pointer_pos()
@@ -140,7 +140,7 @@ impl App {
             let delta = ui.input(|i| i.pointer.delta());
             self.fly = None;
             active = true;
-            if self.ring_drag {
+            if self.nav.ring_drag {
                 let prev = cur - delta;
                 let angle = |v: Vec2| v.y.atan2(v.x);
                 let mut d = angle(cur - centre) - angle(prev - centre);
@@ -169,9 +169,10 @@ impl App {
             }
         }
         if dial.drag_stopped() {
-            self.ring_drag = false;
+            self.nav.ring_drag = false;
         }
-        let ring_hot = self.ring_drag || (!dial.dragged() && dial.hover_pos().is_some_and(on_ring));
+        let ring_hot =
+            self.nav.ring_drag || (!dial.dragged() && dial.hover_pos().is_some_and(on_ring));
         let globe_hot = !ring_hot && (dial.dragged() || dial.hovered());
         if globe_hot {
             ui.ctx().set_cursor_icon(if dial.dragged() {
@@ -204,7 +205,7 @@ impl App {
             );
             letter_hot[i] = response.hovered();
             if response.on_hover_text(lg.text(tooltip)).clicked() {
-                self.nav_snap_heading = Some(nearest_heading(self.cam.heading, target));
+                self.nav.snap_heading = Some(nearest_heading(self.cam.heading, target));
                 self.fly = None;
                 active = true;
             }
@@ -294,22 +295,22 @@ impl App {
         }
 
         // Ease a cardinal snap in.
-        if let Some(target) = self.nav_snap_heading {
+        if let Some(target) = self.nav.snap_heading {
             let remaining = target - self.cam.heading;
             if remaining.abs() < SNAP_DONE_DEG {
                 self.cam.heading = wrap_lon(target);
-                self.nav_snap_heading = None;
+                self.nav.snap_heading = None;
             } else {
                 let step = 1.0 - SNAP_REMAINING_PER_SECOND.powf(dt.clamp(0.0, 0.05));
                 self.cam.heading += remaining * step;
-                self.nav_snap_heading = Some(target);
+                self.nav.snap_heading = Some(target);
             }
             active = true;
         }
 
         // ── drawing: the ring, as in the classic navigator, lit while turned ──
         painter.circle_filled(centre, r_ring, ring_bg);
-        let ring_edge = if self.ring_drag {
+        let ring_edge = if self.nav.ring_drag {
             t.accent
         } else if ring_hot {
             t.text_dim

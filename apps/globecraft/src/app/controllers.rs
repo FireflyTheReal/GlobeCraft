@@ -303,9 +303,9 @@ impl App {
         }
         let allowed = ctx.input(|input| input.focused)
             && !ctx.egui_wants_keyboard_input()
-            && !self.show_settings
-            && !self.show_about
-            && !self.show_shortcuts
+            && !self.windows.settings
+            && !self.windows.about
+            && !self.windows.shortcuts
             && !self.explorer.open
             && self.altitude_editor.is_none()
             && self.measure.point_editor.is_none()
@@ -334,7 +334,7 @@ impl App {
                 self.run_reporting(id, serde_json::Value::Null);
             }
         }
-        if motion.is_active() && !self.show_settings {
+        if motion.is_active() && !self.windows.settings {
             self.fly = None;
             let dt = super::frame_timing::navigation_delta_secs(ctx);
             motion.apply(

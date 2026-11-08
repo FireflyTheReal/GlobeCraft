@@ -15,7 +15,6 @@ use eframe::egui::{self, Rect};
 use globecraft_core::{
     camera::Cam,
     language::{Lang, LanguagePreference},
-    placemark::Places,
 };
 use globecraft_data::{
     boundaries::{BoundaryData, BoundaryUpdates, StatusLog, load_boundaries_async},
@@ -65,6 +64,7 @@ mod measure;
 mod menu;
 mod navigation;
 mod overlays;
+mod places;
 mod render_wake;
 mod rendering;
 mod road_names;
@@ -83,6 +83,7 @@ mod update_restart;
 mod user_layers;
 mod view_links;
 mod wayback;
+mod windows;
 pub(crate) use update_restart::RestartRequest;
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
 const PAN_SPEED_POINTS_PER_SECOND: f64 = 350.0;
@@ -210,12 +211,14 @@ pub(crate) struct App {
 
     file_jobs: globecraft_data::files::FileJobs,
     file_results: mpsc::Receiver<globecraft_data::files::FileCompletion>,
-    placemarks: Places,
-    place_selection: Option<u64>,
-    place_reveal_requested: bool,
-    new_name: String,
-    kml_path: String,
-    kml_session: files::KmlSession,
+    /// The places and their KML file.
+    places: places::PlacesState,
+    /// The timeline bar.
+    timeline: time::TimelineState,
+    /// Which of the Settings, About and Shortcuts windows are open.
+    windows: windows::WindowsState,
+    /// The navigator's drags and eased turns.
+    nav: navigation::NavState,
     menu_pick: Option<(f64, f64)>,
     /// A `globecraft://view` link from the command line, opened on the first frame.
     pending_view_link: Option<String>,
@@ -232,10 +235,6 @@ pub(crate) struct App {
     settings: Settings,
     saved_settings: Settings,
     settings_writer: globecraft_data::settings::SettingsWriter,
-    ui_scale_edit: f32, // slider value while dragging (committed on release)
-    show_settings: bool,
-    show_about: bool,
-    show_shortcuts: bool,
     /// The ruler.
     measure: measure::MeasureState,
     /// Esri Wayback: the releases, the one shown and the swipe compare.
@@ -243,20 +242,8 @@ pub(crate) struct App {
 
     /// The app's time: live, a moment, or playing (roadmap 4.H).
     pub(super) time: globecraft_core::time::AppTime,
-    /// The timeline bar is open, and the speed its play button runs at (scene
-    /// seconds per second).
-    pub(super) timeline_open: bool,
-    pub(super) timeline_speed: f64,
-    /// The moment dated imagery shows, and when it last moved (it trails a playing
-    /// time, so tiles of each day can arrive).
-    imagery_time: (f64, Instant),
 
     kml_drop_rect: Rect,
-    ring_drag: bool,
-    /// The navigator's tilt thumb is being dragged.
-    tilt_drag: bool,
-    /// A navigator cardinal button turns the view to this heading, easing in.
-    nav_snap_heading: Option<f64>,
     /// A high-quality screenshot rendering in the background.
     still_shot: Option<still_shot::StillShot>,
     /// The terrain height (km, exaggerated) the camera looks at, eased toward the
@@ -451,19 +438,16 @@ impl App {
             us_locale: globecraft_core::units::is_us_locale(&system_locale),
             system_locale,
             altitude_editor: None,
-            placemarks: Places::default(),
-            place_selection: None,
-            place_reveal_requested: false,
             file_jobs,
             file_results,
-            new_name: String::new(),
-            kml_path: "placemarks.kml".into(),
-            kml_session: files::KmlSession::default(),
+            places: places::PlacesState::default(),
+            timeline: time::TimelineState::default(),
+            windows: windows::WindowsState::new(settings.ui_scale),
+            nav: navigation::NavState::default(),
             menu_pick: None,
             pending_view_link: view_links::link_from_args(),
             solo: None,
             cursor: None,
-            ui_scale_edit: settings.ui_scale,
             settings: settings.clone(),
             saved_settings: settings,
             settings_writer: globecraft_data::settings::SettingsWriter::new({
@@ -471,19 +455,10 @@ impl App {
                 move || ctx.request_repaint()
             })
             .expect("start settings writer"),
-            show_settings: false,
-            show_about: false,
-            show_shortcuts: false,
             measure: measure::MeasureState::default(),
             wayback: wayback::WaybackState::default(),
             time: globecraft_core::time::AppTime::default(),
-            timeline_open: false,
-            timeline_speed: globecraft_core::time::HOUR_SECS,
-            imagery_time: (0.0, Instant::now()),
             kml_drop_rect: Rect::NOTHING,
-            ring_drag: false,
-            tilt_drag: false,
-            nav_snap_heading: None,
             still_shot: None,
             ground_km: 0.0,
             download_log: (Instant::now(), 0),
@@ -611,7 +586,7 @@ impl eframe::App for App {
         let shows_clock = self.time.is_live()
             && (self.layer(MapLayer::Sunlight)
                 || self.sky_ready()
-                || self.timeline_open
+                || self.timeline.open
                 || (self.layer(MapLayer::TimeZones) && self.cursor.is_some()));
         if let Some(after) = clock_wake(globecraft_core::math::now_unix(), shows_clock) {
             ctx.request_repaint_after(after);

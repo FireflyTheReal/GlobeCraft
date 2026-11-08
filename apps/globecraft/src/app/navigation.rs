@@ -5,6 +5,18 @@ use globecraft_core::language::LanguagePreference;
 use globecraft_core::layers::MapLayer;
 use std::time::Instant;
 
+/// The navigator's drags and eased turns (roadmap 10.2: one of the feature states
+/// split out of `App`).
+#[derive(Default)]
+pub(super) struct NavState {
+    /// The heading ring is being dragged.
+    pub(super) ring_drag: bool,
+    /// The navigator's tilt thumb is being dragged.
+    pub(super) tilt_drag: bool,
+    /// A navigator cardinal button turns the view to this heading, easing in.
+    pub(super) snap_heading: Option<f64>,
+}
+
 impl App {
     pub(super) fn active_earth_model(&self) -> globecraft_core::earth_model::EarthModel {
         if self.explorer.active == globecraft_core::body::Body::Earth {

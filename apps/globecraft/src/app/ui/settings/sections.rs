@@ -179,12 +179,12 @@ impl App {
                 // Fix: only commit the new scale when the drag ends.
                 let r = super::super::scale_slider::relative_scale_slider(
                     ui,
-                    &mut self.ui_scale_edit,
+                    &mut self.windows.ui_scale_edit,
                     MIN_UI_SCALE,
                     MAX_UI_SLIDER_SCALE,
                 );
                 if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    self.settings.ui_scale = self.ui_scale_edit;
+                    self.settings.ui_scale = self.windows.ui_scale_edit;
                 }
                 ui.end_row();
                 ui.label(lg.text("settings-map-scale-label"));
