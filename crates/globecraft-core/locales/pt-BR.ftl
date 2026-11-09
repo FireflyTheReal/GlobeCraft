@@ -450,6 +450,8 @@ ruler-unit-degrees-help = Ângulo central ao longo do trajeto medido no globo.
 ruler-unit-arcseconds-help = 1 segundo de arco = 1/3.600 de grau de ângulo central.
 ruler-unit-football-fields-help = Um campo de futebol americano equivale a 100 jardas, sem as zonas de pontuação.
 
+statusbar-units-hint = Clique direito: unidades de distância
+statusbar-format-hint = Clique: copiar · Clique direito: formato das coordenadas
 altitude-edit-tooltip = Definir a altitude exata da câmera
 altitude-edit-title = Altitude da câmera
 altitude-apply-action = Aplicar

@@ -450,6 +450,8 @@ ruler-unit-degrees-help = Central angle along the measured path on the globe.
 ruler-unit-arcseconds-help = 1 arcsecond = 1/3,600 of a degree of central angle.
 ruler-unit-football-fields-help = One American football field is 100 yards, excluding end zones.
 
+statusbar-units-hint = Right-click: distance units
+statusbar-format-hint = Click: copy · Right-click: coordinate format
 altitude-edit-tooltip = Set an exact camera altitude
 altitude-edit-title = Camera altitude
 altitude-apply-action = Apply

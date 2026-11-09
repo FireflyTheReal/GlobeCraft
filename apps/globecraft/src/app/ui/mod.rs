@@ -28,6 +28,7 @@ mod search_bar;
 mod selection;
 pub(in crate::app) mod settings;
 mod status;
+mod status_menus;
 mod suggestions;
 pub(in crate::app) mod theme;
 pub(in crate::app) mod tile_diagnostics;

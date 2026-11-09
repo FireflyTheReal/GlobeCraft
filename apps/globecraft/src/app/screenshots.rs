@@ -1557,6 +1557,20 @@ fn layout_inventory_screenshots() {
         settle(&mut h, 0.3);
         save(&mut h, &dir, &format!("ribbon-tab-{}", tab.code()));
     }
+    // The status bar's menus: the coordinate format and the units (right-click).
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label_contains("Center:").click_secondary();
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, "status-coordinate-format");
+        h.key_press(egui::Key::Escape);
+        settle(&mut h, 0.2);
+        h.get_by_label_contains("Camera altitude").click_secondary();
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, "status-units");
+        h.key_press(egui::Key::Escape);
+        settle(&mut h, 0.2);
+    }
     // Search results as a finished search leaves them, listed at the top of Places.
     h.state_mut().search.results = ["Lisbon, Portugal", "Lisbon, Maine, United States"]
         .iter()

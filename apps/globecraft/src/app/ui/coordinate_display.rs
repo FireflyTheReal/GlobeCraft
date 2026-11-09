@@ -53,7 +53,8 @@ pub(super) fn copyable_label(
         .on_hover_text(lang.format(
             "coordinates-copy-tooltip",
             &[("coordinates", coordinates.into())],
-        ));
+        ))
+        .on_hover_text(lang.text("statusbar-format-hint"));
     if response.clicked() {
         ui.copy_text(coordinates.to_owned());
     }

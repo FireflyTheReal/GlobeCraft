@@ -304,13 +304,23 @@ impl App {
                             || "—".to_owned(),
                             |metres| self.distance_units().elevation(f64::from(metres)),
                         );
-                        ui.monospace(lang.format(
-                            "statusbar-cursor-elevation",
-                            &[("distance", format!("{value:>8}").into())],
-                        ))
-                        .on_hover_text(
-                            globecraft_data::tiles::Provider::TerrainDem.attribution(lang),
-                        );
+                        let elevation = ui
+                            .add(
+                                egui::Label::new(
+                                    egui::RichText::new(lang.format(
+                                        "statusbar-cursor-elevation",
+                                        &[("distance", format!("{value:>8}").into())],
+                                    ))
+                                    .monospace(),
+                                )
+                                .sense(Sense::click()),
+                            )
+                            .on_hover_text(format!(
+                                "{}\n{}",
+                                globecraft_data::tiles::Provider::TerrainDem.attribution(lang),
+                                lang.text("statusbar-units-hint")
+                            ));
+                        self.units_menu(&elevation);
                         separator(ui, &t);
                         // The local time under the cursor (Time zones layer).
                         if self.layer(globecraft_core::layers::MapLayer::TimeZones) {
@@ -332,7 +342,13 @@ impl App {
                                 "coordinates-camera-readout",
                                 &[("coordinates", coordinates.as_str().into())],
                             );
-                            super::coordinate_display::copyable_label(ui, text, &coordinates, lang);
+                            let response = super::coordinate_display::copyable_label(
+                                ui,
+                                text,
+                                &coordinates,
+                                lang,
+                            );
+                            self.coordinate_format_menu(&response);
                         }
                         Err(error) => {
                             ui.monospace("—").on_hover_text(error.to_string());
@@ -356,7 +372,12 @@ impl App {
                             .sense(Sense::click()),
                         )
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(lang.text("altitude-edit-tooltip"));
+                        .on_hover_text(format!(
+                            "{}\n{}",
+                            lang.text("altitude-edit-tooltip"),
+                            lang.text("statusbar-units-hint")
+                        ));
+                    self.units_menu(&altitude_response);
                     if altitude_response.clicked() {
                         self.altitude_editor = Some(super::altitude::AltitudeEditor::new(
                             self.cam.alt,
