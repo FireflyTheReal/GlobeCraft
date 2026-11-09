@@ -126,6 +126,38 @@ impl App {
         if let Some(error) = &self.fonts.error {
             ui.label(error);
         }
+        ui.strong(lg.text("settings-text-section-title"));
+        egui::Grid::new("settings_text")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label(lg.text("settings-ui-scale-label"));
+                // The window auto-sizes to its (scaled) content, so changing the scale while dragging
+                // moves the slider under the cursor and feeds back into itself (shaking).
+                // Fix: only commit the new scale when the drag ends.
+                let r = super::super::scale_slider::relative_scale_slider(
+                    ui,
+                    &mut self.windows.ui_scale_edit,
+                    MIN_UI_SCALE,
+                    MAX_UI_SLIDER_SCALE,
+                );
+                if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                    self.settings.ui_scale = self.windows.ui_scale_edit;
+                }
+                ui.end_row();
+                ui.label(lg.text("settings-map-scale-label"));
+                super::super::scale_slider::relative_scale_slider(
+                    ui,
+                    &mut self.settings.map_scale,
+                    MIN_MAP_SCALE,
+                    MAX_MAP_SCALE,
+                );
+                ui.end_row();
+            });
+    }
+    /// Distance units and the coordinate format.
+    pub(super) fn settings_units(&mut self, ui: &mut egui::Ui) {
+        let lg = self.lang;
         ui.horizontal(|ui| {
             ui.label(lg.text("settings-distance-units-label"));
             let label = |units| match units {
@@ -166,38 +198,9 @@ impl App {
                     }
                 });
         });
-        self.settings_earth_model(ui);
         super::super::coordinate_display::controls(ui, &mut self.settings.coordinate_display, lg);
-        ui.strong(lg.text("settings-text-section-title"));
-        egui::Grid::new("settings_text")
-            .num_columns(2)
-            .spacing([12.0, 8.0])
-            .show(ui, |ui| {
-                ui.label(lg.text("settings-ui-scale-label"));
-                // The window auto-sizes to its (scaled) content, so changing the scale while dragging
-                // moves the slider under the cursor and feeds back into itself (shaking).
-                // Fix: only commit the new scale when the drag ends.
-                let r = super::super::scale_slider::relative_scale_slider(
-                    ui,
-                    &mut self.windows.ui_scale_edit,
-                    MIN_UI_SCALE,
-                    MAX_UI_SLIDER_SCALE,
-                );
-                if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    self.settings.ui_scale = self.windows.ui_scale_edit;
-                }
-                ui.end_row();
-                ui.label(lg.text("settings-map-scale-label"));
-                super::super::scale_slider::relative_scale_slider(
-                    ui,
-                    &mut self.settings.map_scale,
-                    MIN_MAP_SCALE,
-                    MAX_MAP_SCALE,
-                );
-                ui.end_row();
-            });
     }
-    fn settings_earth_model(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn settings_earth_model(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
             ui.label(lg.text("settings-earth-model-label"));
@@ -458,8 +461,10 @@ impl App {
             &mut self.settings.navigation.invert_scroll,
             lg.text("settings-invert-scroll"),
         );
-        ui.separator();
-        ui.label(lg.text("settings-startup-view-label"));
+    }
+    /// Where GlobeCraft opens.
+    pub(super) fn settings_startup(&mut self, ui: &mut egui::Ui) {
+        let lg = self.lang;
         let camera = self.settings.navigation.startup.camera();
         match self
             .settings

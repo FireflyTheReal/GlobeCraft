@@ -148,6 +148,9 @@ A sidebar with seven pages instead of eleven wrapped tabs, and the search box ab
   `search.clear` ✕, and a finished search shows Places. The Places pane lost its Save /
   Save As / Open row and its file footer (drop zone, path field, Clear All): those are in
   File and Explore › Places, and a KML dropped anywhere opens.
+- 2026-11-09: step 5 done. Settings has a sidebar of seven pages (search above it);
+  pages with several sections show subheadings. Files & shortcuts lists every tool with a
+  shortcut, with Change… and Reset Ribbon Tools. Minimum window 600 × 380 points.
 
 ## Steps (each a commit with before/after screenshots of every tab)
 

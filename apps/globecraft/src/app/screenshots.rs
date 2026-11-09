@@ -266,10 +266,10 @@ fn network_settings_screenshots() {
     let _ = h.state_mut().run("ui.settings", Value::Null);
     settle(&mut h, 0.5);
 
-    // Drag the bottom-right corner to the Settings window's 520×360 point minimum.
+    // Drag the bottom-right corner to the Settings window's 600×380 point minimum.
     let before = settings_window_rect(&h);
     let start = before.max - egui::vec2(4.0, 4.0);
-    let delta = egui::vec2(520.0, 360.0) - before.size();
+    let delta = egui::vec2(600.0, 380.0) - before.size();
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
         button: egui::PointerButton::Primary,
@@ -291,11 +291,11 @@ fn network_settings_screenshots() {
     let rect = settings_window_rect(&h);
     println!("settings window after resize: {rect:?}");
     assert!(
-        (rect.width() - 520.0).abs() < 3.0 && (rect.height() - 360.0).abs() < 4.0,
+        (rect.width() - 600.0).abs() < 3.0 && (rect.height() - 380.0).abs() < 4.0,
         "window did not reach its minimum: {rect:?}"
     );
 
-    h.get_by_label("Network").click();
+    h.get_by_label("Data & network").click();
     settle(&mut h, 0.5);
     assert!(
         h.query_by_label_contains("server.arcgisonline.com")
@@ -308,16 +308,13 @@ fn network_settings_screenshots() {
     scroll_settings(&mut h, rect.center(), true, 6);
     save(&mut h, &dir, "network-en-bottom");
     scroll_settings(&mut h, rect.center(), false, 10);
-    // The Keys page (adapter D): one field per keyed service.
-    h.get_by_label("Keys").click();
+    // The keys section (adapter D), lower on the same page: one field per keyed service.
     settle(&mut h, 0.5);
     assert!(
         h.query_by_label_contains("NASA FIRMS").is_some(),
         "no FIRMS key row"
     );
     save(&mut h, &dir, "keys-en");
-    h.get_by_label("Network").click();
-    settle(&mut h, 0.5);
 
     let _ = h
         .state_mut()
@@ -1580,6 +1577,24 @@ fn layout_inventory_screenshots() {
         .expect("settings");
     settle(&mut h, 0.5);
     save(&mut h, &dir, "settings-window");
+    {
+        use egui_kittest::kittest::Queryable;
+        let pages = [
+            "Appearance",
+            "Map style",
+            "Navigation",
+            "Globe & graphics",
+            "Data & network",
+            "Files & shortcuts",
+        ];
+        if language.is_none() {
+            for (n, page) in pages.iter().enumerate() {
+                h.get_by_label(page).click();
+                settle(&mut h, 0.3);
+                save(&mut h, &dir, &format!("settings-page-{}", n + 2));
+            }
+        }
+    }
     if language.is_some() {
         // The language is saved: put English back for the next tests.
         h.state_mut()

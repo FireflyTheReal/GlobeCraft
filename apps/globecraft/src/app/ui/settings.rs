@@ -8,13 +8,17 @@ mod keys;
 mod map_style;
 mod network;
 mod sections;
+mod shortcuts;
 mod sky;
 pub(super) const MAX_UI_SLIDER_SCALE: f32 = 2.0;
-const WINDOW_SIZE_POINTS: egui::Vec2 = egui::vec2(680.0, 560.0);
-const WINDOW_MIN_SIZE_POINTS: egui::Vec2 = egui::vec2(520.0, 360.0);
+const WINDOW_SIZE_POINTS: egui::Vec2 = egui::vec2(760.0, 560.0);
+const WINDOW_MIN_SIZE_POINTS: egui::Vec2 = egui::vec2(600.0, 380.0);
+/// The pages' sidebar in the Settings window.
+const SIDEBAR_WIDTH_POINTS: f32 = 180.0;
 const MIN_BODY_HEIGHT_POINTS: f32 = 160.0;
 const FOOTER_HEIGHT_POINTS: f32 = 40.0;
 
+/// The Settings pages, in the sidebar's order (`docs/plans/2026-11-09-ribbon-organization.md`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Category {
     #[default]
@@ -23,25 +27,17 @@ enum Category {
     MapStyle,
     Navigation,
     Globe,
-    Graphics,
-    Controllers,
-    Cache,
-    Network,
-    Keys,
+    Data,
     Files,
 }
 impl Category {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 7] = [
         Self::General,
         Self::Appearance,
         Self::MapStyle,
         Self::Navigation,
         Self::Globe,
-        Self::Graphics,
-        Self::Controllers,
-        Self::Cache,
-        Self::Network,
-        Self::Keys,
+        Self::Data,
         Self::Files,
     ];
     fn name_id(self) -> &'static str {
@@ -51,27 +47,27 @@ impl Category {
             Self::MapStyle => "settings-category-map-style",
             Self::Navigation => "settings-category-navigation",
             Self::Globe => "settings-category-globe",
-            Self::Controllers => "settings-category-controllers",
-            Self::Graphics => "settings-category-graphics",
-            Self::Cache => "settings-category-cache",
-            Self::Network => "settings-category-network",
-            Self::Keys => "settings-category-keys",
+            Self::Data => "settings-category-cache",
             Self::Files => "settings-category-files",
+        }
+    }
+    fn icon(self) -> &'static str {
+        match self {
+            Self::General => "settings",
+            Self::Appearance => "dark",
+            Self::MapStyle => "symbology",
+            Self::Navigation => "compass",
+            Self::Globe => "globe_view",
+            Self::Data => "web_data",
+            Self::Files => "save",
         }
     }
     fn keywords(self) -> &'static [&'static str] {
         match self {
-            Self::General => &["settings-language-label"],
-            Self::Appearance => &[
-                "settings-theme-label",
-                "settings-ui-font-label",
-                "settings-map-font-label",
+            Self::General => &[
+                "settings-language-label",
+                "settings-experience-label",
                 "settings-distance-units-label",
-                "settings-earth-model-label",
-                "earth-model-wgs84",
-                "earth-model-sphere",
-                "settings-ui-scale-label",
-                "settings-map-scale-label",
                 "coordinates-format-label",
                 "coordinates-format-dd",
                 "coordinates-format-dms",
@@ -79,6 +75,15 @@ impl Category {
                 "coordinates-format-utm",
                 "coordinates-format-mgrs",
                 "coordinates-input-help",
+                "settings-startup-view-label",
+                "settings-startup-help",
+            ],
+            Self::Appearance => &[
+                "settings-theme-label",
+                "settings-ui-font-label",
+                "settings-map-font-label",
+                "settings-ui-scale-label",
+                "settings-map-scale-label",
             ],
             Self::MapStyle => map_style::KEYWORDS,
             Self::Navigation => &[
@@ -90,25 +95,30 @@ impl Category {
                 "settings-rotation-sensitivity",
                 "settings-zoom-sensitivity",
                 "settings-invert-scroll",
-                "settings-startup-view-label",
-                "settings-startup-help",
-            ],
-            Self::Globe => &["layers-stars-toggle", "layers-milky-way-toggle", "sky-help"],
-            Self::Controllers => &[
+                "settings-category-controllers",
                 "controllers-enabled",
                 "controllers-help",
                 "controllers-deadzone",
                 "controllers-invert",
             ],
-            Self::Graphics => &["settings-uncap-fps-toggle", "settings-frame-sync-help"],
-            Self::Cache => &[
+            Self::Globe => &[
+                "settings-earth-model-label",
+                "earth-model-wgs84",
+                "earth-model-sphere",
+                "layers-stars-toggle",
+                "layers-milky-way-toggle",
+                "sky-help",
+                "settings-category-graphics",
+                "settings-uncap-fps-toggle",
+                "settings-frame-sync-help",
+            ],
+            Self::Data => &[
                 "settings-cache-section-title",
                 "settings-cache-clear-help",
                 "settings-cache-decoded-label",
                 "settings-cache-disk-label",
                 "settings-cache-restart-help",
-            ],
-            Self::Network => &[
+                "settings-category-network",
                 "settings-network-intro",
                 "settings-network-group-basemaps",
                 "settings-network-group-map-data",
@@ -123,8 +133,7 @@ impl Category {
                 "settings-network-service-updates",
                 "settings-network-user-layer-help",
                 "settings-network-assistant-help",
-            ],
-            Self::Keys => &[
+                "settings-category-keys",
                 "settings-keys-intro",
                 "keys-tomtom",
                 "keys-firms",
@@ -134,6 +143,8 @@ impl Category {
                 "settings-screenshot-folder-label",
                 "settings-kml-folder-label",
                 "settings-folder-creation-help",
+                "settings-shortcuts-title",
+                "cmd-ui-ribbon-reset-tools",
             ],
         }
     }
@@ -142,7 +153,7 @@ impl Category {
             || std::iter::once(self.name_id())
                 .chain(self.keywords().iter().copied())
                 .any(|id| fold_name(lang.text(id)).contains(query))
-            || (self == Self::Network && network::network_matches(query))
+            || (self == Self::Data && network::network_matches(query))
     }
 }
 #[derive(Default)]
@@ -171,21 +182,39 @@ impl App {
             .default_size(WINDOW_SIZE_POINTS)
             .min_size(WINDOW_MIN_SIZE_POINTS)
             .show(ctx, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.query)
-                        .hint_text(lang.text("settings-search-placeholder"))
-                        .desired_width(f32::INFINITY),
-                );
-                ui.horizontal_wrapped(|ui| {
-                    for category in Category::ALL {
-                        ui.selectable_value(
-                            &mut state.category,
-                            category,
-                            lang.text(category.name_id()),
+                // A sidebar of pages with the search above it; the page on the right.
+                egui::Panel::left("settings-pages")
+                    .resizable(false)
+                    .exact_size(SIDEBAR_WIDTH_POINTS)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                        left: 0,
+                        right: 8,
+                        top: 0,
+                        bottom: 0,
+                    }))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.query)
+                                .hint_text(lang.text("settings-search-placeholder"))
+                                .desired_width(f32::INFINITY),
                         );
-                    }
-                });
-                ui.separator();
+                        ui.add_space(6.0);
+                        let query = fold_name(&state.query);
+                        for category in Category::ALL {
+                            let shown = query.is_empty()
+                                || category.matches(&query, lang)
+                                || (category == Category::Data
+                                    && self.network_dynamic_matches(&query));
+                            if !shown {
+                                continue;
+                            }
+                            if page_button(ui, category, lang, state.category == category).clicked()
+                            {
+                                state.category = category;
+                                state.query.clear();
+                            }
+                        }
+                    });
                 let query = fold_name(&state.query);
                 let categories: Vec<_> = Category::ALL
                     .into_iter()
@@ -194,7 +223,7 @@ impl App {
                             *category == state.category
                         } else {
                             category.matches(&query, lang)
-                                || (*category == Category::Network
+                                || (*category == Category::Data
                                     && self.network_dynamic_matches(&query))
                         }
                     })
@@ -215,23 +244,13 @@ impl App {
                         for category in categories {
                             ui.push_id(category as u8, |ui| {
                                 ui.heading(lang.text(category.name_id()));
-                                match category {
-                                    Category::General => {
-                                        self.settings_general(ui, &mut language_preference)
-                                    }
-                                    Category::Appearance => self.settings_appearance(ui),
-                                    Category::MapStyle => self.settings_map_style(ui),
-                                    Category::Navigation => self.settings_navigation(ui),
-                                    Category::Globe => self.settings_sky(ui),
-                                    Category::Controllers => self.settings_controllers(ui),
-                                    Category::Graphics => self.settings_graphics(ui),
-                                    Category::Cache => {
-                                        self.settings_cache(ui, &mut state.confirm_cache)
-                                    }
-                                    Category::Network => self.settings_network(ui),
-                                    Category::Keys => self.settings_keys(ui),
-                                    Category::Files => self.settings_files(ui),
-                                }
+                                ui.add_space(4.0);
+                                self.settings_page(
+                                    ui,
+                                    category,
+                                    &mut state,
+                                    &mut language_preference,
+                                );
                                 ui.add_space(ui.spacing().item_spacing.y);
                             });
                         }
@@ -277,22 +296,123 @@ impl App {
     }
 }
 
+impl App {
+    /// A page: its sections, each under a subheading when the page has several.
+    fn settings_page(
+        &mut self,
+        ui: &mut egui::Ui,
+        category: Category,
+        state: &mut SettingsUi,
+        language_preference: &mut globecraft_core::language::LanguagePreference,
+    ) {
+        let lang = self.lang;
+        let section = |ui: &mut egui::Ui, title: &str| {
+            ui.add_space(8.0);
+            ui.strong(title);
+            ui.separator();
+        };
+        match category {
+            Category::General => {
+                self.settings_general(ui, language_preference);
+                section(ui, lang.text("settings-units-section-title"));
+                self.settings_units(ui);
+                section(ui, lang.text("settings-startup-view-label"));
+                self.settings_startup(ui);
+            }
+            Category::Appearance => self.settings_appearance(ui),
+            Category::MapStyle => self.settings_map_style(ui),
+            Category::Navigation => {
+                self.settings_navigation(ui);
+                section(ui, lang.text("settings-category-controllers"));
+                self.settings_controllers(ui);
+            }
+            Category::Globe => {
+                self.settings_earth_model(ui);
+                section(ui, lang.text("sidebar-sky-title"));
+                self.settings_sky(ui);
+                section(ui, lang.text("settings-category-graphics"));
+                self.settings_graphics(ui);
+            }
+            Category::Data => {
+                self.settings_cache(ui, &mut state.confirm_cache);
+                section(ui, lang.text("settings-category-network"));
+                self.settings_network(ui);
+                section(ui, lang.text("settings-category-keys"));
+                self.settings_keys(ui);
+            }
+            Category::Files => {
+                self.settings_files(ui);
+                section(ui, lang.text("settings-shortcuts-title"));
+                self.settings_shortcuts(ui);
+            }
+        }
+    }
+}
+
+/// A page in the sidebar: icon and name, filled when it is the page shown.
+fn page_button(ui: &mut egui::Ui, category: Category, lang: Lang, on: bool) -> egui::Response {
+    let t = super::theme::Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), PAGE_ROW_HEIGHT_POINTS),
+        egui::Sense::click(),
+    );
+    let name = lang.text(category.name_id());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
+    let fill = if on {
+        Some(t.checked)
+    } else if resp.hovered() {
+        Some(t.hover)
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(6), fill);
+    }
+    super::icons::paint(
+        ui.painter(),
+        egui::Rect::from_center_size(
+            egui::pos2(rect.min.x + 16.0, rect.center().y),
+            egui::vec2(18.0, 18.0),
+        ),
+        category.icon(),
+        t.icon,
+        t.accent,
+    );
+    ui.painter().text(
+        egui::pos2(rect.min.x + 32.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        if on {
+            super::theme::semibold(12.5)
+        } else {
+            super::theme::regular(12.5)
+        },
+        t.text,
+    );
+    resp
+}
+
+/// Height of a page's row in the Settings sidebar.
+const PAGE_ROW_HEIGHT_POINTS: f32 = 30.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn search_matches_localized_labels_and_help() {
-        assert!(Category::Appearance.matches(&fold_name("MGRS"), Lang::En));
-        assert!(Category::Appearance.matches(&fold_name("Earth model"), Lang::En));
-        assert!(Category::Appearance.matches(&fold_name("Modelo da Terra"), Lang::PtBr));
-        assert!(Category::Appearance.matches(&fold_name("distância"), Lang::PtBr));
+        assert!(Category::General.matches(&fold_name("MGRS"), Lang::En));
+        assert!(Category::Globe.matches(&fold_name("Earth model"), Lang::En));
+        assert!(Category::Globe.matches(&fold_name("Modelo da Terra"), Lang::PtBr));
+        assert!(Category::General.matches(&fold_name("distância"), Lang::PtBr));
         assert!(Category::Navigation.matches(&fold_name("sensibilidade"), Lang::PtBr));
         assert!(!Category::Files.matches("mgrs", Lang::En));
         assert!(Category::MapStyle.matches(&fold_name("Width"), Lang::En));
         assert!(Category::MapStyle.matches(&fold_name("espessura"), Lang::PtBr));
-        assert!(Category::Network.matches(&fold_name("github"), Lang::En));
-        assert!(Category::Network.matches(&fold_name("OpenSky"), Lang::En));
-        assert!(Category::Network.matches(&fold_name("tile.openstreetmap.org"), Lang::En));
+        assert!(Category::Data.matches(&fold_name("github"), Lang::En));
+        assert!(Category::Data.matches(&fold_name("OpenSky"), Lang::En));
+        assert!(Category::Data.matches(&fold_name("tile.openstreetmap.org"), Lang::En));
+        assert!(Category::Files.matches(&fold_name("keyboard shortcuts"), Lang::En));
         assert!(!Category::Files.matches(&fold_name("github"), Lang::En));
         for lang in [Lang::En, Lang::PtBr] {
             for category in Category::ALL {

@@ -723,12 +723,16 @@ coordinates-copy-tooltip = { $coordinates }
     Click to copy coordinates.
 coordinates-input-help = Search accepts DD, DMS, DDM, UTM/UPS and MGRS. UTM input: zone N/S easting northing. Grid precision describes display resolution, not source accuracy.
 
+settings-units-section-title = Units and coordinates
+settings-shortcuts-title = Keyboard shortcuts
+settings-shortcut-change = Change…
+settings-shortcuts-help = Any tool can have a shortcut: open its group menu on the ribbon and choose ⋮ › Change Keyboard Shortcut.
 settings-category-general = General
 settings-category-appearance = Appearance
 settings-category-navigation = Navigation
-settings-category-globe = Globe
+settings-category-globe = Globe & graphics
 settings-category-graphics = Graphics
-settings-category-cache = Data & Cache
+settings-category-cache = Data & network
 settings-category-network = Network
 settings-category-keys = Keys
 settings-keys-intro = Some sources need a free key from their provider. Keys are saved on this computer apart from the settings, readable only by you, and sent only to their own service. A key set in the environment (GLOBECRAFT_TOMTOM_KEY and so on) takes precedence.
@@ -739,7 +743,7 @@ keys-tomtom = TomTom
 keys-tomtom-help = Live traffic (Layers → Traffic).
 keys-firms = NASA FIRMS
 keys-firms-help = Active fires seen by satellite in the last day (Add Data → Library → Hazards).
-settings-category-files = Files & Export
+settings-category-files = Files & shortcuts
 settings-search-placeholder = Search settings…
 settings-search-empty = No settings match “{ $query }”.
 settings-theme-label = Theme

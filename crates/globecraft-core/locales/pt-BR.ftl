@@ -723,12 +723,16 @@ coordinates-copy-tooltip = { $coordinates }
     Clique para copiar as coordenadas.
 coordinates-input-help = A busca aceita DD, DMS, DDM, UTM/UPS e MGRS. Entrada UTM: zona N/S leste norte. A precisão da grade descreve a resolução exibida, não a exatidão da fonte.
 
+settings-units-section-title = Unidades e coordenadas
+settings-shortcuts-title = Atalhos de teclado
+settings-shortcut-change = Alterar…
+settings-shortcuts-help = Qualquer ferramenta pode ter um atalho: abra o menu do grupo na faixa e escolha ⋮ › Alterar atalho de teclado.
 settings-category-general = Geral
 settings-category-appearance = Aparência
 settings-category-navigation = Navegação
-settings-category-globe = Globo
+settings-category-globe = Globo e gráficos
 settings-category-graphics = Gráficos
-settings-category-cache = Dados e cache
+settings-category-cache = Dados e rede
 settings-category-network = Rede
 settings-category-keys = Chaves
 settings-keys-intro = Algumas fontes precisam de uma chave gratuita do provedor. As chaves ficam salvas neste computador, separadas das configurações, legíveis só por você, e são enviadas apenas ao próprio serviço. Uma chave definida no ambiente (GLOBECRAFT_TOMTOM_KEY etc.) tem prioridade.
@@ -739,7 +743,7 @@ keys-tomtom = TomTom
 keys-tomtom-help = Trânsito ao vivo (Camadas → Trânsito).
 keys-firms = NASA FIRMS
 keys-firms-help = Focos de incêndio vistos por satélite no último dia (Adicionar dados → Biblioteca → Riscos).
-settings-category-files = Arquivos e exportação
+settings-category-files = Arquivos e atalhos
 settings-search-placeholder = Buscar configurações…
 settings-search-empty = Nenhuma configuração corresponde a “{ $query }”.
 settings-theme-label = Tema
