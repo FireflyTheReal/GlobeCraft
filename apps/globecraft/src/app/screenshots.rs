@@ -311,8 +311,8 @@ fn network_settings_screenshots() {
     // The keys section (adapter D), lower on the same page: one field per keyed service.
     settle(&mut h, 0.5);
     assert!(
-        h.query_by_label_contains("NASA FIRMS").is_some(),
-        "no FIRMS key row"
+        h.query_by_label_contains("TomTom").is_some(),
+        "no TomTom key row"
     );
     save(&mut h, &dir, "keys-en");
 

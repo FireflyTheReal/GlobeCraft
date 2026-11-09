@@ -553,8 +553,12 @@ working queue, not a promise.
 
 **0b. Bugs reported by the user (2026-11-09), after the redesign**
 
-- Active fires (NASA FIRMS preset, `{key:firms}`) shows nothing.
-- Continental shelf lines (Marine Regions preset) look wrong.
+- ~~Active fires (NASA FIRMS preset) shows nothing~~ fixed 2026-11-09: Suomi NPP's VIIRS
+  feed is empty (header only) and FIRMS's area API answers a wrong key with an empty file;
+  the preset reads FIRMS's public NOAA-20 24-hour CSV (no key; the FIRMS key is gone).
+- ~~Continental shelf lines look wrong~~ fixed 2026-11-09: `ecs_boundaries` draws only the
+  outer limits and connection stubs; the preset shows the `ecs` areas by status. Saved
+  library layers now follow the library's address (`presets::refresh_sources`).
 
 **1. Check on the Mac what just landed** (needs the user)
 

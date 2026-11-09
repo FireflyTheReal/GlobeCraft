@@ -136,7 +136,6 @@ impl Category {
                 "settings-category-keys",
                 "settings-keys-intro",
                 "keys-tomtom",
-                "keys-firms",
                 "layers-traffic-key",
             ],
             Self::Files => &[

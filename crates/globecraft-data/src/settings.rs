@@ -258,6 +258,7 @@ impl Settings {
         }
         if let Some(value) = input.user_layers {
             self.user_layers = crate::user_data::layers_from_json(&value);
+            crate::user_data::presets::refresh_sources(&mut self.user_layers);
         }
         if let Some(value) = input.saved_sources {
             self.saved_sources.apply(&value);

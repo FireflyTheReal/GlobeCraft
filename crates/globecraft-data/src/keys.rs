@@ -1,5 +1,5 @@
-//! Keys for services that need one (roadmap adapter D): TomTom traffic, NASA FIRMS
-//! fires, and later others. A key comes from the environment
+//! Keys for services that need one (roadmap adapter D): TomTom traffic, and later
+//! others. A key comes from the environment
 //! (`GLOBECRAFT_<SERVICE>_KEY`) or from Settings -> Keys, which saves it in
 //! `service-keys.json` beside the caches (readable by the user only), never in
 //! `settings.json`. Addresses name a key as `{key:<service>}`; it is filled in only
@@ -21,22 +21,13 @@ pub struct KeyedService {
 }
 
 pub const TOMTOM: &str = "tomtom";
-pub const FIRMS: &str = "firms";
 
-pub static SERVICES: &[KeyedService] = &[
-    KeyedService {
-        id: TOMTOM,
-        name_key: "keys-tomtom",
-        help_key: "keys-tomtom-help",
-        signup_url: "https://developer.tomtom.com/",
-    },
-    KeyedService {
-        id: FIRMS,
-        name_key: "keys-firms",
-        help_key: "keys-firms-help",
-        signup_url: "https://firms.modaps.eosdis.nasa.gov/api/map_key/",
-    },
-];
+pub static SERVICES: &[KeyedService] = &[KeyedService {
+    id: TOMTOM,
+    name_key: "keys-tomtom",
+    help_key: "keys-tomtom-help",
+    signup_url: "https://developer.tomtom.com/",
+}];
 
 fn keys_file() -> PathBuf {
     crate::paths::cache_dir().join("service-keys.json")

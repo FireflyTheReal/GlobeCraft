@@ -105,8 +105,11 @@ fn contiguous_zones() -> UserSource {
     marine_regions("eez_24nm", "Line_blue_green", 12)
 }
 
+/// The extended shelves as areas, coloured by status (one state's, joint, overlapping
+/// claims). The boundary layer drew only the outer limits beyond 200 nautical miles:
+/// loose strokes and connection stubs that looked like noise.
 fn continental_shelves() -> UserSource {
-    marine_regions("ecs_boundaries", "", 10)
+    marine_regions("ecs", "", 10)
 }
 
 fn marine_ecosystems() -> UserSource {
@@ -168,17 +171,17 @@ fn forest_loss() -> UserSource {
     }
 }
 
-/// NASA FIRMS: fires and other hot spots VIIRS (Suomi NPP) saw in the last day,
-/// worldwide, as CSV. The key is filled in at each request (`crate::keys`).
+/// NASA FIRMS: fires and other hot spots VIIRS on NOAA-20 saw in the last 24 hours,
+/// worldwide, from FIRMS's public CSV (no key). Suomi NPP's file, used before, has
+/// been empty since its VIIRS stopped sending (2026-11: header only), and the area API
+/// answers a wrong key with an empty file too, so the layer stayed blank.
 fn active_fires() -> UserSource {
     UserSource::Features {
-        location:
-            "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key:firms}/VIIRS_SNPP_NRT/world/1"
-                .into(),
+        location: "https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_24h.csv"
+            .into(),
         format: FeatureFormat::Csv,
-        // FIRMS updates within hours of each pass; its keys allow 5,000 requests in
-        // 10 minutes.
-        refresh_minutes: 30,
+        // The file (about 9 MB) is rewritten within hours of each pass.
+        refresh_minutes: 60,
         value_field: Some("frp".into()),
     }
 }
@@ -315,7 +318,8 @@ pub static PRESETS: &[Preset] = &[
         commercial_use: true,
         longevity: Longevity::Institutional,
         attribution: "Flanders Marine Institute, MarineRegions.org Extended Continental Shelves",
-        opacity: 1.0,
+        // Areas, not lines: the seafloor shows through.
+        opacity: 0.6,
         key: None,
         color: "#c8c8c8",
         source: continental_shelves,
@@ -398,9 +402,9 @@ pub static PRESETS: &[Preset] = &[
         licence: "NASA open data",
         commercial_use: true,
         longevity: Longevity::Institutional,
-        attribution: "NASA FIRMS (VIIRS, LANCE)",
+        attribution: "NASA FIRMS (VIIRS NOAA-20, LANCE)",
         opacity: 1.0,
-        key: Some(crate::keys::FIRMS),
+        key: None,
         color: "#ff7a1a",
         source: active_fires,
     },
@@ -450,6 +454,20 @@ pub static PRESETS: &[Preset] = &[
     },
 ];
 
+/// Brings saved library layers up to the library's current address for them (a preset
+/// can move to a better source between versions; the layer's name, opacity and colour
+/// stay the user's).
+pub fn refresh_sources(layers: &mut [super::UserLayer]) {
+    for layer in layers {
+        if let Some(preset) = layer.preset.as_deref().and_then(find) {
+            let current = (preset.source)();
+            if layer.source != current {
+                layer.source = current;
+            }
+        }
+    }
+}
+
 pub fn find(code: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|preset| preset.code == code)
 }
@@ -457,6 +475,28 @@ pub fn find(code: &str) -> Option<&'static Preset> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_library_layers_follow_the_library() {
+        let shelves = find("continental_shelves").unwrap();
+        let mut layers = vec![super::super::UserLayer {
+            id: 1,
+            name: "Shelves".into(),
+            source: marine_regions("ecs_boundaries", "", 10),
+            visible: true,
+            opacity: 0.3,
+            attribution: shelves.attribution.into(),
+            color: "#123456".into(),
+            preset: Some(shelves.code.into()),
+        }];
+        let mut custom = layers[0].clone();
+        custom.preset = None;
+        layers.push(custom.clone());
+        refresh_sources(&mut layers);
+        assert_eq!(layers[0].source, (shelves.source)());
+        assert_eq!(layers[0].opacity, 0.3, "the user's opacity stays");
+        assert_eq!(layers[1], custom, "a layer of the user's own is left alone");
+    }
 
     #[test]
     fn every_preset_is_complete_and_addressed_over_https() {
