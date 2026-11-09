@@ -60,12 +60,6 @@ impl LabelGalleys {
         }
     }
 
-    /// Whether egui recreated its font atlas since the last rebuild: every galley laid
-    /// out before, and every shape kept with one, then points at the wrong glyphs.
-    pub(super) fn atlas_was_reset(&self, ctx: &egui::Context) -> bool {
-        ctx.fonts(|fonts| fonts.font_atlas_fill_ratio()) < self.atlas_fill
-    }
-
     pub(super) fn clear(&mut self) {
         self.by_font.clear();
         self.len = 0;

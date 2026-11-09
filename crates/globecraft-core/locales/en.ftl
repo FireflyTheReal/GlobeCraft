@@ -1063,7 +1063,6 @@ cmd-ui-shortcut-set = Set Keyboard Shortcut
 cmd-ui-shortcut-set-help = Set the keys that run a tool, remove its shortcut or restore the default.
 cmd-ui-ribbon-reset-tools = Reset Ribbon Tools
 cmd-ui-ribbon-reset-tools-help = Put the ribbon's tools, the quick-access buttons and the keyboard shortcuts back as they were at installation.
-ribbon-group-menu-help = Every tool of this group. Use ⋮ to pin a tool or change its shortcut.
 ribbon-tool-more = More for this tool
 shortcut-dialog-title = Keyboard Shortcut
 shortcut-dialog-prompt = Press the keys for “{ $tool }”.

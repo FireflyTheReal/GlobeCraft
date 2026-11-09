@@ -460,14 +460,13 @@ pub(in crate::app) fn group(
         start.x + (w - label_w) / 2.0,
         start.y + CONTENT_H + LABEL_H / 2.0 - 1.0 - label.size().y / 2.0,
     );
-    if rows.is_empty() {
+    // A group of one tool has nothing more to show.
+    if rows.len() < 2 {
         ui.painter().galley(label_pos, label, t.group_label);
     } else {
         // The title is a button: hovered, it is filled like the tools above it.
-        let hit = Rect::from_min_size(
-            pos2(label_pos.x - 6.0, title_rect.min.y),
-            vec2(label_w + 12.0, LABEL_H - 1.0),
-        );
+        // The whole title row is the button, as wide as the group.
+        let hit = Rect::from_min_size(pos2(start.x, title_rect.min.y), vec2(w, LABEL_H - 1.0));
         let resp = ui.interact(hit, ui.id().with(("ribbon_group", id)), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));

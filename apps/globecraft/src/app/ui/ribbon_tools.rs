@@ -121,102 +121,117 @@ impl App {
         }
     }
 
-    /// A group menu's rows.
+    /// A group menu: the tools on the ribbon in their ribbon order, then, after a
+    /// separator, those kept in the menu only.
     pub(super) fn group_menu(&mut self, ui: &mut Ui, group: &'static str, rows: &[ToolRow]) {
-        let t = Tokens::get(ui.ctx());
-        ui.set_min_width(ROW_W + MORE_W + 8.0);
-        ui.label(
-            egui::RichText::new(self.lang.text("ribbon-group-menu-help"))
-                .size(11.0)
-                .color(t.text_dim),
-        );
-        ui.add_space(2.0);
-        for row in rows {
+        ui.set_min_width(ROW_W);
+        let (shown, menu_only): (Vec<&ToolRow>, Vec<&ToolRow>) = rows
+            .iter()
+            .partition(|row| self.tool_pinned(group, &row.key));
+        for row in &shown {
+            self.tool_row(ui, group, row);
+        }
+        if !shown.is_empty() && !menu_only.is_empty() {
+            ui.separator();
+        }
+        for row in &menu_only {
             self.tool_row(ui, group, row);
         }
     }
 
+    /// One tool: icon, name and shortcut, and a ⋮ at the end while the row is hovered
+    /// (or its menu open).
     fn tool_row(&mut self, ui: &mut Ui, group: &'static str, row: &ToolRow) {
         let t = Tokens::get(ui.ctx());
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-            let (rect, resp) = ui.allocate_exact_size(
-                vec2(ROW_W, ROW_H),
-                if row.enabled {
-                    Sense::click()
-                } else {
-                    Sense::hover()
-                },
-            );
-            resp.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::Button,
-                    row.enabled,
-                    row.checked,
-                    &row.label,
-                )
-            });
-            let fill = if row.enabled && resp.is_pointer_button_down_on() {
-                Some(t.pressed)
-            } else if row.enabled && resp.hovered() {
-                Some(t.hover)
-            } else if row.checked {
-                Some(t.checked)
+        let (rect, resp) = ui.allocate_exact_size(
+            vec2(ROW_W, ROW_H),
+            if row.enabled {
+                Sense::click()
             } else {
-                None
-            };
-            if let Some(fill) = fill {
-                ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
-            }
-            let text = if row.enabled { t.text } else { t.text_disabled };
-            let ic =
-                Rect::from_center_size(pos2(rect.min.x + 14.0, rect.center().y), vec2(18.0, 18.0));
-            icons::paint(
-                ui.painter(),
-                ic,
-                &row.icon,
-                if row.enabled { t.icon } else { text },
-                t.accent,
-            );
-            ui.painter().text(
-                pos2(rect.min.x + 30.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
+                Sense::hover()
+            },
+        );
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Button,
+                row.enabled,
+                row.checked,
                 &row.label,
-                regular(12.5),
-                text,
-            );
-            let keys = crate::app::commands::tool_shortcut_text(&row.key);
-            if !keys.is_empty() {
-                ui.painter().text(
-                    pos2(rect.max.x - 8.0, rect.center().y),
-                    egui::Align2::RIGHT_CENTER,
-                    keys,
-                    regular(11.5),
-                    t.text_dim,
-                );
-            }
-            if self.tool_pinned(group, &row.key) {
-                // A mark at the row's edge: this tool is on the ribbon.
-                let mark =
-                    Rect::from_min_size(pos2(rect.min.x, rect.center().y - 6.0), vec2(2.5, 12.0));
-                ui.painter()
-                    .rect_filled(mark, CornerRadius::same(1), t.accent);
-            }
-            if resp.clicked() {
-                self.run_reporting(&row.id, row.params.clone());
-                ui.close();
-            }
-            self.tool_more(ui, group, row);
+            )
         });
+        let more_rect = Rect::from_min_max(pos2(rect.max.x - MORE_W, rect.min.y), rect.max);
+        let open_id = ui.id().with(("tool_more_open", &row.key));
+        let more_open = ui.data(|d| d.get_temp::<bool>(open_id).unwrap_or(false));
+        let row_hovered = ui.rect_contains_pointer(rect);
+        let fill = if row.enabled && resp.is_pointer_button_down_on() {
+            Some(t.pressed)
+        } else if row_hovered || more_open {
+            Some(t.hover)
+        } else if row.checked {
+            Some(t.checked)
+        } else {
+            None
+        };
+        if let Some(fill) = fill {
+            ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
+        }
+        let text = if row.enabled { t.text } else { t.text_disabled };
+        let ic = Rect::from_center_size(pos2(rect.min.x + 15.0, rect.center().y), vec2(18.0, 18.0));
+        icons::paint(
+            ui.painter(),
+            ic,
+            &row.icon,
+            if row.enabled { t.icon } else { text },
+            t.accent,
+        );
+        ui.painter().text(
+            pos2(rect.min.x + 32.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &row.label,
+            regular(12.5),
+            text,
+        );
+        let keys = crate::app::commands::tool_shortcut_text(&row.key);
+        if !keys.is_empty() {
+            ui.painter().text(
+                pos2(more_rect.min.x - 4.0, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                keys,
+                regular(11.5),
+                t.text_dim,
+            );
+        }
+        // The ⋮ sits on the row; a click on it opens its menu, not the tool.
+        let mut more_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(more_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let open = self.tool_more(&mut more_ui, group, row, row_hovered || more_open);
+        ui.data_mut(|d| d.insert_temp(open_id, open));
+        let on_more = more_rect.contains(ui.ctx().pointer_interact_pos().unwrap_or_default());
+        if resp.clicked() && !on_more {
+            self.run_reporting(&row.id, row.params.clone());
+            ui.close();
+        }
     }
 
-    /// The ⋮ menu of a tool row.
-    fn tool_more(&mut self, ui: &mut Ui, group: &'static str, row: &ToolRow) {
+    /// The ⋮ menu of a tool row; `true` while it is open.
+    fn tool_more(
+        &mut self,
+        ui: &mut Ui,
+        group: &'static str,
+        row: &ToolRow,
+        visible: bool,
+    ) -> bool {
         let lang = self.lang;
         let t = Tokens::get(ui.ctx());
-        let more = egui::RichText::new("⋮")
-            .font(semibold(14.0))
-            .color(t.text_dim);
+        let colour = if visible {
+            t.text
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        let more = egui::RichText::new("⋮").font(semibold(15.0)).color(colour);
         let mut run: Option<(&str, Value)> = None;
         // A sub-menu button without the arrow: the ⋮ is the sign.
         let button = egui::Button::new(more)
@@ -247,10 +262,12 @@ impl App {
                 ui.close();
             }
         });
+        let open = response.1.is_some();
         response.0.on_hover_text(lang.text("ribbon-tool-more"));
         if let Some((id, params)) = run {
             self.run_reporting(id, params);
         }
+        open
     }
 
     /// The dialog that listens for a tool's new keyboard shortcut.

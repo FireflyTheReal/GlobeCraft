@@ -100,6 +100,8 @@ pub(crate) struct App {
     styled_scale: Option<f32>,
     assistant: assistant::AssistantState,
     command_search: Option<ui::palette::CommandSearch>,
+    /// egui's font atlas fill at the start of the last frame (see `ui`).
+    font_atlas_fill: f32,
     /// The ribbon group being drawn, and the shortcut dialog.
     ribbon_tools: ui::ribbon_tools::RibbonTools,
     /// The ribbon shown over the globe while collapsed (a tab was clicked).
@@ -345,6 +347,7 @@ impl App {
             assistant: assistant::AssistantState::default(),
             command_search: None,
             ribbon_tools: Default::default(),
+            font_atlas_fill: 0.0,
             ribbon_peek: false,
             tab_strip_rect: None,
             #[cfg(target_os = "macos")]
@@ -782,6 +785,14 @@ impl eframe::App for App {
         let mut watchdog = globecraft_data::profiling::PassWatchdog::new("ui.slow");
         #[cfg(feature = "profiling")]
         watchdog.checkpoint("ui.slow.setup");
+        // egui recreates its font atlas when it fills up, before the frame: the atlas is
+        // then emptier than at the last frame's start. Label shapes kept across frames
+        // must be laid out again, or they show other glyphs.
+        let atlas_fill = ui.ctx().fonts(|fonts| fonts.font_atlas_fill_ratio());
+        if atlas_fill < self.font_atlas_fill {
+            self.overlay_cache.font_atlas_reset();
+        }
+        self.font_atlas_fill = atlas_fill;
         ui.set_theme(match self.settings.appearance.theme {
             globecraft_data::settings::appearance::ThemePreference::System => {
                 egui::ThemePreference::System

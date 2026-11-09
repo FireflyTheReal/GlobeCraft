@@ -1063,7 +1063,6 @@ cmd-ui-shortcut-set = Definir atalho de teclado
 cmd-ui-shortcut-set-help = Define as teclas que executam uma ferramenta, remove o atalho ou restaura o padrão.
 cmd-ui-ribbon-reset-tools = Restaurar ferramentas da faixa
 cmd-ui-ribbon-reset-tools-help = Devolve as ferramentas da faixa, os botões de acesso rápido e os atalhos de teclado ao estado da instalação.
-ribbon-group-menu-help = Todas as ferramentas deste grupo. Use ⋮ para fixar uma ferramenta ou alterar o atalho.
 ribbon-tool-more = Mais opções desta ferramenta
 shortcut-dialog-title = Atalho de teclado
 shortcut-dialog-prompt = Pressione as teclas para “{ $tool }”.

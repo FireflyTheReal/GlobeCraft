@@ -1534,6 +1534,37 @@ fn about_window() {
     }
 }
 
+/// Every ribbon tab in Advanced mode, every Settings page and the left panes: the
+/// inventory for the layout redesign (`ribbon-tab-<code>`, `settings-<n>`).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn layout_inventory_screenshots() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Light);
+    settle(&mut h, 0.5);
+    h.state_mut()
+        .run("settings.experience", json!({"level": "advanced"}))
+        .expect("advanced");
+    for tab in Tab::ALL {
+        h.state_mut().settings.workspace.ribbon_tab = tab;
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, &format!("ribbon-tab-{}", tab.code()));
+    }
+    for pane in ["ui.pane.layers", "ui.pane.places", "ui.pane.data"] {
+        h.state_mut().run(pane, json!({})).expect(pane);
+        settle(&mut h, 0.5);
+        save(&mut h, &dir, &format!("pane-{pane}"));
+    }
+    h.state_mut()
+        .run("ui.settings", json!({}))
+        .expect("settings");
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "settings-window");
+}
+
 /// A ribbon group's menu, a tool's ⋮ menu, a tool pinned to the ribbon and to the
 /// quick-access row, and the keyboard shortcut dialog.
 #[test]
@@ -1554,7 +1585,7 @@ fn ribbon_menus_screenshot() {
         h.get_by_label("Navigate").click();
         settle(&mut h, 0.3);
         assert!(
-            h.query_by_label_contains("Use ⋮").is_some(),
+            h.query_by_label("Top-Down View").is_some(),
             "the menu is open"
         );
         save(&mut h, &dir, &format!("ribbon-menu-{name}"));
