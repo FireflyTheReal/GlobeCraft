@@ -143,6 +143,11 @@ A sidebar with seven pages instead of eleven wrapped tabs, and the search box ab
   with `GLOBECRAFT_SHOT_SIZE=1280x800`, `GLOBECRAFT_SHOT_LANG=pt-BR`). Differences from the
   tables: Hazards waits until fires and alerts are layers; the exaggeration is a small menu
   (`1.0× ▾`) in Nature; the ruler unit stays visible in Measure.
+- 2026-11-09: step 4 done. The Explore pane and `ui.pane.explore` are gone (a saved
+  "explore" panel opens Places); search results are listed at the top of Places with a
+  `search.clear` ✕, and a finished search shows Places. The Places pane lost its Save /
+  Save As / Open row and its file footer (drop zone, path field, Clear All): those are in
+  File and Explore › Places, and a KML dropped anywhere opens.
 
 ## Steps (each a commit with before/after screenshots of every tab)
 

@@ -255,7 +255,6 @@ pub(crate) struct App {
     /// The app's time: live, a moment, or playing (roadmap 4.H).
     pub(super) time: globecraft_core::time::AppTime,
 
-    kml_drop_rect: Rect,
     /// A high-quality screenshot rendering in the background.
     still_shot: Option<still_shot::StillShot>,
     /// The terrain height (km, exaggerated) the camera looks at, eased toward the
@@ -485,7 +484,6 @@ impl App {
             measure: measure::MeasureState::default(),
             wayback: wayback::WaybackState::default(),
             time: globecraft_core::time::AppTime::default(),
-            kml_drop_rect: Rect::NOTHING,
             still_shot: None,
             ground_km: 0.0,
             download_log: (Instant::now(), 0),

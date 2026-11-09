@@ -381,9 +381,16 @@ mod tests {
                 ("layers", "map"),
                 ("places", "explore"),
             ];
-            (path == "/workspace/ribbon_tab")
-                .then(|| renamed.iter().find(|(from, _)| old.as_str() == Some(from)))
-                .flatten()
+            // The Explore pane went into Places (2026-11).
+            let panes = [("explore", "places")];
+            let table: &[(&str, &str)] = match path {
+                "/workspace/ribbon_tab" => &renamed,
+                "/sidebar/panel" => &panes,
+                _ => &[],
+            };
+            table
+                .iter()
+                .find(|(from, _)| old.as_str() == Some(from))
                 .map(|(_, to)| Value::from(*to))
         };
         let lost: Vec<String> = old_leaves

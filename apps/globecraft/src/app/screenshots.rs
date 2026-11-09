@@ -1560,6 +1560,16 @@ fn layout_inventory_screenshots() {
         settle(&mut h, 0.3);
         save(&mut h, &dir, &format!("ribbon-tab-{}", tab.code()));
     }
+    // Search results as a finished search leaves them, listed at the top of Places.
+    h.state_mut().search.results = ["Lisbon, Portugal", "Lisbon, Maine, United States"]
+        .iter()
+        .map(|name| globecraft_data::search::GeoResult {
+            name: name.to_string(),
+            lat: 38.7,
+            lon: -9.1,
+            alt: 30.0,
+        })
+        .collect();
     for pane in ["ui.pane.layers", "ui.pane.places", "ui.pane.data"] {
         h.state_mut().run(pane, json!({})).expect(pane);
         settle(&mut h, 0.5);

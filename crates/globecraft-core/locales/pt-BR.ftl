@@ -235,7 +235,6 @@ layers-weather-toggle = Mapa do clima (radar de chuva ao vivo)
 layers-clouds-toggle = Mapa das nuvens por satélite (Matt Eason)
 layers-live-overlays-help = Aviões reais, com cobertura incompleta: atualização global a cada ~17 min e local a cada ~90 s. Nuvens ~3 h; radar de chuva ~10 min. Requer internet.
 
-navigation-section-title = Navegação
 
 navigation-reset-north-action = Norte para cima
 
@@ -253,11 +252,9 @@ placemarks-fly-to-action = Ir
 
 kml-drop-zone-hint = Arraste um arquivo .kml ou .kmz aqui
 
-kml-save-action = Salvar
 
 kml-save-tooltip = Salva na pasta de KML/KMZ (veja Configurações)
 
-kml-save-as-action = Salvar como…
 
 kml-open-action = Abrir KML/KMZ…
 
@@ -267,7 +264,6 @@ ruler-enable-toggle = Medir distâncias (clique no globo)
 
 ruler-clear-action = Limpar régua
 
-export-section-title = Exportar
 
 screenshot-save-action = Salvar captura (PNG)
 
@@ -332,7 +328,6 @@ placemarks-generated-name = Local { $number }
 
 wayback-availability-status = { $count } versões disponíveis
 
-export-folder-label = Pasta: { $path }
 
 ruler-measurement-summary = Pontos: { $count }   Total: { $distance }
 
@@ -513,7 +508,6 @@ places-root-name = Meus lugares
 places-document-name = Documento
 places-folder-name = Nova pasta
 places-add-folder-action = + Pasta
-places-clear-all-action = Limpar tudo
 places-delete-action = Excluir
 places-visible-help = Mostrar este lugar e seus filhos no globo
 places-empty-help = Abra um arquivo KML ou KMZ ou adicione um lugar. Arraste lugares para pastas para organizá-los.
@@ -659,7 +653,6 @@ update-retry-label = Tentar novamente
 update-releases-action = Abrir versões
 update-saving-label = Salvando antes de reiniciar
 
-sidebar-explore-title = Globo
 sidebar-data-title = Dados
 data-pane-favorites-title = Favoritos
 data-pane-favorites-empty = Marque uma fonte com a estrela para mantê-la aqui.
@@ -685,7 +678,6 @@ sidebar-places-title = Lugares
 sidebar-pin-places-action = Fixar
 sidebar-pin-places-tooltip = Manter Lugares visível ao alternar painéis
 sidebar-unpin-places-tooltip = Desafixar Lugares
-sidebar-places-files-title = Arquivos KML / KMZ
 sidebar-imagery-title = Imagem de base
 
 sidebar-geography-title = Limites, rótulos e grade
@@ -1000,8 +992,6 @@ cmd-ui-pane-layers = Painel de camadas
 cmd-ui-pane-layers-help = Mostra o painel de camadas.
 cmd-ui-pane-places = Painel de lugares
 cmd-ui-pane-places-help = Mostra Meus lugares.
-cmd-ui-pane-explore = Painel do globo
-cmd-ui-pane-explore-help = Mostra resultados de busca, navegação e exportação.
 cmd-ui-pane-data = Painel de dados
 cmd-ui-pane-data-help = Mostra suas fontes favoritas e recentes, a biblioteca de dados e suas camadas.
 cmd-ui-pane-assistant = Assistente de IA
@@ -1079,6 +1069,8 @@ shortcut-dialog-default = Restaurar padrão
 shortcut-dialog-cancel = Cancelar
 shortcut-dialog-modifier = Use Ctrl, Alt ou ⌘ com uma letra ou um dígito; teclas de função funcionam sozinhas.
 shortcut-taken = { $keys } agora executa “{ $tool }”; “{ $previous }” ficou sem atalho.
+cmd-search-clear = Limpar resultados da busca
+cmd-search-clear-help = Remove os resultados da última busca de Lugares e esvazia a caixa de busca.
 cmd-ui-theme = Tema
 cmd-ui-theme-help = Segue o sistema ou usa o tema escuro ou claro.
 cmd-ui-fullscreen = Tela cheia
@@ -1224,7 +1216,6 @@ pane-measure-title = Medição
 pane-close-tooltip = Fechar o painel
 pane-close-named-tooltip = Fechar { $name }
 layers-earth-only = As camadas se aplicam à Terra. Volte para a Terra em Exibir › Mundos.
-explore-results-empty = Busque um lugar na caixa no topo da janela; os resultados aparecem aqui.
 measure-total-label = Distância total
 measure-points-label = { $count } pontos
 measure-area-label = Área: { $area }
@@ -1424,3 +1415,10 @@ here-time-help = A hora solar média segue a longitude; o fuso horário legal do
 here-sun-label = Sol
 here-sun-up = { $degrees }° acima do horizonte
 here-sun-down = { $degrees }° abaixo do horizonte
+
+# Original labels kept for the localization fixtures (no longer shown).
+navigation-section-title = Navegação
+kml-save-action = Salvar
+kml-save-as-action = Salvar como…
+export-section-title = Exportar
+export-folder-label = Pasta: { $path }

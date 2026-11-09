@@ -50,7 +50,6 @@ pub(in crate::app) enum Action {
     Undo,
     Redo,
     Sidebar,
-    ShowExplore,
     ShowLayers,
     ShowPlaces,
     ShowData,
@@ -71,7 +70,7 @@ pub(in crate::app) enum Action {
     ReportIssue,
 }
 impl Action {
-    pub(super) const ALL: [Self; 30] = [
+    pub(super) const ALL: [Self; 29] = [
         Self::About,
         Self::Settings,
         Self::Open,
@@ -83,7 +82,6 @@ impl Action {
         Self::Undo,
         Self::Redo,
         Self::Sidebar,
-        Self::ShowExplore,
         Self::ShowLayers,
         Self::ShowPlaces,
         Self::ShowData,
@@ -111,7 +109,6 @@ impl Action {
             }
             Self::Undo | Self::Redo => Section::Edit,
             Self::Sidebar
-            | Self::ShowExplore
             | Self::ShowLayers
             | Self::ShowPlaces
             | Self::ShowData
@@ -140,7 +137,6 @@ impl Action {
             Self::About => "menu-about-action",
             Self::Settings => "menu-settings-action",
             Self::Sidebar => "menu-sidebar-toggle",
-            Self::ShowExplore => "sidebar-explore-title",
             Self::ShowLayers => "layers-section-title",
             Self::ShowPlaces => "sidebar-places-title",
             Self::ShowData => "sidebar-data-title",
@@ -176,7 +172,6 @@ impl Action {
             Self::Undo => ("edit.undo", Value::Null),
             Self::Redo => ("edit.redo", Value::Null),
             Self::Sidebar => ("ui.leftPane", Value::Null),
-            Self::ShowExplore => ("ui.pane.explore", Value::Null),
             Self::ShowLayers => ("ui.pane.layers", Value::Null),
             Self::ShowPlaces => ("ui.pane.places", Value::Null),
             Self::ShowData => ("ui.pane.data", Value::Null),

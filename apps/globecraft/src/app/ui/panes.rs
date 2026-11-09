@@ -1,4 +1,4 @@
-//! Panes beside the globe: Layers, Places and Globe on the left, the AI Assistant and Measure on
+//! Panes beside the globe: Layers, Places and Data on the left, the AI Assistant and Measure on
 //! the right, each with a tab header like RustGIS's panes (`crates/ui-egui/src/panes.rs`,
 //! Apache-2.0).
 use super::icons;
@@ -19,7 +19,7 @@ const HEADER_H: f32 = 32.0;
 const PINNED_PLACES_MAX_HEIGHT_FRACTION: f32 = 0.65;
 
 /// The left panes in tab order, with their command and icon.
-const LEFT: [(SidebarPanel, &str, &str, &str); 4] = [
+const LEFT: [(SidebarPanel, &str, &str, &str); 3] = [
     (
         SidebarPanel::Layers,
         "layers-section-title",
@@ -37,12 +37,6 @@ const LEFT: [(SidebarPanel, &str, &str, &str); 4] = [
         "sidebar-data-title",
         "ui.pane.data",
         "catalog",
-    ),
-    (
-        SidebarPanel::Explore,
-        "sidebar-explore-title",
-        "ui.pane.explore",
-        "compass",
     ),
 ];
 
@@ -130,7 +124,6 @@ fn close_cross(ui: &mut Ui, t: &Tokens, center: egui::Pos2, id: egui::Id, tip: &
 impl App {
     pub(in crate::app) fn left_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
-        self.kml_drop_rect = Rect::NOTHING;
         // A placemark or ruler revealed from elsewhere brings its pane forward.
         if self.measure.reveal_requested {
             self.settings.workspace.open_right(RightPane::Measure);
@@ -220,16 +213,6 @@ impl App {
                                 egui::Frame::NONE
                                     .inner_margin(margin)
                                     .show(ui, |ui| self.data_pane(ui));
-                            });
-                    }
-                    SidebarPanel::Explore => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("explore-scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                egui::Frame::NONE
-                                    .inner_margin(margin)
-                                    .show(ui, |ui| self.explore_pane(ui));
                             });
                     }
                 }

@@ -235,7 +235,6 @@ layers-weather-toggle = Live precipitation radar (RainViewer)
 layers-clouds-toggle = Satellite cloud map (Matt Eason)
 layers-live-overlays-help = Aircraft positions come from live tracking (coverage incomplete); global updates ~17 min and nearby updates ~90 s. Cloud imagery ~3 h; rain radar ~10 min. Internet required.
 
-navigation-section-title = Navigation
 
 navigation-reset-north-action = North up
 
@@ -253,11 +252,9 @@ placemarks-fly-to-action = Go
 
 kml-drop-zone-hint = Drag a .kml or .kmz file here
 
-kml-save-action = Save
 
 kml-save-tooltip = Saves into the KML/KMZ folder (see Settings)
 
-kml-save-as-action = Save as…
 
 kml-open-action = Open KML/KMZ…
 
@@ -267,7 +264,6 @@ ruler-enable-toggle = Measure distances (click on the globe)
 
 ruler-clear-action = Clear ruler
 
-export-section-title = Export
 
 screenshot-save-action = Save screenshot (PNG)
 
@@ -332,7 +328,6 @@ placemarks-generated-name = Place { $number }
 
 wayback-availability-status = { $count } snapshots available
 
-export-folder-label = Folder: { $path }
 
 ruler-measurement-summary = Points: { $count }   Total: { $distance }
 
@@ -513,7 +508,6 @@ places-root-name = My Places
 places-document-name = Document
 places-folder-name = New folder
 places-add-folder-action = + Folder
-places-clear-all-action = Clear All
 places-delete-action = Delete
 places-visible-help = Show this place and its children on the globe
 places-empty-help = Open a KML or KMZ file or add a place. Drag places into folders to organize them.
@@ -659,7 +653,6 @@ update-retry-label = Retry update
 update-releases-action = Open releases
 update-saving-label = Saving before restart
 
-sidebar-explore-title = Globe
 sidebar-data-title = Data
 data-pane-favorites-title = Favorites
 data-pane-favorites-empty = Star a source to keep it here.
@@ -685,7 +678,6 @@ sidebar-places-title = Places
 sidebar-pin-places-action = Pin
 sidebar-pin-places-tooltip = Keep Places visible when switching panels
 sidebar-unpin-places-tooltip = Unpin Places
-sidebar-places-files-title = KML / KMZ files
 sidebar-imagery-title = Base imagery
 
 sidebar-geography-title = Borders, labels & grid
@@ -1000,8 +992,6 @@ cmd-ui-pane-layers = Layers Pane
 cmd-ui-pane-layers-help = Show the Layers pane.
 cmd-ui-pane-places = Places Pane
 cmd-ui-pane-places-help = Show My Places.
-cmd-ui-pane-explore = Globe Pane
-cmd-ui-pane-explore-help = Show search results, navigation and export options.
 cmd-ui-pane-data = Data Pane
 cmd-ui-pane-data-help = Show your favorite and recent sources, the data library and your layers.
 cmd-ui-pane-assistant = AI Assistant
@@ -1079,6 +1069,8 @@ shortcut-dialog-default = Restore Default
 shortcut-dialog-cancel = Cancel
 shortcut-dialog-modifier = Use Ctrl, Alt or ⌘ with a letter or digit; function keys work alone.
 shortcut-taken = { $keys } now runs “{ $tool }”; “{ $previous }” no longer has a shortcut.
+cmd-search-clear = Clear Search Results
+cmd-search-clear-help = Remove the last search's results from Places and empty the search box.
 cmd-ui-theme = Theme
 cmd-ui-theme-help = Follow the system, or use the dark or light theme.
 cmd-ui-fullscreen = Full Screen
@@ -1224,7 +1216,6 @@ pane-measure-title = Measure
 pane-close-tooltip = Close the pane
 pane-close-named-tooltip = Close { $name }
 layers-earth-only = Layers apply to the Earth. Switch back to Earth in View › Worlds.
-explore-results-empty = Search for a place in the box at the top of the window; its results appear here.
 measure-total-label = Total distance
 measure-points-label = { $count } points
 measure-area-label = Area: { $area }
@@ -1424,3 +1415,10 @@ here-time-help = Mean solar time follows the longitude; the legal time zone of t
 here-sun-label = Sun
 here-sun-up = { $degrees }° above the horizon
 here-sun-down = { $degrees }° below the horizon
+
+# Original labels kept for the localization fixtures (no longer shown).
+navigation-section-title = Navigation
+kml-save-action = Save
+kml-save-as-action = Save as…
+export-section-title = Export
+export-folder-label = Folder: { $path }

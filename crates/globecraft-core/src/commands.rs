@@ -148,6 +148,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"query":{"type":"string","description":"A place name, an address, or coordinates such as 48.85, 2.35"},"fly":{"type":"boolean","description":"Fly to the best result when it arrives (default true)"}},"required":["query"]}"#
     ),
     command!(
+        "search.clear",
+        "search-clear",
+        "close",
+        Explore,
+        View,
+        NO_PARAMS
+    ),
+    command!(
         "camera.zoomIn",
         "camera-zoom-in",
         "zoom_in",
@@ -545,14 +553,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ui.pane.data",
         "ui-pane-data",
         "catalog",
-        View,
-        Interface,
-        NO_PARAMS
-    ),
-    command!(
-        "ui.pane.explore",
-        "ui-pane-explore",
-        "compass",
         View,
         Interface,
         NO_PARAMS

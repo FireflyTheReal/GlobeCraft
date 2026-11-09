@@ -211,6 +211,12 @@ impl App {
                 self.touch();
                 self.camera_json()
             }
+            "search.clear" => {
+                self.search.results.clear();
+                self.search.query.clear();
+                self.search.suggestions_open = false;
+                json!({})
+            }
             "search.place" => match str_param(p, "query") {
                 Some(query) if !query.is_empty() => {
                     self.search.query = query.to_string();
@@ -630,12 +636,11 @@ impl App {
                 json!({})
             }
             // ── Panes and interface
-            "ui.pane.layers" | "ui.pane.places" | "ui.pane.explore" | "ui.pane.data" => {
+            "ui.pane.layers" | "ui.pane.places" | "ui.pane.data" => {
                 let panel = match id {
                     "ui.pane.layers" => SidebarPanel::Layers,
-                    "ui.pane.places" => SidebarPanel::Places,
                     "ui.pane.data" => SidebarPanel::Data,
-                    _ => SidebarPanel::Explore,
+                    _ => SidebarPanel::Places,
                 };
                 let layout = &mut self.settings.sidebar;
                 if layout.open && layout.panel == panel {
@@ -1017,10 +1022,6 @@ impl App {
             "ui.pane.places" => {
                 on(self.settings.sidebar.open
                     && self.settings.sidebar.panel == SidebarPanel::Places)
-            }
-            "ui.pane.explore" => {
-                on(self.settings.sidebar.open
-                    && self.settings.sidebar.panel == SidebarPanel::Explore)
             }
             "ui.pane.data" => {
                 on(self.settings.sidebar.open && self.settings.sidebar.panel == SidebarPanel::Data)

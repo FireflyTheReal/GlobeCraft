@@ -11,15 +11,14 @@ pub const MAX_PINNED_PLACES_HEIGHT_POINTS: f32 = 1000.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SidebarPanel {
-    #[default]
-    Explore,
     Layers,
+    #[default]
     Places,
     /// The data browser: library, favorites, recent sources and the user's layers.
     Data,
 }
 impl SidebarPanel {
-    pub const ALL: [Self; 4] = [Self::Explore, Self::Layers, Self::Places, Self::Data];
+    pub const ALL: [Self; 3] = [Self::Layers, Self::Places, Self::Data];
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -33,7 +32,7 @@ pub struct SidebarLayout {
 impl Default for SidebarLayout {
     fn default() -> Self {
         Self {
-            panel: SidebarPanel::Explore,
+            panel: SidebarPanel::Places,
             open: true,
             places_pinned: false,
             width_points: DEFAULT_SIDEBAR_WIDTH_POINTS,
@@ -45,7 +44,9 @@ impl SidebarLayout {
     pub(super) fn apply_json(&mut self, value: &serde_json::Value) {
         if let Some(panel) = value.get("panel").and_then(|v| v.as_str()) {
             self.panel = match panel {
-                "explore" => SidebarPanel::Explore,
+                // The Explore pane (search results, navigation, export) went in 2026-11:
+                // search results are in Places now.
+                "explore" => SidebarPanel::Places,
                 "layers" => SidebarPanel::Layers,
                 "places" => SidebarPanel::Places,
                 "data" => SidebarPanel::Data,
