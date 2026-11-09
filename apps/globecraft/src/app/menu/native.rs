@@ -24,6 +24,13 @@ impl Item {
     fn id(&self) -> &MenuId {
         self.menu_item().id()
     }
+    fn set_accelerator(&self, accelerator: Option<Accelerator>) {
+        // A failed update keeps the old key in the menu; the egui shortcut still works.
+        let _ = match self {
+            Self::Plain(item) => item.set_accelerator(accelerator),
+            Self::Toggle(item) => item.set_accelerator(accelerator),
+        };
+    }
     fn update(&self, label: &str, enabled: bool, checked: Option<bool>) {
         match self {
             Self::Plain(item) => {
@@ -47,6 +54,8 @@ pub(in crate::app) struct NativeMenu {
     items: Vec<(Action, Item)>,
     lang: Lang,
     state: MenuState,
+    /// The accelerators shown, to update them when the user changes a shortcut.
+    accelerators: Vec<Option<Accelerator>>,
     pub(super) events: mpsc::Receiver<Action>,
 }
 impl NativeMenu {
@@ -115,10 +124,15 @@ impl NativeMenu {
                 ctx.request_repaint();
             }
         }));
+        let accelerators = items
+            .iter()
+            .map(|(action, _)| accelerator(*action))
+            .collect();
         Ok(Self {
             menu,
             sections,
             items,
+            accelerators,
             lang,
             state,
             events,
@@ -141,27 +155,87 @@ impl NativeMenu {
             self.lang = lang;
             self.state = state;
         }
+        for ((action, item), shown) in self.items.iter().zip(&mut self.accelerators) {
+            let current = accelerator(*action);
+            if current != *shown {
+                item.set_accelerator(current);
+                *shown = current;
+            }
+        }
     }
 }
-fn accelerator(action: Action) -> Option<Accelerator> {
+/// The native accelerator of an action's current shortcut, if AppKit can show its key.
+pub(super) fn accelerator(action: Action) -> Option<Accelerator> {
+    use eframe::egui::Key;
     let shortcut = action.shortcut()?;
     let key = match shortcut.logical_key {
-        eframe::egui::Key::O => Code::KeyO,
-        eframe::egui::Key::S => Code::KeyS,
-        eframe::egui::Key::E => Code::KeyE,
-        eframe::egui::Key::Q => Code::KeyQ,
-        eframe::egui::Key::Z => Code::KeyZ,
-        eframe::egui::Key::Comma => Code::Comma,
-        eframe::egui::Key::P => Code::KeyP,
-        eframe::egui::Key::N => Code::KeyN,
-        eframe::egui::Key::B => Code::KeyB,
+        Key::A => Code::KeyA,
+        Key::B => Code::KeyB,
+        Key::C => Code::KeyC,
+        Key::D => Code::KeyD,
+        Key::E => Code::KeyE,
+        Key::F => Code::KeyF,
+        Key::G => Code::KeyG,
+        Key::H => Code::KeyH,
+        Key::I => Code::KeyI,
+        Key::J => Code::KeyJ,
+        Key::K => Code::KeyK,
+        Key::L => Code::KeyL,
+        Key::M => Code::KeyM,
+        Key::N => Code::KeyN,
+        Key::O => Code::KeyO,
+        Key::P => Code::KeyP,
+        Key::Q => Code::KeyQ,
+        Key::R => Code::KeyR,
+        Key::S => Code::KeyS,
+        Key::T => Code::KeyT,
+        Key::U => Code::KeyU,
+        Key::V => Code::KeyV,
+        Key::W => Code::KeyW,
+        Key::X => Code::KeyX,
+        Key::Y => Code::KeyY,
+        Key::Z => Code::KeyZ,
+        Key::Num0 => Code::Digit0,
+        Key::Num1 => Code::Digit1,
+        Key::Num2 => Code::Digit2,
+        Key::Num3 => Code::Digit3,
+        Key::Num4 => Code::Digit4,
+        Key::Num5 => Code::Digit5,
+        Key::Num6 => Code::Digit6,
+        Key::Num7 => Code::Digit7,
+        Key::Num8 => Code::Digit8,
+        Key::Num9 => Code::Digit9,
+        Key::F1 => Code::F1,
+        Key::F2 => Code::F2,
+        Key::F3 => Code::F3,
+        Key::F4 => Code::F4,
+        Key::F5 => Code::F5,
+        Key::F6 => Code::F6,
+        Key::F7 => Code::F7,
+        Key::F8 => Code::F8,
+        Key::F9 => Code::F9,
+        Key::F10 => Code::F10,
+        Key::F11 => Code::F11,
+        Key::F12 => Code::F12,
+        Key::Comma => Code::Comma,
+        Key::Period => Code::Period,
+        Key::Minus => Code::Minus,
+        Key::Equals => Code::Equal,
+        Key::Slash => Code::Slash,
+        Key::Semicolon => Code::Semicolon,
         _ => return None,
     };
-    let mut modifiers = Modifiers::META;
-    if shortcut.modifiers.shift {
+    let m = shortcut.modifiers;
+    let mut modifiers = Modifiers::empty();
+    if m.command || m.mac_cmd {
+        modifiers |= Modifiers::META;
+    } else if m.ctrl {
+        modifiers |= Modifiers::CONTROL;
+    }
+    if m.shift {
         modifiers |= Modifiers::SHIFT;
     }
-    if shortcut.modifiers.alt {
+    if m.alt {
         modifiers |= Modifiers::ALT;
     }
     Some(Accelerator::new(modifiers, key))

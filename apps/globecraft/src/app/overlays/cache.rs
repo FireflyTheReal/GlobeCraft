@@ -190,6 +190,12 @@ impl OverlayCache {
         style: OverlayStyle,
         taken: &LabelSpace,
     ) {
+        if self.galleys.atlas_was_reset(painter.ctx()) {
+            // The kept label shapes point at glyphs that are gone: lay them out again.
+            self.galleys.clear();
+            self.key = None;
+            self.remembered_key = None;
+        }
         let space = taken.key();
         if space != self.taken {
             // Same view, other room: lay the names out again.

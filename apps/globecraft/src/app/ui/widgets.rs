@@ -44,9 +44,11 @@ struct Resolved<'a> {
     enabled: bool,
     /// Command whose shortcut the tooltip shows; empty for plain menus.
     command: &'a str,
+    /// The command's parameters: with them, it is the tool whose shortcut is shown.
+    params: Option<&'a Value>,
 }
 
-fn resolve<'a>(app: &App, id: &'a str, params: &Value, look: &Look<'a>) -> Resolved<'a> {
+fn resolve<'a>(app: &App, id: &'a str, params: &'a Value, look: &Look<'a>) -> Resolved<'a> {
     let spec = commands::find(id);
     let lang = app.lang;
     let state = app.command_state(id, params);
@@ -63,18 +65,21 @@ fn resolve<'a>(app: &App, id: &'a str, params: &Value, look: &Look<'a>) -> Resol
         checked: look.checked.unwrap_or(state.checked),
         enabled: state.enabled,
         command: id,
+        params: Some(params),
     }
 }
 
 /// A rich tooltip: title (with the command's shortcut) and description. Line breaks of
 /// two-line ribbon labels become spaces.
-fn tooltip(resp: Response, title: &str, desc: &str, command: &str) -> Response {
+fn tooltip(resp: Response, r: &Resolved) -> Response {
+    let (title, desc, command) = (r.label, r.help, r.command);
     resp.on_hover_ui(|ui| {
         ui.set_max_width(280.0);
         let shortcut = if command.is_empty() {
             String::new()
         } else {
-            crate::app::commands::shortcut_text(command)
+            let key = crate::app::tools::tool_key(command, r.params.unwrap_or(&Value::Null));
+            crate::app::commands::tool_shortcut_text(&key)
         };
         let title = title.replace('\n', " ");
         let head = if shortcut.is_empty() {
@@ -172,7 +177,7 @@ fn paint_big(ui: &mut Ui, r: &Resolved, menu: bool) -> Response {
         }
         y += 13.5;
     }
-    tooltip(resp, r.label, r.help, r.command)
+    tooltip(resp, r)
 }
 
 /// A large command button. Returns the response; a click runs the command.
@@ -188,6 +193,9 @@ pub(in crate::app) fn big_with(
     look: Look<'_>,
 ) -> Response {
     let r = resolve(app, id, &params, &look);
+    if !app.list_tool(id, &params, r.icon, r.label, r.enabled, r.checked) {
+        return ui.response();
+    }
     let resp = paint_big(ui, &r, false);
     if resp.clicked() && r.enabled {
         app.run_reporting(id, params);
@@ -211,6 +219,7 @@ pub(in crate::app) fn big_menu(
         checked: false,
         enabled: true,
         command: "",
+        params: None,
     };
     let resp = paint_big(ui, &r, true);
     egui::Popup::menu(&resp).show(|ui| {
@@ -251,7 +260,7 @@ fn paint_small(ui: &mut Ui, r: &Resolved, show_label: bool, menu: bool) -> Respo
             t.text,
         );
     }
-    tooltip(resp, r.label, r.help, r.command)
+    tooltip(resp, r)
 }
 
 /// A small command button with its label.
@@ -267,6 +276,9 @@ pub(in crate::app) fn small_with(
     look: Look<'_>,
 ) -> Response {
     let r = resolve(app, id, &params, &look);
+    if !app.list_tool(id, &params, r.icon, r.label, r.enabled, r.checked) {
+        return ui.response();
+    }
     let resp = paint_small(ui, &r, true, false);
     if resp.clicked() && r.enabled {
         app.run_reporting(id, params);
@@ -281,7 +293,18 @@ pub(in crate::app) fn icon_command(
     id: &str,
     params: Value,
 ) -> Response {
-    let r = resolve(app, id, &params, &Look::default());
+    let layer = params
+        .get("layer")
+        .and_then(Value::as_str)
+        .and_then(globecraft_core::layers::MapLayer::from_code);
+    let name = (!params.is_null())
+        .then(|| super::ribbon_tools::tool_name(app, &crate::app::tools::tool_key(id, &params)));
+    let look = Look {
+        icon: layer.map(|l| l.icon()),
+        label: name.as_deref(),
+        ..Look::default()
+    };
+    let r = resolve(app, id, &params, &look);
     let resp = paint_small(ui, &r, false, false);
     if resp.clicked() && r.enabled {
         app.run_reporting(id, params);
@@ -304,6 +327,7 @@ pub(in crate::app) fn small_menu(
         checked: false,
         enabled: true,
         command: "",
+        params: None,
     };
     let resp = paint_small(ui, &r, true, true);
     egui::Popup::menu(&resp).show(|ui| {
@@ -403,29 +427,67 @@ fn menu_icon(ui: &Ui, resp: &Response, icon: &str) {
     );
 }
 
-/// A ribbon group: controls laid out left to right over a centred label, with a separator.
-pub(in crate::app) fn group(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
+/// A ribbon group: controls laid out left to right over its title, with a separator. The
+/// title opens a menu of all the group's tools (see `ribbon_tools.rs`); `id` names the group
+/// in the user's pins.
+pub(in crate::app) fn group(
+    ui: &mut Ui,
+    app: &mut App,
+    id: &'static str,
+    title: &str,
+    add: impl FnOnce(&mut Ui, &mut App),
+) {
     let t = Tokens::get(ui.ctx());
     let start = ui.cursor().min;
     let label = galley(ui, title, regular(11.0), t.group_label);
-    let label_w = label.size().x;
+    let label_w = label.size().x + GROUP_CARET_W;
+    app.ribbon_tools.begin(id);
     let inner = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = vec2(2.0, 1.0);
         let r = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
             ui.set_min_height(CONTENT_H);
             ui.spacing_mut().item_spacing = vec2(2.0, 1.0);
-            add(ui);
+            add(ui, app);
+            app.group_extras(ui, id);
         });
         let w = r.response.rect.width().max(label_w + 12.0);
-        ui.allocate_exact_size(vec2(w, LABEL_H), Sense::hover());
-        w
+        let (_, title_resp) = ui.allocate_exact_size(vec2(w, LABEL_H), Sense::hover());
+        (w, title_resp.rect)
     });
-    let w = inner.inner;
+    let rows = app.ribbon_tools.end();
+    let (w, title_rect) = inner.inner;
     let label_pos = pos2(
         start.x + (w - label_w) / 2.0,
         start.y + CONTENT_H + LABEL_H / 2.0 - 1.0 - label.size().y / 2.0,
     );
-    ui.painter().galley(label_pos, label, t.group_label);
+    if rows.is_empty() {
+        ui.painter().galley(label_pos, label, t.group_label);
+    } else {
+        // The title is a button: hovered, it is filled like the tools above it.
+        let hit = Rect::from_min_size(
+            pos2(label_pos.x - 6.0, title_rect.min.y),
+            vec2(label_w + 12.0, LABEL_H - 1.0),
+        );
+        let resp = ui.interact(hit, ui.id().with(("ribbon_group", id)), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+        if resp.hovered() || open {
+            ui.painter().rect_filled(
+                hit,
+                CornerRadius::same(4),
+                if open { t.pressed } else { t.hover },
+            );
+        }
+        let color = if resp.hovered() || open {
+            t.text
+        } else {
+            t.group_label
+        };
+        let caret_at = pos2(label_pos.x + label.size().x + 6.0, hit.center().y);
+        ui.painter().galley(label_pos, label, color);
+        caret(ui.painter(), caret_at, color);
+        egui::Popup::menu(&resp).show(|ui| app.group_menu(ui, id, &rows));
+    }
     ui.add_space(6.0);
     let x = ui.cursor().min.x;
     ui.painter().line_segment(
@@ -437,6 +499,9 @@ pub(in crate::app) fn group(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui))
     );
     ui.add_space(7.0);
 }
+
+/// Room for the caret after a group's title.
+const GROUP_CARET_W: f32 = 11.0;
 
 /// A column of up to three small controls.
 pub(in crate::app) fn col(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {

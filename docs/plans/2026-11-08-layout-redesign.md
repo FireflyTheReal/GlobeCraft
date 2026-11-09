@@ -54,5 +54,13 @@ widgets, not behaviour.
    before/after screenshots in the interface screenshot test.
 5. Keyboard: every drop-down and pane reachable by keyboard (feeds 6.6).
 
+Status (2026-11-09): step 3 is done. Every group title opens its menu (`ui/ribbon_tools.rs`);
+`ui.ribbon.pin`, `ui.quickTools.pin`, `ui.shortcut.edit`, `ui.shortcut.set` and
+`ui.ribbon.resetTools` are the commands behind the ⋮ menu; pins and shortcuts live in
+`workspace.ribbon_toggled`, `workspace.quick_tools` and `workspace.shortcuts`. Zoom In/Out,
+Undo/Redo and Close Shape moved to their groups' menus (the navigator and the quick-access
+row have them); a few groups gained menu-only tools (Top-Down View, Elevation Profile, Copy View
+Link, Save, Clear Flight…). Screenshot test: `ribbon_menus_screenshot`.
+
 Each step is a commit with screenshots; the user checks the look on the Mac between
 steps 3 and 4.

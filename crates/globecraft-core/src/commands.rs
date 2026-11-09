@@ -725,6 +725,46 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     command!("ui.ribbon", "ui-ribbon", "up", View, Interface, NO_PARAMS),
     command!(
+        "ui.ribbon.pin",
+        "ui-ribbon-pin",
+        "pin",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"group":{"type":"string","description":"Ribbon group id, such as home.navigate"},"tool":{"type":"string","description":"Command id, then a space and its parameters as JSON when it has any"},"on":{"type":"boolean","description":"Omit to toggle"}},"required":["group","tool"]}"#
+    ),
+    command!(
+        "ui.quickTools.pin",
+        "ui-quick-tools-pin",
+        "bookmark",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"tool":{"type":"string","description":"Command id, then a space and its parameters as JSON when it has any"},"on":{"type":"boolean","description":"Omit to toggle"}},"required":["tool"]}"#
+    ),
+    command!(
+        "ui.shortcut.edit",
+        "ui-shortcut-edit",
+        "keyboard",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"tool":{"type":"string","description":"Command id, then a space and its parameters as JSON when it has any"}},"required":["tool"]}"#
+    ),
+    command!(
+        "ui.shortcut.set",
+        "ui-shortcut-set",
+        "keyboard",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"tool":{"type":"string","description":"Command id, then a space and its parameters as JSON when it has any"},"keys":{"type":"string","description":"Keys such as command+shift+E; empty for no shortcut; omit for the default"}},"required":["tool"]}"#
+    ),
+    command!(
+        "ui.ribbon.resetTools",
+        "ui-ribbon-reset-tools",
+        "clear_all",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
         "ui.theme",
         "ui-theme",
         "dark",

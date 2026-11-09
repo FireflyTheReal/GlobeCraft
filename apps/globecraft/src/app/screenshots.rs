@@ -1534,6 +1534,90 @@ fn about_window() {
     }
 }
 
+/// A ribbon group's menu, a tool's ⋮ menu, a tool pinned to the ribbon and to the
+/// quick-access row, and the keyboard shortcut dialog.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn ribbon_menus_screenshot() {
+    use egui_kittest::kittest::Queryable;
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        let mut h = harness(theme);
+        settle(&mut h, 0.5);
+        save(&mut h, &dir, &format!("ribbon-{name}"));
+        h.get_by_label("Navigate").click();
+        settle(&mut h, 0.3);
+        assert!(
+            h.query_by_label_contains("Use ⋮").is_some(),
+            "the menu is open"
+        );
+        save(&mut h, &dir, &format!("ribbon-menu-{name}"));
+        h.get_all_by_label("⋮").next().expect("a ⋮ button").hover();
+        settle(&mut h, 0.2);
+        h.get_all_by_label("⋮").next().expect("a ⋮ button").click();
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, &format!("ribbon-menu-more-{name}"));
+        h.key_press(egui::Key::Escape);
+        h.key_press(egui::Key::Escape);
+        settle(&mut h, 0.2);
+        let app = h.state_mut();
+        app.run(
+            "ui.ribbon.pin",
+            json!({"group": "home.navigate", "tool": "camera.zoomIn"}),
+        )
+        .expect("pin");
+        assert!(app.tool_pinned("home.navigate", "camera.zoomIn"));
+        app.run(
+            "ui.ribbon.pin",
+            json!({"group": "home.navigate", "tool": "camera.resetNorth", "on": false}),
+        )
+        .expect("unpin");
+        app.run(
+            "ui.quickTools.pin",
+            json!({"tool": r#"layer.show {"layer":"radar"}"#}),
+        )
+        .expect("quick tool");
+        app.run(
+            "ui.shortcut.set",
+            json!({"tool": "ui.legend", "keys": "command+shift+E"}),
+        )
+        .expect("shortcut");
+        // The keys were the screenshot's: it has none now.
+        assert_eq!(crate::app::commands::shortcut("file.screenshot"), None);
+        assert!(crate::app::commands::shortcut("ui.legend").is_some());
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, &format!("ribbon-pinned-{name}"));
+        h.state_mut()
+            .run("ui.shortcut.edit", json!({"tool": "ui.legend"}))
+            .expect("edit");
+        settle(&mut h, 0.3);
+        save(&mut h, &dir, &format!("shortcut-dialog-{name}"));
+        h.event(egui::Event::Key {
+            key: egui::Key::L,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+        });
+        settle(&mut h, 0.2);
+        let app = h.state_mut();
+        assert!(app.ribbon_tools.capture.is_none(), "the dialog closed");
+        assert_eq!(
+            app.settings.workspace.shortcuts["ui.legend"],
+            "command+alt+L"
+        );
+        app.run("ui.ribbon.resetTools", json!({})).expect("reset");
+        assert!(crate::app::commands::shortcut("file.screenshot").is_some());
+        assert!(!app.tool_pinned("home.navigate", "camera.zoomIn"));
+    }
+}
+
 /// Every icon the ribbon, the Layers pane and the timeline show, with drafts beside
 /// each (`name~a`, `~b`, `~c` when drawn). `GLOBECRAFT_ICON_NAMES` lists the names,
 /// `GLOBECRAFT_ICON_DRAFTS=1` adds the drafts. Manual.

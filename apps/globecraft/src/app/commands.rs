@@ -37,13 +37,33 @@ pub(in crate::app) struct CommandState {
 
 /// The keyboard shortcut of a command, as text for tooltips and menus.
 pub(in crate::app) fn shortcut_text(id: &str) -> String {
-    shortcut(id)
-        .map(|s| s.format(&egui::ModifierNames::NAMES, cfg!(target_os = "macos")))
+    tool_shortcut_text(id)
+}
+
+/// The keyboard shortcut of a tool (see [`super::tools::tool_key`]), as text.
+pub(in crate::app) fn tool_shortcut_text(key: &str) -> String {
+    tool_shortcut(key)
+        .map(|s| keys_label(&s))
         .unwrap_or_default()
 }
 
-/// The keyboard shortcut of a command.
+/// Keys as the interface shows them (⌘⇧E on macOS, Ctrl+Shift+E elsewhere).
+pub(in crate::app) fn keys_label(shortcut: &egui::KeyboardShortcut) -> String {
+    shortcut.format(&egui::ModifierNames::NAMES, cfg!(target_os = "macos"))
+}
+
+/// The keyboard shortcut of a command: the user's, or the default.
 pub(in crate::app) fn shortcut(id: &str) -> Option<egui::KeyboardShortcut> {
+    tool_shortcut(id)
+}
+
+/// The keyboard shortcut of a tool: the user's, or the default.
+pub(in crate::app) fn tool_shortcut(key: &str) -> Option<egui::KeyboardShortcut> {
+    super::tools::user_shortcut(key).unwrap_or_else(|| default_shortcut(key))
+}
+
+/// The keyboard shortcut a command has at installation.
+pub(in crate::app) fn default_shortcut(id: &str) -> Option<egui::KeyboardShortcut> {
     use egui::{Key, Modifiers};
     let (modifiers, key) = match id {
         "places.open" => (Modifiers::COMMAND, Key::O),
@@ -673,6 +693,60 @@ impl App {
                 self.ribbon_peek = false;
                 json!({})
             }
+            "ui.ribbon.pin" => {
+                let group = str_param(p, "group").ok_or("group is required")?;
+                let tool = str_param(p, "tool").ok_or("tool is required")?;
+                let on = bool_param(p, "on").unwrap_or(!self.tool_pinned(group, tool));
+                let entry = super::tools::group_entry(group, tool);
+                let toggled = on != super::tools::pinned_by_default(group, tool);
+                self.settings.workspace.set_ribbon_toggled(&entry, toggled);
+                json!({"pinned": on})
+            }
+            "ui.quickTools.pin" => {
+                let tool = str_param(p, "tool").ok_or("tool is required")?;
+                super::tools::parse_tool(tool).ok_or("tool is not a command")?;
+                let present = self
+                    .settings
+                    .workspace
+                    .quick_tools
+                    .iter()
+                    .any(|k| k == tool);
+                let on = bool_param(p, "on").unwrap_or(!present);
+                self.settings.workspace.set_quick_tool(tool, on);
+                let now = self
+                    .settings
+                    .workspace
+                    .quick_tools
+                    .iter()
+                    .any(|k| k == tool);
+                if on && !now {
+                    return Err(format!(
+                        "the quick-access row holds at most {} tools",
+                        globecraft_data::settings::workspace::MAX_QUICK_TOOLS
+                    ));
+                }
+                json!({"pinned": now})
+            }
+            "ui.shortcut.edit" => {
+                let tool = str_param(p, "tool").ok_or("tool is required")?;
+                super::tools::parse_tool(tool).ok_or("tool is not a command")?;
+                self.ribbon_tools.capture = Some(tool.to_string());
+                json!({})
+            }
+            "ui.shortcut.set" => {
+                let tool = str_param(p, "tool").ok_or("tool is required")?.to_string();
+                super::tools::parse_tool(&tool).ok_or("tool is not a command")?;
+                self.set_shortcut(&tool, str_param(p, "keys"))?
+            }
+            "ui.ribbon.resetTools" => {
+                let defaults = globecraft_data::settings::workspace::WorkspaceLayout::default();
+                let w = &mut self.settings.workspace;
+                w.ribbon_toggled = defaults.ribbon_toggled;
+                w.quick_tools = defaults.quick_tools;
+                w.shortcuts = defaults.shortcuts;
+                super::tools::sync_shortcuts(&w.shortcuts);
+                json!({})
+            }
             "ui.theme" => {
                 self.settings.appearance.theme = match str_param(p, "theme") {
                     Some("system") => ThemePreference::System,
@@ -968,6 +1042,11 @@ impl App {
             "ui.navigatorStyle" => on(str_param(params, "style")
                 .is_some_and(|style| style == self.settings.navigation.navigator.code())),
             "ui.ribbon" => on(self.settings.workspace.ribbon_minimized),
+            "ui.ribbon.pin" => on(str_param(params, "group")
+                .zip(str_param(params, "tool"))
+                .is_some_and(|(g, t)| self.tool_pinned(g, t))),
+            "ui.quickTools.pin" => on(str_param(params, "tool")
+                .is_some_and(|t| self.settings.workspace.quick_tools.iter().any(|k| k == t))),
             "ui.theme" => on(match str_param(params, "theme") {
                 Some("system") => self.settings.appearance.theme == ThemePreference::System,
                 Some("dark") => self.settings.appearance.theme == ThemePreference::Dark,
@@ -1090,17 +1169,102 @@ impl App {
         })
     }
 
+    /// Gives `tool` the keys `keys` (`None` restores the default, empty removes it). A tool
+    /// that had these keys loses them, so each keys run one tool.
+    fn set_shortcut(&mut self, tool: &str, keys: Option<&str>) -> Result<Value, String> {
+        let wanted = match keys {
+            None => default_shortcut(tool),
+            Some("") => None,
+            Some(text) => {
+                let keys = super::tools::parse_keys(text).ok_or("unknown keys")?;
+                if !super::tools::allowed(&keys) {
+                    return Err("use Ctrl, Alt or Command with the key, or a function key".into());
+                }
+                Some(keys)
+            }
+        };
+        let mut previous = None;
+        if let Some(keys) = wanted {
+            let mut holders: Vec<String> =
+                SHORTCUT_COMMANDS.iter().map(|id| id.to_string()).collect();
+            holders.extend(self.settings.workspace.shortcuts.keys().cloned());
+            holders.sort();
+            holders.dedup();
+            for other in holders {
+                if other != tool && tool_shortcut(&other) == Some(keys) {
+                    self.settings
+                        .workspace
+                        .shortcuts
+                        .insert(other.clone(), String::new());
+                    previous = Some(other);
+                }
+            }
+        }
+        let shortcuts = &mut self.settings.workspace.shortcuts;
+        if wanted == default_shortcut(tool) {
+            shortcuts.remove(tool);
+        } else {
+            shortcuts.insert(
+                tool.to_string(),
+                wanted
+                    .map(|k| super::tools::keys_text(&k))
+                    .unwrap_or_default(),
+            );
+        }
+        super::tools::sync_shortcuts(shortcuts);
+        if let (Some(keys), Some(previous)) = (wanted, &previous) {
+            self.status = self.lang.format(
+                "shortcut-taken",
+                &[
+                    ("keys", keys_label(&keys).into()),
+                    (
+                        "tool",
+                        super::ui::ribbon_tools::tool_name(self, tool).into(),
+                    ),
+                    (
+                        "previous",
+                        super::ui::ribbon_tools::tool_name(self, previous).into(),
+                    ),
+                ],
+            );
+        }
+        Ok(json!({
+            "keys": wanted.map(|k| super::tools::keys_text(&k)),
+            "removed_from": previous,
+        }))
+    }
+
     /// Commands bound to keyboard shortcuts, run when their keys are pressed.
     pub(in crate::app) fn command_shortcuts(&mut self, ctx: &egui::Context) {
-        for id in SHORTCUT_COMMANDS {
+        super::tools::sync_shortcuts(&self.settings.workspace.shortcuts);
+        let mut bound: Vec<(String, egui::KeyboardShortcut)> = SHORTCUT_COMMANDS
+            .iter()
+            .filter_map(|id| shortcut(id).map(|s| (id.to_string(), s)))
+            .collect();
+        for (key, keys) in super::tools::user_shortcuts() {
+            if !SHORTCUT_COMMANDS.contains(&key.as_str()) {
+                bound.push((key, keys));
+            }
+        }
+        // Keys with more modifiers first: ⌘⇧S must not run ⌘S's command.
+        bound.sort_by_key(|(key, keys)| {
+            let m = keys.modifiers;
+            (
+                std::cmp::Reverse(
+                    u8::from(m.command) + u8::from(m.ctrl) + u8::from(m.alt) + u8::from(m.shift),
+                ),
+                key.clone(),
+            )
+        });
+        for (key, keys) in bound {
             #[cfg(target_os = "macos")]
-            if self.native_menu.is_some() && super::menu::native_shortcut(id) {
+            if self.native_menu.is_some() && super::menu::native_shortcut(&key) {
                 continue;
             }
-            if let Some(shortcut) = shortcut(id)
-                && ctx.input_mut(|input| input.consume_shortcut(&shortcut))
+            if ctx.input_mut(|input| input.consume_shortcut(&keys))
+                && let Some((id, params)) = super::tools::parse_tool(&key)
             {
-                self.run_reporting(id, Value::Null);
+                self.run_reporting(&id, params);
             }
         }
     }

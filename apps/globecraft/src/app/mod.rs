@@ -78,6 +78,7 @@ mod selected_satellite;
 mod still_shot;
 mod time;
 mod timezones;
+mod tools;
 mod traffic;
 mod ui;
 mod update_restart;
@@ -99,6 +100,8 @@ pub(crate) struct App {
     styled_scale: Option<f32>,
     assistant: assistant::AssistantState,
     command_search: Option<ui::palette::CommandSearch>,
+    /// The ribbon group being drawn, and the shortcut dialog.
+    ribbon_tools: ui::ribbon_tools::RibbonTools,
     /// The ribbon shown over the globe while collapsed (a tab was clicked).
     ribbon_peek: bool,
     tab_strip_rect: Option<Rect>,
@@ -341,6 +344,7 @@ impl App {
             styled_scale: None,
             assistant: assistant::AssistantState::default(),
             command_search: None,
+            ribbon_tools: Default::default(),
             ribbon_peek: false,
             tab_strip_rect: None,
             #[cfg(target_os = "macos")]
@@ -844,6 +848,7 @@ impl eframe::App for App {
         self.here_window(ui);
         self.ruler_points_window(ui);
         self.command_search_window(ui);
+        self.shortcut_dialog(ui);
         #[cfg(feature = "profiling")]
         watchdog.checkpoint("ui.slow.live_maps");
         self.live_maps.update(

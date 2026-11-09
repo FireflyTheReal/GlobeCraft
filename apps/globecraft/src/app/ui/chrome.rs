@@ -26,12 +26,10 @@ const STATUS_HEIGHT: f32 = 26.0;
 const PLACE_SEARCH_WIDTH: f32 = 300.0;
 /// The place search never shrinks below this; the tabs scroll instead.
 const MIN_PLACE_SEARCH_WIDTH: f32 = 140.0;
-/// Quick Access Toolbar commands, in order. Open and Save stay in the File menu
-/// only: their header icons repeated menu items that already have shortcuts.
-const QAT_COMMANDS: [&str; 3] = ["edit.undo", "edit.redo", "file.screenshot"];
+/// The quick-access row's buttons are 26 points wide with gaps between them; its tools
+/// are the user's (`workspace.quick_tools`, pinned from a ribbon group's menu).
 const QAT_GAP: f32 = 2.0;
-/// Three 26-point icon buttons and their gaps.
-const QAT_WIDTH: f32 = 3.0 * 26.0 + 2.0 * QAT_GAP;
+const QAT_BUTTON: f32 = 26.0;
 /// Smallest padding per tab before the tabs scroll.
 const TAB_MIN_PAD: f32 = 8.0;
 /// Room the cursor readout keeps in the status bar.
@@ -82,7 +80,9 @@ impl App {
                     let full_cmd_w =
                         (text_w(ui, label, regular(12.0)) + text_w(ui, hint, regular(11.0)) + 60.0)
                             .clamp(170.0, 230.0);
-                    let fixed = COLLAPSE_W + 8.0 + 10.0 + 10.0 + QAT_WIDTH + 8.0;
+                    let quick = self.settings.workspace.quick_tools.len() as f32;
+                    let qat_width = (quick * (QAT_BUTTON + QAT_GAP) - QAT_GAP).max(0.0);
+                    let fixed = COLLAPSE_W + 8.0 + 10.0 + 10.0 + qat_width + 8.0;
                     let room = right - left - fixed - tabs_min;
                     let wanted_search = PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0);
                     let cmd_w = if room >= full_cmd_w + wanted_search {
@@ -175,7 +175,7 @@ impl App {
                     field_rect = field_rect.union(sr);
                     // Quick Access Toolbar, left of the place search.
                     let qat = Rect::from_min_max(
-                        pos2(sr.min.x - 10.0 - QAT_WIDTH, full.min.y),
+                        pos2(sr.min.x - 10.0 - qat_width, full.min.y),
                         pos2(sr.min.x - 10.0, full.max.y),
                     );
                     let mut qat_ui = ui.new_child(
@@ -184,8 +184,10 @@ impl App {
                             .layout(egui::Layout::left_to_right(egui::Align::Center)),
                     );
                     qat_ui.spacing_mut().item_spacing = vec2(QAT_GAP, 0.0);
-                    for id in QAT_COMMANDS {
-                        icon_command(&mut qat_ui, self, id, Value::Null);
+                    for key in self.settings.workspace.quick_tools.clone() {
+                        if let Some((id, params)) = crate::app::tools::parse_tool(&key) {
+                            icon_command(&mut qat_ui, self, &id, params);
+                        }
                     }
                     // The tabs take what is left; they scroll when the window is narrow.
                     self.tab_buttons(ui, &t, qat.min.x - 8.0 - left);

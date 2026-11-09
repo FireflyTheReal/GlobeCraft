@@ -1,10 +1,18 @@
 //! The ribbon and the right pane, kept across launches (the left pane is `SidebarLayout`).
 use globecraft_core::commands::Tab;
 use serde::{Serialize, Serializer};
+use std::collections::BTreeMap;
 
 pub const DEFAULT_RIGHT_PANE_WIDTH_POINTS: f32 = 340.0;
 pub const MIN_RIGHT_PANE_WIDTH_POINTS: f32 = 260.0;
 pub const MAX_RIGHT_PANE_WIDTH_POINTS: f32 = 720.0;
+/// The quick-access row holds at most this many tools.
+pub const MAX_QUICK_TOOLS: usize = 10;
+/// Tools in the quick-access row of a new installation.
+pub const DEFAULT_QUICK_TOOLS: [&str; 3] = ["edit.undo", "edit.redo", "file.screenshot"];
+/// Caps on the saved lists, so a damaged file cannot grow them without bound.
+const MAX_SAVED_TOOLS: usize = 500;
+const MAX_TOOL_KEY_LEN: usize = 200;
 
 /// Panes on the right of the globe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -37,6 +45,14 @@ pub struct WorkspaceLayout {
     /// Right panes open as tabs, in the order they were opened.
     pub right_open: Vec<RightPane>,
     pub right_width_points: f32,
+    /// Ribbon tools whose place differs from the default, as `group/tool`: a tool shown on
+    /// the ribbon by default and hidden by the user, or one the user pinned to it.
+    pub ribbon_toggled: Vec<String>,
+    /// Tools in the quick-access row, in order. A tool is a command id, followed by a space
+    /// and its parameters as JSON when it has any.
+    pub quick_tools: Vec<String>,
+    /// Keyboard shortcuts the user changed: tool → keys (`command+shift+E`), empty for none.
+    pub shortcuts: BTreeMap<String, String>,
 }
 
 impl Default for WorkspaceLayout {
@@ -47,6 +63,9 @@ impl Default for WorkspaceLayout {
             right_pane: None,
             right_open: Vec::new(),
             right_width_points: DEFAULT_RIGHT_PANE_WIDTH_POINTS,
+            ribbon_toggled: Vec::new(),
+            quick_tools: DEFAULT_QUICK_TOOLS.map(String::from).to_vec(),
+            shortcuts: BTreeMap::new(),
         }
     }
 }
@@ -55,7 +74,41 @@ fn serialize_tab<S: Serializer>(tab: &Tab, serializer: S) -> Result<S::Ok, S::Er
     serializer.serialize_str(tab.code())
 }
 
+fn valid_key(key: &str) -> bool {
+    !key.trim().is_empty() && key.len() <= MAX_TOOL_KEY_LEN
+}
+
+/// The distinct valid strings of a JSON array, in order, at most `max`.
+fn string_list(value: &serde_json::Value, max: usize) -> Option<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for item in value.as_array()? {
+        if let Some(s) = item.as_str().filter(|s| valid_key(s))
+            && !out.iter().any(|o| o == s)
+            && out.len() < max
+        {
+            out.push(s.to_string());
+        }
+    }
+    Some(out)
+}
+
 impl WorkspaceLayout {
+    /// Pins `key` to the quick-access row, or takes it off.
+    pub fn set_quick_tool(&mut self, key: &str, on: bool) {
+        let present = self.quick_tools.iter().any(|k| k == key);
+        if on && !present && self.quick_tools.len() < MAX_QUICK_TOOLS {
+            self.quick_tools.push(key.to_string());
+        } else if !on {
+            self.quick_tools.retain(|k| k != key);
+        }
+    }
+    /// Marks `group/tool` as moved from its default place, or back.
+    pub fn set_ribbon_toggled(&mut self, entry: &str, toggled: bool) {
+        self.ribbon_toggled.retain(|k| k != entry);
+        if toggled && self.ribbon_toggled.len() < MAX_SAVED_TOOLS {
+            self.ribbon_toggled.push(entry.to_string());
+        }
+    }
     /// Shows `pane`, opening its tab.
     pub fn open_right(&mut self, pane: RightPane) {
         if !self.right_open.contains(&pane) {
@@ -124,6 +177,29 @@ impl WorkspaceLayout {
             self.right_width_points =
                 (width as f32).clamp(MIN_RIGHT_PANE_WIDTH_POINTS, MAX_RIGHT_PANE_WIDTH_POINTS);
         }
+        if let Some(list) = value
+            .get("ribbon_toggled")
+            .and_then(|v| string_list(v, MAX_SAVED_TOOLS))
+        {
+            self.ribbon_toggled = list;
+        }
+        if let Some(list) = value
+            .get("quick_tools")
+            .and_then(|v| string_list(v, MAX_QUICK_TOOLS))
+        {
+            self.quick_tools = list;
+        }
+        if let Some(map) = value.get("shortcuts").and_then(|v| v.as_object()) {
+            self.shortcuts = map
+                .iter()
+                .filter(|(tool, _)| valid_key(tool))
+                .filter_map(|(tool, keys)| {
+                    let keys = keys.as_str().filter(|k| k.len() <= MAX_TOOL_KEY_LEN)?;
+                    Some((tool.clone(), keys.to_string()))
+                })
+                .take(MAX_SAVED_TOOLS)
+                .collect();
+        }
     }
 }
 
@@ -149,5 +225,34 @@ mod tests {
         assert_eq!(restored.ribbon_tab, Tab::Live);
         assert_eq!(restored.right_width_points, MAX_RIGHT_PANE_WIDTH_POINTS);
         assert_eq!(restored.right_open, [RightPane::Measure]);
+    }
+
+    #[test]
+    fn tools_and_shortcuts_roundtrip_and_reject_damage() {
+        let mut layout = WorkspaceLayout::default();
+        assert_eq!(layout.quick_tools, DEFAULT_QUICK_TOOLS);
+        layout.set_quick_tool("ui.legend", true);
+        layout.set_quick_tool("edit.undo", false);
+        layout.set_quick_tool("ui.legend", true);
+        layout.set_ribbon_toggled("home.navigate/camera.zoomIn", true);
+        layout
+            .shortcuts
+            .insert("ui.legend".into(), "command+L".into());
+        let mut restored = WorkspaceLayout::default();
+        restored.apply(&serde_json::to_value(&layout).unwrap());
+        assert_eq!(restored, layout);
+        assert_eq!(
+            restored.quick_tools,
+            ["edit.redo", "file.screenshot", "ui.legend"]
+        );
+        restored.apply(&serde_json::json!({
+            "quick_tools": ["a", "a", "", 3, "b"],
+            "ribbon_toggled": "nope",
+            "shortcuts": {"x": 1, "y": "", "": "command+K"},
+        }));
+        assert_eq!(restored.quick_tools, ["a", "b"]);
+        assert_eq!(restored.ribbon_toggled, ["home.navigate/camera.zoomIn"]);
+        assert_eq!(restored.shortcuts.len(), 1);
+        assert_eq!(restored.shortcuts["y"], "");
     }
 }

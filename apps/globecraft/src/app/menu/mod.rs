@@ -21,7 +21,7 @@ mod tests;
 pub(super) fn native_shortcut(id: &str) -> bool {
     Action::ALL
         .into_iter()
-        .any(|action| action.command().0 == id && action.shortcut().is_some())
+        .any(|action| action.command().0 == id && native::accelerator(action).is_some())
 }
 
 #[cfg(target_os = "macos")]
