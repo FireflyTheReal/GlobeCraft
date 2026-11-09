@@ -9,11 +9,17 @@ use globecraft_core::language::Lang;
 use globecraft_data::user_data::{
     ArchiveInfo, FeatureFormat, MBTILES_PREFIX, PMTILES_PREFIX, UserLayer, UserSource, WmsLayer,
     is_url,
-    presets::{self, Category, Longevity},
+    presets::{self, Longevity},
     wms_template,
 };
 use std::sync::{Arc, Mutex};
 
+/// The dialog's height: the same for every tab.
+const DIALOG_HEIGHT_POINTS: f32 = 520.0;
+/// The KML row under the page.
+const KML_ROW_HEIGHT_POINTS: f32 = 40.0;
+/// Room for a library row's Add button.
+const ADD_COLUMN_POINTS: f32 = 96.0;
 /// The level a web map's test tile is fetched at.
 const TEST_ZOOM: u8 = 2;
 const DEFAULT_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 176, 0);
@@ -353,8 +359,9 @@ impl AddDataDialog {
         let (open, _) = super::surface::Surface::dialog(
             "add_data_window",
             lang.text("add-data-title"),
-            super::surface::Width::Medium,
+            super::surface::Width::Large,
         )
+        .height(DIALOG_HEIGHT_POINTS)
         .show(ctx, lang, |ui| {
             // Basic (Settings) offers the library; the forms stay reachable
             // when a command opened one.
@@ -372,11 +379,16 @@ impl AddDataDialog {
                 ui.weak(lang.text("add-data-advanced-hint"));
             }
             ui.separator();
-            match self.tab {
-                Tab::Library => self.library(ui, lang, added_presets, &mut action),
-                Tab::WebMap => self.web_form(ui, ctx, lang, runtime, &mut action),
-                Tab::Features => self.feature_form(ui, ctx, lang, runtime, &mut action),
-            }
+            // The page scrolls; the dialog keeps its size whichever tab is shown.
+            egui::ScrollArea::vertical()
+                .id_salt(("add-data-page", self.tab as u8))
+                .auto_shrink([false, false])
+                .max_height(ui.available_height() - KML_ROW_HEIGHT_POINTS)
+                .show(ui, |ui| match self.tab {
+                    Tab::Library => self.library(ui, lang, added_presets, &mut action),
+                    Tab::WebMap => self.web_form(ui, ctx, lang, runtime, &mut action),
+                    Tab::Features => self.feature_form(ui, ctx, lang, runtime, &mut action),
+                });
             ui.separator();
             ui.horizontal(|ui| {
                 ui.weak(lang.text("add-data-kml-help"));
@@ -391,78 +403,94 @@ impl AddDataDialog {
         action
     }
 
+    /// The library's sources by category, one row each, the whole width: what it is on
+    /// the left, Add on the right.
     fn library(&mut self, ui: &mut egui::Ui, lang: Lang, added: &[String], action: &mut Action) {
-        egui::ScrollArea::vertical()
-            .max_height(420.0)
-            .show(ui, |ui| {
-                for category in Category::ALL {
-                    ui.strong(lang.text(category.label_key()));
-                    for preset in presets::PRESETS.iter().filter(|p| p.category == category) {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.set_width(ui.available_width() - 90.0);
-                                ui.label(egui::RichText::new(lang.text(preset.name_key)).strong());
-                                ui.label(lang.text(preset.help_key));
-                                let commercial = if preset.commercial_use {
-                                    "add-data-commercial-yes"
-                                } else {
-                                    "add-data-commercial-no"
-                                };
-                                let longevity = match preset.longevity {
-                                    Longevity::Institutional => "add-data-longevity-institutional",
-                                    Longevity::Goodwill => "add-data-longevity-goodwill",
-                                };
-                                ui.weak(format!(
-                                    "{} · {} · {}",
-                                    preset.licence,
-                                    lang.text(commercial),
-                                    lang.text(longevity)
-                                ));
-                                if let Some(service) = preset.key.and_then(|id| {
-                                    globecraft_data::keys::SERVICES
-                                        .iter()
-                                        .find(|service| service.id == id)
-                                }) {
-                                    let note = if globecraft_data::keys::get(service.id).is_some() {
-                                        "add-data-key-ready"
-                                    } else {
-                                        "add-data-key-needed"
-                                    };
-                                    ui.label(
-                                        egui::RichText::new(lang.format(
-                                            note,
-                                            &[("service", lang.text(service.name_key).into())],
-                                        ))
-                                        .color(egui::Color32::from_rgb(230, 170, 60)),
-                                    );
-                                }
-                            });
-                            let present = added.iter().any(|code| code == preset.code);
-                            let label = if present {
-                                "add-data-added-label"
-                            } else {
-                                "add-data-add-action"
-                            };
-                            if ui
-                                .add_enabled(!present, egui::Button::new(lang.text(label)))
-                                .clicked()
-                            {
-                                *action = Action::Add(UserLayer {
-                                    id: 0,
-                                    name: lang.text(preset.name_key).to_owned(),
-                                    source: preset.source(),
-                                    visible: true,
-                                    opacity: preset.opacity,
-                                    attribution: preset.attribution.to_owned(),
-                                    color: preset.color.to_owned(),
-                                    preset: Some(preset.code.to_owned()),
-                                });
-                            }
-                        });
-                        ui.add_space(6.0);
+        for (index, preset) in presets::PRESETS.iter().enumerate() {
+            let first_of_category =
+                index == 0 || presets::PRESETS[index - 1].category != preset.category;
+            if first_of_category {
+                ui.add_space(if index == 0 { 0.0 } else { 10.0 });
+                ui.label(
+                    egui::RichText::new(lang.text(preset.category.label_key()))
+                        .strong()
+                        .size(13.5),
+                );
+                ui.separator();
+            } else {
+                ui.separator();
+            }
+            ui.horizontal(|ui| {
+                let present = added.iter().any(|code| code == preset.code);
+                let label = if present {
+                    "add-data-added-label"
+                } else {
+                    "add-data-add-action"
+                };
+                let text_width = (ui.available_width() - ADD_COLUMN_POINTS).max(120.0);
+                ui.vertical(|ui| {
+                    ui.set_width(text_width);
+                    ui.label(egui::RichText::new(lang.text(preset.name_key)).strong());
+                    ui.label(lang.text(preset.help_key));
+                    let commercial = if preset.commercial_use {
+                        "add-data-commercial-yes"
+                    } else {
+                        "add-data-commercial-no"
+                    };
+                    let longevity = match preset.longevity {
+                        Longevity::Institutional => "add-data-longevity-institutional",
+                        Longevity::Goodwill => "add-data-longevity-goodwill",
+                    };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} · {} · {}",
+                            preset.licence,
+                            lang.text(commercial),
+                            lang.text(longevity)
+                        ))
+                        .size(11.0)
+                        .weak(),
+                    );
+                    if let Some(service) = preset.key.and_then(|id| {
+                        globecraft_data::keys::SERVICES
+                            .iter()
+                            .find(|service| service.id == id)
+                    }) {
+                        let note = if globecraft_data::keys::get(service.id).is_some() {
+                            "add-data-key-ready"
+                        } else {
+                            "add-data-key-needed"
+                        };
+                        ui.label(
+                            egui::RichText::new(
+                                lang.format(
+                                    note,
+                                    &[("service", lang.text(service.name_key).into())],
+                                ),
+                            )
+                            .color(egui::Color32::from_rgb(230, 170, 60)),
+                        );
                     }
-                }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(!present, egui::Button::new(lang.text(label)))
+                        .clicked()
+                    {
+                        *action = Action::Add(UserLayer {
+                            id: 0,
+                            name: lang.text(preset.name_key).to_owned(),
+                            source: preset.source(),
+                            visible: true,
+                            opacity: preset.opacity,
+                            attribution: preset.attribution.to_owned(),
+                            color: preset.color.to_owned(),
+                            preset: Some(preset.code.to_owned()),
+                        });
+                    }
+                });
             });
+        }
     }
 
     fn web_form(

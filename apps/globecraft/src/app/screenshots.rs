@@ -580,9 +580,7 @@ fn add_data_screenshots() {
     let sample = app.settings.user_layers[0].clone();
     app.settings.saved_sources.toggle_favorite(&sample);
     let _ = app.run("data.add", json!({"preset": "earthquakes"}));
-    let _ = app.run("ui.pane.data", Value::Null);
     settle(&mut h, 1.0);
-    save(&mut h, &dir, "10-data-pane");
     // The Layers ribbon at both experience levels: Basic leaves out the Earth models.
     let app = h.state_mut();
     app.settings.workspace.ribbon_tab = Tab::Map;
@@ -1581,7 +1579,7 @@ fn layout_inventory_screenshots() {
             alt: 30.0,
         })
         .collect();
-    for pane in ["ui.pane.layers", "ui.pane.places", "ui.pane.data"] {
+    for pane in ["ui.pane.layers", "ui.pane.places"] {
         h.state_mut().run(pane, json!({})).expect(pane);
         settle(&mut h, 0.5);
         save(&mut h, &dir, &format!("pane-{pane}"));
@@ -1716,6 +1714,36 @@ fn keyboard_navigation_screenshot() {
     assert_eq!(focused(&h), Some(left_tab_id(panel)), "Shift+F6 goes back");
 }
 
+/// Side menus in the group drop-downs: Nature ▾ › Exaggeration ▸, My data ▾ ›
+/// Ocean ▸ (the sources that were the Data pane), View › Window ▾ › Theme ▸.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn side_menus_screenshot() {
+    use egui_kittest::kittest::Queryable;
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Light);
+    settle(&mut h, 0.5);
+    for (tab, group, side, name) in [
+        (Tab::Map, "Nature", "Exaggeration", "side-exaggeration"),
+        (Tab::Map, "My data", "Ocean", "side-library-ocean"),
+        (Tab::View, "Window", "Theme", "side-theme"),
+    ] {
+        h.state_mut().settings.workspace.ribbon_tab = tab;
+        settle(&mut h, 0.3);
+        h.get_by_label(group).click();
+        settle(&mut h, 0.3);
+        h.get_by_label_contains(side).hover();
+        settle(&mut h, 0.5);
+        save(&mut h, &dir, name);
+        h.key_press(egui::Key::Escape);
+        h.key_press(egui::Key::Escape);
+        settle(&mut h, 0.3);
+    }
+}
+
 /// A ribbon group's menu, a tool's ⋮ menu, a tool pinned to the ribbon and to the
 /// quick-access row, and the keyboard shortcut dialog.
 #[test]
@@ -1736,7 +1764,7 @@ fn ribbon_menus_screenshot() {
         h.get_by_label("Navigate").click();
         settle(&mut h, 0.3);
         assert!(
-            h.query_by_label("Top-Down View").is_some(),
+            h.query_by_label("Auto-Rotate").is_some(),
             "the menu is open"
         );
         save(&mut h, &dir, &format!("ribbon-menu-{name}"));

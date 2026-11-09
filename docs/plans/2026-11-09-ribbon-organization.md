@@ -155,6 +155,13 @@ A sidebar with seven pages instead of eleven wrapped tabs, and the search box ab
   coordinate format; on the elevation or the altitude, the distance units (click still
   copies the coordinates and edits the altitude). All six steps are in; next is the
   layout redesign's step 4 (floating windows into panes, cards and dialogs).
+- 2026-11-09, late: from the user's review. Finer settings live in side menus of the group
+  drop-downs (`ui/ribbon_side.rs`): Nature ▾ › Exaggeration ▸, Reference ▾ › Earth model ▸,
+  Window ▾ › Theme ▸; the ribbon shows tools only. The Data pane went into My data ▾ ›
+  Favorites ▸, Recent ▸, Ocean / Earth / Hazards ▸ (the left sidebar is Layers and Places).
+  Pinned tools fill the group's last column before starting a new one. Dialogs sit over
+  the globe, below the ribbon. Add Data keeps one size on every tab, and its library rows
+  use the dialog's width.
 
 ## Steps (each a commit with before/after screenshots of every tab)
 

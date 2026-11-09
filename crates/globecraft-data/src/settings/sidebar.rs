@@ -14,11 +14,9 @@ pub enum SidebarPanel {
     Layers,
     #[default]
     Places,
-    /// The data browser: library, favorites, recent sources and the user's layers.
-    Data,
 }
 impl SidebarPanel {
-    pub const ALL: [Self; 3] = [Self::Layers, Self::Places, Self::Data];
+    pub const ALL: [Self; 2] = [Self::Layers, Self::Places];
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -49,7 +47,8 @@ impl SidebarLayout {
                 "explore" => SidebarPanel::Places,
                 "layers" => SidebarPanel::Layers,
                 "places" => SidebarPanel::Places,
-                "data" => SidebarPanel::Data,
+                // The Data pane went into Map › My data ▾ (2026-11).
+                "data" => SidebarPanel::Layers,
                 _ => self.panel,
             };
         }

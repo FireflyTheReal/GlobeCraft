@@ -1080,6 +1080,7 @@ cmd-ui-focus-next = Next Region
 cmd-ui-focus-next-help = Move the keyboard focus to the next part of the window: the ribbon, the left pane, the right pane, the globe. Tab and the arrow keys then move between its controls; Enter or Space presses one.
 cmd-ui-focus-previous = Previous Region
 cmd-ui-focus-previous-help = Move the keyboard focus to the previous part of the window.
+exaggeration-needs-terrain = Turn 3D Terrain on to change it.
 cmd-ui-theme = Theme
 cmd-ui-theme-help = Follow the system, or use the dark or light theme.
 cmd-ui-fullscreen = Full Screen

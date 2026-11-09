@@ -642,10 +642,9 @@ impl App {
                 json!({})
             }
             // ── Panes and interface
-            "ui.pane.layers" | "ui.pane.places" | "ui.pane.data" => {
+            "ui.pane.layers" | "ui.pane.places" => {
                 let panel = match id {
                     "ui.pane.layers" => SidebarPanel::Layers,
-                    "ui.pane.data" => SidebarPanel::Data,
                     _ => SidebarPanel::Places,
                 };
                 let layout = &mut self.settings.sidebar;
@@ -1033,9 +1032,6 @@ impl App {
             "ui.pane.places" => {
                 on(self.settings.sidebar.open
                     && self.settings.sidebar.panel == SidebarPanel::Places)
-            }
-            "ui.pane.data" => {
-                on(self.settings.sidebar.open && self.settings.sidebar.panel == SidebarPanel::Data)
             }
             "ui.pane.assistant" => {
                 on(self.settings.workspace.right_pane == Some(RightPane::Assistant))

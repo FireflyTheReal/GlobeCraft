@@ -687,6 +687,7 @@ impl App {
         }
         self.here_window(&ui.ctx().clone(), rect);
         self.legend_watch();
+        super::ui::surface::remember_globe_rect(ui.ctx(), rect);
 
         // scale bar
         if let Some(scale_bar) = self.scale_bar_cache.for_view(

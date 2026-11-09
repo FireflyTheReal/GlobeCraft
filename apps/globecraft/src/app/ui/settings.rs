@@ -207,7 +207,14 @@ impl App {
                         if !shown {
                             continue;
                         }
-                        if page_button(ui, category, lang, state.category == category).clicked() {
+                        if super::surface::sidebar_item(
+                            ui,
+                            category.icon(),
+                            lang.text(category.name_id()),
+                            state.category == category,
+                        )
+                        .clicked()
+                        {
                             state.category = category;
                             state.query.clear();
                         }
@@ -340,53 +347,6 @@ impl App {
         }
     }
 }
-
-/// A page in the sidebar: icon and name, filled when it is the page shown.
-fn page_button(ui: &mut egui::Ui, category: Category, lang: Lang, on: bool) -> egui::Response {
-    let t = super::theme::Tokens::get(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), PAGE_ROW_HEIGHT_POINTS),
-        egui::Sense::click(),
-    );
-    let name = lang.text(category.name_id());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
-    let fill = if on {
-        Some(t.checked)
-    } else if resp.hovered() {
-        Some(t.hover)
-    } else {
-        None
-    };
-    if let Some(fill) = fill {
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(6), fill);
-    }
-    super::icons::paint(
-        ui.painter(),
-        egui::Rect::from_center_size(
-            egui::pos2(rect.min.x + 16.0, rect.center().y),
-            egui::vec2(18.0, 18.0),
-        ),
-        category.icon(),
-        t.icon,
-        t.accent,
-    );
-    ui.painter().text(
-        egui::pos2(rect.min.x + 32.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        name,
-        if on {
-            super::theme::semibold(12.5)
-        } else {
-            super::theme::regular(12.5)
-        },
-        t.text,
-    );
-    resp
-}
-
-/// Height of a page's row in the Settings sidebar.
-const PAGE_ROW_HEIGHT_POINTS: f32 = 30.0;
 
 #[cfg(test)]
 mod tests {

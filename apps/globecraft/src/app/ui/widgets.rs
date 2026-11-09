@@ -256,31 +256,6 @@ pub(in crate::app) fn choice_big(ui: &mut Ui, app: &mut App, help: &str, choices
     egui::Popup::menu(&resp).show(|ui| choice_menu(ui, app, choices));
 }
 
-/// A small button for a set of choices (theme, Earth model), labelled with the one in
-/// effect, or with `title` when the options' names are too long for the ribbon.
-pub(in crate::app) fn choice_small(
-    ui: &mut Ui,
-    app: &mut App,
-    title: Option<&str>,
-    help: &str,
-    choices: &[Choice],
-) {
-    let Some(current) = current_choice(app, choices) else {
-        return;
-    };
-    let r = Resolved {
-        icon: current.icon,
-        label: title.unwrap_or(current.label),
-        help,
-        checked: false,
-        enabled: true,
-        command: "",
-        params: None,
-    };
-    let resp = paint_small(ui, &r, true, true);
-    egui::Popup::menu(&resp).show(|ui| choice_menu(ui, app, choices));
-}
-
 /// Paints a small button: an 18 px icon with an optional label.
 fn paint_small(ui: &mut Ui, r: &Resolved, show_label: bool, menu: bool) -> Response {
     let t = Tokens::get(ui.ctx());
@@ -495,6 +470,7 @@ pub(in crate::app) fn group(
     let label = galley(ui, title, regular(11.0), t.group_label);
     let label_w = label.size().x + GROUP_CARET_W;
     app.ribbon_tools.begin(id);
+    forget_last_column(ui.ctx());
     let inner = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = vec2(2.0, 1.0);
         let r = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
@@ -513,8 +489,8 @@ pub(in crate::app) fn group(
         start.x + (w - label_w) / 2.0,
         start.y + CONTENT_H + LABEL_H / 2.0 - 1.0 - label.size().y / 2.0,
     );
-    // A group of one tool has nothing more to show.
-    if rows.len() < 2 {
+    // A group of one tool has nothing more to show, unless it has side menus.
+    if rows.len() < 2 && !super::ribbon_side::has_side_menus(id) {
         ui.painter().galley(label_pos, label, t.group_label);
     } else {
         // The title is a button: hovered, it is filled like the tools above it.
@@ -557,11 +533,40 @@ const GROUP_CARET_W: f32 = 11.0;
 
 /// A column of up to three small controls.
 pub(in crate::app) fn col(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
-        ui.add_space(1.0);
-        add(ui);
-    });
+    let rect = ui
+        .vertical(|ui| {
+            ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+            ui.add_space(1.0);
+            add(ui);
+        })
+        .response
+        .rect;
+    // Kept for the group's pinned tools, which fill the last column first.
+    let rows = (rect.height() / SMALL_ROW_POINTS).round() as usize;
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new(LAST_COLUMN_KEY), LastColumn { rect, rows }));
+}
+
+/// A small button's height with the gap under it.
+const SMALL_ROW_POINTS: f32 = 23.0;
+/// Small buttons in a column.
+pub(in crate::app) const COLUMN_ROWS: usize = 3;
+const LAST_COLUMN_KEY: &str = "ribbon-last-column";
+
+/// The last column a group laid out: where it is and how many small buttons it holds.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::app) struct LastColumn {
+    pub rect: Rect,
+    pub rows: usize,
+}
+
+/// The last column laid out since `forget_last_column`.
+pub(in crate::app) fn last_column(ctx: &egui::Context) -> Option<LastColumn> {
+    ctx.data(|d| d.get_temp::<LastColumn>(egui::Id::new(LAST_COLUMN_KEY)))
+}
+
+pub(in crate::app) fn forget_last_column(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<LastColumn>(egui::Id::new(LAST_COLUMN_KEY)));
 }
 
 /// A filled action button (Send, Allow…), with its label centred on the capital letters.

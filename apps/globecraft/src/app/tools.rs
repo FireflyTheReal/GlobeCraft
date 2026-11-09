@@ -175,7 +175,6 @@ pub(in crate::app) const EXTRAS: &[(&str, &str)] = &[
     ("live.tracking", "satellite.clear"),
     ("view.panes", "ui.pane.layers"),
     ("view.panes", "ui.pane.places"),
-    ("view.panes", "ui.pane.data"),
     ("view.panes", "ui.tileDiagnostics"),
     ("view.window", "ui.ribbon"),
     ("view.window", "ui.minimize"),

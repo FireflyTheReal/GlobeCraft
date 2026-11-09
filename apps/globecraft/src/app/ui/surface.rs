@@ -34,7 +34,7 @@ impl Width {
 /// Where a surface sits.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::app) enum Place {
-    /// A dialog: centred in the window.
+    /// A dialog: centred over the globe, below the ribbon and between the panes.
     Centre,
     /// A card: in the top-left corner of the globe's rectangle.
     Card(Rect),
@@ -143,7 +143,14 @@ impl<'a> Surface<'a> {
                 .max_width(self.width),
         };
         window = match self.place {
-            Place::Centre => window.anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)),
+            Place::Centre => match globe_rect(ctx) {
+                // Over the globe, so the ribbon and the panes stay in reach.
+                Some(globe) => window
+                    .pivot(Align2::CENTER_CENTER)
+                    .fixed_pos(globe.center())
+                    .constrain_to(globe),
+                None => window.anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)),
+            },
             Place::Card(globe) => window
                 .fixed_pos(globe.left_top() + vec2(CARD_MARGIN_POINTS, CARD_MARGIN_POINTS))
                 .constrain_to(globe),
@@ -185,6 +192,18 @@ impl<'a> Surface<'a> {
         (open, response.and_then(|r| r.inner))
     }
 }
+
+/// Where the globe is drawn this frame (see `remember_globe_rect`).
+fn globe_rect(ctx: &egui::Context) -> Option<Rect> {
+    ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(GLOBE_RECT_KEY)))
+}
+
+/// Notes where the globe is drawn, for the dialogs to sit over it.
+pub(in crate::app) fn remember_globe_rect(ctx: &egui::Context, rect: Rect) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(GLOBE_RECT_KEY), rect));
+}
+
+const GLOBE_RECT_KEY: &str = "surface-globe-rect";
 
 /// The header: title (and subtitle) on the left, ✕ on the right, a line under it.
 /// Returns whether ✕ was clicked.
@@ -266,3 +285,42 @@ pub(in crate::app) fn footer(ui: &mut Ui, buttons: impl FnOnce(&mut Ui)) {
     ui.separator();
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), buttons);
 }
+
+/// A page in a dialog's sidebar (Settings, Add Data): icon and name, filled when it is
+/// the page shown.
+pub(in crate::app) fn sidebar_item(ui: &mut Ui, icon: &str, name: &str, on: bool) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(
+        vec2(ui.available_width(), SIDEBAR_ROW_HEIGHT_POINTS),
+        Sense::click(),
+    );
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
+    let fill = if on {
+        Some(t.checked)
+    } else if resp.hovered() {
+        Some(t.hover)
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter().rect_filled(rect, CornerRadius::same(6), fill);
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(pos2(rect.min.x + 16.0, rect.center().y), vec2(18.0, 18.0)),
+        icon,
+        t.icon,
+        t.accent,
+    );
+    ui.painter().with_clip_rect(rect).text(
+        pos2(rect.min.x + 32.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        name,
+        if on { semibold(12.5) } else { regular(12.5) },
+        t.text,
+    );
+    resp
+}
+
+/// Height of a row in a dialog's sidebar.
+const SIDEBAR_ROW_HEIGHT_POINTS: f32 = 30.0;

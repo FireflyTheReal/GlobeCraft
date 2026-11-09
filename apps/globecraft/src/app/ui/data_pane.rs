@@ -1,17 +1,17 @@
-//! The Data pane (roadmap 2.5), the Add Data browser beside the globe: starred and
-//! recently added sources, the service library and the user's own layers, each
-//! added again in one click.
+//! Sources to add in one click (roadmap 2.5), in the side menus of Map › My data ▾:
+//! starred and recently added sources, and the library by category. (They were the
+//! Data pane; the user's own layers are in the Layers pane.)
 use super::icons;
-use super::theme::{Tokens, semibold};
-use super::widgets::{primary_button, section_heading};
+use super::theme::Tokens;
 use crate::app::App;
 use eframe::egui::{self, CornerRadius, Sense, Ui, vec2};
-use globecraft_data::settings::sidebar::SidebarPanel;
 use globecraft_data::user_data::{
     UserLayer, UserSource,
     presets::{self, Category},
 };
-use serde_json::json;
+
+/// Width of the source lists' side menus.
+const SIDE_MENU_WIDTH_POINTS: f32 = 340.0;
 
 /// What a row asks for.
 enum RowAction {
@@ -151,112 +151,18 @@ impl App {
         }
     }
 
-    pub(in crate::app) fn data_pane(&mut self, ui: &mut Ui) {
+    /// Rows of sources: a click on Add adds one, the star keeps it in Favorites.
+    fn source_rows(&mut self, ui: &mut Ui, layers: &[(UserLayer, String)]) {
         let t = Tokens::get(ui.ctx());
-        let lang = self.lang;
-        if primary_button(ui, lang.text("cmd-ui-add-data"), true, vec2(0.0, 0.0)).clicked() {
-            self.run_reporting("ui.addData", serde_json::Value::Null);
-        }
-        ui.add_space(6.0);
+        ui.set_min_width(SIDE_MENU_WIDTH_POINTS);
         let mut add: Option<UserLayer> = None;
         let mut toggle: Option<UserLayer> = None;
-        let mut handle = |action: RowAction, layer: &UserLayer| match action {
-            RowAction::Add => add = Some(layer.clone()),
-            RowAction::Star => toggle = Some(layer.clone()),
-            RowAction::None => {}
-        };
-
-        ui.horizontal(|ui| {
-            section_heading(ui, lang.text("data-pane-favorites-title"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::icon_button(ui, "export", lang.text("data-pane-export-help")).clicked() {
-                    self.pick_sources_export();
-                }
-                if icons::icon_button(ui, "open", lang.text("data-pane-import-help")).clicked() {
-                    self.pick_sources_import();
-                }
-            });
-        });
-        if self.settings.saved_sources.favorites.is_empty() {
-            ui.label(
-                egui::RichText::new(lang.text("data-pane-favorites-empty"))
-                    .size(11.5)
-                    .color(t.text_dim),
-            );
-        }
-        for layer in &self.settings.saved_sources.favorites {
-            handle(
-                source_row(ui, &t, self, layer, Some(&location(layer))),
-                layer,
-            );
-        }
-
-        ui.add_space(6.0);
-        section_heading(ui, lang.text("data-pane-recent-title"));
-        if self.settings.saved_sources.recent.is_empty() {
-            ui.label(
-                egui::RichText::new(lang.text("data-pane-recent-empty"))
-                    .size(11.5)
-                    .color(t.text_dim),
-            );
-        }
-        for layer in &self.settings.saved_sources.recent {
-            handle(
-                source_row(ui, &t, self, layer, Some(&location(layer))),
-                layer,
-            );
-        }
-
-        ui.add_space(6.0);
-        section_heading(ui, lang.text("data-pane-services-title"));
-        for category in Category::ALL {
-            ui.label(
-                egui::RichText::new(lang.text(category.label_key()))
-                    .font(semibold(11.5))
-                    .color(t.text_dim),
-            );
-            for preset in presets::PRESETS.iter().filter(|p| p.category == category) {
-                let layer = UserLayer {
-                    id: 0,
-                    name: lang.text(preset.name_key).to_owned(),
-                    source: preset.source(),
-                    visible: true,
-                    opacity: preset.opacity,
-                    attribution: preset.attribution.to_owned(),
-                    color: preset.color.to_owned(),
-                    preset: Some(preset.code.to_owned()),
-                };
-                handle(
-                    source_row(ui, &t, self, &layer, Some(preset.licence)),
-                    &layer,
-                );
+        for (layer, note) in layers {
+            match source_row(ui, &t, self, layer, Some(note)) {
+                RowAction::Add => add = Some(layer.clone()),
+                RowAction::Star => toggle = Some(layer.clone()),
+                RowAction::None => {}
             }
-        }
-
-        ui.add_space(6.0);
-        section_heading(ui, lang.text("data-pane-mine-title"));
-        if self.settings.user_layers.is_empty() {
-            ui.label(
-                egui::RichText::new(lang.text("layers-user-empty"))
-                    .size(11.5)
-                    .color(t.text_dim),
-            );
-        }
-        let mut show: Option<u64> = None;
-        for layer in self.settings.user_layers.iter().rev() {
-            let mut visible = layer.visible;
-            if ui.checkbox(&mut visible, &layer.name).changed() {
-                show = Some(layer.id);
-            }
-        }
-        if !self.settings.user_layers.is_empty()
-            && ui.link(lang.text("data-pane-open-layers-action")).clicked()
-        {
-            self.settings.sidebar.panel = SidebarPanel::Layers;
-        }
-
-        if let Some(id) = show {
-            self.run_reporting("data.show", json!({"id": id}));
         }
         if let Some(layer) = toggle {
             self.settings.saved_sources.toggle_favorite(&layer);
@@ -264,8 +170,86 @@ impl App {
         if let Some(layer) = add {
             let name = layer.name.clone();
             self.add_user_layer(layer);
-            self.status = lang.format("add-data-added-status", &[("name", name.into())]);
+            self.status = self
+                .lang
+                .format("add-data-added-status", &[("name", name.into())]);
         }
+    }
+
+    /// A dim line where a list is empty.
+    fn empty_note(&self, ui: &mut Ui, key: &str) {
+        let t = Tokens::get(ui.ctx());
+        ui.set_min_width(SIDE_MENU_WIDTH_POINTS);
+        ui.label(
+            egui::RichText::new(self.lang.text(key))
+                .size(11.5)
+                .color(t.text_dim),
+        );
+    }
+
+    /// Favorites ▸: the starred sources, and their export and import.
+    pub(in crate::app) fn favorites_menu(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
+        let rows: Vec<_> = self
+            .settings
+            .saved_sources
+            .favorites
+            .iter()
+            .map(|layer| (layer.clone(), location(layer)))
+            .collect();
+        if rows.is_empty() {
+            self.empty_note(ui, "data-pane-favorites-empty");
+        }
+        self.source_rows(ui, &rows);
+        ui.separator();
+        if ui.button(lang.text("data-pane-export-help")).clicked() {
+            self.pick_sources_export();
+            ui.close();
+        }
+        if ui.button(lang.text("data-pane-import-help")).clicked() {
+            self.pick_sources_import();
+            ui.close();
+        }
+    }
+
+    /// Recent ▸: the sources added lately.
+    pub(in crate::app) fn recent_menu(&mut self, ui: &mut Ui) {
+        let rows: Vec<_> = self
+            .settings
+            .saved_sources
+            .recent
+            .iter()
+            .map(|layer| (layer.clone(), location(layer)))
+            .collect();
+        if rows.is_empty() {
+            self.empty_note(ui, "data-pane-recent-empty");
+        }
+        self.source_rows(ui, &rows);
+    }
+
+    /// A library category ▸: its sources.
+    pub(in crate::app) fn library_menu(&mut self, ui: &mut Ui, category: Category) {
+        let lang = self.lang;
+        let rows: Vec<_> = presets::PRESETS
+            .iter()
+            .filter(|p| p.category == category)
+            .map(|preset| {
+                (
+                    UserLayer {
+                        id: 0,
+                        name: lang.text(preset.name_key).to_owned(),
+                        source: preset.source(),
+                        visible: true,
+                        opacity: preset.opacity,
+                        attribution: preset.attribution.to_owned(),
+                        color: preset.color.to_owned(),
+                        preset: Some(preset.code.to_owned()),
+                    },
+                    preset.licence.to_owned(),
+                )
+            })
+            .collect();
+        self.source_rows(ui, &rows);
     }
 }
 

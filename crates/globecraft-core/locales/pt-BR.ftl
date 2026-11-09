@@ -1080,6 +1080,7 @@ cmd-ui-focus-next = Próxima região
 cmd-ui-focus-next-help = Leva o foco do teclado à próxima parte da janela: a faixa, o painel esquerdo, o painel direito, o globo. Tab e as setas passam então entre os controles; Enter ou Espaço aciona um.
 cmd-ui-focus-previous = Região anterior
 cmd-ui-focus-previous-help = Leva o foco do teclado à parte anterior da janela.
+exaggeration-needs-terrain = Ative o relevo 3D para alterá-lo.
 cmd-ui-theme = Tema
 cmd-ui-theme-help = Segue o sistema ou usa o tema escuro ou claro.
 cmd-ui-fullscreen = Tela cheia

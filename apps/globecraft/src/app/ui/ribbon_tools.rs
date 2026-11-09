@@ -3,6 +3,7 @@
 //! row, or changes its keyboard shortcut (in a small dialog that listens for the keys).
 use super::icons;
 use super::theme::{Tokens, regular, semibold};
+use super::widgets::COLUMN_ROWS;
 use crate::app::App;
 use crate::app::tools::{
     EXTRAS, allowed, group_entry, keys_text, parse_tool, pinned_by_default, pressed, tool_key,
@@ -10,8 +11,10 @@ use crate::app::tools::{
 use eframe::egui::{self, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
+/// The last column counts as the group's end when it reaches this close to it.
+const LAST_COLUMN_SLACK_POINTS: f32 = 4.0;
 /// Width of a group menu's tool rows.
-const ROW_W: f32 = 250.0;
+pub(super) const ROW_W: f32 = 250.0;
 const ROW_H: f32 = 26.0;
 const MORE_W: f32 = 22.0;
 
@@ -112,7 +115,31 @@ impl App {
                 );
             }
         }
-        for chunk in pinned.chunks(3) {
+        // Pinned tools fill the group's last column first, then new columns of three.
+        let mut rest: &[&str] = &pinned;
+        if let Some(last) = super::widgets::last_column(ui.ctx())
+            && last.rows < COLUMN_ROWS
+            && last.rect.max.x >= ui.min_rect().max.x - LAST_COLUMN_SLACK_POINTS
+            && !rest.is_empty()
+        {
+            let room = (COLUMN_ROWS - last.rows).min(rest.len());
+            let top = last.rect.left_bottom() + egui::vec2(0.0, 1.0);
+            let mut below = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_size(
+                        top,
+                        egui::vec2(f32::INFINITY, f32::INFINITY),
+                    ))
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            below.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
+            for id in &rest[..room] {
+                super::widgets::small(&mut below, self, id, Value::Null);
+            }
+            ui.expand_to_include_rect(below.min_rect());
+            rest = &rest[room..];
+        }
+        for chunk in rest.chunks(COLUMN_ROWS) {
             super::widgets::col(ui, |ui| {
                 for id in chunk {
                     super::widgets::small(ui, self, id, Value::Null);
@@ -137,6 +164,7 @@ impl App {
         for row in &menu_only {
             self.tool_row(ui, group, row);
         }
+        self.group_side_menus(ui, group);
     }
 
     /// One tool: icon, name and shortcut, and a ⋮ at the end while the row is hovered

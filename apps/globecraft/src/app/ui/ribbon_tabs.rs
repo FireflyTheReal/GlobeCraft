@@ -2,11 +2,10 @@
 //! Each group shows at most one large button and two columns of small ones; its other
 //! tools are in the group's menu (`tools::EXTRAS`). A set of choices is one button.
 use super::widgets::{
-    Choice, Look, big, big_with, choice_big, choice_small, col, group, small, small_menu,
-    small_with,
+    Choice, Look, big, big_with, choice_big, col, group, small, small_menu, small_with,
 };
 use crate::app::App;
-use eframe::egui::{self, Ui};
+use eframe::egui::Ui;
 use globecraft_core::{layers::MapLayer, units::RulerUnit};
 use serde_json::{Value, json};
 
@@ -15,12 +14,6 @@ const BASEMAPS: [(&str, &str, &str); 4] = [
     ("streets", "road", "ribbon-basemap-streets"),
     ("topo", "terrain", "ribbon-basemap-topo"),
     ("wayback", "history", "ribbon-basemap-wayback"),
-];
-
-const THEMES: [(&str, &str); 3] = [
-    ("system", "settings-theme-system"),
-    ("dark", "settings-theme-dark"),
-    ("light", "settings-theme-light"),
 ];
 
 const WORLDS: [(&str, &str, &str); 3] = [
@@ -188,7 +181,6 @@ impl App {
                     app.layer_small(ui, MapLayer::Parks);
                     app.layer_small(ui, MapLayer::Peaks);
                 });
-                col(ui, |ui| app.terrain_menu(ui));
             },
         );
         group(
@@ -218,26 +210,6 @@ impl App {
                     app.layer_small(ui, MapLayer::GridLabels);
                     app.layer_small(ui, MapLayer::TimeZones);
                 });
-                if app.settings.experience.is_advanced() {
-                    col(ui, |ui| {
-                        let choices: Vec<Choice> = globecraft_core::earth_model::EarthModel::ALL
-                            .iter()
-                            .map(|model| Choice {
-                                id: "world.earthModel",
-                                params: json!({"model": model.code()}),
-                                icon: "globe_view",
-                                label: lang.text(model.name_id()),
-                            })
-                            .collect();
-                        choice_small(
-                            ui,
-                            app,
-                            Some(lang.text("cmd-world-earth-model")),
-                            lang.text("cmd-world-earth-model-help"),
-                            &choices,
-                        );
-                    });
-                }
             },
         );
         group(
@@ -248,7 +220,6 @@ impl App {
             |ui, app| {
                 big(ui, app, "ui.addData", Value::Null);
                 col(ui, |ui| {
-                    small(ui, app, "ui.pane.data", Value::Null);
                     small(ui, app, "ui.pane.layers", Value::Null);
                 });
             },
@@ -373,16 +344,6 @@ impl App {
                 big(ui, app, "ui.navigationControls", Value::Null);
                 col(ui, |ui| {
                     small(ui, app, "ui.fullscreen", Value::Null);
-                    let choices: Vec<Choice> = THEMES
-                        .iter()
-                        .map(|&(code, key)| Choice {
-                            id: "ui.theme",
-                            params: json!({"theme": code}),
-                            icon: "dark",
-                            label: lang.text(key),
-                        })
-                        .collect();
-                    choice_small(ui, app, None, lang.text("cmd-ui-theme-help"), &choices);
                 });
             },
         );
@@ -413,38 +374,6 @@ impl App {
         );
         if let Some(params) = picked {
             self.run_reporting("ruler.unit", params);
-        }
-    }
-
-    /// The relief's exaggeration: a small menu with a slider (a slider on the ribbon
-    /// took a column of its own).
-    fn terrain_menu(&mut self, ui: &mut Ui) {
-        let lang = self.lang;
-        let value = self.settings.layers.terrain_exaggeration;
-        let caption = format!("{value:.1}×");
-        let enabled = self.layer(MapLayer::Terrain);
-        let mut changed = None;
-        small_menu(
-            ui,
-            "terrain",
-            &caption,
-            lang.text("cmd-layer-terrain-exaggeration-help"),
-            |ui| {
-                ui.label(lang.text("cmd-layer-terrain-exaggeration"));
-                let mut v = value;
-                let r = ui.add_enabled(
-                    enabled,
-                    egui::Slider::new(&mut v, 0.5..=3.0)
-                        .step_by(0.1)
-                        .suffix("×"),
-                );
-                if r.changed() {
-                    changed = Some(v);
-                }
-            },
-        );
-        if let Some(v) = changed {
-            self.settings.layers.terrain_exaggeration = v;
         }
     }
 }
