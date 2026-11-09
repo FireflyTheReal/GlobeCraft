@@ -418,6 +418,8 @@ impl App {
                     self.cam.lat,
                     self.cam.lon,
                 )));
+                // The editor is a section of the Measure pane.
+                self.settings.workspace.open_right(RightPane::Measure);
                 json!({})
             }
             "edit.undo" | "edit.redo" => {
@@ -626,13 +628,13 @@ impl App {
                 self.flat_earth.open = false;
                 self.explorer.choose(body, &self.file_jobs);
                 if body == Body::Custom {
-                    self.explorer.open = true;
+                    self.settings.workspace.open_right(RightPane::Explorer);
                 }
                 self.touch();
                 json!({"body": str_param(p, "body")})
             }
             "ui.explorer" => {
-                self.explorer.open = !self.explorer.open;
+                self.settings.workspace.toggle_right(RightPane::Explorer);
                 json!({})
             }
             // ── Panes and interface
@@ -896,6 +898,7 @@ impl App {
             }
             "ui.here" => {
                 let (lat, lon) = position(p)?;
+                self.close_other_cards(super::here::Card::Here);
                 self.here_card = Some(super::here::HereCard { lat, lon });
                 json!({"lat": lat, "lon": lon})
             }
@@ -1014,7 +1017,7 @@ impl App {
                 Some("custom") => self.explorer.active == Body::Custom,
                 _ => false,
             }),
-            "ui.explorer" => on(self.explorer.open),
+            "ui.explorer" => on(self.settings.workspace.right_pane == Some(RightPane::Explorer)),
             "ui.pane.layers" => {
                 on(self.settings.sidebar.open
                     && self.settings.sidebar.panel == SidebarPanel::Layers)

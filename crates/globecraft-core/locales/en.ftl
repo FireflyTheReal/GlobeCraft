@@ -349,6 +349,7 @@ top-explore-action = Explore +
 top-earth = Earth
 top-moon = Moon
 top-custom-planet = Custom planet
+explorer-pane-title = Explorer
 explorer-title = Explore · places, sky and planets
 explorer-selected-location = Selected location
 explorer-search-place = Search for a place to view information

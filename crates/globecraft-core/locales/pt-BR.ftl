@@ -349,6 +349,7 @@ top-explore-action = Explorar +
 top-earth = Terra
 top-moon = Lua
 top-custom-planet = Planeta customizável
+explorer-pane-title = Explorador
 explorer-title = Explorar · locais, céu e planetas
 explorer-selected-location = Local selecionado
 explorer-search-place = Pesquise um local para ver informações

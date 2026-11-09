@@ -2,6 +2,7 @@
 //! ADSB.lol's map), the rest of its way to its destination, both airports and a card
 //! with its route. Its position comes every few seconds.
 use super::App;
+use super::ui::surface::Surface;
 mod card;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape, Stroke};
 use globecraft_core::{camera::Basis, layers::MapLayer, math::now_unix};
@@ -27,9 +28,6 @@ const AIRPORT_POINTS: f32 = 5.0;
 const AIRPORT_FILL: Color32 = Color32::from_rgb(255, 205, 110);
 const HALO: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 200);
 const LABEL_POINTS: f32 = 12.0;
-const CARD_MARGIN_POINTS: f32 = 12.0;
-const CARD_WIDTH_POINTS: f32 = 400.0;
-const CARD_MIN_WIDTH_POINTS: f32 = 220.0;
 const EMERGENCY: Color32 = Color32::from_rgb(255, 90, 80);
 /// The great circle to the destination is drawn with a point every this many km.
 const REMAINING_STEP_KM: f64 = 40.0;
@@ -233,6 +231,7 @@ impl App {
                 if !self.layer(MapLayer::Flights) {
                     self.settings.set_layer_visible(MapLayer::Flights, true);
                 }
+                self.close_other_cards(super::here::Card::Flight);
                 self.flight_selection.select(&hex, &callsign, listed);
                 self.selected_snapshot = None;
             }
@@ -362,26 +361,18 @@ impl App {
             self.distance_units(),
             self.flight_selection.loading(),
         );
-        // A window of its own: moved by its title, resized at its edges, closed by
-        // its ✕ (or a click beside the planes, see `globe.rs`).
-        let mut open = true;
-        egui::Window::new(egui::RichText::new(&lines.title).strong())
-            .id(egui::Id::new("selected-flight-card"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .constrain_to(rect)
-            .default_pos(rect.left_top() + egui::vec2(CARD_MARGIN_POINTS, CARD_MARGIN_POINTS))
-            .default_width(CARD_WIDTH_POINTS)
-            .min_width(CARD_MIN_WIDTH_POINTS)
-            .show(ctx, |ui| {
-                ui.label(egui::RichText::new(&lines.route).strong());
+        // A card at the globe's top left, closed by its ✕ (or a click beside the
+        // planes, see `globe.rs`).
+        let (open, _) = Surface::card("selected-flight-card", &lines.title, rect)
+            .subtitle(&lines.route)
+            .show(ctx, lang, |ui| {
                 if let Some(warning) = &lines.warning {
                     ui.label(egui::RichText::new(warning).strong().color(EMERGENCY));
                 }
                 for line in &lines.details {
                     ui.label(line);
                 }
+                ui.add_space(4.0);
                 ui.small(lang.text("flight-card-source"));
             });
         if !open {

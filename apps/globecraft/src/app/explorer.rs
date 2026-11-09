@@ -12,7 +12,6 @@ use std::{process::Command, sync::Arc};
 
 #[derive(Default)]
 pub(super) struct Explorer {
-    pub open: bool,
     name: String,
     image_path: String,
     sky_path: String,
@@ -103,31 +102,20 @@ fn speak(text: &str, _lang: globecraft_core::language::Lang) -> Result<(), Strin
 }
 
 impl App {
-    pub(super) fn explorer_window(&mut self, ctx: &egui::Context) {
-        if !self.explorer.open {
-            return;
+    /// The Explorer's pane: the selected place and its links, a tour, layers and the
+    /// worlds.
+    pub(super) fn explorer_pane(&mut self, ui: &mut egui::Ui) {
+        let label = self.explorer_location(ui);
+        ui.separator();
+        self.explorer_tour(ui, &label);
+        ui.separator();
+        self.explorer_layers(ui);
+        ui.separator();
+        self.explorer_bodies(ui);
+        if !self.explorer.message.is_empty() {
+            ui.separator();
+            ui.label(&self.explorer.message);
         }
-        let lg = self.lang;
-        let mut open = self.explorer.open;
-        egui::Window::new(lg.text("explorer-title"))
-            .open(&mut open)
-            .default_width(390.0)
-            .resizable(true)
-            .vscroll(true)
-            .show(ctx, |ui| {
-                let label = self.explorer_location(ui);
-                ui.separator();
-                self.explorer_tour(ui, &label);
-                ui.separator();
-                self.explorer_layers(ui);
-                ui.separator();
-                self.explorer_bodies(ui);
-                if !self.explorer.message.is_empty() {
-                    ui.separator();
-                    ui.label(&self.explorer.message);
-                }
-            });
-        self.explorer.open = open;
     }
 
     /// The selected place (the first search result, else the view centre) and its links.

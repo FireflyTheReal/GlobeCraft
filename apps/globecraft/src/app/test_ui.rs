@@ -10,3 +10,10 @@ pub(crate) fn run(
     output.textures_delta.clear();
     output
 }
+
+/// A context with the application's fonts (the ribbon and dialogs use its named families).
+pub(crate) fn context() -> egui::Context {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(super::fonts::base_definitions());
+    ctx
+}

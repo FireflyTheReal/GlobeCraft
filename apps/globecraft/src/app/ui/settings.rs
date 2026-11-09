@@ -175,111 +175,104 @@ impl App {
         let mut close_requested = false;
         let mut language_preference = self.language_preference;
         let mut state = std::mem::take(&mut self.settings_ui);
-        egui::Window::new(lang.text("settings-title"))
-            .id(egui::Id::new("settings-window"))
-            .open(&mut open)
-            .resizable(true)
-            .default_size(WINDOW_SIZE_POINTS)
-            .min_size(WINDOW_MIN_SIZE_POINTS)
-            .show(ctx, |ui| {
-                // A sidebar of pages with the search above it; the page on the right.
-                egui::Panel::left("settings-pages")
-                    .resizable(false)
-                    .exact_size(SIDEBAR_WIDTH_POINTS)
-                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-                        left: 0,
-                        right: 8,
-                        top: 0,
-                        bottom: 0,
-                    }))
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut state.query)
-                                .hint_text(lang.text("settings-search-placeholder"))
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.add_space(6.0);
-                        let query = fold_name(&state.query);
-                        for category in Category::ALL {
-                            let shown = query.is_empty()
-                                || category.matches(&query, lang)
-                                || (category == Category::Data
-                                    && self.network_dynamic_matches(&query));
-                            if !shown {
-                                continue;
-                            }
-                            if page_button(ui, category, lang, state.category == category).clicked()
-                            {
-                                state.category = category;
-                                state.query.clear();
-                            }
+        let (still_open, _) = super::surface::Surface::dialog(
+            "settings-window",
+            lang.text("settings-title"),
+            super::surface::Width::Large,
+        )
+        .resizable(WINDOW_MIN_SIZE_POINTS)
+        .height(WINDOW_SIZE_POINTS.y)
+        .show(ctx, lang, |ui| {
+            // A sidebar of pages with the search above it; the page on the right.
+            egui::Panel::left("settings-pages")
+                .resizable(false)
+                .exact_size(SIDEBAR_WIDTH_POINTS)
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                    left: 0,
+                    right: 8,
+                    top: 0,
+                    bottom: 0,
+                }))
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.query)
+                            .hint_text(lang.text("settings-search-placeholder"))
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(6.0);
+                    let query = fold_name(&state.query);
+                    for category in Category::ALL {
+                        let shown = query.is_empty()
+                            || category.matches(&query, lang)
+                            || (category == Category::Data && self.network_dynamic_matches(&query));
+                        if !shown {
+                            continue;
                         }
-                    });
-                let query = fold_name(&state.query);
-                let categories: Vec<_> = Category::ALL
-                    .into_iter()
-                    .filter(|category| {
-                        if query.is_empty() {
-                            *category == state.category
-                        } else {
-                            category.matches(&query, lang)
-                                || (*category == Category::Data
-                                    && self.network_dynamic_matches(&query))
+                        if page_button(ui, category, lang, state.category == category).clicked() {
+                            state.category = category;
+                            state.query.clear();
                         }
-                    })
-                    .collect();
-                let height =
-                    (ui.available_height() - FOOTER_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
-                egui::ScrollArea::vertical()
-                    .id_salt("settings-body")
-                    .max_height(height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if categories.is_empty() {
-                            ui.label(lang.format(
-                                "settings-search-empty",
-                                &[("query", state.query.as_str().into())],
-                            ));
-                        }
-                        for category in categories {
-                            ui.push_id(category as u8, |ui| {
-                                ui.heading(lang.text(category.name_id()));
-                                ui.add_space(4.0);
-                                self.settings_page(
-                                    ui,
-                                    category,
-                                    &mut state,
-                                    &mut language_preference,
-                                );
-                                ui.add_space(ui.spacing().item_spacing.y);
-                            });
-                        }
-                    });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(lang.text("settings-reset-action")).clicked() {
-                        state.confirm_reset = true;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(lang.text("settings-close-action")).clicked() {
-                            close_requested = true;
-                        }
-                    });
                 });
-                if state.confirm_reset {
-                    ui.label(lang.text("settings-reset-confirm"));
-                    ui.horizontal(|ui| {
-                        if ui.button(lang.text("settings-confirm-action")).clicked() {
-                            self.settings = Settings::default();
-                            self.windows.ui_scale_edit = self.settings.ui_scale;
-                            state.confirm_reset = false;
-                        }
-                        if ui.button(lang.text("settings-cancel-action")).clicked() {
-                            state.confirm_reset = false;
-                        }
-                    });
+            let query = fold_name(&state.query);
+            let categories: Vec<_> = Category::ALL
+                .into_iter()
+                .filter(|category| {
+                    if query.is_empty() {
+                        *category == state.category
+                    } else {
+                        category.matches(&query, lang)
+                            || (*category == Category::Data && self.network_dynamic_matches(&query))
+                    }
+                })
+                .collect();
+            let height = (ui.available_height() - FOOTER_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
+            egui::ScrollArea::vertical()
+                .id_salt("settings-body")
+                .max_height(height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if categories.is_empty() {
+                        ui.label(lang.format(
+                            "settings-search-empty",
+                            &[("query", state.query.as_str().into())],
+                        ));
+                    }
+                    for category in categories {
+                        ui.push_id(category as u8, |ui| {
+                            ui.heading(lang.text(category.name_id()));
+                            ui.add_space(4.0);
+                            self.settings_page(ui, category, &mut state, &mut language_preference);
+                            ui.add_space(ui.spacing().item_spacing.y);
+                        });
+                    }
+                });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button(lang.text("settings-reset-action")).clicked() {
+                    state.confirm_reset = true;
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(lang.text("settings-close-action")).clicked() {
+                        close_requested = true;
+                    }
+                });
             });
+            if state.confirm_reset {
+                ui.label(lang.text("settings-reset-confirm"));
+                ui.horizontal(|ui| {
+                    if ui.button(lang.text("settings-confirm-action")).clicked() {
+                        self.settings = Settings::default();
+                        self.windows.ui_scale_edit = self.settings.ui_scale;
+                        state.confirm_reset = false;
+                    }
+                    if ui.button(lang.text("settings-cancel-action")).clicked() {
+                        state.confirm_reset = false;
+                    }
+                });
+            }
+        });
+        open &= still_open;
         if language_preference != self.language_preference {
             self.set_language_preference(language_preference);
             ctx.request_repaint();

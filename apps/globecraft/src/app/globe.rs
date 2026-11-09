@@ -679,11 +679,13 @@ impl App {
             ui.request_repaint();
         }
         self.timeline_bar(&ui.ctx().clone(), rect);
+        // One card at a time (the last selected; see `close_other_cards`).
         self.selected_flight_card(&ui.ctx().clone(), rect);
         if self.layer(MapLayer::Satellites) {
             self.selected_satellite_card(&ui.ctx().clone(), rect);
         }
-        self.legend_window(&ui.ctx().clone(), rect);
+        self.here_window(&ui.ctx().clone(), rect);
+        self.legend_watch();
 
         // scale bar
         if let Some(scale_bar) = self.scale_bar_cache.for_view(

@@ -44,6 +44,8 @@ fn right_title(pane: RightPane) -> &'static str {
     match pane {
         RightPane::Assistant => "cmd-ui-pane-assistant",
         RightPane::Measure => "pane-measure-title",
+        RightPane::Legend => "legend-title",
+        RightPane::Explorer => "explorer-pane-title",
     }
 }
 
@@ -331,6 +333,26 @@ impl App {
                     ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(*ui.layout()));
                 match pane {
                     RightPane::Assistant => self.assistant_pane(&mut body, &t),
+                    RightPane::Legend => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("legend-scroll")
+                            .auto_shrink([false, false])
+                            .show(&mut body, |ui| {
+                                egui::Frame::NONE
+                                    .inner_margin(egui::Margin::symmetric(12, 8))
+                                    .show(ui, |ui| self.legend_pane(ui));
+                            });
+                    }
+                    RightPane::Explorer => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("explorer-scroll")
+                            .auto_shrink([false, false])
+                            .show(&mut body, |ui| {
+                                egui::Frame::NONE
+                                    .inner_margin(egui::Margin::symmetric(12, 8))
+                                    .show(ui, |ui| self.explorer_pane(ui));
+                            });
+                    }
                     RightPane::Measure => {
                         egui::ScrollArea::vertical()
                             .id_salt("measure-scroll")

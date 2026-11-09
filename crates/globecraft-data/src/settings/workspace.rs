@@ -20,14 +20,19 @@ const MAX_TOOL_KEY_LEN: usize = 200;
 pub enum RightPane {
     Assistant,
     Measure,
+    Legend,
+    /// Places, sky and planets (the Explorer).
+    Explorer,
 }
 
 impl RightPane {
-    pub const ALL: [Self; 2] = [Self::Assistant, Self::Measure];
+    pub const ALL: [Self; 4] = [Self::Assistant, Self::Measure, Self::Legend, Self::Explorer];
     fn code(self) -> &'static str {
         match self {
             Self::Assistant => "assistant",
             Self::Measure => "measure",
+            Self::Legend => "legend",
+            Self::Explorer => "explorer",
         }
     }
     fn from_code(code: &str) -> Option<Self> {
@@ -115,6 +120,19 @@ impl WorkspaceLayout {
             self.right_open.push(pane);
         }
         self.right_pane = Some(pane);
+    }
+    /// Opens `pane`'s tab without taking the view from a pane already shown.
+    pub fn add_right(&mut self, pane: RightPane) {
+        if !self.right_open.contains(&pane) {
+            self.right_open.push(pane);
+        }
+        if self.right_pane.is_none() {
+            self.right_pane = Some(pane);
+        }
+    }
+    /// Whether `pane` has a tab.
+    pub fn right_is_open(&self, pane: RightPane) -> bool {
+        self.right_open.contains(&pane)
     }
     /// Closes `pane`'s tab; the next open tab, if any, comes into view.
     pub fn close_right(&mut self, pane: RightPane) {

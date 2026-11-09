@@ -1618,6 +1618,47 @@ fn layout_inventory_screenshots() {
     }
 }
 
+/// Every dialog, card and pane that replaced a floating window (layout redesign
+/// step 4), in light and dark.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn surfaces_screenshots() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        let mut h = harness(theme);
+        settle(&mut h, 0.5);
+        let steps: [(&str, Value, &str); 6] = [
+            ("ui.about", json!({}), "about"),
+            ("ui.shortcuts", json!({}), "shortcuts"),
+            ("ui.addData", json!({}), "add-data"),
+            ("ui.here", json!({"lat": 38.72, "lon": -9.14}), "here-card"),
+            ("ui.explorer", json!({}), "explorer-pane"),
+            ("ruler.editPoints", json!({}), "ruler-points"),
+        ];
+        for (id, params, shot) in steps {
+            h.state_mut().run(id, params).expect(id);
+            settle(&mut h, 0.5);
+            save(&mut h, &dir, &format!("surface-{shot}-{name}"));
+            h.key_press(egui::Key::Escape);
+            settle(&mut h, 0.2);
+        }
+        h.state_mut()
+            .run("ui.legend", json!({"on": true}))
+            .expect("legend");
+        h.state_mut()
+            .run("layer.show", json!({"layer": "flights", "on": true}))
+            .expect("flights");
+        settle(&mut h, 0.5);
+        save(&mut h, &dir, &format!("surface-legend-pane-{name}"));
+    }
+}
+
 /// A ribbon group's menu, a tool's ⋮ menu, a tool pinned to the ribbon and to the
 /// quick-access row, and the keyboard shortcut dialog.
 #[test]

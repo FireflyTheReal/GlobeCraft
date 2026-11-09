@@ -102,6 +102,30 @@ pub(super) fn sun_altitude_deg(lat: f64, lon: f64, unix: f64) -> f64 {
     90.0 - cosine.acos().to_degrees()
 }
 
+/// The cards over the globe; one is open at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Card {
+    Flight,
+    Satellite,
+    Here,
+}
+
+impl App {
+    /// Closes the cards other than `keep`, which is opening: the globe shows one card.
+    pub(super) fn close_other_cards(&mut self, keep: Card) {
+        if keep != Card::Flight {
+            self.flight_selection.clear();
+            self.selected_snapshot = None;
+        }
+        if keep != Card::Satellite {
+            self.satellite_selection.clear();
+        }
+        if keep != Card::Here {
+            self.here_card = None;
+        }
+    }
+}
+
 impl App {
     pub(super) fn here_info(&self, lat: f64, lon: f64, admin: AdminAreas) -> HereInfo {
         let coordinates = CoordinateFormat::ALL
@@ -218,7 +242,7 @@ impl App {
     }
 
     /// The card, while one is open.
-    pub(super) fn here_window(&mut self, ctx: &egui::Context) {
+    pub(super) fn here_window(&mut self, ctx: &egui::Context, rect: egui::Rect) {
         let Some(card) = self.here_card else {
             return;
         };
@@ -228,122 +252,113 @@ impl App {
         if info.elevation_m.is_none() {
             ctx.request_repaint_after(ELEVATION_POLL);
         }
-        let mut open = true;
         let mut action: Option<(&str, Value)> = None;
-        egui::Window::new(lang.text("here-title"))
-            .id(egui::Id::new("here_card"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(380.0)
-            .show(ctx, |ui| {
-                egui::Grid::new("here_card_grid")
-                    .num_columns(3)
-                    .spacing([10.0, 6.0])
-                    .show(ui, |ui| {
-                        for (format, text) in &info.coordinates {
-                            ui.weak(lang.text(format.name_id()));
-                            ui.monospace(text);
-                            if super::ui::icons::icon_button(
-                                ui,
-                                "copy",
-                                lang.text("here-copy-help"),
-                            )
+        let (open, _) = super::ui::surface::Surface::card(
+            "here_card",
+            lang.text("here-title"),
+            rect,
+        )
+        .show(ctx, lang, |ui| {
+            egui::Grid::new("here_card_grid")
+                .num_columns(3)
+                .spacing([10.0, 6.0])
+                .show(ui, |ui| {
+                    for (format, text) in &info.coordinates {
+                        ui.weak(lang.text(format.name_id()));
+                        ui.monospace(text);
+                        if super::ui::icons::icon_button(ui, "copy", lang.text("here-copy-help"))
                             .clicked()
-                            {
-                                ui.copy_text(text.clone());
-                            }
-                            ui.end_row();
+                        {
+                            ui.copy_text(text.clone());
                         }
-                    });
-                ui.separator();
-                egui::Grid::new("here_card_facts")
-                    .num_columns(2)
-                    .spacing([10.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.weak(lang.text("here-elevation-label"));
-                        ui.label(info.elevation_m.map_or_else(
-                            || lang.text("here-loading").to_owned(),
-                            |metres| self.distance_units().elevation(f64::from(metres)),
-                        ));
                         ui.end_row();
-                        ui.weak(lang.text("here-country-label"));
-                        ui.label(
-                            info.country
-                                .clone()
-                                .unwrap_or_else(|| lang.text("here-no-country").to_owned()),
-                        );
-                        ui.end_row();
-                        ui.weak(lang.text("here-state-label"));
-                        admin_row(ui, lang, &info.admin.state, "here-state-not-loaded-help");
-                        ui.end_row();
-                        ui.weak(lang.text("here-municipality-label"))
-                            .on_hover_text(lang.text("here-municipality-help"));
-                        admin_row(
-                            ui,
-                            lang,
-                            &info.admin.municipality,
-                            "here-municipality-not-loaded-help",
-                        );
-                        ui.end_row();
-                        ui.weak(lang.text("here-nearest-label"));
-                        ui.label(info.nearest.as_ref().map_or_else(
-                            || "—".to_owned(),
-                            |(name, km, bearing)| {
-                                lang.format(
-                                    "here-nearest-value",
-                                    &[
-                                        ("name", name.as_str().into()),
-                                        ("distance", self.distance_units().distance(*km).into()),
-                                        ("direction", compass_point(*bearing).into()),
-                                    ],
-                                )
-                            },
-                        ));
-                        ui.end_row();
-                        ui.weak(lang.text("here-time-label"));
-                        ui.label(lang.format(
-                            "here-time-value",
-                            &[
-                                (
-                                    "solar",
-                                    format!("{:02}:{:02}", info.solar.0, info.solar.1).into(),
-                                ),
-                                ("utc", format!("{:02}:{:02}", info.utc.0, info.utc.1).into()),
-                                ("zone", format!("UTC{:+}", info.nautical_zone).into()),
-                            ],
-                        ))
-                        .on_hover_text(lang.text("here-time-help"));
-                        ui.end_row();
-                        ui.weak(lang.text("here-sun-label"));
-                        ui.label(lang.format(
-                            if info.sun_altitude_deg >= 0.0 {
-                                "here-sun-up"
-                            } else {
-                                "here-sun-down"
-                            },
-                            &[(
-                                "degrees",
-                                format!("{:.0}", info.sun_altitude_deg.abs()).into(),
-                            )],
-                        ));
-                        ui.end_row();
-                    });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let at = json!({"lat": card.lat, "lon": card.lon});
-                    if super::ui::icons::button(ui, "places", lang.text("globe-placemark-action"))
-                        .clicked()
-                    {
-                        action = Some(("places.add", at.clone()));
-                    }
-                    if super::ui::icons::button(ui, "fly", lang.text("globe-fly-to-action"))
-                        .clicked()
-                    {
-                        action = Some(("camera.flyTo", at));
                     }
                 });
+            ui.separator();
+            egui::Grid::new("here_card_facts")
+                .num_columns(2)
+                .spacing([10.0, 6.0])
+                .show(ui, |ui| {
+                    ui.weak(lang.text("here-elevation-label"));
+                    ui.label(info.elevation_m.map_or_else(
+                        || lang.text("here-loading").to_owned(),
+                        |metres| self.distance_units().elevation(f64::from(metres)),
+                    ));
+                    ui.end_row();
+                    ui.weak(lang.text("here-country-label"));
+                    ui.label(
+                        info.country
+                            .clone()
+                            .unwrap_or_else(|| lang.text("here-no-country").to_owned()),
+                    );
+                    ui.end_row();
+                    ui.weak(lang.text("here-state-label"));
+                    admin_row(ui, lang, &info.admin.state, "here-state-not-loaded-help");
+                    ui.end_row();
+                    ui.weak(lang.text("here-municipality-label"))
+                        .on_hover_text(lang.text("here-municipality-help"));
+                    admin_row(
+                        ui,
+                        lang,
+                        &info.admin.municipality,
+                        "here-municipality-not-loaded-help",
+                    );
+                    ui.end_row();
+                    ui.weak(lang.text("here-nearest-label"));
+                    ui.label(info.nearest.as_ref().map_or_else(
+                        || "—".to_owned(),
+                        |(name, km, bearing)| {
+                            lang.format(
+                                "here-nearest-value",
+                                &[
+                                    ("name", name.as_str().into()),
+                                    ("distance", self.distance_units().distance(*km).into()),
+                                    ("direction", compass_point(*bearing).into()),
+                                ],
+                            )
+                        },
+                    ));
+                    ui.end_row();
+                    ui.weak(lang.text("here-time-label"));
+                    ui.label(lang.format(
+                        "here-time-value",
+                        &[
+                            (
+                                "solar",
+                                format!("{:02}:{:02}", info.solar.0, info.solar.1).into(),
+                            ),
+                            ("utc", format!("{:02}:{:02}", info.utc.0, info.utc.1).into()),
+                            ("zone", format!("UTC{:+}", info.nautical_zone).into()),
+                        ],
+                    ))
+                    .on_hover_text(lang.text("here-time-help"));
+                    ui.end_row();
+                    ui.weak(lang.text("here-sun-label"));
+                    ui.label(lang.format(
+                        if info.sun_altitude_deg >= 0.0 {
+                            "here-sun-up"
+                        } else {
+                            "here-sun-down"
+                        },
+                        &[(
+                            "degrees",
+                            format!("{:.0}", info.sun_altitude_deg.abs()).into(),
+                        )],
+                    ));
+                    ui.end_row();
+                });
+            super::ui::surface::footer(ui, |ui| {
+                let at = json!({"lat": card.lat, "lon": card.lon});
+                if super::ui::icons::button(ui, "places", lang.text("globe-placemark-action"))
+                    .clicked()
+                {
+                    action = Some(("places.add", at.clone()));
+                }
+                if super::ui::icons::button(ui, "fly", lang.text("globe-fly-to-action")).clicked() {
+                    action = Some(("camera.flyTo", at));
+                }
             });
+        });
         if let Some((id, params)) = action {
             self.run_reporting(id, params);
         }

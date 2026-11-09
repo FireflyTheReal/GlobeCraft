@@ -30,6 +30,7 @@ pub(in crate::app) mod settings;
 mod status;
 mod status_menus;
 mod suggestions;
+pub(in crate::app) mod surface;
 pub(in crate::app) mod theme;
 pub(in crate::app) mod tile_diagnostics;
 pub(in crate::app) mod timeline;

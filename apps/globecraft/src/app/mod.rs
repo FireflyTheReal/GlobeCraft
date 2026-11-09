@@ -851,11 +851,8 @@ impl eframe::App for App {
         watchdog.checkpoint("ui.slow.windows");
         self.settings_window(ui);
         self.menu_windows(ui);
-        self.explorer_window(ui);
         self.altitude_window(ui);
         self.add_data_window(ui);
-        self.here_window(ui);
-        self.ruler_points_window(ui);
         self.command_search_window(ui);
         self.shortcut_dialog(ui);
         #[cfg(feature = "profiling")]

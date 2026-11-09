@@ -15,6 +15,7 @@ impl App {
             small(ui, self, "ruler.editPoints", Value::Null);
             small(ui, self, "ruler.closeShape", Value::Null);
         });
+        self.ruler_points_section(ui);
         let selected =
             super::ruler::unit_selector(ui, self.settings.ruler_unit, self.us_locale, lg);
         if selected != self.settings.ruler_unit {

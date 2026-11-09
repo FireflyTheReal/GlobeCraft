@@ -7,6 +7,7 @@
 //! is predicted with SGP4 from the elements already loaded: nothing is downloaded.
 use super::App;
 use super::live_layers::{satellite_colour, satellite_symbol};
+use super::ui::surface::Surface;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke};
 use globecraft_core::{camera::Basis, math::now_unix};
 use globecraft_data::satellites::{Satellite, SatellitePosition};
@@ -24,8 +25,6 @@ const SELECTED_SCALE: f32 = 1.8;
 const SYMBOL_POINTS: f32 = 5.0;
 /// Clicks this close to a satellite pick it.
 const PICK_RADIUS_POINTS: f32 = 13.0;
-const CARD_MARGIN_POINTS: f32 = 12.0;
-const CARD_WIDTH_POINTS: f32 = 260.0;
 const SECONDS_PER_DAY: f64 = 86_400.0;
 const KM_PER_MILE: f64 = 1.609_344;
 /// The Earth's turn relative to the stars, degrees a second (one sidereal day).
@@ -52,6 +51,10 @@ pub(super) struct SatelliteSelection {
 impl SatelliteSelection {
     pub(super) fn selected(&self) -> Option<&str> {
         self.norad.as_deref()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.norad = None;
     }
 
     /// Where the satellites are drawn this frame (replaces the last frame's).
@@ -116,6 +119,7 @@ impl App {
                     return Err(format!("no satellite {norad} is loaded"));
                 };
                 let name = satellite.name.clone();
+                self.close_other_cards(super::here::Card::Satellite);
                 self.satellite_selection.norad = Some(norad.clone());
                 Ok(json!({"norad": norad, "name": name}))
             }
@@ -271,19 +275,12 @@ impl App {
             ],
         );
         let title = satellite.name.clone();
-        let mut open = true;
-        egui::Window::new(egui::RichText::new(title).strong())
-            .id(egui::Id::new("selected-satellite-card"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .constrain_to(rect)
-            .default_pos(rect.left_top() + egui::vec2(CARD_MARGIN_POINTS, CARD_MARGIN_POINTS))
-            .default_width(CARD_WIDTH_POINTS)
-            .show(ctx, |ui| {
+        let (open, _) =
+            Surface::card("selected-satellite-card", &title, rect).show(ctx, lang, |ui| {
                 for line in &lines {
                     ui.label(line);
                 }
+                ui.add_space(4.0);
                 ui.small(source);
             });
         if !open {

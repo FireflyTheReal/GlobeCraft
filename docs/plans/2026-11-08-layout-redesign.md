@@ -62,5 +62,13 @@ Undo/Redo and Close Shape moved to their groups' menus (the navigator and the qu
 row have them); a few groups gained menu-only tools (Top-Down View, Elevation Profile, Copy View
 Link, Save, Clear Flight…). Screenshot test: `ribbon_menus_screenshot`.
 
+Status (2026-11-09, evening): steps 2 and 4 are done. `ui/surface.rs` gives dialogs,
+cards and popovers one frame, header (title, ✕) and footer. Dialogs (centred, three
+widths, Escape closes): Settings, Add Data, About, Keyboard Shortcuts. Cards (top-left of
+the globe, one at a time, `close_other_cards`): selected flight, selected satellite, What's
+here. Popover: the altitude editor. Panes: the Legend and the Explorer are right panes;
+the ruler's point editor is a section of the Measure pane. Screenshot test:
+`surfaces_screenshots`. Left: step 5 (keyboard).
+
 Each step is a commit with screenshots; the user checks the look on the Mac between
 steps 3 and 4.

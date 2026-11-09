@@ -350,43 +350,41 @@ impl AddDataDialog {
         self.archive_test.poll();
         self.feature_test.poll();
         let mut action = Action::None;
-        let mut open = true;
-        egui::Window::new(lang.text("add-data-title"))
-            .id(egui::Id::new("add_data_window"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(560.0)
-            .show(ctx, |ui| {
-                // Basic (Settings) offers the library; the forms stay reachable
-                // when a command opened one.
-                if advanced || self.tab != Tab::Library {
-                    ui.horizontal(|ui| {
-                        for (tab, key) in [
-                            (Tab::Library, "add-data-tab-library"),
-                            (Tab::WebMap, "add-data-tab-web"),
-                            (Tab::Features, "add-data-tab-features"),
-                        ] {
-                            ui.selectable_value(&mut self.tab, tab, lang.text(key));
-                        }
-                    });
-                } else {
-                    ui.weak(lang.text("add-data-advanced-hint"));
-                }
-                ui.separator();
-                match self.tab {
-                    Tab::Library => self.library(ui, lang, added_presets, &mut action),
-                    Tab::WebMap => self.web_form(ui, ctx, lang, runtime, &mut action),
-                    Tab::Features => self.feature_form(ui, ctx, lang, runtime, &mut action),
-                }
-                ui.separator();
+        let (open, _) = super::surface::Surface::dialog(
+            "add_data_window",
+            lang.text("add-data-title"),
+            super::surface::Width::Medium,
+        )
+        .show(ctx, lang, |ui| {
+            // Basic (Settings) offers the library; the forms stay reachable
+            // when a command opened one.
+            if advanced || self.tab != Tab::Library {
                 ui.horizontal(|ui| {
-                    ui.weak(lang.text("add-data-kml-help"));
-                    if ui.button(lang.text("add-data-kml-action")).clicked() {
-                        action = Action::OpenKml;
+                    for (tab, key) in [
+                        (Tab::Library, "add-data-tab-library"),
+                        (Tab::WebMap, "add-data-tab-web"),
+                        (Tab::Features, "add-data-tab-features"),
+                    ] {
+                        ui.selectable_value(&mut self.tab, tab, lang.text(key));
                     }
                 });
+            } else {
+                ui.weak(lang.text("add-data-advanced-hint"));
+            }
+            ui.separator();
+            match self.tab {
+                Tab::Library => self.library(ui, lang, added_presets, &mut action),
+                Tab::WebMap => self.web_form(ui, ctx, lang, runtime, &mut action),
+                Tab::Features => self.feature_form(ui, ctx, lang, runtime, &mut action),
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.weak(lang.text("add-data-kml-help"));
+                if ui.button(lang.text("add-data-kml-action")).clicked() {
+                    action = Action::OpenKml;
+                }
             });
+        });
         if !open {
             return Action::Close;
         }

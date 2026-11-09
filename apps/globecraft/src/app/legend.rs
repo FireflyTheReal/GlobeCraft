@@ -9,6 +9,7 @@ use super::live_layers::{
 };
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
 use globecraft_core::layers::MapLayer;
+use globecraft_data::settings::workspace::RightPane;
 use globecraft_data::{
     aircraft::AircraftClass, live_maps::RADAR_BANDS, satellites::SatelliteGroup,
 };
@@ -22,9 +23,6 @@ const SWATCH_POINTS: f32 = 12.0;
 /// The aircraft and satellite symbols are drawn in a square this large.
 const SYMBOL_POINTS: f32 = 22.0;
 const SATELLITE_SYMBOL_POINTS: f32 = 5.0;
-/// The window's corner sits this far inside the globe's bottom right corner, above
-/// the timeline and the credits.
-const MARGIN_POINTS: Vec2 = Vec2::new(16.0, 72.0);
 /// The track's colours span the ground to this height.
 const TRACK_TOP_FEET: f64 = 40_000.0;
 /// The aurora glow starts at this chance (%) and is full at the second.
@@ -42,11 +40,9 @@ pub(super) enum LegendKind {
     PlacesOfInterest,
 }
 
-/// Whether the legend is open, and which keys were on the globe last frame (a key
-/// that was not opens it).
+/// Which keys were on the globe last frame (a key that was not opens the legend's pane).
 #[derive(Default)]
 pub(super) struct Legend {
-    open: bool,
     seen: Vec<LegendKind>,
 }
 
@@ -176,148 +172,135 @@ impl App {
     }
 
     pub(super) fn run_legend(&mut self, p: &Value) -> Value {
-        self.legend.open = p
+        let on = p
             .get("on")
             .and_then(Value::as_bool)
-            .unwrap_or(!self.legend.open);
-        json!({"visible": self.legend.open})
+            .unwrap_or(!self.legend_open());
+        if on {
+            self.settings.workspace.open_right(RightPane::Legend);
+        } else {
+            self.settings.workspace.close_right(RightPane::Legend);
+        }
+        json!({"visible": on})
     }
 
     pub(super) fn legend_open(&self) -> bool {
-        self.legend.open
+        self.settings.workspace.right_is_open(RightPane::Legend)
     }
 
-    /// The legend window, at the globe's bottom right until moved.
-    pub(super) fn legend_window(&mut self, ctx: &egui::Context, rect: Rect) {
+    /// Opens the legend's pane when a key appears on the globe (without taking the view
+    /// from another pane).
+    pub(super) fn legend_watch(&mut self) {
         let kinds = self.legend_kinds();
         if kinds.iter().any(|kind| !self.legend.seen.contains(kind)) {
-            self.legend.open = true;
+            self.settings.workspace.add_right(RightPane::Legend);
         }
-        self.legend.seen.clone_from(&kinds);
-        if !self.legend.open {
-            return;
-        }
+        self.legend.seen = kinds;
+    }
+
+    /// The legend's pane: a key per layer on the globe that has one.
+    pub(super) fn legend_pane(&mut self, ui: &mut egui::Ui) {
+        let kinds = self.legend_kinds();
         let lang = self.lang;
-        let mut open = true;
-        egui::Window::new(lang.text("legend-title"))
-            .id(egui::Id::new("legend-window"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .constrain_to(rect)
-            .pivot(Align2::RIGHT_BOTTOM)
-            .default_pos(rect.right_bottom() - MARGIN_POINTS)
-            .show(ctx, |ui| {
-                if kinds.is_empty() {
-                    ui.label(lang.text("legend-empty"));
+        if kinds.is_empty() {
+            ui.label(lang.text("legend-empty"));
+        }
+        for (index, kind) in kinds.iter().enumerate() {
+            if index > 0 {
+                ui.separator();
+            }
+            match kind {
+                LegendKind::Aircraft => {
+                    ui.strong(lang.text("legend-aircraft"));
+                    two_columns(ui, "legend-aircraft", &AircraftClass::ALL, |ui, class| {
+                        symbol(
+                            ui,
+                            |at| vec![class_symbol(*class, at, SYMBOL_POINTS)],
+                            lang.text(class.label_key()),
+                        );
+                    });
                 }
-                for (index, kind) in kinds.iter().enumerate() {
-                    if index > 0 {
-                        ui.separator();
-                    }
-                    match kind {
-                        LegendKind::Aircraft => {
-                            ui.strong(lang.text("legend-aircraft"));
-                            two_columns(ui, "legend-aircraft", &AircraftClass::ALL, |ui, class| {
-                                symbol(
-                                    ui,
-                                    |at| vec![class_symbol(*class, at, SYMBOL_POINTS)],
-                                    lang.text(class.label_key()),
-                                );
-                            });
-                        }
-                        LegendKind::Vessels => {
-                            ui.strong(lang.text("legend-vessels"));
-                            two_columns(ui, "legend-vessels", &VesselClass::ALL, |ui, class| {
-                                symbol(
-                                    ui,
-                                    |at| vec![vessel_symbol(*class, at, SYMBOL_POINTS)],
-                                    lang.text(class.label_key()),
-                                );
-                            });
-                        }
-                        LegendKind::Satellites => {
-                            ui.strong(lang.text("legend-satellites"));
-                            two_columns(
+                LegendKind::Vessels => {
+                    ui.strong(lang.text("legend-vessels"));
+                    two_columns(ui, "legend-vessels", &VesselClass::ALL, |ui, class| {
+                        symbol(
+                            ui,
+                            |at| vec![vessel_symbol(*class, at, SYMBOL_POINTS)],
+                            lang.text(class.label_key()),
+                        );
+                    });
+                }
+                LegendKind::Satellites => {
+                    ui.strong(lang.text("legend-satellites"));
+                    two_columns(
+                        ui,
+                        "legend-satellites",
+                        &SatelliteGroup::ALL,
+                        |ui, group| {
+                            symbol(
                                 ui,
-                                "legend-satellites",
-                                &SatelliteGroup::ALL,
-                                |ui, group| {
-                                    symbol(
-                                        ui,
-                                        |at| {
-                                            satellite_symbol(
-                                                *group,
-                                                at,
-                                                SATELLITE_SYMBOL_POINTS,
-                                                1.0,
-                                            )
-                                        },
-                                        lang.text(group.label_key()),
-                                    );
-                                },
+                                |at| satellite_symbol(*group, at, SATELLITE_SYMBOL_POINTS, 1.0),
+                                lang.text(group.label_key()),
                             );
-                        }
-                        LegendKind::FlightAltitude => {
-                            ui.strong(lang.text("legend-flight-altitude"));
-                            ramp(
-                                ui,
-                                |t| {
-                                    super::selected_flight::altitude_color(Some(
-                                        f64::from(t) * TRACK_TOP_FEET,
-                                    ))
-                                },
-                                &[
-                                    (0.0, "0"),
-                                    (0.25, "10k"),
-                                    (0.5, "20k"),
-                                    (0.75, "30k"),
-                                    (1.0, "40k ft"),
-                                ],
-                            );
-                            swatch(
-                                ui,
-                                super::selected_flight::altitude_color(None),
-                                lang.text("legend-on-ground"),
-                            );
-                        }
-                        LegendKind::Radar => {
-                            ui.strong(lang.text("legend-radar"));
-                            for (index, (lowest, [r, g, b])) in RADAR_BANDS.iter().enumerate() {
-                                let range = match RADAR_BANDS.get(index + 1) {
-                                    Some((next, _)) => format!("{lowest:.0}–{next:.0} dBZ"),
-                                    None => format!("{lowest:.0}+ dBZ"),
-                                };
-                                let text = lang.format(
-                                    "legend-radar-band",
-                                    &[
-                                        ("name", lang.text(RADAR_BAND_KEYS[index]).into()),
-                                        ("range", range.into()),
-                                    ],
-                                );
-                                swatch(ui, Color32::from_rgb(*r, *g, *b), &text);
-                            }
-                        }
-                        LegendKind::Aurora => {
-                            ui.strong(lang.text("legend-aurora"));
-                            let (low, high) = AURORA_CHANCE_SPAN;
-                            ramp(
-                                ui,
-                                |t| aurora_colour((low + t * (high - low)).round() as u8),
-                                &[(0.0, "4 %"), (0.5, "30 %"), (1.0, "60 %+")],
-                            );
-                        }
-                        LegendKind::PlacesOfInterest => {
-                            ui.strong(lang.text("legend-poi"));
-                            two_columns(ui, "legend-poi-groups", &PoiGroup::ALL, |ui, group| {
-                                swatch(ui, group.color(), lang.text(group.label_key()));
-                            });
-                        }
+                        },
+                    );
+                }
+                LegendKind::FlightAltitude => {
+                    ui.strong(lang.text("legend-flight-altitude"));
+                    ramp(
+                        ui,
+                        |t| {
+                            super::selected_flight::altitude_color(Some(
+                                f64::from(t) * TRACK_TOP_FEET,
+                            ))
+                        },
+                        &[
+                            (0.0, "0"),
+                            (0.25, "10k"),
+                            (0.5, "20k"),
+                            (0.75, "30k"),
+                            (1.0, "40k ft"),
+                        ],
+                    );
+                    swatch(
+                        ui,
+                        super::selected_flight::altitude_color(None),
+                        lang.text("legend-on-ground"),
+                    );
+                }
+                LegendKind::Radar => {
+                    ui.strong(lang.text("legend-radar"));
+                    for (index, (lowest, [r, g, b])) in RADAR_BANDS.iter().enumerate() {
+                        let range = match RADAR_BANDS.get(index + 1) {
+                            Some((next, _)) => format!("{lowest:.0}–{next:.0} dBZ"),
+                            None => format!("{lowest:.0}+ dBZ"),
+                        };
+                        let text = lang.format(
+                            "legend-radar-band",
+                            &[
+                                ("name", lang.text(RADAR_BAND_KEYS[index]).into()),
+                                ("range", range.into()),
+                            ],
+                        );
+                        swatch(ui, Color32::from_rgb(*r, *g, *b), &text);
                     }
                 }
-            });
-        if !open {
-            self.legend.open = false;
+                LegendKind::Aurora => {
+                    ui.strong(lang.text("legend-aurora"));
+                    let (low, high) = AURORA_CHANCE_SPAN;
+                    ramp(
+                        ui,
+                        |t| aurora_colour((low + t * (high - low)).round() as u8),
+                        &[(0.0, "4 %"), (0.5, "30 %"), (1.0, "60 %+")],
+                    );
+                }
+                LegendKind::PlacesOfInterest => {
+                    ui.strong(lang.text("legend-poi"));
+                    two_columns(ui, "legend-poi-groups", &PoiGroup::ALL, |ui, group| {
+                        swatch(ui, group.color(), lang.text(group.label_key()));
+                    });
+                }
+            }
         }
     }
 }

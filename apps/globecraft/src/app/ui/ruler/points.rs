@@ -6,7 +6,6 @@ use globecraft_core::{
     language::Lang,
     ruler::{Ruler, RulerPointId},
 };
-const EDITOR_WIDTH_POINTS: f32 = 440.0;
 const POINT_LIST_HEIGHT_POINTS: f32 = 160.0;
 const BUTTON_MARGIN_POINTS: f32 = 8.0;
 
@@ -74,117 +73,101 @@ impl PointEditor {
             }
         }
     }
-    fn show(&mut self, ctx: &egui::Context, ruler: &Ruler, lang: Lang) -> Action {
-        let mut open = true;
+    /// The editor, as a section of the Measure pane.
+    fn show(&mut self, ui: &mut egui::Ui, ruler: &Ruler, lang: Lang) -> Action {
         let mut action = Action::Pending;
-        egui::Window::new(lang.text("ruler-points-title"))
-            .id(egui::Id::new("ruler_points_editor"))
-            .default_width(EDITOR_WIDTH_POINTS)
-            .default_pos(
-                ctx.content_rect().center()
-                    - egui::vec2(EDITOR_WIDTH_POINTS * 0.5, POINT_LIST_HEIGHT_POINTS),
-            )
-            .collapsible(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(POINT_LIST_HEIGHT_POINTS)
-                    .show(ui, |ui| {
-                        for (path, points) in ruler.paths().enumerate() {
-                            if points.is_empty() {
-                                continue;
-                            }
-                            ui.strong(lang.format(
-                                "ruler-path-heading",
-                                &[("number", (path + 1).to_string().into())],
-                            ));
-                            for (point, position) in points.iter().copied().enumerate() {
-                                let id = RulerPointId { path, point };
-                                let label = lang.format(
-                                    "ruler-point-row",
-                                    &[
-                                        ("number", (point + 1).to_string().into()),
-                                        ("latitude", format!("{:.8}", position.0).into()),
-                                        ("longitude", format!("{:.8}", position.1).into()),
-                                    ],
-                                );
-                                if ui
-                                    .selectable_label(
-                                        self.selected.is_some_and(|(selected, _)| selected == id),
-                                        label,
-                                    )
-                                    .clicked()
-                                {
-                                    self.select(id, position);
-                                }
-                            }
-                        }
-                    });
-                ui.separator();
-                ui.label(lang.text(if self.selected.is_some() {
-                    "ruler-point-edit-mode"
-                } else {
-                    "ruler-point-add-mode"
-                }));
-                let mut enter = false;
-                for (label, text) in [
-                    ("ruler-point-latitude", &mut self.latitude),
-                    ("ruler-point-longitude", &mut self.longitude),
-                ] {
-                    ui.horizontal(|ui| {
-                        ui.label(lang.text(label));
-                        let response = ui.add(
-                            egui::TextEdit::singleline(text)
-                                .id_source(label)
-                                .desired_width(ui.available_width()),
+        egui::ScrollArea::vertical()
+            .max_height(POINT_LIST_HEIGHT_POINTS)
+            .show(ui, |ui| {
+                for (path, points) in ruler.paths().enumerate() {
+                    if points.is_empty() {
+                        continue;
+                    }
+                    ui.strong(lang.format(
+                        "ruler-path-heading",
+                        &[("number", (path + 1).to_string().into())],
+                    ));
+                    for (point, position) in points.iter().copied().enumerate() {
+                        let id = RulerPointId { path, point };
+                        let label = lang.format(
+                            "ruler-point-row",
+                            &[
+                                ("number", (point + 1).to_string().into()),
+                                ("latitude", format!("{:.8}", position.0).into()),
+                                ("longitude", format!("{:.8}", position.1).into()),
+                            ],
                         );
-                        if response.changed() {
-                            self.error = None;
+                        if ui
+                            .selectable_label(
+                                self.selected.is_some_and(|(selected, _)| selected == id),
+                                label,
+                            )
+                            .clicked()
+                        {
+                            self.select(id, position);
                         }
-                        enter |= (response.has_focus() || response.lost_focus())
-                            && ui.input_mut(|input| {
-                                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                            });
-                    });
-                }
-                if self.selected.is_none() {
-                    ui.checkbox(&mut self.new_path, lang.text("ruler-point-new-path-toggle"));
-                }
-                ui.weak(lang.text("ruler-point-input-help"));
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                ui.add_space(BUTTON_MARGIN_POINTS);
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button(lang.text(if self.selected.is_some() {
-                            "ruler-point-apply-action"
-                        } else {
-                            "ruler-point-add-action"
-                        }))
-                        .clicked()
-                        || enter
-                    {
-                        action = self.submit(ruler);
                     }
-                    if self.selected.is_some()
-                        && ui.button(lang.text("ruler-point-new-action")).clicked()
-                    {
-                        self.selected = None;
-                        self.error = None;
-                    }
-                    if ui.button(lang.text("ruler-point-close-action")).clicked() {
-                        action = Action::Close;
-                    }
-                });
+                }
             });
-        if !open
-            || ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            Action::Close
+        ui.separator();
+        ui.label(lang.text(if self.selected.is_some() {
+            "ruler-point-edit-mode"
         } else {
-            action
+            "ruler-point-add-mode"
+        }));
+        let mut enter = false;
+        for (label, text) in [
+            ("ruler-point-latitude", &mut self.latitude),
+            ("ruler-point-longitude", &mut self.longitude),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(lang.text(label));
+                let response = ui.add(
+                    egui::TextEdit::singleline(text)
+                        .id_source(label)
+                        .desired_width(ui.available_width()),
+                );
+                if response.changed() {
+                    self.error = None;
+                }
+                enter |= (response.has_focus() || response.lost_focus())
+                    && ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    });
+            });
         }
+        if self.selected.is_none() {
+            ui.checkbox(&mut self.new_path, lang.text("ruler-point-new-path-toggle"));
+        }
+        ui.weak(lang.text("ruler-point-input-help"));
+        if let Some(error) = &self.error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        ui.add_space(BUTTON_MARGIN_POINTS);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button(lang.text(if self.selected.is_some() {
+                    "ruler-point-apply-action"
+                } else {
+                    "ruler-point-add-action"
+                }))
+                .clicked()
+                || enter
+            {
+                action = self.submit(ruler);
+            }
+            if self.selected.is_some() && ui.button(lang.text("ruler-point-new-action")).clicked() {
+                self.selected = None;
+                self.error = None;
+            }
+            if ui.button(lang.text("ruler-point-close-action")).clicked() {
+                action = Action::Close;
+            }
+        });
+        if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            return Action::Close;
+        }
+        action
     }
 }
 impl PointEditor {
@@ -215,11 +198,15 @@ impl PointEditor {
     }
 }
 impl App {
-    pub(in crate::app) fn ruler_points_window(&mut self, ctx: &egui::Context) {
+    /// The point editor, at the top of the Measure pane while it is open.
+    pub(in crate::app) fn ruler_points_section(&mut self, ui: &mut egui::Ui) {
         let Some(editor) = &mut self.measure.point_editor else {
             return;
         };
-        let action = editor.show(ctx, &self.measure.paths, self.lang);
+        let ctx = ui.ctx().clone();
+        ui.strong(self.lang.text("ruler-points-title"));
+        let action = editor.show(ui, &self.measure.paths, self.lang);
+        ui.separator();
         if action == Action::Close {
             self.measure.point_editor = None;
         } else if editor.apply(action, &mut self.measure.paths) {
@@ -299,8 +286,7 @@ mod tests {
         for lang in Lang::ALL {
             let mut editor = PointEditor::new((0.0, 0.0));
             let _ = crate::app::test_ui::run(&ctx, egui::RawInput::default(), |ui| {
-                let ctx: &egui::Context = ui;
-                assert_eq!(editor.show(ctx, &ruler, lang), Action::Pending);
+                assert_eq!(editor.show(ui, &ruler, lang), Action::Pending);
             });
             let _ = crate::app::test_ui::run(
                 &ctx,

@@ -306,7 +306,6 @@ impl App {
             && !self.windows.settings
             && !self.windows.about
             && !self.windows.shortcuts
-            && !self.explorer.open
             && self.altitude_editor.is_none()
             && self.measure.point_editor.is_none()
             && !self.flat_earth.open
