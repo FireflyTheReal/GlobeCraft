@@ -5,10 +5,10 @@
 //! The layout follows RustGIS's chrome (`crates/ui-egui/src/chrome.rs`, Apache-2.0).
 use super::ribbon::COLLAPSE_W;
 use super::theme::{Tokens, regular};
-use super::widgets::{icon_command, text_w};
+use super::widgets::{icon_command, menu_item, text_w};
 use super::{icons, status};
 use crate::app::App;
-use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, Align2, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use globecraft_core::commands::Tab;
 use serde_json::Value;
 
@@ -29,6 +29,9 @@ const MIN_PLACE_SEARCH_WIDTH: f32 = 140.0;
 /// The quick-access row's buttons are 26 points wide with gaps between them; its tools
 /// are the user's (`workspace.quick_tools`, pinned from a ribbon group's menu).
 const QAT_GAP: f32 = 2.0;
+/// The Help and Settings buttons in the header, and the gap after each.
+const HEADER_ICON_W: f32 = 26.0;
+const HEADER_ICON_GAP: f32 = 2.0;
 const QAT_BUTTON: f32 = 26.0;
 /// Smallest padding per tab before the tabs scroll.
 const TAB_MIN_PAD: f32 = 8.0;
@@ -70,7 +73,7 @@ impl App {
                     let right = full.max.x;
                     let left = ui.cursor().min.x;
                     let tabs_min =
-                        self.tab_captions_width(ui) + Tab::ALL.len() as f32 * TAB_MIN_PAD;
+                        self.tab_captions_width(ui) + Tab::RIBBON.len() as f32 * TAB_MIN_PAD;
                     let label = lang.text("cmd-ui-command-search");
                     let hint = if cfg!(target_os = "macos") {
                         "⌘K"
@@ -82,7 +85,13 @@ impl App {
                             .clamp(170.0, 230.0);
                     let quick = self.settings.workspace.quick_tools.len() as f32;
                     let qat_width = (quick * (QAT_BUTTON + QAT_GAP) - QAT_GAP).max(0.0);
-                    let fixed = COLLAPSE_W + 8.0 + 10.0 + 10.0 + qat_width + 8.0;
+                    let fixed = COLLAPSE_W
+                        + 8.0
+                        + 2.0 * (HEADER_ICON_W + HEADER_ICON_GAP)
+                        + 10.0
+                        + 10.0
+                        + qat_width
+                        + 8.0;
                     let room = right - left - fixed - tabs_min;
                     let wanted_search = PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0);
                     let cmd_w = if room >= full_cmd_w + wanted_search {
@@ -96,7 +105,24 @@ impl App {
                         vec2(COLLAPSE_W, COLLAPSE_W),
                     );
                     self.collapse_button(ui, &t, collapse);
-                    let right = collapse.min.x - 8.0;
+                    // Help and Settings, left of the collapse button.
+                    let icon_at = |i: f32| {
+                        Rect::from_center_size(
+                            pos2(
+                                collapse.min.x
+                                    - 8.0
+                                    - HEADER_ICON_W / 2.0
+                                    - i * (HEADER_ICON_W + HEADER_ICON_GAP),
+                                full.center().y,
+                            ),
+                            vec2(HEADER_ICON_W, HEADER_ICON_W),
+                        )
+                    };
+                    let settings_rect = icon_at(0.0);
+                    let help_rect = icon_at(1.0);
+                    self.settings_button(ui, &t, settings_rect);
+                    self.help_button(ui, &t, help_rect);
+                    let right = help_rect.min.x - 8.0;
                     let cr = Rect::from_min_max(
                         pos2(right - cmd_w, full.center().y - 12.0),
                         pos2(right, full.center().y + 12.0),
@@ -196,6 +222,34 @@ impl App {
             });
         self.tab_strip_rect = Some(header.response.rect);
         self.suggestion_popup(ui, field_rect);
+    }
+
+    /// The ⚙ button: Settings.
+    fn settings_button(&mut self, ui: &mut Ui, t: &Tokens, r: Rect) {
+        let tip = self.lang.text("ribbon-settings-button");
+        let resp = header_icon(ui, t, r, "settings", tip, egui::Id::new("header_settings"));
+        if resp.clicked() {
+            self.run_reporting("ui.settings", Value::Null);
+        }
+    }
+
+    /// The ? button: a menu of help, shortcuts and About.
+    fn help_button(&mut self, ui: &mut Ui, t: &Tokens, r: Rect) {
+        let tip = self.lang.text("ribbon-help-menu");
+        let resp = header_icon(ui, t, r, "help", tip, egui::Id::new("header_help"));
+        egui::Popup::menu(&resp).show(|ui| {
+            ui.set_min_width(220.0);
+            for id in ["ui.shortcuts", "ui.commandSearch"] {
+                menu_item(ui, self, id, Value::Null);
+            }
+            ui.separator();
+            for id in ["help.documentation", "help.reportIssue"] {
+                menu_item(ui, self, id, Value::Null);
+            }
+            ui.separator();
+            menu_item(ui, self, "ui.ribbon.resetTools", Value::Null);
+            menu_item(ui, self, "ui.about", Value::Null);
+        });
     }
 
     pub(in crate::app) fn status_bar(&mut self, ui: &mut Ui) {
@@ -371,4 +425,16 @@ impl App {
 fn separator(ui: &mut Ui, t: &Tokens) {
     let (r, _) = ui.allocate_exact_size(vec2(1.0, 14.0), Sense::hover());
     ui.painter().rect_filled(r, 0.0, t.border_strong);
+}
+
+/// A header icon button at `r`, with a hover fill.
+fn header_icon(ui: &mut Ui, t: &Tokens, r: Rect, icon: &str, tip: &str, id: egui::Id) -> Response {
+    let resp = ui.interact(r, id, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    if resp.hovered() || egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp))
+    {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+    }
+    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text_dim, t.accent);
+    resp.on_hover_text(tip)
 }

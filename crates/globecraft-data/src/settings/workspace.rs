@@ -58,7 +58,7 @@ pub struct WorkspaceLayout {
 impl Default for WorkspaceLayout {
     fn default() -> Self {
         Self {
-            ribbon_tab: Tab::Home,
+            ribbon_tab: Tab::Explore,
             ribbon_minimized: false,
             right_pane: None,
             right_open: Vec::new(),
@@ -136,7 +136,7 @@ impl WorkspaceLayout {
         if let Some(tab) = value
             .get("ribbon_tab")
             .and_then(|v| v.as_str())
-            .and_then(Tab::from_code)
+            .and_then(Tab::ribbon_from_code)
         {
             self.ribbon_tab = tab;
         }

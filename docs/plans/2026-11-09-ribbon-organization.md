@@ -135,6 +135,15 @@ A sidebar with seven pages instead of eleven wrapped tabs, and the search box ab
 - Keyboard: ↑/↓ move, Enter runs, → opens ⋮, Esc closes.
 - Choice sets show as radio rows.
 
+## Status
+
+- 2026-11-09: steps 1–3 done. Four tabs in `ui/ribbon_tabs.rs`; choice buttons
+  (`widgets::choice_big`, `choice_small`); ? and ⚙ in the header; File menu with Add Data.
+  All four tabs fit 1280 points in English and Portuguese (`layout_inventory_screenshots`
+  with `GLOBECRAFT_SHOT_SIZE=1280x800`, `GLOBECRAFT_SHOT_LANG=pt-BR`). Differences from the
+  tables: Hazards waits until fires and alerts are layers; the exaggeration is a small menu
+  (`1.0× ▾`) in Nature; the ruler unit stays visible in Measure.
+
 ## Steps (each a commit with before/after screenshots of every tab)
 
 1. Group menus fixed (above).

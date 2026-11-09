@@ -151,29 +151,34 @@ pub(in crate::app) fn user_shortcuts() -> Vec<(String, KeyboardShortcut)> {
     })
 }
 
-/// Ribbon tools that are in their group's menu only until the user pins them: the
-/// ribbon shows the tools used most, and the menu all of them.
-pub(in crate::app) const MENU_ONLY: &[(&str, &str)] = &[
-    ("home.navigate", "camera.zoomIn"),
-    ("home.navigate", "camera.zoomOut"),
-    ("home.measure", "edit.undo"),
-    ("home.measure", "edit.redo"),
-    ("home.measure", "ruler.closeShape"),
-];
+/// Ribbon tools drawn in a group but kept in its menu until the user pins them.
+pub(in crate::app) const MENU_ONLY: &[(&str, &str)] = &[];
 
 /// Tools a group's menu offers beyond its ribbon buttons; pinned, they join the ribbon.
+/// The plan's tables (`docs/plans/2026-11-09-ribbon-organization.md`) list them.
 pub(in crate::app) const EXTRAS: &[(&str, &str)] = &[
-    ("home.navigate", "camera.topDown"),
-    ("home.measure", "ruler.profile"),
-    ("home.capture", "view.copyLink"),
-    ("home.places", "places.save"),
-    ("home.places", "places.saveAs"),
-    ("live.objects", "flight.clear"),
-    ("live.objects", "satellite.clear"),
+    ("explore.navigate", "camera.zoomIn"),
+    ("explore.navigate", "camera.zoomOut"),
+    ("explore.navigate", "camera.autoRotate"),
+    ("explore.navigate", "ui.explorer"),
+    ("explore.places", "places.save"),
+    ("explore.places", "places.saveAs"),
+    ("explore.places", "places.clear"),
+    ("explore.places", "ui.pane.places"),
+    ("explore.measure", "ruler.closeShape"),
+    ("explore.measure", "ruler.profile"),
+    ("explore.measure", "edit.undo"),
+    ("explore.measure", "edit.redo"),
+    ("explore.measure", "ui.pane.measure"),
+    ("explore.capture", "view.copyLink"),
+    ("live.tracking", "flight.clear"),
+    ("live.tracking", "satellite.clear"),
+    ("view.panes", "ui.pane.layers"),
+    ("view.panes", "ui.pane.places"),
+    ("view.panes", "ui.pane.data"),
+    ("view.panes", "ui.tileDiagnostics"),
+    ("view.window", "ui.ribbon"),
     ("view.window", "ui.minimize"),
-    ("view.window", "ui.tileDiagnostics"),
-    ("view.panes", "ui.timeline"),
-    ("settings.preferences", "ui.ribbon.resetTools"),
 ];
 
 /// Whether a tool is on the ribbon by default.
@@ -207,8 +212,8 @@ mod tests {
         assert_eq!(key, r#"layer.show {"layer":"radar"}"#);
         assert_eq!(parse_tool(&key), Some(("layer.show".into(), params)));
         assert_eq!(tool_key("ui.legend", &json!({})), "ui.legend");
-        assert!(pinned_by_default("home.navigate", "search.place"));
-        assert!(!pinned_by_default("home.navigate", "camera.zoomIn"));
+        assert!(pinned_by_default("explore.navigate", "search.place"));
+        assert!(!pinned_by_default("explore.navigate", "camera.zoomIn"));
     }
 
     #[test]

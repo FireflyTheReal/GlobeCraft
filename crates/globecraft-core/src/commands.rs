@@ -15,52 +15,61 @@ pub enum Reach {
     Interface,
 }
 
-/// Ribbon tab a command belongs to (its home in the interface).
+/// Where a command lives in the interface: one of the four ribbon tabs, or the File or
+/// Help menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
-    Home,
-    Layers,
+    Explore,
+    Map,
     Live,
     View,
-    Places,
-    Settings,
+    File,
     Help,
 }
 
 impl Tab {
-    pub const ALL: [Self; 7] = [
-        Self::Home,
-        Self::Layers,
+    pub const ALL: [Self; 6] = [
+        Self::Explore,
+        Self::Map,
         Self::Live,
         Self::View,
-        Self::Places,
-        Self::Settings,
+        Self::File,
         Self::Help,
     ];
+    /// The ribbon's tabs, in order.
+    pub const RIBBON: [Self; 4] = [Self::Explore, Self::Map, Self::Live, Self::View];
     pub fn label_key(self) -> &'static str {
         match self {
-            Self::Home => "ribbon-tab-home",
-            Self::Layers => "ribbon-tab-layers",
+            Self::Explore => "ribbon-tab-explore",
+            Self::Map => "ribbon-tab-map",
             Self::Live => "ribbon-tab-live",
             Self::View => "ribbon-tab-view",
-            Self::Places => "ribbon-tab-places",
-            Self::Settings => "ribbon-tab-settings",
+            Self::File => "ribbon-file",
             Self::Help => "ribbon-tab-help",
         }
     }
     pub fn code(self) -> &'static str {
         match self {
-            Self::Home => "home",
-            Self::Layers => "layers",
+            Self::Explore => "explore",
+            Self::Map => "map",
             Self::Live => "live",
             Self::View => "view",
-            Self::Places => "places",
-            Self::Settings => "settings",
+            Self::File => "file",
             Self::Help => "help",
         }
     }
     pub fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|tab| tab.code() == code)
+    }
+    /// The ribbon tab saved as `code`, including the codes of the tabs before 2026-11
+    /// (Home, Layers, Places, Settings and Help went into the four tabs).
+    pub fn ribbon_from_code(code: &str) -> Option<Self> {
+        match code {
+            "home" | "places" | "help" => Some(Self::Explore),
+            "layers" => Some(Self::Map),
+            "settings" => Some(Self::View),
+            _ => Self::from_code(code).filter(|tab| Self::RIBBON.contains(tab)),
+        }
     }
 }
 
@@ -118,7 +127,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.flyTo",
         "camera-fly-to",
         "fly",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.15..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"},"tilt_deg":{"type":"number","description":"View tilt from straight down, 0..80; default keeps the current tilt"}},"required":["lat","lon"]}"#
     ),
@@ -126,7 +135,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.set",
         "camera-set",
         "goto_xy",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"},"tilt_deg":{"type":"number","description":"0 (straight down) .. 80"}}}"#
     ),
@@ -134,7 +143,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "search.place",
         "search-place",
         "search",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"query":{"type":"string","description":"A place name, an address, or coordinates such as 48.85, 2.35"},"fly":{"type":"boolean","description":"Fly to the best result when it arrives (default true)"}},"required":["query"]}"#
     ),
@@ -142,7 +151,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.zoomIn",
         "camera-zoom-in",
         "zoom_in",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -150,7 +159,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.zoomOut",
         "camera-zoom-out",
         "zoom_out",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -158,7 +167,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.resetNorth",
         "camera-reset-north",
         "north",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -166,7 +175,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.tilt",
         "camera-tilt",
         "terrain",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..80 (less close to the ground)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
     ),
@@ -174,7 +183,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.topDown",
         "camera-top-down",
         "globe_view",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -182,7 +191,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.globalView",
         "camera-global-view",
         "zoom_world",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -190,7 +199,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "camera.autoRotate",
         "camera-auto-rotate",
         "rotate",
-        Home,
+        Explore,
         View,
         TOGGLE
     ),
@@ -199,7 +208,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places.addAtCenter",
         "places-add-center",
         "pin_add",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"}}}"#
     ),
@@ -207,7 +216,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places.add",
         "places-add",
         "pin_add",
-        Places,
+        Explore,
         View,
         r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"name":{"type":"string"},"description":{"type":"string"},"folder":{"type":"string","description":"Name of an existing folder to put it in"}},"required":["lat","lon"]}"#
     ),
@@ -215,7 +224,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places.addFolder",
         "places-add-folder",
         "add_folder",
-        Places,
+        Explore,
         View,
         r#"{"type":"object","properties":{"name":{"type":"string"}}}"#
     ),
@@ -223,7 +232,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places.flyTo",
         "places-fly-to",
         "fly",
-        Places,
+        Explore,
         View,
         r#"{"type":"object","properties":{"name":{"type":"string","description":"Placemark name (case-insensitive)"}},"required":["name"]}"#
     ),
@@ -231,31 +240,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places.remove",
         "places-remove",
         "delete",
-        Places,
+        Explore,
         View,
         r#"{"type":"object","properties":{"name":{"type":"string","description":"Placemark or folder name"}},"required":["name"]}"#
     ),
-    command!(
-        "places.open",
-        "places-open",
-        "open",
-        Places,
-        Files,
-        NO_PARAMS
-    ),
-    command!(
-        "places.save",
-        "places-save",
-        "save",
-        Places,
-        Files,
-        NO_PARAMS
-    ),
+    command!("places.open", "places-open", "open", File, Files, NO_PARAMS),
+    command!("places.save", "places-save", "save", File, Files, NO_PARAMS),
     command!(
         "places.saveAs",
         "places-save-as",
         "save_as",
-        Places,
+        File,
         Files,
         NO_PARAMS
     ),
@@ -263,7 +258,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places.clear",
         "places-clear",
         "clear_all",
-        Places,
+        Explore,
         Destructive,
         NO_PARAMS
     ),
@@ -272,7 +267,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.enable",
         "ruler-enable",
         "measure",
-        Home,
+        Explore,
         View,
         TOGGLE
     ),
@@ -280,7 +275,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.addPoint",
         "ruler-add-point",
         "measure",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"new_path":{"type":"boolean","description":"Start a separate path"}},"required":["lat","lon"]}"#
     ),
@@ -288,7 +283,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.clear",
         "ruler-clear",
         "clear_sel",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -296,7 +291,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.closeShape",
         "ruler-close-shape",
         "shape",
-        Home,
+        Explore,
         View,
         TOGGLE
     ),
@@ -304,7 +299,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.profile",
         "ruler-profile",
         "measure",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -312,7 +307,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.unit",
         "ruler-unit",
         "measure",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"unit":{"type":"string","enum":["automatic","centimeters","meters","kilometers","inches","feet","yards","miles","nautical_miles","smoots","degrees","arcseconds","football_fields"]}},"required":["unit"]}"#
     ),
@@ -320,17 +315,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ruler.editPoints",
         "ruler-edit-points",
         "vertices",
-        Home,
+        Explore,
         Interface,
         NO_PARAMS
     ),
-    command!("edit.undo", "edit-undo", "undo", Home, View, NO_PARAMS),
-    command!("edit.redo", "edit-redo", "redo", Home, View, NO_PARAMS),
+    command!("edit.undo", "edit-undo", "undo", Explore, View, NO_PARAMS),
+    command!("edit.redo", "edit-redo", "redo", Explore, View, NO_PARAMS),
     command!(
         "view.copyLink",
         "view-copy-link",
         "copy",
-        Home,
+        Explore,
         View,
         NO_PARAMS
     ),
@@ -338,7 +333,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "view.openLink",
         "view-open-link",
         "goto_xy",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"link":{"type":"string","description":"A globecraft://view?lat=…&lon=… link (optional alt, heading, tilt, basemap, layers, data)"}},"required":["link"]}"#
     ),
@@ -346,7 +341,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "file.screenshot",
         "file-screenshot",
         "camera",
-        Home,
+        Explore,
         Files,
         r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"],"description":"normal: screen size once every tile has loaded; plus: twice the size, one zoom level deeper; pro: four times the size, two levels deeper; pro_max: eight times the size, three levels deeper. Default: the chosen quality"}}}"#
     ),
@@ -354,7 +349,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "file.screenshotQuality",
         "file-screenshot-quality",
         "camera",
-        Home,
+        Explore,
         Files,
         r#"{"type":"object","properties":{"quality":{"type":"string","enum":["normal","plus","pro","pro_max"]}},"required":["quality"]}"#
     ),
@@ -362,7 +357,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "file.cancelScreenshot",
         "file-cancel-screenshot",
         "close",
-        Home,
+        Explore,
         Files,
         NO_PARAMS
     ),
@@ -371,7 +366,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ui.addData",
         "ui-add-data",
         "add_data",
-        Layers,
+        File,
         Interface,
         NO_PARAMS
     ),
@@ -379,7 +374,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.add",
         "data-add",
         "web_data",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"preset":{"type":"string","enum":["gebco","emodnet_bathymetry","gibs_true_colour","forest_loss","earthquakes"],"description":"A library source: GEBCO seafloor, EMODnet European bathymetry, NASA GIBS yesterday's true colour, Global Forest Watch tree cover loss, USGS earthquakes of the past week"},"url":{"type":"string","description":"Instead of a preset: a web address. For tiles a template with {z}, {x} and {y}; for a WMS its service address; for features a GeoJSON, GPX or CSV file"},"kind":{"type":"string","enum":["tiles","wms","features"]},"layers":{"type":"string","description":"WMS layer names, comma-separated"},"format":{"type":"string","enum":["geojson","gpx","csv"]},"refresh_minutes":{"type":"integer","description":"Reload a feature URL this often; 0 loads it once"},"size_by":{"type":"string","description":"For features: the property points are sized and ranked by (for example mag or population); left out, the usual ones are found"},"max_zoom":{"type":"integer"},"name":{"type":"string"},"attribution":{"type":"string"}}}"#
     ),
@@ -387,7 +382,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.search",
         "data-search",
         "search",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"query":{"type":"string","description":"Words to look for in the library's names, descriptions and categories (ocean, earth, hazards); empty lists the whole library"}}}"#
     ),
@@ -395,7 +390,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.show",
         "data-show",
         "eye",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"id":{"type":"integer","description":"A user layer's id (info.view lists them)"},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["id"]}"#
     ),
@@ -403,7 +398,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.opacity",
         "data-opacity",
         "transparency",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"id":{"type":"integer"},"opacity":{"type":"number","description":"0 (invisible) to 1 (opaque)"}},"required":["id","opacity"]}"#
     ),
@@ -411,7 +406,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.move",
         "data-move",
         "up",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"id":{"type":"integer"},"direction":{"type":"string","enum":["up","down"],"description":"Up draws it over the next layer"}},"required":["id"]}"#
     ),
@@ -419,7 +414,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.zoomTo",
         "data-zoom-to",
         "zoom_full",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"id":{"type":"integer","description":"A feature layer's id"}},"required":["id"]}"#
     ),
@@ -427,7 +422,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data.remove",
         "data-remove",
         "delete",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#
     ),
@@ -436,7 +431,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.basemap",
         "layer-basemap",
         "basemap",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"basemap":{"type":"string","enum":["satellite","wayback","streets","topo"]}},"required":["basemap"]}"#
     ),
@@ -444,7 +439,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.waybackRelease",
         "layer-wayback-release",
         "history",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"date":{"type":"string","description":"Release date as listed, e.g. 2021-06-30"},"step":{"type":"integer","description":"+1 for an older, -1 for a newer release"}}}"#
     ),
@@ -452,7 +447,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.waybackCompare",
         "layer-wayback-compare",
         "history",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"enabled":{"type":"boolean","description":"Omit to toggle"},"date":{"type":"string","description":"Release shown right of the split, as listed"},"left_date":{"type":"string","description":"Release shown left of the split, as listed"},"swap":{"type":"boolean","description":"Exchange the two sides' releases"},"step":{"type":"integer","description":"+1 for an older, -1 for a newer comparison release"},"split":{"type":"number","description":"Where the split runs, 0 (left edge) .. 1 (right edge)"}}}"#
     ),
@@ -460,7 +455,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.show",
         "layer-show",
         "eye",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
@@ -468,7 +463,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.opacity",
         "layer-opacity",
         "transparency",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"layer":{"type":"string","enum":["clouds","radar","aurora","time_zones","traffic"]},"opacity":{"type":"number","minimum":0,"maximum":1}},"required":["layer","opacity"]}"#
     ),
@@ -476,7 +471,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.solo",
         "layer-solo",
         "eye",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"layer":{"type":"string","description":"A layer code as in layer.show; omit to show again what was visible before"}}}"#
     ),
@@ -484,7 +479,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.terrainExaggeration",
         "layer-terrain-exaggeration",
         "terrain",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"value":{"type":"number","description":"Vertical exaggeration, 0.5..3"}},"required":["value"]}"#
     ),
@@ -492,7 +487,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.flatLiveObjects",
         "layer-flat-live-objects",
         "satellite",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"on":{"type":"boolean","description":"true: aircraft and satellites drawn on the ground; false: at their height. Omit to toggle"}}}"#
     ),
@@ -500,7 +495,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "layer.stateAltitude",
         "layer-state-altitude",
         "scale_range",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"km":{"type":"number","description":"States and provinces are drawn below this camera altitude, 0..8000 km (default 1609)"}},"required":["km"]}"#
     ),
@@ -508,7 +503,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "world.earthModel",
         "world-earth-model",
         "globe_view",
-        Layers,
+        Map,
         View,
         r#"{"type":"object","properties":{"model":{"type":"string","enum":["wgs84_g2296","perfect_sphere"]}},"required":["model"]}"#
     ),
@@ -623,7 +618,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ui.here",
         "ui-here",
         "identify",
-        Home,
+        Explore,
         Interface,
         r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"}},"required":["lat","lon"]}"#
     ),
@@ -801,7 +796,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "ui.settings",
         "ui-settings",
         "settings",
-        Settings,
+        File,
         Interface,
         NO_PARAMS
     ),
@@ -809,7 +804,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "settings.units",
         "settings-units",
         "ruler_units",
-        Settings,
+        View,
         View,
         r#"{"type":"object","properties":{"units":{"type":"string","enum":["system","metric","imperial"]}},"required":["units"]}"#
     ),
@@ -817,7 +812,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "settings.experience",
         "settings-experience",
         "settings",
-        Settings,
+        View,
         View,
         r#"{"type":"object","properties":{"level":{"type":"string","enum":["basic","advanced"]}},"required":["level"]}"#
     ),
@@ -825,7 +820,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "settings.coordinateFormat",
         "settings-coordinate-format",
         "goto_xy",
-        Settings,
+        View,
         View,
         r#"{"type":"object","properties":{"format":{"type":"string","enum":["dd","dms","ddm","utm_ups","mgrs"]}},"required":["format"]}"#
     ),
@@ -833,7 +828,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "settings.language",
         "settings-language",
         "globe_lang",
-        Settings,
+        View,
         View,
         r#"{"type":"object","properties":{"language":{"type":"string","enum":["system","en","pt-BR"]}},"required":["language"]}"#
     ),
@@ -841,7 +836,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "style.line",
         "style-line",
         "symbology",
-        Settings,
+        View,
         View,
         r##"{"type":"object","properties":{"line":{"type":"string","enum":["country","state","municipal","disputed","major_road","minor_road","roadworks","railway","service_rail","subway","tram","ferry","runway","taxiway","river","canal","park","time_zone"],"description":"Borders (country, state/province, municipal, disputed), roads (motorway to secondary, smaller roads, roadworks), transport (railways, yards and sidings, subways, trams, ferries, runways, taxiways), rivers, canals, park outlines or time zone lines"},"color":{"type":"string","description":"Hex colour #rrggbb or #rrggbbaa (aa is opacity)"},"width":{"type":"number","description":"Line width in points, 0.5..6"},"dash":{"type":"string","enum":["solid","dashed","dotted"]}},"required":["line"]}"##
     ),
@@ -849,7 +844,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "style.labelSize",
         "style-label-size",
         "label_properties",
-        Settings,
+        View,
         View,
         r#"{"type":"object","properties":{"label":{"type":"string","enum":["country","state","city","road","time_zone"]},"size":{"type":"number","description":"Font size in points before the map text scale, 6..24"}},"required":["label","size"]}"#
     ),
@@ -857,7 +852,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "style.reset",
         "style-reset",
         "symbology",
-        Settings,
+        View,
         View,
         NO_PARAMS
     ),
@@ -891,26 +886,40 @@ pub const COMMANDS: &[CommandSpec] = &[
         "app.quit",
         "app-quit",
         "close",
-        Help,
+        File,
         Destructive,
         NO_PARAMS
     ),
     // Read-only views for the assistant.
-    command!("info.view", "info-view", "identify", Home, View, NO_PARAMS),
+    command!(
+        "info.view",
+        "info-view",
+        "identify",
+        Explore,
+        View,
+        NO_PARAMS
+    ),
     command!(
         "info.places",
         "info-places",
         "places",
-        Places,
+        Explore,
         View,
         NO_PARAMS
     ),
-    command!("info.ruler", "info-ruler", "measure", Home, View, NO_PARAMS),
+    command!(
+        "info.ruler",
+        "info-ruler",
+        "measure",
+        Explore,
+        View,
+        NO_PARAMS
+    ),
     command!(
         "info.here",
         "info-here",
         "identify",
-        Home,
+        Explore,
         View,
         r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"}},"required":["lat","lon"],"description":"What is known about a point: coordinates in every format, ground height, country, state and municipality (null with a reason when their border tiles are not loaded), nearest named place, local times and the sun's height"}"#
     ),

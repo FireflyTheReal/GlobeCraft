@@ -21,6 +21,7 @@ mod paths;
 mod places;
 mod places_pane;
 mod ribbon;
+mod ribbon_tabs;
 pub(in crate::app) mod ribbon_tools;
 pub(in crate::app) mod ruler;
 mod scale_slider;

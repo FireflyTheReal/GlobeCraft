@@ -548,6 +548,14 @@ working queue, not a promise.
 
 0. Keep the look, reorganise the layout: ribbon groups with Fusion 360 style drop-downs (every tool of a group with its shortcut, `⋮` to pin to the toolbar or to shortcuts and to change the shortcut), one panel system (docked panes, anchored cards, dialogs with one look) replacing the eleven floating windows (Settings, Add Data, flight and satellite cards, legend, …), and fixed zones around the globe's own controls
 
+   Organization (agreed 2026-11-09): `docs/plans/2026-11-09-ribbon-organization.md`; four tabs
+   (Explore, Map, Live, View), File and ? menus, split buttons for choice sets, seven Settings pages.
+
+**0b. Bugs reported by the user (2026-11-09), after the redesign**
+
+- Active fires (NASA FIRMS preset, `{key:firms}`) shows nothing.
+- Continental shelf lines (Marine Regions preset) look wrong.
+
 **1. Check on the Mac what just landed** (needs the user)
 
 1. Flights: updates across the view, a selected flight's route and card (5); time zones as a classic map (5)

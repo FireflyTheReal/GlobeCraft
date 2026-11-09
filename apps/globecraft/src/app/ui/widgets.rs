@@ -203,18 +203,49 @@ pub(in crate::app) fn big_with(
     resp
 }
 
-/// A large button that opens a menu.
-pub(in crate::app) fn big_menu(
-    ui: &mut Ui,
-    app: &mut App,
-    icon: &str,
-    label: &str,
-    help: &str,
-    menu: impl FnOnce(&mut Ui, &mut App),
-) {
+/// One option of a choice (a basemap, a theme, a world): a command with parameters.
+pub(in crate::app) struct Choice<'a> {
+    pub id: &'a str,
+    pub params: Value,
+    pub icon: &'a str,
+    pub label: &'a str,
+}
+
+/// The option of `choices` in effect, or the first.
+fn current_choice<'c, 'a>(app: &App, choices: &'c [Choice<'a>]) -> Option<&'c Choice<'a>> {
+    choices
+        .iter()
+        .find(|c| app.command_state(c.id, &c.params).checked)
+        .or_else(|| choices.first())
+}
+
+/// The menu of a choice: every option, the one in effect marked.
+fn choice_menu(ui: &mut Ui, app: &mut App, choices: &[Choice]) {
+    ui.set_min_width(200.0);
+    for choice in choices {
+        menu_item_with(
+            ui,
+            app,
+            choice.id,
+            choice.params.clone(),
+            Look {
+                icon: Some(choice.icon),
+                label: Some(choice.label),
+                ..Look::default()
+            },
+        );
+    }
+}
+
+/// A large button for a set of choices (basemap, world): it shows the one in effect and
+/// opens a menu of all of them, instead of one button per option.
+pub(in crate::app) fn choice_big(ui: &mut Ui, app: &mut App, help: &str, choices: &[Choice]) {
+    let Some(current) = current_choice(app, choices) else {
+        return;
+    };
     let r = Resolved {
-        icon,
-        label,
+        icon: current.icon,
+        label: current.label,
         help,
         checked: false,
         enabled: true,
@@ -222,10 +253,32 @@ pub(in crate::app) fn big_menu(
         params: None,
     };
     let resp = paint_big(ui, &r, true);
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(200.0);
-        menu(ui, app);
-    });
+    egui::Popup::menu(&resp).show(|ui| choice_menu(ui, app, choices));
+}
+
+/// A small button for a set of choices (theme, Earth model), labelled with the one in
+/// effect, or with `title` when the options' names are too long for the ribbon.
+pub(in crate::app) fn choice_small(
+    ui: &mut Ui,
+    app: &mut App,
+    title: Option<&str>,
+    help: &str,
+    choices: &[Choice],
+) {
+    let Some(current) = current_choice(app, choices) else {
+        return;
+    };
+    let r = Resolved {
+        icon: current.icon,
+        label: title.unwrap_or(current.label),
+        help,
+        checked: false,
+        enabled: true,
+        command: "",
+        params: None,
+    };
+    let resp = paint_small(ui, &r, true, true);
+    egui::Popup::menu(&resp).show(|ui| choice_menu(ui, app, choices));
 }
 
 /// Paints a small button: an 18 px icon with an optional label.

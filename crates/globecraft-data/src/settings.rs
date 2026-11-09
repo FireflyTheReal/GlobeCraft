@@ -373,9 +373,25 @@ mod tests {
         let mut new_leaves = Vec::new();
         leaves("", &saved, &mut new_leaves);
         let new_leaves: std::collections::HashMap<_, _> = new_leaves.into_iter().collect();
+        // Values a later version renames on purpose: (path, old, new).
+        let migrated = |path: &str, old: &Value| -> Option<Value> {
+            // The ribbon's tabs were merged into Explore, Map, Live and View (2026-11).
+            let renamed = [
+                ("home", "explore"),
+                ("layers", "map"),
+                ("places", "explore"),
+            ];
+            (path == "/workspace/ribbon_tab")
+                .then(|| renamed.iter().find(|(from, _)| old.as_str() == Some(from)))
+                .flatten()
+                .map(|(_, to)| Value::from(*to))
+        };
         let lost: Vec<String> = old_leaves
             .iter()
-            .filter(|(path, value)| new_leaves.get(path) != Some(value))
+            .filter(|(path, value)| {
+                let expected = migrated(path, value).unwrap_or_else(|| value.clone());
+                new_leaves.get(path) != Some(&expected)
+            })
             .map(|(path, value)| format!("{path}: {value} -> {:?}", new_leaves.get(path)))
             .collect();
         assert!(

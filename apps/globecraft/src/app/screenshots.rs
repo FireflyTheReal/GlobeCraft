@@ -105,7 +105,7 @@ fn interface_screenshots() {
         .run("ui.navigatorStyle", json!({"style": "globe"}));
 
     let app = h.state_mut();
-    app.settings.workspace.ribbon_tab = Tab::Layers;
+    app.settings.workspace.ribbon_tab = Tab::Map;
     let _ = app.run("ui.pane.layers", Value::Null);
     let _ = app.run("layer.show", json!({"layer": "grid"}));
     settle(&mut h, 2.0);
@@ -588,7 +588,7 @@ fn add_data_screenshots() {
     save(&mut h, &dir, "10-data-pane");
     // The Layers ribbon at both experience levels: Basic leaves out the Earth models.
     let app = h.state_mut();
-    app.settings.workspace.ribbon_tab = Tab::Layers;
+    app.settings.workspace.ribbon_tab = Tab::Map;
     let _ = app.run("settings.experience", json!({"level": "basic"}));
     settle(&mut h, 1.0);
     save(&mut h, &dir, "11-layers-ribbon-basic");
@@ -1548,7 +1548,14 @@ fn layout_inventory_screenshots() {
     h.state_mut()
         .run("settings.experience", json!({"level": "advanced"}))
         .expect("advanced");
-    for tab in Tab::ALL {
+    // GLOBECRAFT_SHOT_LANG=pt-BR checks that the tabs fit in Portuguese too.
+    let language = std::env::var("GLOBECRAFT_SHOT_LANG").ok();
+    if let Some(code) = &language {
+        h.state_mut()
+            .run("settings.language", json!({"language": code}))
+            .expect("language");
+    }
+    for tab in Tab::RIBBON {
         h.state_mut().settings.workspace.ribbon_tab = tab;
         settle(&mut h, 0.3);
         save(&mut h, &dir, &format!("ribbon-tab-{}", tab.code()));
@@ -1563,6 +1570,13 @@ fn layout_inventory_screenshots() {
         .expect("settings");
     settle(&mut h, 0.5);
     save(&mut h, &dir, "settings-window");
+    if language.is_some() {
+        // The language is saved: put English back for the next tests.
+        h.state_mut()
+            .run("settings.language", json!({"language": "en"}))
+            .expect("language");
+        settle(&mut h, 0.3);
+    }
 }
 
 /// A ribbon group's menu, a tool's ⋮ menu, a tool pinned to the ribbon and to the
@@ -1600,13 +1614,13 @@ fn ribbon_menus_screenshot() {
         let app = h.state_mut();
         app.run(
             "ui.ribbon.pin",
-            json!({"group": "home.navigate", "tool": "camera.zoomIn"}),
+            json!({"group": "explore.navigate", "tool": "camera.zoomIn"}),
         )
         .expect("pin");
-        assert!(app.tool_pinned("home.navigate", "camera.zoomIn"));
+        assert!(app.tool_pinned("explore.navigate", "camera.zoomIn"));
         app.run(
             "ui.ribbon.pin",
-            json!({"group": "home.navigate", "tool": "camera.resetNorth", "on": false}),
+            json!({"group": "explore.navigate", "tool": "camera.resetNorth", "on": false}),
         )
         .expect("unpin");
         app.run(
@@ -1645,7 +1659,7 @@ fn ribbon_menus_screenshot() {
         );
         app.run("ui.ribbon.resetTools", json!({})).expect("reset");
         assert!(crate::app::commands::shortcut("file.screenshot").is_some());
-        assert!(!app.tool_pinned("home.navigate", "camera.zoomIn"));
+        assert!(!app.tool_pinned("explore.navigate", "camera.zoomIn"));
     }
 }
 
@@ -1960,7 +1974,7 @@ fn time_zones_screenshot() {
         // Opacity and solo (roadmap 6.1): the zones at 35 %, shown alone, with the
         // Layers pane open on them.
         let app = h.state_mut();
-        app.settings.workspace.ribbon_tab = Tab::Layers;
+        app.settings.workspace.ribbon_tab = Tab::Map;
         let _ = app.run("ui.pane.layers", Value::Null);
         app.run(
             "layer.opacity",
