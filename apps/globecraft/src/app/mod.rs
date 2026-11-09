@@ -855,6 +855,7 @@ impl eframe::App for App {
         self.add_data_window(ui);
         self.command_search_window(ui);
         self.shortcut_dialog(ui);
+        ui::focus::paint_focus_ring(ui.ctx());
         #[cfg(feature = "profiling")]
         watchdog.checkpoint("ui.slow.live_maps");
         self.live_maps.update(

@@ -720,6 +720,22 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     command!("ui.ribbon", "ui-ribbon", "up", View, Interface, NO_PARAMS),
     command!(
+        "ui.focusNext",
+        "ui-focus-next",
+        "tools",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
+        "ui.focusPrevious",
+        "ui-focus-previous",
+        "tools",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
         "ui.ribbon.pin",
         "ui-ribbon-pin",
         "pin",

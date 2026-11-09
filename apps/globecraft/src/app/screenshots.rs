@@ -1659,6 +1659,63 @@ fn surfaces_screenshots() {
     }
 }
 
+/// The keyboard: F6 reaches the ribbon's tabs, the arrows move between them, Enter
+/// opens one, F6 goes on to the left pane and the globe, and the focused control has a
+/// ring (layout redesign step 5).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn keyboard_navigation_screenshot() {
+    use super::ui::focus::{left_tab_id, ribbon_tab_id};
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Light);
+    settle(&mut h, 0.5);
+    let focused = |h: &Harness<'static, App>| h.ctx.memory(|m| m.focused());
+    h.key_press(egui::Key::F6);
+    settle(&mut h, 0.2);
+    assert_eq!(
+        focused(&h),
+        Some(ribbon_tab_id(Tab::Explore)),
+        "F6 reaches the ribbon"
+    );
+    h.key_press(egui::Key::ArrowRight);
+    settle(&mut h, 0.2);
+    assert_eq!(
+        focused(&h),
+        Some(ribbon_tab_id(Tab::Map)),
+        "→ moves to the next tab"
+    );
+    h.key_press(egui::Key::Enter);
+    settle(&mut h, 0.3);
+    assert_eq!(
+        h.state().settings.workspace.ribbon_tab,
+        Tab::Map,
+        "Enter opens it"
+    );
+    save(&mut h, &dir, "keyboard-ribbon-tab");
+    h.key_press(egui::Key::F6);
+    settle(&mut h, 0.2);
+    let panel = h.state().settings.sidebar.panel;
+    assert_eq!(
+        focused(&h),
+        Some(left_tab_id(panel)),
+        "F6 goes on to the left pane"
+    );
+    save(&mut h, &dir, "keyboard-left-pane");
+    h.key_press(egui::Key::F6);
+    settle(&mut h, 0.2);
+    assert_eq!(
+        focused(&h),
+        None,
+        "then the globe, whose arrows move the view"
+    );
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
+    settle(&mut h, 0.2);
+    assert_eq!(focused(&h), Some(left_tab_id(panel)), "Shift+F6 goes back");
+}
+
 /// A ribbon group's menu, a tool's ⋮ menu, a tool pinned to the ribbon and to the
 /// quick-access row, and the keyboard shortcut dialog.
 #[test]

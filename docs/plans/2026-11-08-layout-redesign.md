@@ -68,7 +68,11 @@ widths, Escape closes): Settings, Add Data, About, Keyboard Shortcuts. Cards (to
 the globe, one at a time, `close_other_cards`): selected flight, selected satellite, What's
 here. Popover: the altitude editor. Panes: the Legend and the Explorer are right panes;
 the ruler's point editor is a section of the Measure pane. Screenshot test:
-`surfaces_screenshots`. Left: step 5 (keyboard).
+`surfaces_screenshots`. Step 5 (keyboard) too: F6 / Shift+F6 (`ui.focusNext`,
+`ui.focusPrevious`) move between the ribbon, the left pane, the right pane and the globe;
+Tab and the arrows move between controls (egui), Enter or Space presses one; every
+focused control has a ring (`ui/focus.rs`); the globe's arrow keys yield while a
+control has the focus. Test: `keyboard_navigation_screenshot`. The redesign is done.
 
 Each step is a commit with screenshots; the user checks the look on the Mac between
 steps 3 and 4.

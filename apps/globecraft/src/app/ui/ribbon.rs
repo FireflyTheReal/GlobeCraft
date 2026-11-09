@@ -139,7 +139,9 @@ impl App {
                             regular(12.5)
                         };
                         let w = text_w(ui, caption, font.clone()) + pad;
-                        let (r, resp) = ui.allocate_exact_size(vec2(w, strip_h), Sense::click());
+                        let (r, _) = ui.allocate_exact_size(vec2(w, strip_h), Sense::hover());
+                        let resp =
+                            ui.interact(r, super::focus::ribbon_tab_id(*tab), Sense::click());
                         resp.widget_info(|| {
                             egui::WidgetInfo::selected(
                                 egui::WidgetType::Button,

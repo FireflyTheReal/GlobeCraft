@@ -613,7 +613,7 @@ working queue, not a promise.
 
 29. 6.5 first-run onboarding; 6.8 pane presets (Explore, Measure, Present)
 30. ~~6.11 scale bar and view disc for tilted views~~ done 2026-11-08 (GPU parity left)
-31. 6.6 accessibility (keyboard, focus ring, reduced motion, high contrast); 6.7 accent colour and sidebar look
+31. 6.6 accessibility (~~keyboard, focus ring~~ done 2026-11-09 with the redesign; reduced motion, high contrast); 6.7 accent colour and sidebar look
 32. 6.10 more languages (es, fr, de, ja), with native speakers' review
 
 **9. Assistant**

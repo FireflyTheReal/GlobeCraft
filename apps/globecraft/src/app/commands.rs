@@ -81,6 +81,8 @@ pub(in crate::app) fn default_shortcut(id: &str) -> Option<egui::KeyboardShortcu
         "ui.pane.assistant" => (Modifiers::COMMAND | Modifiers::SHIFT, Key::A),
         "ui.ribbon" => (Modifiers::CTRL, Key::F1),
         "search.place" => (Modifiers::COMMAND, Key::F),
+        "ui.focusNext" => (Modifiers::NONE, Key::F6),
+        "ui.focusPrevious" => (Modifiers::SHIFT, Key::F6),
         _ => return None,
     };
     Some(egui::KeyboardShortcut::new(modifiers, key))
@@ -102,6 +104,8 @@ pub(in crate::app) const SHORTCUT_COMMANDS: &[&str] = &[
     "ui.pane.assistant",
     "ui.ribbon",
     "search.place",
+    "ui.focusNext",
+    "ui.focusPrevious",
 ];
 
 fn f64_param(params: &Value, key: &str) -> Result<Option<f64>, String> {
@@ -698,6 +702,10 @@ impl App {
                 self.settings.workspace.ribbon_minimized =
                     !self.settings.workspace.ribbon_minimized;
                 self.ribbon_peek = false;
+                json!({})
+            }
+            "ui.focusNext" | "ui.focusPrevious" => {
+                self.focus_next_region(&ctx, id == "ui.focusPrevious");
                 json!({})
             }
             "ui.ribbon.pin" => {

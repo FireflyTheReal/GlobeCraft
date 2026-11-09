@@ -142,7 +142,8 @@ impl App {
                 interacting = true;
             }
         }
-        if !ui.egui_wants_keyboard_input() {
+        // The arrow keys move the globe unless they move the focus between controls.
+        if !ui.egui_wants_keyboard_input() && ui.memory(|m| m.focused().is_none()) {
             let dt = super::frame_timing::animation_delta_secs(ui);
             let sp = PAN_SPEED_POINTS_PER_SECOND * dt;
             let (mut dx, mut dy) = (0.0, 0.0);
