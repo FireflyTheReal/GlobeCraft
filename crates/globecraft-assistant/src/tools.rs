@@ -216,13 +216,13 @@ pub fn run(host: &mut dyn Host, call: &ToolCall, tokens: usize) -> Result<String
             if spec.reach == commands::Reach::Network
                 && let Some(url) = params.get("url")
             {
-                let host = url
+                let address_host = url
                     .as_str()
                     .and_then(url_host)
                     .ok_or("url must be an https:// or http:// address")?;
-                if is_local_host(&host) {
+                if is_local_host(&address_host) {
                     return Err(format!(
-                        "'{host}' is this computer or the local network; the assistant may only add public web addresses"
+                        "'{address_host}' is this computer or the local network; the assistant may only add public web addresses"
                     ));
                 }
             }
