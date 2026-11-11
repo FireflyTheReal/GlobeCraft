@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -744,6 +744,16 @@ fn report_first_failure(provider: super::Provider, url: &str, reason: &str) {
         );
     }
 }
+/// Writes the session's first failed disk-cache write to the run log: a full or
+/// read-only disk would otherwise go unnoticed while every tile downloads again.
+fn report_disk_failure(result: Result<(), crate::Error>) {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if let Err(error) = result
+        && !REPORTED.swap(true, Ordering::Relaxed)
+    {
+        eprintln!("Tile disk cache: a write failed ({error}); later failures are not reported");
+    }
+}
 async fn fetch_tile(
     k: TileKey,
     disk: &DiskCache,
@@ -919,10 +929,12 @@ async fn download(cache: &TileCache, job: Job, repaint: &Arc<dyn Fn() + Send + S
             cache.complete(job.key, Ok(tile));
             repaint();
             if let Some((path, bytes, validity)) = persistence {
-                let _ = cache
-                    .disk
-                    .write_owned(&path, bytes, Some(validity), job.epoch)
-                    .await;
+                report_disk_failure(
+                    cache
+                        .disk
+                        .write_owned(&path, bytes, Some(validity), job.epoch)
+                        .await,
+                );
             }
             if let Some(validity) = stale {
                 cache.queue_revalidation(job.key, validity);
@@ -965,10 +977,12 @@ async fn finish_revalidation(
                 cache.generation.fetch_add(1, Ordering::Relaxed);
                 repaint();
             }
-            let _ = cache
-                .disk
-                .write_owned(&path, bytes, Some(fresh), job.epoch)
-                .await;
+            report_disk_failure(
+                cache
+                    .disk
+                    .write_owned(&path, bytes, Some(fresh), job.epoch)
+                    .await,
+            );
         }
         Some(Err(TileFailure::Throttled(wait))) => {
             cache.throttle(job.key, wait);

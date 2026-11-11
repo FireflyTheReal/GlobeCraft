@@ -4,9 +4,7 @@ use crate::network::{
     TILE_USER_AGENT, TRAFFIC_USER_AGENT, USER_DATA_USER_AGENT, VESSELS_USER_AGENT,
     WAYBACK_USER_AGENT,
 };
-use crate::paths::cache_dir;
-use std::{path::PathBuf, time::Duration};
-const MAX_CACHE_FILENAME_CHARS: usize = 120;
+use std::time::Duration;
 const JSON_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const JSON_READ_TIMEOUT: Duration = Duration::from_secs(90);
 /// Whole-request ceiling for boundary JSON and PMTiles range reads, including a slow
@@ -18,15 +16,6 @@ const BOUNDARY_RANGE_CONCURRENCY: usize = 6;
 /// Place search (Nominatim): a stalled connection must not leave the search pending.
 const SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SEARCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
-
-pub(crate) fn geo_cache_path(url: &str) -> PathBuf {
-    let clean: String = url
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    let start = clean.len().saturating_sub(MAX_CACHE_FILENAME_CHARS);
-    cache_dir().join("geo").join(&clean[start..])
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Policy {

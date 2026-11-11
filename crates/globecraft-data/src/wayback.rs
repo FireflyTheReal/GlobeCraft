@@ -1,4 +1,3 @@
-use crate::http::geo_cache_path;
 use std::sync::Mutex;
 const MAX_WAYBACK_RELEASES: usize = 60_000;
 const MAX_WAYBACK_CONFIG_BYTES: u64 = 64 << 20;
@@ -64,14 +63,13 @@ fn parse_wayback_config(v: &serde_json::Value) -> Vec<WaybackRelease> {
     out.truncate(MAX_WAYBACK_RELEASES);
     out
 }
-/// The release list's file in the shared download folder, kept by
-/// `remove_retired_caches`.
-pub(crate) fn release_list_path() -> std::path::PathBuf {
-    geo_cache_path(WAYBACK_CONFIG_URL)
+/// The release list kept for starts without a connection.
+fn release_list_path() -> std::path::PathBuf {
+    crate::paths::cache_dir().join("wayback_releases.json")
 }
 /// Fetches the release list (network first so that new releases show up; disk cache as fallback).
 pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error> {
-    let path = geo_cache_path(WAYBACK_CONFIG_URL);
+    let path = release_list_path();
     let request = crate::http::client(crate::http::Policy::Wayback)?.get(WAYBACK_CONFIG_URL);
     let net = async {
         let bytes = crate::http::body(request, MAX_WAYBACK_CONFIG_BYTES).await?;
@@ -80,10 +78,15 @@ pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error
         })
         .await?;
         let (value, bytes) = parsed?;
-        if let Some(dir) = path.parent() {
-            let _ = tokio::fs::create_dir_all(dir).await;
+        let kept = path.clone();
+        let written = tokio::task::spawn_blocking(move || {
+            crate::paths::write_atomic(&kept, &bytes, false)
+        })
+        .await?;
+        if let Err(error) = written {
+            // The list still applies; only a start without a connection loses it.
+            eprintln!("Could not keep the Wayback release list: {error}");
         }
-        let _ = tokio::fs::write(&path, bytes).await;
         Ok::<_, crate::Error>(value)
     }
     .await;
