@@ -145,7 +145,8 @@ impl App {
             globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
         );
         let nearest = self
-            .boundaries
+            .borders
+            .drawn
             .labels
             .iter()
             .filter(|label| label.kind == globecraft_data::boundaries::LabelKind::City)
@@ -166,7 +167,8 @@ impl App {
             coordinates,
             elevation_m,
             country: self
-                .boundaries
+                .borders
+                .drawn
                 .country_name_at(lat, lon, self.lang)
                 .map(str::to_owned),
             admin,
@@ -180,7 +182,7 @@ impl App {
 
     /// `info.here`: what is known about a point, as JSON.
     pub(super) fn here_json(&self, lat: f64, lon: f64) -> Value {
-        let admin = self.boundary_loader.admin_areas_at(lat, lon);
+        let admin = self.borders.loader.admin_areas_at(lat, lon);
         let info = self.here_info(lat, lon, admin);
         let (state, state_unavailable) = admin_json(
             &info.admin.state,
@@ -230,11 +232,11 @@ impl App {
     /// The card's state and municipality, looked up again only when the point or the
     /// border tiles in memory change.
     fn here_admin(&mut self, card: HereCard) -> AdminAreas {
-        let revision = self.boundary_loader.border_tiles_revision();
+        let revision = self.borders.loader.border_tiles_revision();
         match &self.selection.here_admin {
             Some((at, seen, admin)) if *at == card && *seen == revision => admin.clone(),
             _ => {
-                let admin = self.boundary_loader.admin_areas_at(card.lat, card.lon);
+                let admin = self.borders.loader.admin_areas_at(card.lat, card.lon);
                 self.selection.here_admin = Some((card, revision, admin.clone()));
                 admin
             }

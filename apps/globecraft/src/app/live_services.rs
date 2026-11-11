@@ -141,7 +141,7 @@ impl App {
             // A playing time moves the sun and the timed points every frame.
             ctx.request_repaint();
         }
-        self.place_names.update(
+        self.borders.place_names.update(
             &self.runtime,
             earth && self.layer(MapLayer::PlaceLabels),
             view,

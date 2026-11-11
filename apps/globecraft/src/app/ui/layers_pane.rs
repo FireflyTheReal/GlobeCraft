@@ -484,15 +484,16 @@ impl App {
                 }
             }
             if group == LayerGroup::Geography && !filtering {
-                if self.boundary_loader.is_loading_base_layers() {
+                if self.borders.loader.is_loading_base_layers() {
                     loading_note(ui, &t, lang.text("boundaries-loading-status"));
                 }
-                if self.boundary_loader.is_loading_local() {
+                if self.borders.loader.is_loading_local() {
                     loading_note(ui, &t, lang.text("boundaries-osm-loading-status"));
                 }
                 // The loader appends; only the latest lines are worth reading here.
                 let log: Vec<String> = self
-                    .boundary_log
+                    .borders
+                    .log
                     .lock()
                     .map(|l| {
                         let skip = l.len().saturating_sub(BOUNDARY_LOG_LINES);

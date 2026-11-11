@@ -373,7 +373,7 @@ impl App {
                     dashes: globecraft_render::overlays::BorderDashes::of(&self.settings.map_style),
                     ground: self.overlay_ground(),
                 },
-                data: self.boundaries.clone(),
+                data: self.borders.drawn.clone(),
                 fading_out: self.layer_arrivals.fading_out(std::time::Instant::now()),
             }),
         });
@@ -418,9 +418,9 @@ impl App {
             self.aircraft_overlay.accept(geometry, now_unix());
         }
         if let Some(geometry) = overlays {
-            self.overlay_cache.accept(geometry);
+            self.borders.overlay_cache.accept(geometry);
         }
-        self.overlay_cache.accept_fading_out(fading_out);
+        self.borders.overlay_cache.accept_fading_out(fading_out);
         match compare {
             Some((image, rel)) => {
                 let size = image.size;

@@ -28,6 +28,7 @@ use std::{
 };
 mod antarctica;
 mod assistant;
+mod borders;
 mod cache;
 mod commands;
 mod controllers;
@@ -136,7 +137,6 @@ pub(crate) struct App {
     update_restart: update_restart::UpdateRestart,
     explorer: explorer::Explorer,
     flat_earth: flat_earth::FlatEarth,
-    boundary_loader: globecraft_data::boundaries::BoundaryLoader,
     lang: Lang,
     fonts: fonts::FontService,
     controllers: controllers::Controllers,
@@ -155,22 +155,13 @@ pub(crate) struct App {
     /// The imagery a running flight lands on, loaded while it flies (roadmap 1.4),
     /// with the destination it was listed for.
     arrival_warmup: Option<([u64; 5], TileWarmup)>,
-    /// The boundaries drawn: `boundary_source` with the close-up place names.
-    boundaries: Arc<BoundaryData>,
-    /// The boundaries as the loader sent them.
-    boundary_source: Arc<BoundaryData>,
-    /// Zoom 13–14 place names around the view.
-    place_names: globecraft_data::boundaries::PlaceNameTiles,
-    /// The place-name snapshot `boundaries` was built with (its address; 0 for none).
-    place_names_shown: usize,
-    overlay_cache: overlays::OverlayCache,
-    boundaries_rx: BoundaryUpdates,
-    boundary_log: StatusLog,
     auto_rotate: bool,
     tomtom_key: String,
     /// Keys of the other keyed services as typed in Settings -> Keys (the TomTom key
     /// is `tomtom_key`, also typed in the Layers pane).
     service_keys: std::collections::BTreeMap<&'static str, String>,
+    /// The borders and names: loading, the drawn set and its painted overlay.
+    borders: borders::Borders,
     /// What is picked: a flight, a satellite, the What's here? card.
     selection: selection::Selection,
     /// The live data services that follow the view (see `live_services`).
@@ -392,18 +383,20 @@ impl App {
             zoom_out_warmup: None,
             arrival_warmup: None,
             cache_controls: cache::CacheControls::default(),
-            boundaries: Arc::new(BoundaryData::default()),
-            boundary_source: Arc::new(BoundaryData::default()),
-            place_names: Default::default(),
-            place_names_shown: 0,
-            overlay_cache,
-            boundaries_rx: BoundaryUpdates::new(boundaries_rx, {
-                let ctx = cc.egui_ctx.clone();
-                move || ctx.request_repaint()
-            })
-            .expect("start boundary preparation"),
-            boundary_loader,
-            boundary_log,
+            borders: borders::Borders {
+                drawn: Arc::new(BoundaryData::default()),
+                source: Arc::new(BoundaryData::default()),
+                place_names: Default::default(),
+                place_names_shown: 0,
+                overlay_cache,
+                updates: BoundaryUpdates::new(boundaries_rx, {
+                    let ctx = cc.egui_ctx.clone();
+                    move || ctx.request_repaint()
+                })
+                .expect("start boundary preparation"),
+                loader: boundary_loader,
+                log: boundary_log,
+            },
             auto_rotate: false,
             tomtom_key: globecraft_data::keys::get(globecraft_data::keys::TOMTOM)
                 .unwrap_or_default(),
@@ -676,10 +669,10 @@ impl eframe::App for App {
         }
         self.poll_search();
         self.poll_cache_clear(ctx);
-        if let Some(snapshot) = self.boundaries_rx.take_latest() {
+        if let Some(snapshot) = self.borders.updates.take_latest() {
             self.merge_snapshot(snapshot);
         }
-        if self.boundary_loader.is_loading() {
+        if self.borders.loader.is_loading() {
             ctx.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }
     }
@@ -695,7 +688,7 @@ impl eframe::App for App {
         // must be laid out again, or they show other glyphs.
         let atlas_fill = ui.ctx().fonts(|fonts| fonts.font_atlas_fill_ratio());
         if atlas_fill < self.font_atlas_fill {
-            self.overlay_cache.font_atlas_reset();
+            self.borders.overlay_cache.font_atlas_reset();
         }
         self.font_atlas_fill = atlas_fill;
         ui.set_theme(egui_theme(self.settings.appearance.theme));
@@ -772,7 +765,8 @@ impl eframe::App for App {
         globecraft_data::vector_tiles::set_disk_cache_limit(self.settings.cache.border_bytes());
         // Borders and names stream from OpenStreetMap tiles around the view while any
         // border or name layer shows.
-        self.boundary_loader
+        self.borders
+            .loader
             .request_osm_tiles(globecraft_data::boundaries::OsmTileView {
                 enabled: earth_visible && self.uses_border_tiles(),
                 lat: self.cam.lat,
@@ -789,7 +783,7 @@ impl eframe::App for App {
                                 globecraft_data::boundaries::STATE_BIG_VISIBLE_MAX_ALTITUDE_KM,
                             ),
             });
-        if self.boundary_loader.is_loading() {
+        if self.borders.loader.is_loading() {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }
         self.log_downloads();

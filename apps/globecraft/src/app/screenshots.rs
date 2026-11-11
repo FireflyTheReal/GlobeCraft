@@ -1131,7 +1131,7 @@ fn boundary_streaming_descent() {
         let t = std::time::Instant::now();
         h.step();
         slowest.push((t.elapsed().as_secs_f64() * 1000.0, altitude));
-        let data = &h.state().boundaries;
+        let data = &h.state().borders.drawn;
         if first_states.is_none() && !data.osm_borders.state.is_empty() {
             first_states = Some(altitude);
         }
@@ -1154,7 +1154,7 @@ fn boundary_streaming_descent() {
         sorted[sorted.len() * 99 / 100]
     );
     println!("states arrived at {first_states:?} km, municipal at {first_municipal:?} km");
-    for line in h.state().boundary_log.lock().unwrap().iter() {
+    for line in h.state().borders.log.lock().unwrap().iter() {
         println!("  {line}");
     }
 }
@@ -2788,7 +2788,7 @@ fn idle_window_requests_no_repaints() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let app = h.state();
         let loading =
-            !app.renderer.is_idle() || app.cache.inflight() > 0 || app.boundary_loader.is_loading();
+            !app.renderer.is_idle() || app.cache.inflight() > 0 || app.borders.loader.is_loading();
         quiet = if loading || delay(&h) < std::time::Duration::from_secs(5) {
             0
         } else {

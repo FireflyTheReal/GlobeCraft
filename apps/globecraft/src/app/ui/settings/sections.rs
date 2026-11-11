@@ -320,7 +320,7 @@ impl App {
                     (
                         "size",
                         crate::app::cache::cache_size_text(
-                            self.boundary_loader.border_cache_usage(),
+                            self.borders.loader.border_cache_usage(),
                         )
                         .into(),
                     ),

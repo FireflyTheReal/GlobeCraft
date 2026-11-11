@@ -101,7 +101,7 @@ impl LayerArrivals {
 
 impl App {
     pub(super) fn invalidate_font_layout(&mut self) {
-        self.overlay_cache.invalidate();
+        self.borders.overlay_cache.invalidate();
         self.aircraft_overlay.invalidate_text();
         self.world_shapes = super::live_layers::WorldShapes::default();
         self.roads.invalidate_text();
@@ -124,36 +124,37 @@ impl App {
 
     pub(super) fn merge_snapshot(&mut self, snapshot: BoundarySnapshot) {
         self.layer_arrivals
-            .observe(&self.boundary_source, &snapshot.data, Instant::now());
-        self.boundary_source = snapshot.data;
-        self.boundaries = self.with_place_names();
+            .observe(&self.borders.source, &snapshot.data, Instant::now());
+        self.borders.source = snapshot.data;
+        self.borders.drawn = self.with_place_names();
         if let Err(error) = self.search.local.update_shared(snapshot.names) {
             self.status = format!("Local prefix index failed: {error}");
         }
         // Data-only change: hold the previous overlay on screen until the
         // replacement is prepared instead of flashing the borders away.
-        self.overlay_cache.merge_boundaries();
+        self.borders.overlay_cache.merge_boundaries();
     }
 
     /// The loader's boundaries with the close-up place names on show.
     fn with_place_names(&mut self) -> Arc<BoundaryData> {
-        let places = self.place_names.snapshot();
-        self.place_names_shown = places.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
+        let places = self.borders.place_names.snapshot();
+        self.borders.place_names_shown = places.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
         match places {
-            Some(places) => Arc::new(self.boundary_source.with_place_names(Some(&places))),
-            None => self.boundary_source.clone(),
+            Some(places) => Arc::new(self.borders.source.with_place_names(Some(&places))),
+            None => self.borders.source.clone(),
         }
     }
 
     /// Rebuilds the drawn boundaries when the close-up place names change.
     pub(super) fn refresh_place_names(&mut self) {
         let shown = self
+            .borders
             .place_names
             .snapshot()
             .map_or(0, |s| Arc::as_ptr(&s) as usize);
-        if shown != self.place_names_shown {
-            self.boundaries = self.with_place_names();
-            self.overlay_cache.merge_boundaries();
+        if shown != self.borders.place_names_shown {
+            self.borders.drawn = self.with_place_names();
+            self.borders.overlay_cache.merge_boundaries();
         }
     }
 
@@ -202,8 +203,13 @@ impl App {
         taken: &globecraft_render::overlays::LabelSpace,
         include_new: bool,
     ) -> globecraft_render::overlays::PlacedLabels {
-        self.overlay_cache
-            .remembered_placed(painter, frame.view, frame.style, taken, include_new)
+        self.borders.overlay_cache.remembered_placed(
+            painter,
+            frame.view,
+            frame.style,
+            taken,
+            include_new,
+        )
     }
 
     /// Brings the borders and place names up to date for the displayed view, before
@@ -218,13 +224,18 @@ impl App {
             painter.ctx().request_repaint();
         }
         meshes::BorderWidths::of(&frame.style.map_style).publish(painter.ctx());
-        self.overlay_cache
-            .prepare(painter, frame.view, &self.boundaries, frame.style, taken);
+        self.borders.overlay_cache.prepare(
+            painter,
+            frame.view,
+            &self.borders.drawn,
+            frame.style,
+            taken,
+        );
     }
 
     /// Paints what `prepare_overlays` prepared, then the ruler and placemarks.
     pub(super) fn draw_overlays(&mut self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
-        self.overlay_cache.paint(painter);
+        self.borders.overlay_cache.paint(painter);
         let ms = self.settings.map_scale;
         // The ruler and placemarks sit on the relief, where they are picked.
         let source = self.ground_source();

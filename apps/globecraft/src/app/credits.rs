@@ -78,7 +78,7 @@ impl App {
             && self.cam.alt <= globecraft_data::transport::MAX_ALTITUDE_KM)
             || (self.layer(MapLayer::Roads)
                 && self.cam.alt <= globecraft_data::roads::MAX_ALTITUDE_KM);
-        if (self.uses_border_tiles() && self.boundary_loader.has_osm_tiles()) || transport_drawn {
+        if (self.uses_border_tiles() && self.borders.loader.has_osm_tiles()) || transport_drawn {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             credits.push(OSM_TILES_CREDIT.to_owned());
         }

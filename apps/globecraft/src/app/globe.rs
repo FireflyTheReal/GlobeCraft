@@ -696,7 +696,7 @@ impl App {
             taken.add(self.poi_shapes.shown_placed());
         }
         self.prepare_overlays(painter, frame, &taken);
-        taken.add(&self.overlay_cache.placed());
+        taken.add(&self.borders.overlay_cache.placed());
         self.user_layers
             .prepare_names(painter, self.settings.map_scale, &taken);
         taken.add(self.user_layers.placed());
