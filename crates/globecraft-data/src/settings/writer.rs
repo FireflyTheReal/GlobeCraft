@@ -36,13 +36,19 @@ impl SettingsWriter {
             .spawn(move || {
                 loop {
                     let (settings, lang, kml_paths) = {
-                        let mut state = worker.pending.lock().unwrap();
+                        let mut state = worker
+                            .pending
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         while state.settings.is_none()
                             && state.lang.is_none()
                             && state.kml_paths.is_none()
                             && !state.stopped
                         {
-                            state = worker.wake.wait(state).unwrap();
+                            state = worker
+                                .wake
+                                .wait(state)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                         }
                         if state.settings.is_none()
                             && state.lang.is_none()
@@ -80,7 +86,11 @@ impl SettingsWriter {
                         Ok(())
                     })();
                     if let Err(error) = result {
-                        worker.pending.lock().unwrap().error = Some(error.to_string());
+                        worker
+                            .pending
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .error = Some(error.to_string());
                     }
                     repaint();
                 }
@@ -91,24 +101,45 @@ impl SettingsWriter {
         })
     }
     pub fn settings(&self, settings: &Settings) {
-        self.shared.pending.lock().unwrap().settings = Some(settings.clone());
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .settings = Some(settings.clone());
         self.shared.wake.notify_one();
     }
     /// Persist only source paths; never write the open documents themselves.
     pub fn kml_paths(&self, paths: &[PathBuf]) {
-        self.shared.pending.lock().unwrap().kml_paths = Some(paths.to_vec());
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .kml_paths = Some(paths.to_vec());
         self.shared.wake.notify_one();
     }
     pub fn language(&self, lang: LanguagePreference) {
-        self.shared.pending.lock().unwrap().lang = Some(lang);
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lang = Some(lang);
         self.shared.wake.notify_one();
     }
     pub fn take_error(&self) -> Option<String> {
-        self.shared.pending.lock().unwrap().error.take()
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error
+            .take()
     }
     /// Final shutdown only: wait for the latest writes and report failures.
     pub fn finish(&mut self) -> Result<(), crate::Error> {
-        self.shared.pending.lock().unwrap().stopped = true;
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stopped = true;
         self.shared.wake.notify_one();
         if let Some(thread) = self.thread.take() {
             thread

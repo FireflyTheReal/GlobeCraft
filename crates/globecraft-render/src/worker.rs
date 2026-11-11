@@ -94,9 +94,15 @@ impl<T: Send + 'static> RenderWorker<T> {
             .spawn(move || {
                 loop {
                     let (pending, buffer) = {
-                        let mut mailbox = worker.mailbox.lock().unwrap();
+                        let mut mailbox = worker
+                            .mailbox
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         while !mailbox.stopped && mailbox.pending.is_none() {
-                            mailbox = worker.wake.wait(mailbox).unwrap();
+                            mailbox = worker
+                                .wake
+                                .wait(mailbox)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                         }
                         if mailbox.stopped {
                             return;
@@ -117,7 +123,10 @@ impl<T: Send + 'static> RenderWorker<T> {
                     // Rasterization holds no mailbox lock. Admission is synchronized below.
                     let frame = render(&request, buffer);
                     let prepared = prepare(&request, &frame.pixels);
-                    let mut mailbox = worker.mailbox.lock().unwrap();
+                    let mut mailbox = worker
+                        .mailbox
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     mailbox.active = false;
                     if mailbox.stopped {
                         return;
@@ -154,11 +163,19 @@ impl<T: Send + 'static> RenderWorker<T> {
     }
 
     pub fn recycle(&self, buffer: Vec<u8>) {
-        self.shared.mailbox.lock().unwrap().spare = Some(buffer);
+        self.shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .spare = Some(buffer);
     }
 
     pub fn submit(&self, request: RenderRequest) {
-        self.shared.mailbox.lock().unwrap().pending = Some(PendingRequest {
+        self.shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pending = Some(PendingRequest {
             request,
             #[cfg(feature = "profiling")]
             submitted: std::time::Instant::now(),
@@ -170,21 +187,29 @@ impl<T: Send + 'static> RenderWorker<T> {
         self.shared
             .mailbox
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .completed
             .take()
             .filter(|frame| frame.request.presentation == presentation)
     }
 
     pub fn is_idle(&self) -> bool {
-        let mailbox = self.shared.mailbox.lock().unwrap();
+        let mailbox = self
+            .shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         !mailbox.active && mailbox.pending.is_none()
     }
 }
 
 impl<T> Drop for RenderWorker<T> {
     fn drop(&mut self) {
-        let mut mailbox = self.shared.mailbox.lock().unwrap();
+        let mut mailbox = self
+            .shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         mailbox.stopped = true;
         mailbox.pending = None;
         mailbox.completed = None;

@@ -363,7 +363,12 @@ impl Archive {
 
     async fn leaf(&self, entry: Entry) -> Result<std::sync::Arc<Vec<Entry>>, crate::Error> {
         let offset = self.header.leaf_offset + entry.offset;
-        if let Some(cached) = self.leaves.lock().expect("leaf cache").get_mut(&offset) {
+        if let Some(cached) = self
+            .leaves
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(&offset)
+        {
             cached.used = Instant::now();
             return Ok(cached.entries.clone());
         }
@@ -378,7 +383,10 @@ impl Archive {
             })
             .await?,
         );
-        let mut leaves = self.leaves.lock().expect("leaf cache");
+        let mut leaves = self
+            .leaves
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if leaves.len() >= MAX_CACHED_LEAVES
             && let Some(oldest) = leaves
                 .iter()
@@ -413,7 +421,7 @@ impl Archive {
         let reused = self
             .resolved
             .lock()
-            .expect("redirect cache")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .filter(|(_, at)| at.elapsed() < REDIRECT_REUSE)
             .map(|(url, _)| url);
@@ -430,7 +438,10 @@ impl Archive {
             let status = response.status();
             // An expired signed link: ask the archive's own address again.
             if url != self.url && !status.is_success() {
-                *self.resolved.lock().expect("redirect cache") = None;
+                *self
+                    .resolved
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                 continue;
             }
             let response = response.error_for_status()?;
@@ -438,7 +449,10 @@ impl Archive {
                 return Err(format!("{} does not serve byte ranges", self.url).into());
             }
             if url == self.url && response.url().as_str() != self.url {
-                *self.resolved.lock().expect("redirect cache") =
+                *self
+                    .resolved
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
                     Some((response.url().to_string(), Instant::now()));
             }
             let mut response = response;

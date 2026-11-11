@@ -138,7 +138,9 @@ impl LocalSearch {
                     NameIndex::new(snapshot.labels.clone())
                 })
                 .await;
-                let mut state = output.lock().unwrap();
+                let mut state = output
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 *state = match result {
                     Ok(index) => Published {
                         generation,
@@ -174,7 +176,10 @@ impl LocalSearch {
     }
     /// None while a current index is being built; callers retain the scan fallback.
     pub fn merge(&self, query: &str, lang: Lang, remote: &[Suggestion]) -> Option<Vec<Suggestion>> {
-        let state = self.published.lock().unwrap();
+        let state = self
+            .published
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.generation != self.generation.load(Ordering::Acquire) {
             return None;
         }
@@ -183,7 +188,11 @@ impl LocalSearch {
         Some(index.merge(query, lang, remote))
     }
     pub fn take_error(&self) -> Option<crate::Error> {
-        self.published.lock().unwrap().error.take()
+        self.published
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error
+            .take()
     }
 }
 

@@ -327,7 +327,12 @@ impl App {
         settings: Settings,
         restart: Arc<RestartRequest>,
     ) -> Self {
-        let settings = restart.settings.lock().unwrap().take().unwrap_or(settings);
+        let settings = restart
+            .settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap_or(settings);
         // Every font family the interface names exists from the first frame; installed system
         // faces replace these once the font worker has loaded them.
         cc.egui_ctx.set_fonts(fonts::base_definitions());
@@ -517,13 +522,28 @@ impl App {
         if let Some(error) = &app.update_restart.error {
             app.status = error.clone();
         }
-        if let Some(problem) = restart.load_problem.lock().unwrap().take() {
+        if let Some(problem) = restart
+            .load_problem
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             app.status = problem;
         }
-        if let Some(version) = restart.installed_version.lock().unwrap().as_deref() {
+        if let Some(version) = restart
+            .installed_version
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref()
+        {
             app.updater.resume_installed(version);
         }
-        if let Some(path) = restart.planet.lock().unwrap().take() {
+        if let Some(path) = restart
+            .planet
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             app.explorer.request_open(path, &app.file_jobs);
         }
         #[cfg(target_os = "macos")]
@@ -577,7 +597,12 @@ impl eframe::App for App {
         match self.settings_writer.finish() {
             Ok(()) => {}
             Err(error) if restarting => {
-                *self.update_restart.request.error.lock().unwrap() = Some(format!(
+                *self
+                    .update_restart
+                    .request
+                    .error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(format!(
                     "Settings save before restart failed: {error}. Click Restart to update to retry."
                 ));
             }
@@ -600,7 +625,14 @@ impl eframe::App for App {
         // finishes normally.
         #[cfg(target_os = "macos")]
         if restarting {
-            if let Some(error) = self.update_restart.request.error.lock().unwrap().clone() {
+            if let Some(error) = self
+                .update_restart
+                .request
+                .error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            {
                 globecraft_data::log_line!(
                     "Update restart stopped: {error}. Relaunch GlobeCraft manually."
                 );

@@ -164,7 +164,7 @@ impl Mbtiles {
             // Lazy migration retains legacy fallback if optional persistence fails.
             if write(connection,&root,&address,&bytes,None,&budget,limit).is_ok() {
                 let _=std::fs::remove_file(&legacy);
-                if let Some(budget)=budget.lock().unwrap().as_mut() {budget.refresh(&legacy)?;}
+                if let Some(budget)=budget.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {budget.refresh(&legacy)?;}
             }
             Ok(Some((bytes,None)))
         }).await
@@ -238,11 +238,11 @@ impl Mbtiles {
                 with_database(connection,&root,&file,false,format,|db| {
                     db.execute("DELETE FROM tile_cache.tiles WHERE zoom_level=?1 AND tile_column=?2 AND tile_row=?3",params![address.zoom,address.column,address.row])?;Ok(())
                 })?;
-                if let Some(budget)=budget.lock().unwrap().as_mut() {budget.refresh(&file)?;}
+                if let Some(budget)=budget.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {budget.refresh(&file)?;}
             }
             ensure_owned_path(&root,&legacy)?;
             match std::fs::remove_file(&legacy) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}
-            if let Some(budget)=budget.lock().unwrap().as_mut() {budget.refresh(&legacy)?;}
+            if let Some(budget)=budget.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {budget.refresh(&legacy)?;}
             Ok(())
         }).await
     }
@@ -250,7 +250,9 @@ impl Mbtiles {
         let root = self.root.clone();
         let budget = self.budget.clone();
         self.call(move |_| {
-            *budget.lock().unwrap() = None;
+            *budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             for provider in super::Provider::all() {
                 let path = root.join(provider.dir());
                 let metadata = match std::fs::symlink_metadata(&path) {
@@ -330,7 +332,9 @@ fn write(
         FORMATS[2]
     };
     let file = address.database(suffix);
-    let mut state = budget.lock().unwrap();
+    let mut state = budget
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if state.is_none() {
         *state = Some(Budget::scan(root)?);
     }

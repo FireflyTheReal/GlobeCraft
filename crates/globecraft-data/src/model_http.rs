@@ -49,13 +49,19 @@ pub struct ModelCall {
 impl ModelCall {
     /// Pieces of the body that arrived since the last call.
     pub fn take_chunks(&self) -> Vec<u8> {
-        std::mem::take(&mut self.shared.lock().expect("model call poisoned").chunks)
+        std::mem::take(
+            &mut self
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .chunks,
+        )
     }
     /// The finished response, once.
     pub fn take_result(&self) -> Option<Result<ModelResponse, ModelFailure>> {
         self.shared
             .lock()
-            .expect("model call poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .result
             .take()
     }
@@ -112,7 +118,10 @@ pub fn send(
     let worker = shared.clone();
     let task = handle.spawn(async move {
         let result = run(request, &worker, &wake).await;
-        worker.lock().expect("model call poisoned").result = Some(result);
+        worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .result = Some(result);
         wake();
     });
     ModelCall { shared, task }
@@ -156,7 +165,7 @@ async fn run(
                 body.extend_from_slice(&chunk);
                 shared
                     .lock()
-                    .expect("model call poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .chunks
                     .extend_from_slice(&chunk);
                 wake();

@@ -139,9 +139,15 @@ impl AircraftWorker {
                 let mut preparer = AircraftPreparer::default();
                 loop {
                     let input = {
-                        let mut state = worker.mailbox.lock().unwrap();
+                        let mut state = worker
+                            .mailbox
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         while state.pending.is_none() && !state.stopped {
-                            state = worker.wake.wait(state).unwrap();
+                            state = worker
+                                .wake
+                                .wait(state)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                         }
                         if state.stopped {
                             return;
@@ -149,7 +155,10 @@ impl AircraftWorker {
                         state.pending.take().unwrap()
                     };
                     let geometry = preparer.prepare(input);
-                    let mut state = worker.mailbox.lock().unwrap();
+                    let mut state = worker
+                        .mailbox
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if state.stopped {
                         return;
                     }
@@ -162,17 +171,32 @@ impl AircraftWorker {
         Ok(Self { shared })
     }
     pub fn submit(&self, input: ProjectionInput) {
-        let previous = self.shared.mailbox.lock().unwrap().pending.replace(input);
+        let previous = self
+            .shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pending
+            .replace(input);
         drop(previous);
         self.shared.wake.notify_one();
     }
     pub fn take_completed(&self) -> Option<Arc<AircraftGeometry>> {
-        self.shared.mailbox.lock().unwrap().completed.take()
+        self.shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .completed
+            .take()
     }
 }
 impl Drop for AircraftWorker {
     fn drop(&mut self) {
-        let mut state = self.shared.mailbox.lock().unwrap();
+        let mut state = self
+            .shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.stopped = true;
         let pending = state.pending.take();
         let completed = state.completed.take();

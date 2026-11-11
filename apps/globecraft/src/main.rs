@@ -38,7 +38,10 @@ fn main() -> Result<(), eframe::Error> {
         let (settings, load_problem) = globecraft_data::settings::Settings::load();
         if let Some(problem) = load_problem {
             globecraft_data::log_line!("{problem}");
-            *restart.load_problem.lock().unwrap() = Some(problem);
+            *restart
+                .load_problem
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(problem);
         }
         let mut viewport = egui::ViewportBuilder::default()
             .with_inner_size(INITIAL_WINDOW_SIZE_POINTS)
@@ -90,13 +93,21 @@ fn main() -> Result<(), eframe::Error> {
         if !restart.requested.swap(false, Ordering::AcqRel) {
             return Ok(());
         }
-        if restart.error.lock().unwrap().is_some() {
+        if restart
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
             continue;
         }
         match self_update::restart::restart() {
             Ok(never) => match never {},
             Err(error) => {
-                *restart.error.lock().unwrap() = Some(format!(
+                *restart
+                    .error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(format!(
                     "Restart failed: {error}. Save your work and relaunch GlobeCraft manually, or click Restart to update to retry."
                 ));
             }

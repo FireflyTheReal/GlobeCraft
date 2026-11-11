@@ -307,7 +307,12 @@ impl TileCache {
         if let Some(tile) = self.ready.get(&key) {
             return Lookup::Ready(tile);
         }
-        match self.requests.lock().unwrap().get(&key) {
+        match self
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
             Some(RequestState::Unavailable) => Lookup::Unavailable,
             Some(state) if state.is_pending() => Lookup::Pending,
             _ => Lookup::Absent,
@@ -351,7 +356,10 @@ impl TileCache {
     /// Whether the last download of `key` failed (a network error, not a missing tile).
     pub fn failed(&self, key: TileKey) -> bool {
         matches!(
-            self.requests.lock().unwrap().get(&key),
+            self.requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&key),
             Some(RequestState::Failed(_))
         )
     }
@@ -365,7 +373,10 @@ impl TileCache {
     }
     // Check under the admission lock, so background work cannot race past its limit.
     pub(super) fn request_under_limit(&self, key: TileKey, limit: usize) -> bool {
-        let mut requests = self.requests.lock().unwrap();
+        let mut requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.ready.contains_key(&key)
             || requests.get(&key).is_some_and(RequestState::is_pending)
             || self.inflight.load(Ordering::Relaxed) >= limit.min(MAX_INFLIGHT)
@@ -374,7 +385,10 @@ impl TileCache {
         }
         let ahead = limit < MAX_INFLIGHT;
         requests.insert(key, RequestState::Loading(self.disk.epoch(), ahead));
-        self.queue.lock().unwrap().push_back(key);
+        self.queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(key);
         self.inflight.fetch_add(1, Ordering::Relaxed);
         // If wake tickets are full, queued tickets already cover the bounded
         // job queue. Retiring a view must not accumulate unbounded stale tickets.
@@ -382,7 +396,10 @@ impl TileCache {
             self.tx.try_send(key),
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_))
         ) {
-            self.queue.lock().unwrap().retain(|&queued| queued != key);
+            self.queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|&queued| queued != key);
             requests.insert(key, RequestState::Failed(Instant::now()));
             self.inflight.fetch_sub(1, Ordering::Relaxed);
             return false;
@@ -414,10 +431,16 @@ impl TileCache {
         {
             #[cfg(feature = "profiling")]
             let waiting = std::time::Instant::now();
-            let mut requests = self.requests.lock().unwrap();
+            let mut requests = self
+                .requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             #[cfg(feature = "profiling")]
             crate::profiling::Span::elapsed("tiles.admission_lock", waiting, Default::default());
-            let mut queue = self.queue.lock().unwrap();
+            let mut queue = self
+                .queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let reserved = self.reserved.lock().map(|r| r.clone()).unwrap_or_default();
             queue.retain(|key| {
                 let (provider, zoom, _, _, _) = unkey(*key);
@@ -432,20 +455,23 @@ impl TileCache {
             // Downloads of tiles the view left stop, freeing their slots: during a fast
             // zoom the levels passed through are not loaded to the end (roadmap 1.3).
             // Loads ahead of need and reserved tiles continue.
-            self.downloading.lock().unwrap().retain(|key, cancel| {
-                let (provider, zoom, _, _, _) = unkey(*key);
-                let keep = wanted.contains(key)
-                    || reserved.contains(key)
-                    || (provider == super::Provider::Satellite && zoom <= 4)
-                    || matches!(requests.get(key), Some(RequestState::Loading(_, true)));
-                if !keep {
-                    if matches!(requests.remove(key), Some(RequestState::Loading(..))) {
-                        self.inflight.fetch_sub(1, Ordering::Relaxed);
+            self.downloading
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|key, cancel| {
+                    let (provider, zoom, _, _, _) = unkey(*key);
+                    let keep = wanted.contains(key)
+                        || reserved.contains(key)
+                        || (provider == super::Provider::Satellite && zoom <= 4)
+                        || matches!(requests.get(key), Some(RequestState::Loading(_, true)));
+                    if !keep {
+                        if matches!(requests.remove(key), Some(RequestState::Loading(..))) {
+                            self.inflight.fetch_sub(1, Ordering::Relaxed);
+                        }
+                        cancel.notify_one();
                     }
-                    cancel.notify_one();
-                }
-                keep
-            });
+                    keep
+                });
             // A tile the view now wants is no longer loaded ahead.
             for key in keys {
                 if let Some(RequestState::Loading(_, ahead)) = requests.get_mut(key) {
@@ -471,7 +497,10 @@ impl TileCache {
     /// Schedule failed visible dependencies without rerasterizing the globe.
     /// Full admission relies on completion wakeups rather than a busy retry loop.
     pub fn retry_delay(&self, keys: &[TileKey]) -> Option<Duration> {
-        let requests = self.requests.lock().unwrap();
+        let requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         keys.iter()
             .filter_map(|key| match requests.get(key) {
                 Some(RequestState::Failed(time)) if time.elapsed() < FAILED_TILE_RETRY_DELAY => {
@@ -490,10 +519,22 @@ impl TileCache {
     /// The first queued tile whose source and host have a free download slot and are
     /// not pausing.
     fn next_job(&self) -> Option<Job> {
-        let requests = self.requests.lock().unwrap();
-        let mut queue = self.queue.lock().unwrap();
-        let mut downloading = self.downloading.lock().unwrap();
-        let throttled = self.throttled.lock().unwrap();
+        let requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut downloading = self
+            .downloading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let throttled = self
+            .throttled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let now = Instant::now();
         let mut active: HashMap<u64, usize> = HashMap::new();
         let mut host_active: HashMap<u64, usize> = HashMap::new();
@@ -546,7 +587,10 @@ impl TileCache {
         {
             return None;
         }
-        let mut revalidations = self.revalidations.lock().unwrap();
+        let mut revalidations = self
+            .revalidations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let index = revalidations.iter().position(|(key, _)| {
             let provider = unkey(*key).0;
             !downloading.contains_key(key)
@@ -577,7 +621,10 @@ impl TileCache {
 
     /// Queues a stored tile to be asked for again (dropped when the queue is full).
     fn queue_revalidation(&self, key: TileKey, validity: Validity) {
-        let mut revalidations = self.revalidations.lock().unwrap();
+        let mut revalidations = self
+            .revalidations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if revalidations.len() < MAX_REVALIDATIONS_QUEUED
             && !revalidations.iter().any(|(queued, _)| *queued == key)
         {
@@ -587,13 +634,22 @@ impl TileCache {
 
     /// A throttled download goes back to the front of the queue and its source pauses.
     fn throttle(&self, key: TileKey, wait: Duration) {
-        let requests = self.requests.lock().unwrap();
+        let requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if matches!(requests.get(&key), Some(RequestState::Loading(..))) {
-            self.queue.lock().unwrap().push_front(key);
+            self.queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push_front(key);
         }
         let provider = unkey(key).0;
         let until = Instant::now() + wait;
-        let mut throttled = self.throttled.lock().unwrap();
+        let mut throttled = self
+            .throttled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // The host pauses: its other sources would be answered the same.
         let entry = throttled.entry(provider.host_group()).or_insert(until);
         *entry = (*entry).max(until);
@@ -612,8 +668,14 @@ impl TileCache {
             }
         };
         // Publish the decoded tile before removing Loading to avoid duplicate requests.
-        let mut requests = self.requests.lock().unwrap();
-        self.queue.lock().unwrap().retain(|&queued| queued != key);
+        let mut requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|&queued| queued != key);
         let was_loading = matches!(requests.remove(&key), Some(RequestState::Loading(..)));
         // The map also holds every tile its source lacks, so scanning it on each finished
         // tile grew slower through a session. Expired failures go in passes instead.
@@ -683,14 +745,29 @@ impl TileCache {
                 *field(source) += 1;
             }
         };
-        for &key in self.queue.lock().unwrap().iter() {
+        for &key in self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+        {
             count(key, |s| &mut s.queued);
         }
-        for &key in self.downloading.lock().unwrap().keys() {
+        for &key in self
+            .downloading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+        {
             count(key, |s| &mut s.downloading);
         }
         let now = Instant::now();
-        for (&id, &until) in self.throttled.lock().unwrap().iter() {
+        for (&id, &until) in self
+            .throttled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+        {
             for source in sources
                 .iter_mut()
                 .filter(|s| s.provider.host_group() == id && until > now)
@@ -932,7 +1009,11 @@ async fn download(cache: &TileCache, job: Job, repaint: &Arc<dyn Fn() + Send + S
         result = fetch => Some(result),
         () = job.cancel.notified() => None,
     };
-    cache.downloading.lock().unwrap().remove(&job.key);
+    cache
+        .downloading
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&job.key);
     if let Some(validity) = revalidating {
         cache.revalidating.fetch_sub(1, Ordering::Relaxed);
         finish_revalidation(cache, &job, validity, outcome, repaint).await;

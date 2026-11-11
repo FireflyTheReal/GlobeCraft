@@ -54,7 +54,10 @@ pub(crate) async fn banded_template(set: &str, bands: &[&str]) -> Result<String,
 async fn manifest() -> Result<Arc<serde_json::Value>, crate::Error> {
     static LAST: std::sync::Mutex<Option<(Instant, Arc<serde_json::Value>)>> =
         std::sync::Mutex::new(None);
-    if let Some((at, json)) = LAST.lock().expect("manifest cache").clone()
+    if let Some((at, json)) = LAST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
         && at.elapsed() < MANIFEST_REUSE
     {
         return Ok(json);
@@ -62,7 +65,9 @@ async fn manifest() -> Result<Arc<serde_json::Value>, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Boundary)?;
     let bytes = crate::http::body(client.get(MANIFEST_URL), MAX_MANIFEST_BYTES).await?;
     let json = Arc::new(crate::http::parse_json(bytes).await?);
-    *LAST.lock().expect("manifest cache") = Some((Instant::now(), json.clone()));
+    *LAST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((Instant::now(), json.clone()));
     Ok(json)
 }
 

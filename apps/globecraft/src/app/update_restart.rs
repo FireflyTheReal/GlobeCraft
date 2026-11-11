@@ -30,7 +30,11 @@ pub(super) struct UpdateRestart {
 }
 impl UpdateRestart {
     pub(super) fn new(request: Arc<RestartRequest>) -> Self {
-        let error = request.error.lock().unwrap().take();
+        let error = request
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         Self {
             request,
             saving: false,
@@ -125,7 +129,12 @@ impl App {
             self.update_restart.error = Some(format!("Save before restart failed: {error}"));
             return;
         }
-        *self.update_restart.request.planet.lock().unwrap() = planet.clone();
+        *self
+            .update_restart
+            .request
+            .planet
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = planet.clone();
         self.update_restart.kml = kml;
         self.update_restart.planet = planet;
         self.update_restart.saving = true;
@@ -139,7 +148,12 @@ impl App {
             && !self.file_jobs.is_busy()
         {
             self.settings_writer.settings(&self.settings);
-            *self.update_restart.request.settings.lock().unwrap() = Some(self.settings.clone());
+            *self
+                .update_restart
+                .request
+                .settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self.settings.clone());
             if let globecraft_data::updater::UpdateState::ReadyToRestart { version } =
                 self.updater.state()
             {
@@ -148,7 +162,7 @@ impl App {
                     .request
                     .installed_version
                     .lock()
-                    .unwrap() = Some(version.clone());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(version.clone());
             }
             self.update_restart
                 .request
