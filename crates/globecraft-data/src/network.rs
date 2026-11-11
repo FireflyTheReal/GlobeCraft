@@ -9,6 +9,17 @@
 
 use crate::tiles::{Prefetch, Provider};
 use globecraft_core::language::Lang;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Settings › Work offline: while set, every HTTP client refuses before connecting, so
+/// tiles and data come only from the disk caches.
+static OFFLINE: AtomicBool = AtomicBool::new(false);
+pub fn set_offline(offline: bool) {
+    OFFLINE.store(offline, Ordering::Relaxed);
+}
+pub fn offline() -> bool {
+    OFFLINE.load(Ordering::Relaxed)
+}
 
 /// The public user agents. Keeping them here means the table and the HTTP clients
 /// cannot drift apart.

@@ -599,6 +599,8 @@ impl App {
     fn persist_settings(&mut self) {
         self.settings_checked = Instant::now();
         if self.settings != self.saved_settings {
+            // However the setting changed (a command, Settings, an import), requests follow.
+            globecraft_data::network::set_offline(self.settings.offline);
             self.settings_writer.settings(&self.settings);
             self.saved_settings = self.settings.clone();
         }

@@ -891,6 +891,12 @@ impl App {
                 self.status = self.lang.text("diagnostics-copied-status").to_owned();
                 json!({"copied": true})
             }
+            "app.workOffline" => {
+                let offline = toggled(p, self.settings.offline);
+                self.settings.offline = offline;
+                globecraft_data::network::set_offline(offline);
+                json!({"offline": offline})
+            }
             "app.quit" => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 json!({})
@@ -1045,6 +1051,7 @@ impl App {
             "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
+            "app.workOffline" => on(self.settings.offline),
             "ui.tileDiagnostics" => on(self.tile_diagnostics),
             "ui.timeline" => on(self.timeline.open),
             "ui.legend" => on(self.legend_open()),

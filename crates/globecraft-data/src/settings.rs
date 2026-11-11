@@ -78,6 +78,8 @@ pub struct Settings {
     /// Colour, width and dash of border lines; label sizes.
     pub map_style: map_style::MapStyle,
     pub uncap_fps: bool,
+    /// Work offline: no request leaves GlobeCraft; tiles and data come from disk only.
+    pub offline: bool,
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
@@ -130,6 +132,7 @@ impl Default for Settings {
             map_scale: 1.0,
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
+            offline: false,
             gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,
@@ -178,6 +181,8 @@ struct SettingsInput {
     saved_sources: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     uncap_fps: Option<bool>,
+    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
+    offline: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     gpu_globe: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
@@ -265,6 +270,9 @@ impl Settings {
         }
         if let Some(uncap) = input.uncap_fps {
             self.uncap_fps = uncap;
+        }
+        if let Some(offline) = input.offline {
+            self.offline = offline;
         }
         if let Some(gpu) = input.gpu_globe {
             self.gpu_globe = gpu;
@@ -692,6 +700,7 @@ mod tests {
             map_scale: 1.0,
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
+            offline: false,
             gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,

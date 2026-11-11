@@ -27,8 +27,12 @@ impl App {
                 viewport.height()
             ),
             format!(
-                "Interface scale {}, map text scale {}, GPU globe allowed: {}, uncapped frame rate: {}",
-                settings.ui_scale, settings.map_scale, settings.gpu_globe, settings.uncap_fps
+                "Interface scale {}, map text scale {}, GPU globe allowed: {}, uncapped frame rate: {}, offline: {}",
+                settings.ui_scale,
+                settings.map_scale,
+                settings.gpu_globe,
+                settings.uncap_fps,
+                settings.offline
             ),
             format!(
                 "Language {}, world {}, basemap {}",

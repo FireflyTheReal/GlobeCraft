@@ -132,6 +132,11 @@ async fn run(
     shared: &Mutex<Shared>,
     wake: &(impl Fn() + Send + Sync),
 ) -> Result<ModelResponse, ModelFailure> {
+    if crate::network::offline() {
+        return Err(ModelFailure::Connection(
+            "GlobeCraft is set to work offline".to_owned(),
+        ));
+    }
     let client = client().map_err(|e| failure(&e))?;
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|e| ModelFailure::Connection(e.to_string()))?;

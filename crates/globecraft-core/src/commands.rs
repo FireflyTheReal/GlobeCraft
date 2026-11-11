@@ -902,6 +902,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!("ui.about", "ui-about", "logo", Help, Interface, NO_PARAMS),
+    // Interface: the assistant itself needs the network, so only a person turns it off.
+    command!(
+        "app.workOffline",
+        "app-work-offline",
+        "web_data",
+        File,
+        Interface,
+        TOGGLE
+    ),
     command!(
         "app.quit",
         "app-quit",

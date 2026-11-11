@@ -30,6 +30,9 @@ pub enum Error {
     /// A response longer than the caller accepts; nothing of it is used.
     #[error("the response exceeds {limit} bytes")]
     TooLarge { limit: u64 },
+    /// Work offline is on: no request was made.
+    #[error("GlobeCraft is set to work offline")]
+    Offline,
     #[error("{0}")]
     Message(String),
 }

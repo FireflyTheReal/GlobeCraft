@@ -35,6 +35,9 @@ pub(crate) enum Policy {
     UserData,
 }
 pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
+    if crate::network::offline() {
+        return Err(crate::Error::Offline);
+    }
     use std::{
         collections::HashMap,
         sync::{Mutex, OnceLock},

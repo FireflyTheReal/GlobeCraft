@@ -10,6 +10,16 @@ use globecraft_data::user_data::UserSource;
 impl App {
     pub(super) fn settings_network(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
+        if ui
+            .checkbox(
+                &mut self.settings.offline,
+                lang.text("settings-network-offline"),
+            )
+            .on_hover_text(lang.text("settings-network-offline-help"))
+            .changed()
+        {
+            globecraft_data::network::set_offline(self.settings.offline);
+        }
         ui.weak(lang.text("settings-network-intro"));
         for category in Category::ALL {
             match category {

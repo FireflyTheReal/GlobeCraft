@@ -24,6 +24,12 @@ instead of keeping its own copy, so a new tile source appears there automaticall
 | The user adds a layer with an address | That address; local files never leave the computer |
 | The user sends an assistant message | Only the selected assistant provider, with the user's key |
 
+**Work offline** (File menu, Settings › Network) stops all of the above: every HTTP
+client in `globecraft-data` and the assistant's model client return
+`Error::Offline` before connecting, and the update check waits until it is turned
+off. Tiles, vector sets and data already in the disk caches still show. The status
+bar says "Offline" while it is on.
+
 Links that open in the operating system's browser (Wikimedia Commons, a provider's
 credit page, the Releases page) are not requests made by GlobeCraft.
 

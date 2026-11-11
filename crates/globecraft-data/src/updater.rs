@@ -116,7 +116,8 @@ impl UpdateService {
     }
     /// Called from application logic after window initialization. Never starts twice.
     pub fn start_once(&mut self) {
-        if !self.disabled && self.state == UpdateState::Idle {
+        // While offline the check waits; it starts once work offline is turned off.
+        if !self.disabled && self.state == UpdateState::Idle && !crate::network::offline() {
             self.start_check();
         }
     }
@@ -144,7 +145,21 @@ impl UpdateService {
             _ => {}
         }
     }
+    /// Fails `operation` when work offline is on, so it can be retried later.
+    fn refuse_offline(&mut self, operation: UpdateOperation) -> bool {
+        if !crate::network::offline() {
+            return false;
+        }
+        self.state = UpdateState::Failed {
+            operation,
+            message: crate::Error::Offline.to_string(),
+        };
+        true
+    }
     fn start_check(&mut self) {
+        if self.refuse_offline(UpdateOperation::Check) {
+            return;
+        }
         self.state = UpdateState::Checking;
         let sender = self.sender.clone();
         let repaint = self.repaint.clone();
@@ -192,6 +207,9 @@ impl UpdateService {
         });
     }
     fn start_install(&mut self) {
+        if self.refuse_offline(UpdateOperation::Install) {
+            return;
+        }
         let Some(selected) = self.selected.clone() else {
             return;
         };

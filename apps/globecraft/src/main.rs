@@ -41,6 +41,7 @@ fn main() -> Result<(), eframe::Error> {
     let mut renderer = eframe::Renderer::Wgpu;
     loop {
         let (settings, load_problem) = globecraft_data::settings::Settings::load();
+        globecraft_data::network::set_offline(settings.offline);
         if let Some(problem) = load_problem {
             globecraft_data::log_line!("{problem}");
             *restart

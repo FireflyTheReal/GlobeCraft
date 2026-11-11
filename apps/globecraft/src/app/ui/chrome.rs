@@ -420,6 +420,26 @@ impl App {
                                 .color(color),
                         );
                         separator(ui, &t);
+                        if self.settings.offline {
+                            let offline = ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(lang.text("statusbar-offline"))
+                                            .size(11.0)
+                                            .color(t.amber),
+                                    )
+                                    .sense(Sense::click()),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(lang.text("statusbar-offline-help"));
+                            if offline.clicked() {
+                                self.run_reporting(
+                                    "app.workOffline",
+                                    serde_json::json!({"on": false}),
+                                );
+                            }
+                            separator(ui, &t);
+                        }
                         let action = super::updater::indicator(
                             ui,
                             self.updater.state(),
