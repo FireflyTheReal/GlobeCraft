@@ -48,3 +48,5 @@ pub mod vector_tiles;
 pub mod vessels;
 
 pub mod sky;
+#[cfg(test)]
+mod test_inputs;

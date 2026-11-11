@@ -13,6 +13,8 @@ pub mod placemark;
 pub mod polar;
 pub mod profile;
 pub mod ruler;
+#[cfg(test)]
+mod test_inputs;
 pub mod time;
 /// Mean Earth radius used by the globe model, in kilometers.
 pub const EARTH_RADIUS_KM: f64 = 6371.0088;

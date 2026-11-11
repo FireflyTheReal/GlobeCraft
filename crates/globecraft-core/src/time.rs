@@ -249,4 +249,34 @@ mod tests {
             assert_eq!(days_from_civil(y, i64::from(m), i64::from(d)), days);
         }
     }
+
+    #[test]
+    fn any_text_is_parsed_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(1);
+        let pieces = [
+            "0",
+            "1",
+            "2",
+            "9",
+            "-",
+            ":",
+            "T",
+            "t",
+            " ",
+            "+",
+            "Z",
+            ".",
+            "é",
+            "日",
+            "2026-11-04",
+            "T09:38",
+            ":12.5",
+            "+01:00",
+            "\u{0}",
+        ];
+        for _ in 0..50_000 {
+            let text = inputs.text(&pieces, 12);
+            let _ = parse_iso(&text);
+        }
+    }
 }

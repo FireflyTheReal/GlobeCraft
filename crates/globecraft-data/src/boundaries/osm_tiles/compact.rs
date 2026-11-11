@@ -574,4 +574,15 @@ mod tests {
         other[0] = FORMAT_VERSION + 1;
         assert!(Filtered::decode(&other).is_none());
     }
+
+    #[test]
+    fn damaged_tiles_are_refused_without_panicking() {
+        let raw = sample();
+        let encoded = Filtered::from_mvt(&raw).unwrap().encode();
+        let mut inputs = crate::test_inputs::Inputs::new(12);
+        for _ in 0..20_000 {
+            let _ = Filtered::decode(&inputs.mutate(&encoded));
+            let _ = Filtered::from_mvt(&inputs.mutate(&raw));
+        }
+    }
 }

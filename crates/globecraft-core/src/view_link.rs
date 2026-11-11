@@ -214,4 +214,41 @@ mod tests {
             ["https://a.example/x.csv"]
         );
     }
+
+    #[test]
+    fn any_text_is_parsed_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(3);
+        let pieces = [
+            "globecraft://view?",
+            "lat=",
+            "lon=",
+            "alt=",
+            "heading=",
+            "tilt=",
+            "layers=",
+            "data=",
+            "basemap=",
+            "&",
+            "=",
+            "%",
+            "%2",
+            "%G",
+            "%C3",
+            "%A9",
+            "1",
+            "-",
+            "90",
+            ".",
+            "e",
+            "é",
+            "NaN",
+            "inf",
+        ];
+        for _ in 0..50_000 {
+            let text = inputs.text(&pieces, 12);
+            if let Ok(link) = ViewLink::parse(&text) {
+                let _ = ViewLink::parse(&link.to_link());
+            }
+        }
+    }
 }

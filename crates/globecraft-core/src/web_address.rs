@@ -122,4 +122,35 @@ mod tests {
             assert!(!is_local_host(host), "{host}");
         }
     }
+
+    #[test]
+    fn any_address_is_read_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(4);
+        let pieces = [
+            "https://",
+            "http://",
+            "[",
+            "]",
+            ":",
+            "@",
+            "\\",
+            "/",
+            "?",
+            "#",
+            ".",
+            "127",
+            "0x7f",
+            "1",
+            "example",
+            "é",
+            "::1",
+            "fe80::",
+            "localhost",
+        ];
+        for _ in 0..50_000 {
+            if let Some(host) = host(&inputs.text(&pieces, 10)) {
+                let _ = is_local_host(&host);
+            }
+        }
+    }
 }

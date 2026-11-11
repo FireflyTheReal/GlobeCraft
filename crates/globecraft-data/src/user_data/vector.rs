@@ -666,4 +666,28 @@ mod tests {
         let plain = parse_features(FeatureFormat::Csv, b"lat,lon\n1,2\n", None).unwrap();
         assert_eq!((plain.value_field, plain.value_range), (None, None));
     }
+
+    #[test]
+    fn damaged_feature_files_are_refused_without_panicking() {
+        let samples: [(FeatureFormat, &[u8]); 3] = [
+            (
+                FeatureFormat::GeoJson,
+                br#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"title":"M 4.6","mag":4.6,"time":"2026-11-04T09:38+01:00"},"geometry":{"type":"Point","coordinates":[142.1,38.3]}},{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}"#,
+            ),
+            (
+                FeatureFormat::Gpx,
+                br#"<gpx><wpt lat="1" lon="2"><name>A</name><time>2026-11-04T09:38:00Z</time></wpt><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="3" lon="4"/></trkseg></trk></gpx>"#,
+            ),
+            (
+                FeatureFormat::Csv,
+                "name;lat;lon;mag;time\n\"A, B\";48,1;11,5;4,6;2026-11-04T09:38é1234\nC;-91;200;x;1793785080000\n".as_bytes(),
+            ),
+        ];
+        let mut inputs = crate::test_inputs::Inputs::new(15);
+        for (format, sample) in samples {
+            for _ in 0..10_000 {
+                let _ = parse_features(format, &inputs.mutate(sample), Some("mag"));
+            }
+        }
+    }
 }

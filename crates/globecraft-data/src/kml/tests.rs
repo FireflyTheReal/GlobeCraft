@@ -251,3 +251,13 @@ fn tree_roundtrip_preserves_distinct_folders_visibility_and_empty_groups() {
         ["Peak", "Other"]
     );
 }
+
+#[test]
+fn damaged_documents_are_refused_without_panicking() {
+    let xml = br#"<?xml version="1.0"?><kml><Document><name>Places</name><Folder><name>A &amp; B</name><Placemark><name>P</name><description><![CDATA[x < y]]></description><Point><coordinates>-46.6,-23.5,10</coordinates></Point></Placemark><Placemark><LineString><coordinates>1,2 3,4</coordinates></LineString></Placemark></Folder></Document></kml>"#;
+    let mut inputs = crate::test_inputs::Inputs::new(14);
+    for _ in 0..10_000 {
+        let damaged = inputs.mutate(xml);
+        let _ = parse_tree(&String::from_utf8_lossy(&damaged), Lang::En);
+    }
+}

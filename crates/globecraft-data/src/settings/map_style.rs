@@ -447,4 +447,13 @@ mod tests {
         let codes: Vec<&str> = LineType::ALL.iter().map(|kind| kind.code()).collect();
         assert_eq!(listed, codes);
     }
+
+    #[test]
+    fn any_colour_text_is_read_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(16);
+        let pieces = ["#", "0", "9", "a", "F", "g", "é", "日", " ", "ff"];
+        for _ in 0..50_000 {
+            let _ = Rgba::parse_hex(&inputs.text(&pieces, 10));
+        }
+    }
 }

@@ -757,4 +757,34 @@ mod tests {
         };
         assert!(error.to_string().contains("byte ranges"), "{error}");
     }
+
+    #[test]
+    fn damaged_headers_and_directories_are_refused_without_panicking() {
+        let directory = encode(&[
+            Entry {
+                tile_id: 0,
+                offset: 0,
+                length: 100,
+                run_length: 1,
+            },
+            Entry {
+                tile_id: 5,
+                offset: 100,
+                length: 20,
+                run_length: 3,
+            },
+            Entry {
+                tile_id: 40,
+                offset: 0,
+                length: 10,
+                run_length: 0,
+            },
+        ]);
+        let archive = archive_bytes();
+        let mut inputs = crate::test_inputs::Inputs::new(13);
+        for _ in 0..50_000 {
+            let _ = parse_directory(&inputs.mutate(&directory));
+            let _ = Header::parse(&inputs.mutate(&archive[..HEADER_BYTES]));
+        }
+    }
 }
