@@ -379,7 +379,7 @@ impl TileCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.ready.contains_key(&key)
             || requests.get(&key).is_some_and(RequestState::is_pending)
-            || self.inflight.load(Ordering::Relaxed) >= limit.min(MAX_INFLIGHT)
+            || !self.has_slot(key, limit)
         {
             return false;
         }
@@ -405,6 +405,46 @@ impl TileCache {
             return false;
         }
         true
+    }
+    /// Whether a request for `key` fits under `limit` requests in flight. Tiles waiting
+    /// for a host that asked to slow down (429/503, up to two minutes) do not count
+    /// against other hosts: one paused source must not hold every slot, or elevation,
+    /// night lights and polar tiles stop loading while the imagery host pauses. A paused
+    /// host itself still gets no more than `limit`. Call with `requests` locked (lock
+    /// order: requests, queue, throttled).
+    fn has_slot(&self, key: TileKey, limit: usize) -> bool {
+        let limit = limit.min(MAX_INFLIGHT);
+        let inflight = self.inflight.load(Ordering::Relaxed);
+        if inflight < limit {
+            return true;
+        }
+        let queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let throttled = self
+            .throttled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = Instant::now();
+        let paused = |key: TileKey| {
+            throttled
+                .get(&unkey(key).0.host_group())
+                .is_some_and(|until| *until > now)
+        };
+        if paused(key) {
+            return false;
+        }
+        let waiting = queue.iter().filter(|&&queued| paused(queued)).count();
+        inflight.saturating_sub(waiting) < limit
+    }
+    /// Whether `key`'s host is pausing after a throttling answer.
+    fn host_paused(&self, key: TileKey) -> bool {
+        self.throttled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&unkey(key).0.host_group())
+            .is_some_and(|until| *until > Instant::now())
     }
     /// Requests `key` for background work (a screenshot), leaving a quarter of the
     /// download slots to the view on screen. False when nothing was requested.
@@ -489,7 +529,8 @@ impl TileCache {
             *queue = ordered;
         }
         for &key in keys {
-            if !self.request(key) && self.inflight() >= MAX_INFLIGHT {
+            // Past a paused host's tiles, the other hosts may still have slots.
+            if !self.request(key) && self.inflight() >= MAX_INFLIGHT && !self.host_paused(key) {
                 break;
             }
         }
@@ -508,7 +549,7 @@ impl TileCache {
                 }
                 Some(RequestState::Loading(..) | RequestState::Unavailable) => None,
                 // Never asked, or a failure old enough to be asked again.
-                _ if self.inflight() < MAX_INFLIGHT && !self.ready.contains_key(key) => {
+                _ if self.has_slot(*key, MAX_INFLIGHT) && !self.ready.contains_key(key) => {
                     Some(Duration::ZERO)
                 }
                 _ => None,

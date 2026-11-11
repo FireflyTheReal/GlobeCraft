@@ -624,3 +624,28 @@ fn expired_failures_leave_the_request_map_in_passes_and_missing_tiles_stay() {
         REQUEST_PRUNE_MIN_ENTRIES
     );
 }
+
+#[test]
+fn a_paused_host_does_not_hold_the_slots_of_other_hosts() {
+    let (cache, _tickets) = test_cache(4096);
+    let imagery: Vec<_> = (0..MAX_INFLIGHT as u32)
+        .map(|x| make_key(Provider::Satellite, 12, x, 0, 0))
+        .collect();
+    for &key in &imagery {
+        assert!(cache.request(key));
+    }
+    let lights = make_key(Provider::NightLights, 5, 0, 0, 0);
+    assert!(!cache.request(lights), "every slot is taken");
+    assert_eq!(cache.retry_delay(&[lights]), None);
+    // The imagery host answers 429: its tiles wait, and stop holding the slots.
+    let job = cache.next_job().unwrap();
+    cache.downloading.lock().unwrap().remove(&job.key);
+    cache.throttle(job.key, Duration::from_secs(60));
+    assert_eq!(cache.retry_delay(&[lights]), Some(Duration::ZERO));
+    assert!(cache.request(lights), "the paused imagery leaves room");
+    assert!(
+        !cache.request(make_key(Provider::Satellite, 12, 0, 1, 0)),
+        "the paused host gets no more"
+    );
+    assert_eq!(cache.next_job().unwrap().key, lights);
+}
