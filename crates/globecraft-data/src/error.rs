@@ -27,6 +27,9 @@ pub enum Error {
     SqliteWorker(#[from] tokio_rusqlite::Error),
     #[error(transparent)]
     Task(#[from] tokio::task::JoinError),
+    /// A response longer than the caller accepts; nothing of it is used.
+    #[error("the response exceeds {limit} bytes")]
+    TooLarge { limit: u64 },
     #[error("{0}")]
     Message(String),
 }

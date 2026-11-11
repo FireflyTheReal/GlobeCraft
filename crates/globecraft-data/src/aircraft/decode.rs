@@ -31,10 +31,7 @@ pub(super) async fn adsb_lol(
             format!("ADSB.lol asked to wait (too many requests); again in {left} s").into(),
         );
     }
-    match crate::http::body_or_retry_after(request, limit + 1).await? {
-        crate::http::Fetched::Body(bytes) if bytes.len() as u64 > limit => {
-            Err(format!("Aircraft response exceeds {limit} bytes").into())
-        }
+    match crate::http::body_or_retry_after(request, limit).await? {
         crate::http::Fetched::Body(bytes) => Ok(bytes),
         crate::http::Fetched::RetryAfter(wait) => {
             let wait = wait.max(ADSB_LOL_MIN_PAUSE);
@@ -51,11 +48,7 @@ pub(super) async fn adsb_lol(
 }
 
 async fn response(request: reqwest::RequestBuilder, limit: u64) -> Result<Vec<u8>, crate::Error> {
-    let bytes = crate::http::body(request, limit + 1).await?;
-    if bytes.len() as u64 > limit {
-        return Err(format!("Aircraft response exceeds {limit} bytes").into());
-    }
-    Ok(bytes)
+    crate::http::body(request, limit).await
 }
 fn number(v: Option<&serde_json::Value>) -> Option<f64> {
     v.and_then(|v| v.as_f64()).filter(|v| v.is_finite())

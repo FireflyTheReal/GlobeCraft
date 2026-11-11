@@ -39,9 +39,11 @@ while no other tile waits, with `If-None-Match` or `If-Modified-Since`: an uncha
 tile costs a 304 answer without a body. "Prefetch" means tiles just outside the view may be requested
 ahead; "visible only" means the source's policy forbids it.
 
+`<version>` is the running version (`0.4.0` at the time of writing).
+
 | Source | Host | Requests in flight | Prefetch | User agent |
 | --- | --- | --- | --- | --- |
-| Satellite (Esri World Imagery) | `server.arcgisonline.com` | up to 6 at once | prefetch | `GlobeCraft/0.2 (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)` |
+| Satellite (Esri World Imagery) | `server.arcgisonline.com` | up to 6 at once | prefetch | `GlobeCraft/<version> (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)` |
 | Historical imagery (Esri Wayback) | `wayback.maptiles.arcgis.com` | up to 6 at once | prefetch | same as above |
 | Streets (OpenStreetMap) | `tile.openstreetmap.org` | up to 2 at once | visible only | same as above |
 | Terrain/Topography (OpenTopoMap) | `tile.opentopomap.org` | up to 2 at once | visible only | same as above |
@@ -58,19 +60,19 @@ the authority; `CREDITS.md` links to them.
 
 | Service | Hosts | Cadence | User agent |
 | --- | --- | --- | --- |
-| Esri Wayback release list | `s3-us-west-2.amazonaws.com` | once per session | `GlobeCraft/0.2 (wayback release list)` |
-| GlobeCraft map data | `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | on demand; manifest reused for 10 min | `GlobeCraft/0.1 (map boundary overlay)` |
-| OpenStreetMap Nominatim | `nominatim.openstreetmap.org` | on demand | `GlobeCraft/0.2 (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)` |
-| Photon (komoot) | `photon.komoot.io` | on demand while typing | `GlobeCraft/0.2 (search suggestions)` |
-| OpenSky Network | `opensky-network.org` | normally one request every 17 min | `GlobeCraft/1.0 (live aircraft viewer; OpenSky / ADSB.lol)` |
+| Esri Wayback release list | `s3-us-west-2.amazonaws.com` | once per session | `GlobeCraft/<version> (wayback release list)` |
+| GlobeCraft map data | `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | on demand; manifest reused for 10 min | `GlobeCraft/<version> (map boundary overlay)` |
+| OpenStreetMap Nominatim | `nominatim.openstreetmap.org` | on demand | `GlobeCraft/<version> (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)` |
+| Photon (komoot) | `photon.komoot.io` | on demand while typing | `GlobeCraft/<version> (search suggestions)` |
+| OpenSky Network | `opensky-network.org` | normally one request every 17 min | `GlobeCraft/<version> (live aircraft viewer; OpenSky / ADSB.lol)` |
 | ADSB.lol | `api.adsb.lol`, `globe.adsb.lol` | normally one request every 10 s while the layer is visible | same as OpenSky |
-| OpenSeaFeed AIS | `api.openseafeed.com` | normally one request every 2 min | `GlobeCraft/1.0 (live vessel viewer; OpenSeaFeed / Digitraffic)` |
+| OpenSeaFeed AIS | `api.openseafeed.com` | normally one request every 2 min | `GlobeCraft/<version> (live vessel viewer; OpenSeaFeed / Digitraffic)` |
 | Digitraffic AIS (fallback) | `meri.digitraffic.fi` | normally one request every 2 min | same as OpenSeaFeed |
-| NOAA SWPC aurora | `services.swpc.noaa.gov` | normally one request every 10 min | `GlobeCraft/1.0 (aurora forecast; NOAA SWPC)` |
-| CelesTrak | `celestrak.org` | normally one request every 6 h | `GlobeCraft/1.0 (satellite orbits; CelesTrak)` |
-| RainViewer | `api.rainviewer.com`, `tilecache.rainviewer.com` | normally one request every 10 min for the metadata, then visible radar tiles | `GlobeCraft/1.0 radar viewer` |
-| Live Cloud Maps (Matt Eason, EUMETSAT) | `clouds.matteason.co.uk` | normally one request every 3 h | `GlobeCraft/1.0 (attribution: Matt Eason, EUMETSAT)` |
-| TomTom Traffic | `api.tomtom.com` | normally one request every 2 min; camera movement may request a new tile grid sooner | `GlobeCraft/1.0 (traffic; TomTom)` |
+| NOAA SWPC aurora | `services.swpc.noaa.gov` | normally one request every 10 min | `GlobeCraft/<version> (aurora forecast; NOAA SWPC)` |
+| CelesTrak | `celestrak.org` | normally one request every 6 h | `GlobeCraft/<version> (satellite orbits; CelesTrak)` |
+| RainViewer | `api.rainviewer.com`, `tilecache.rainviewer.com` | normally one request every 10 min for the metadata, then visible radar tiles | `GlobeCraft/<version> (radar viewer)` |
+| Live Cloud Maps (Matt Eason, EUMETSAT) | `clouds.matteason.co.uk` | normally one request every 3 h | `GlobeCraft/<version> (attribution: Matt Eason, EUMETSAT)` |
+| TomTom Traffic | `api.tomtom.com` | normally one request every 2 min; camera movement may request a new tile grid sooner | `GlobeCraft/<version> (traffic; TomTom)` |
 | GlobeCraft updates | `api.github.com`, `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | once per session | `self-update/<crate version>` from the updater library |
 
 Nominatim's usage policy asks for an identifying User-Agent and at most one request per
@@ -81,7 +83,7 @@ policies where the app can apply them.
 Checked 2026-11-06 with the agents above: NOAA SWPC, CelesTrak, OpenSeaFeed and
 Digitraffic accepted them. Digitraffic requires gzip encoding, which the app's client
 sends. On 2026-11-07 a user-supplied TomTom key returned an authenticated 256×256 PNG
-tile with the app's exact URL, header and `GlobeCraft/1.0 (traffic; TomTom)` agent; the
+tile with the app's exact URL, header and `GlobeCraft/<version> (traffic; TomTom)` agent; the
 key was not stored.
 
 ## User-added layers
@@ -89,7 +91,7 @@ key was not stored.
 A layer added through Add Data may name any HTTP(S) host. Its host is listed in
 Settings → Network under "Your data", with the reload interval when it is a live URL.
 A file on this computer has no host and is never uploaded. The request carries
-`GlobeCraft/0.3 (3D globe; user-added layer; +https://github.com/FireflyTheReal/GlobeCraft)`.
+`GlobeCraft/<version> (3D globe; user-added layer; +https://github.com/FireflyTheReal/GlobeCraft)`.
 
 WMS capabilities can name further endpoints, and a server may redirect. GlobeCraft
 lists the address the user entered; it cannot know every host a third-party service
