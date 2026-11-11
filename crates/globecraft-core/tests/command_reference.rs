@@ -61,8 +61,11 @@ fn reference() -> String {
 }
 
 fn assistant(spec: &CommandSpec) -> String {
-    if spec.reach == Reach::Interface {
-        return "no".to_owned();
+    match spec.reach {
+        Reach::Interface => return "no".to_owned(),
+        // Built-in sources run unasked; only addresses in the parameters need approval.
+        Reach::Network => return "asks first when it names a web address".to_owned(),
+        Reach::View | Reach::Files | Reach::Destructive => {}
     }
     match spec.approval_reason() {
         Some(reason) => format!("asks first: {}", cell(reason)),
