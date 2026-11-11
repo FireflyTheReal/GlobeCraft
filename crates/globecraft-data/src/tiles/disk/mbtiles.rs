@@ -64,25 +64,33 @@ impl Address {
             .ok_or_else(fail)?
             .parse()
             .map_err(|_| fail())?;
-        if zoom > 30 || column as u64 >= 1u64 << zoom || xyz_row as u64 >= 1u64 << zoom {
-            return Err(fail());
-        }
         let directory = zoom_path.parent().ok_or_else(fail)?.to_path_buf();
         let relative = directory.strip_prefix(root).map_err(|_| fail())?;
         let provider = relative
             .components()
             .next()
             .and_then(|c| c.as_os_str().to_str())
+            .and_then(|dir| super::Provider::all().find(|p| p.dir() == dir))
             .ok_or_else(fail)?;
-        if !super::Provider::all().any(|p| p.dir() == provider) {
+        // Tiles a side at this zoom: 2^zoom for Web Mercator; the polar stereographic
+        // grids (NASA GIBS EPSG:3413 and EPSG:3031) start with two a side at level 0.
+        let polar = matches!(
+            provider,
+            super::Provider::PolarNorth | super::Provider::PolarSouth
+        );
+        if zoom > 30 {
             return Err(fail());
         }
-        let overview = provider == "esri_sat" && zoom <= 4;
+        let side = if polar { 2u64 << zoom } else { 1u64 << zoom };
+        if u64::from(column) >= side || u64::from(xyz_row) >= side {
+            return Err(fail());
+        }
+        let overview = provider == super::Provider::Satellite && zoom <= 4;
         Ok(Self {
             directory,
             zoom,
             column,
-            row: ((1u64 << zoom) - 1 - xyz_row as u64) as u32,
+            row: (side - 1 - u64::from(xyz_row)) as u32,
             overview,
         })
     }
