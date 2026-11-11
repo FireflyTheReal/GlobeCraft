@@ -886,6 +886,11 @@ impl App {
                 ctx.open_url(egui::OpenUrl::new_tab(ISSUES_URL));
                 json!({})
             }
+            "help.copyDiagnostics" => {
+                ctx.copy_text(self.diagnostics_text());
+                self.status = self.lang.text("diagnostics-copied-status").to_owned();
+                json!({"copied": true})
+            }
             "app.quit" => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 json!({})
@@ -1360,5 +1365,56 @@ impl App {
         if ui.checkbox(&mut on, label).changed() {
             self.run_reporting("layer.show", json!({"layer": layer.code(), "visible": on}));
         }
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    /// The body of `fn <name>(` in `source`: up to the first line that closes it at the
+    /// function's own indentation.
+    fn body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("fn {name} not found"));
+        let indent = source[..start]
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .take_while(|c| *c == ' ')
+            .count();
+        let close = format!("\n{}}}\n", " ".repeat(indent));
+        let end = source[start..]
+            .find(&close)
+            .map_or(source.len(), |end| start + end);
+        &source[start..end]
+    }
+
+    /// Every command in the catalog is a match arm of `App::run` or of the dispatcher it
+    /// hands a prefix to, so a command added to the catalog without a handler (which
+    /// would only fail at run time, as "unknown command") fails here.
+    #[test]
+    fn every_catalog_command_has_a_handler() {
+        let commands = include_str!("commands.rs");
+        let bodies = [
+            body(commands, "run"),
+            body(include_str!("user_layers.rs"), "run_user_data"),
+            body(include_str!("time.rs"), "run_time"),
+            body(include_str!("selected_flight.rs"), "run_flight"),
+            body(include_str!("selected_satellite.rs"), "run_satellite"),
+            body(include_str!("legend.rs"), "run_legend"),
+        ];
+        let missing: Vec<&str> = globecraft_core::commands::COMMANDS
+            .iter()
+            .map(|spec| spec.id)
+            .filter(|id| {
+                let quoted = format!("\"{id}\"");
+                !bodies.iter().any(|body| body.contains(&quoted))
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "commands without a handler: {missing:?}"
+        );
     }
 }

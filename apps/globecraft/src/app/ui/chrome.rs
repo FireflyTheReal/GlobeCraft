@@ -243,7 +243,11 @@ impl App {
                 menu_item(ui, self, id, Value::Null);
             }
             ui.separator();
-            for id in ["help.documentation", "help.reportIssue"] {
+            for id in [
+                "help.documentation",
+                "help.reportIssue",
+                "help.copyDiagnostics",
+            ] {
                 menu_item(ui, self, id, Value::Null);
             }
             ui.separator();

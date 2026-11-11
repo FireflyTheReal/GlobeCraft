@@ -893,6 +893,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Interface,
         NO_PARAMS
     ),
+    command!(
+        "help.copyDiagnostics",
+        "help-copy-diagnostics",
+        "copy",
+        Help,
+        Interface,
+        NO_PARAMS
+    ),
     command!("ui.about", "ui-about", "logo", Help, Interface, NO_PARAMS),
     command!(
         "app.quit",

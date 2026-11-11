@@ -32,6 +32,7 @@ mod cache;
 mod commands;
 mod controllers;
 mod credits;
+mod diagnostics;
 mod explorer;
 mod files;
 mod flat_earth;
