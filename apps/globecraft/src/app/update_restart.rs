@@ -17,6 +17,8 @@ pub(crate) struct RestartRequest {
     pub(crate) planet: Mutex<Option<PathBuf>>,
     pub(crate) installed_version: Mutex<Option<String>>,
     pub(crate) settings: Mutex<Option<globecraft_data::settings::Settings>>,
+    /// Why the saved settings could not be used at startup, for the status bar.
+    pub(crate) load_problem: Mutex<Option<String>>,
 }
 
 pub(super) struct UpdateRestart {

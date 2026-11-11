@@ -493,6 +493,9 @@ impl App {
         if let Some(error) = &app.update_restart.error {
             app.status = error.clone();
         }
+        if let Some(problem) = restart.load_problem.lock().unwrap().take() {
+            app.status = problem;
+        }
         if let Some(version) = restart.installed_version.lock().unwrap().as_deref() {
             app.updater.resume_installed(version);
         }

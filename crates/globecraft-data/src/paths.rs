@@ -81,6 +81,46 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Writes `bytes` to `path` so that a crash, power loss or full disk leaves either the old
+/// file or the new one, never a short one: a temporary file beside it is written, flushed
+/// to disk and renamed over the target. `private` makes the file readable by the user only
+/// (Unix).
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut temp_name = path.file_name().unwrap_or_default().to_owned();
+    temp_name.push(".tmp");
+    let temp = path.with_file_name(temp_name);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    let _ = private;
+    let result = (|| -> std::io::Result<()> {
+        let mut file = options.open(&temp)?;
+        // A temporary file left by an earlier attempt keeps its old mode on open.
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
 pub(crate) fn user_home() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -123,6 +163,28 @@ mod tests {
         );
         // Nothing to migrate on a fresh machine.
         assert!(!migrate_folder(&root.join("missing"), &root.join("other")).unwrap());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn atomic_writes_replace_the_whole_file_and_leave_no_temporary_file() {
+        let root = std::env::temp_dir().join(format!("globecraft-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("nested").join("settings.json");
+        write_atomic(&path, b"{\"first\":1, \"long\":\"value\"}", false).unwrap();
+        write_atomic(&path, b"{}", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+        assert!(!root.join("nested").join("settings.json.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // A destination that cannot be replaced fails and cleans up after itself.
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        assert!(write_atomic(&root.join("dir"), b"x", false).is_err());
+        assert!(!root.join("dir.tmp").exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -323,12 +323,46 @@ impl Settings {
             .filter(|layer| self.layer_visible(*layer))
             .collect()
     }
-    pub fn load() -> Self {
+    /// The saved settings, and an English message when `settings.json` exists but could not
+    /// be used. A file that does not parse is renamed `settings.json.corrupt-<unix seconds>`
+    /// first, so the next save cannot overwrite what it held, and the defaults are used.
+    pub fn load() -> (Self, Option<String>) {
+        Self::load_from(&settings_file())
+    }
+    fn load_from(path: &std::path::Path) -> (Self, Option<String>) {
         let mut settings = Self::default();
-        if let Ok(bytes) = std::fs::read(settings_file()) {
-            let _ = settings.apply_json(&bytes);
-        }
-        settings
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return (settings, None),
+            Err(error) => {
+                return (
+                    settings,
+                    Some(format!(
+                        "Could not read {} ({error}); default settings are in use.",
+                        path.display()
+                    )),
+                );
+            }
+        };
+        let Err(error) = settings.apply_json(&bytes) else {
+            return (settings, None);
+        };
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let mut kept_name = path.file_name().unwrap_or_default().to_owned();
+        kept_name.push(format!(".corrupt-{seconds}"));
+        let kept = path.with_file_name(kept_name);
+        let message = match std::fs::rename(path, &kept) {
+            Ok(()) => format!(
+                "The settings file could not be read ({error}). It was kept as {} and default settings are in use.",
+                kept.display()
+            ),
+            Err(rename) => format!(
+                "The settings file could not be read ({error}) or set aside ({rename}); default settings are in use."
+            ),
+        };
+        (Self::default(), Some(message))
     }
 }
 #[cfg(test)]
@@ -407,6 +441,35 @@ mod tests {
             "values changed or lost:\n{}",
             lost.join("\n")
         );
+    }
+    #[test]
+    fn an_unreadable_settings_file_is_set_aside_not_overwritten() {
+        let root =
+            std::env::temp_dir().join(format!("globecraft-settings-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        let (_, problem) = Settings::load_from(&path);
+        assert!(problem.is_none(), "a missing file is a first start");
+        std::fs::write(&path, br#"{"ui_scale": 1.5, "map_sc"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert!(settings == Settings::default());
+        assert!(problem.unwrap().contains("corrupt-"));
+        assert!(!path.exists());
+        let kept: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            kept.len() == 1 && kept[0].starts_with("settings.json.corrupt-"),
+            "{kept:?}"
+        );
+        std::fs::write(&path, br#"{"ui_scale": 1.5}"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert!(problem.is_none());
+        assert!((settings.ui_scale - 1.5).abs() < 1e-6);
+        std::fs::remove_dir_all(&root).unwrap();
     }
     #[test]
     fn new_installs_start_basic_and_earlier_settings_load_advanced() {

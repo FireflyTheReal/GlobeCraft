@@ -125,7 +125,7 @@ impl Job {
                     texture.as_ref().clone(),
                     sky.as_ref().clone(),
                 )?;
-                std::fs::write(&path, document)?;
+                crate::paths::write_atomic(&path, &document, false)?;
                 Ok(FileOutcome::PlanetSaved { path })
             }
             Self::OpenSources(path) => Ok(FileOutcome::SourcesLoaded {
@@ -133,7 +133,8 @@ impl Job {
                 path,
             }),
             Self::SaveSources(path, sources) => {
-                std::fs::write(&path, crate::user_data::export_sources(&sources))?;
+                let document = crate::user_data::export_sources(&sources);
+                crate::paths::write_atomic(&path, &document, false)?;
                 Ok(FileOutcome::SourcesSaved {
                     path,
                     count: sources.len(),

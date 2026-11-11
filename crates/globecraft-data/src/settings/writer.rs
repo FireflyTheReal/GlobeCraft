@@ -59,20 +59,23 @@ impl SettingsWriter {
                     };
                     let result = (|| -> Result<(), crate::Error> {
                         std::fs::create_dir_all(&root)?;
+                        let write = crate::paths::write_atomic;
                         if let Some(settings) = settings {
-                            std::fs::write(
-                                root.join("settings.json"),
-                                serde_json::to_vec(&settings)?,
+                            write(
+                                &root.join("settings.json"),
+                                &serde_json::to_vec(&settings)?,
+                                false,
                             )?;
                         }
                         if let Some(paths) = kml_paths {
-                            std::fs::write(
-                                root.join("open-kml.json"),
-                                serde_json::to_vec(&paths)?,
+                            write(
+                                &root.join("open-kml.json"),
+                                &serde_json::to_vec(&paths)?,
+                                false,
                             )?;
                         }
                         if let Some(lang) = lang {
-                            std::fs::write(root.join("lang.txt"), lang.code())?;
+                            write(&root.join("lang.txt"), lang.code().as_bytes(), false)?;
                         }
                         Ok(())
                     })();

@@ -167,27 +167,8 @@ pub(crate) fn write_private(
             _ => Ok(()),
         };
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     let bytes = serde_json::to_vec(keys)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    use std::io::Write;
-    let mut file = options.open(path)?;
-    file.write_all(&bytes)?;
-    // An existing file keeps its old mode on open: tighten it too.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+    Ok(crate::paths::write_atomic(path, &bytes, true)?)
 }
 
 #[cfg(test)]

@@ -31,7 +31,11 @@ fn main() -> Result<(), eframe::Error> {
     let restart = Arc::new(RestartRequest::default());
     let mut renderer = eframe::Renderer::Wgpu;
     loop {
-        let settings = globecraft_data::settings::Settings::load();
+        let (settings, load_problem) = globecraft_data::settings::Settings::load();
+        if let Some(problem) = load_problem {
+            eprintln!("{problem}");
+            *restart.load_problem.lock().unwrap() = Some(problem);
+        }
         let mut viewport = egui::ViewportBuilder::default()
             .with_inner_size(INITIAL_WINDOW_SIZE_POINTS)
             .with_title(WINDOW_TITLE)
