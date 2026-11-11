@@ -11,7 +11,8 @@ pub enum Reach {
     Files,
     /// Discards work or closes the application.
     Destructive,
-    /// Downloads from a web address given in its parameters (not a built-in source).
+    /// May download from web addresses given in its parameters (not built-in sources): the
+    /// assistant asks first when the parameters name one.
     Network,
     /// Opens interface surfaces; meaningless without a person at the window.
     Interface,
@@ -345,7 +346,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "view-open-link",
         "goto_xy",
         Explore,
-        View,
+        Network,
         r#"{"type":"object","properties":{"link":{"type":"string","description":"A globecraft://view?lat=…&lon=… link (optional alt, heading, tilt, basemap, layers, data)"}},"required":["link"]}"#
     ),
     command!(

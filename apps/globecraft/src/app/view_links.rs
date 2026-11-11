@@ -4,12 +4,9 @@
 //! the command line, as Linux hands it over from a browser) brings that view back.
 use super::App;
 use globecraft_core::layers::MapLayer;
-use globecraft_core::view_link::ViewLink;
+use globecraft_core::view_link::{PRESET_PREFIX, ViewLink};
 use globecraft_data::user_data::UserSource;
 use serde_json::{Value, json};
-
-/// Web data from the Add Data library travels by name: `preset:gebco`.
-const PRESET_PREFIX: &str = "preset:";
 
 impl App {
     /// The view now, as a link.
@@ -107,6 +104,15 @@ impl App {
                     }
             });
             if present {
+                continue;
+            }
+            // A link can come from anywhere (a web page, a message): it never makes
+            // GlobeCraft fetch from this computer or the local network.
+            if preset.is_none()
+                && globecraft_core::web_address::host(url)
+                    .is_none_or(|host| globecraft_core::web_address::is_local_host(&host))
+            {
+                skipped.push(url.clone());
                 continue;
             }
             let params = match preset {

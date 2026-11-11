@@ -9,6 +9,7 @@
 
 use globecraft_core::commands::{self, CommandSpec};
 use globecraft_core::language::Lang;
+use globecraft_core::{view_link::ViewLink, web_address};
 use serde_json::{Value, json};
 
 use crate::provider::{ToolCall, ToolDef};
@@ -81,20 +82,39 @@ pub fn target(call: &ToolCall) -> Option<(String, Value)> {
     }
 }
 
+/// The web addresses a network command would download from: `data.add`'s `url`, and the
+/// `data` entries of a link `view.openLink` opens. Library presets are not addresses.
+fn web_addresses(id: &str, params: &Value) -> Vec<String> {
+    match id {
+        "data.add" => params
+            .get("url")
+            .map(|url| url.as_str().unwrap_or_default().to_owned())
+            .into_iter()
+            .collect(),
+        "view.openLink" => params
+            .get("link")
+            .and_then(Value::as_str)
+            .and_then(|link| ViewLink::parse(link).ok())
+            .map(|link| link.web_addresses().map(str::to_owned).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 /// Whether a call needs the user's approval, and why (English, for the approval card).
 pub fn gate(call: &ToolCall) -> Option<String> {
     let (id, params) = target(call)?;
     let spec = commands::find(&id)?;
-    // A network command that names no address uses a built-in source (a library preset).
-    if spec.reach == commands::Reach::Network && params.get("url").is_none() {
+    // A network command that names no address uses built-in sources only.
+    if spec.reach == commands::Reach::Network && web_addresses(&id, &params).is_empty() {
         return None;
     }
     spec.approval_reason().map(str::to_string)
 }
 
 /// What "allow for this conversation" remembers: for file access the command with its exact
-/// parameters, for a web address the command and the address's host. Destructive commands are
-/// asked about every time.
+/// parameters, for web addresses the command and the addresses' hosts. Destructive commands
+/// are asked about every time.
 pub fn approval_key(call: &ToolCall) -> Option<String> {
     let (id, params) = target(call)?;
     let spec = commands::find(&id)?;
@@ -104,75 +124,15 @@ pub fn approval_key(call: &ToolCall) -> Option<String> {
             Some(format!("{id} {params}"))
         }
         commands::Reach::Network => {
-            let host = url_host(params.get("url")?.as_str()?)?;
-            Some(format!("{id} host {host}"))
+            let mut hosts = web_addresses(&id, &params)
+                .iter()
+                .map(|address| web_address::host(address))
+                .collect::<Option<Vec<_>>>()?;
+            hosts.sort();
+            hosts.dedup();
+            Some(format!("{id} hosts {}", hosts.join(" ")))
         }
         _ => None,
-    }
-}
-
-/// The lower-case host of an HTTP(S) address (no port, no user, no brackets), or `None`.
-fn url_host(url: &str) -> Option<String> {
-    let url = url.trim();
-    let lower = url.to_ascii_lowercase();
-    let rest = lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))?;
-    let authority = &rest[..rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len())];
-    let host_port = authority.rsplit('@').next().unwrap_or(authority);
-    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
-        &bracketed[..bracketed.find(']')?]
-    } else {
-        host_port.split(':').next().unwrap_or(host_port)
-    };
-    let host = host.trim_end_matches('.');
-    (!host.is_empty()).then(|| host.to_owned())
-}
-
-/// Whether a host is this computer or the local network: names such as `localhost` and
-/// `*.local`, private, loopback and link-local addresses, and any numeric host written in a
-/// form other than the four plain decimal parts (`2130706433`, `0x7f.1`) that a URL
-/// parser would still read as an IPv4 address.
-fn is_local_host(host: &str) -> bool {
-    use std::net::{IpAddr, Ipv4Addr};
-    let private_v4 = |ip: Ipv4Addr| {
-        let [a, b, ..] = ip.octets();
-        ip.is_private()
-            || ip.is_loopback()
-            || ip.is_link_local()
-            || ip.is_unspecified()
-            || ip.is_broadcast()
-            // Shared address space (carrier-grade NAT), 100.64.0.0/10.
-            || (a == 100 && (64..128).contains(&b))
-            || a == 0
-    };
-    if host == "localhost"
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".internal")
-    {
-        return true;
-    }
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => private_v4(ip),
-        Ok(IpAddr::V6(ip)) => {
-            let first = ip.segments()[0];
-            ip.is_loopback()
-                || ip.is_unspecified()
-                // Unique local fc00::/7 and link-local fe80::/10.
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80
-                || ip.to_ipv4_mapped().is_some_and(private_v4)
-        }
-        Err(_) => {
-            // A last label of digits or 0x-hex makes the host an IPv4 address to URL parsers.
-            let last = host.rsplit('.').next().unwrap_or(host);
-            !last.is_empty()
-                && (last.bytes().all(|b| b.is_ascii_digit())
-                    || last
-                        .strip_prefix("0x")
-                        .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit())))
-        }
     }
 }
 
@@ -213,17 +173,16 @@ pub fn run(host: &mut dyn Host, call: &ToolCall, tokens: usize) -> Result<String
                 ));
             }
             let params = params_arg(a)?;
-            if spec.reach == commands::Reach::Network
-                && let Some(url) = params.get("url")
-            {
-                let address_host = url
-                    .as_str()
-                    .and_then(url_host)
-                    .ok_or("url must be an https:// or http:// address")?;
-                if is_local_host(&address_host) {
-                    return Err(format!(
-                        "'{address_host}' is this computer or the local network; the assistant may only add public web addresses"
-                    ));
+            if spec.reach == commands::Reach::Network {
+                for address in web_addresses(&id, &params) {
+                    let address_host = web_address::host(&address).ok_or_else(|| {
+                        format!("'{address}' is not an https:// or http:// address")
+                    })?;
+                    if web_address::is_local_host(&address_host) {
+                        return Err(format!(
+                            "'{address_host}' is this computer or the local network; the assistant may only add public web addresses"
+                        ));
+                    }
                 }
             }
             host.run(&id, &params)?
@@ -443,45 +402,22 @@ mod tests {
             approval_key(&first),
             approval_key(&web("https://other.example/a.geojson"))
         );
-        assert_eq!(
-            url_host("https://user@evil.example/x").as_deref(),
-            Some("evil.example")
-        );
-        assert_eq!(url_host("http://[::1]:8080/").as_deref(), Some("::1"));
-        assert_eq!(url_host("file:///etc/passwd"), None);
-    }
-
-    #[test]
-    fn local_and_private_hosts_are_recognised() {
-        for host in [
-            "localhost",
-            "printer.local",
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.64.0.1",
-            "0.0.0.0",
-            "::1",
-            "fd00::1",
-            "fe80::1",
-            "::ffff:127.0.0.1",
-            "2130706433",
-            "0x7f.1",
-            "127.1",
-        ] {
-            assert!(is_local_host(host), "{host}");
-        }
-        for host in [
-            "example.org",
-            "8.8.8.8",
-            "2001:4860::8888",
-            "cafe.de",
-            "1.example",
-        ] {
-            assert!(!is_local_host(host), "{host}");
-        }
+        // A view link's web data is gated the same way; its presets are not.
+        let link = |data: &str| {
+            call(
+                "run_command",
+                json!({"command": "view.openLink", "params": {
+                    "link": format!("globecraft://view?lat=1&lon=2&data={data}")
+                }}),
+            )
+        };
+        assert!(gate(&link("preset%3Aearthquakes")).is_none());
+        assert!(gate(&link("https%3A%2F%2Fdata.example%2Fa.csv")).is_some());
+        assert!(gate(&call(
+            "run_command",
+            json!({"command": "view.openLink", "params": {"link": "globecraft://view?lat=1&lon=2"}})
+        ))
+        .is_none());
     }
 
     #[test]

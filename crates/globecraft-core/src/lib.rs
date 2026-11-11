@@ -34,6 +34,7 @@ pub mod body;
 
 pub mod units;
 pub mod view_link;
+pub mod web_address;
 
 pub mod earth_model;
 
