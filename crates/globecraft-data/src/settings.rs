@@ -331,6 +331,30 @@ impl Settings {
             .filter(|layer| self.layer_visible(*layer))
             .collect()
     }
+    /// The settings as an export file (File › Export Settings): readable JSON. Service and
+    /// assistant keys are stored apart and never included.
+    pub fn export(&self) -> Result<Vec<u8>, crate::Error> {
+        Ok(serde_json::to_vec_pretty(self)?)
+    }
+    /// Settings read from an export file, over the defaults, as a saved file is read. A
+    /// JSON value that shares no field with the settings is refused, so importing the wrong
+    /// file cannot reset everything.
+    pub fn import(bytes: &[u8]) -> Result<Self, crate::Error> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        let known = serde_json::to_value(Self::default())?;
+        let shares_a_field = value
+            .as_object()
+            .zip(known.as_object())
+            .is_some_and(|(file, known)| file.keys().any(|key| known.contains_key(key)));
+        if !shares_a_field {
+            return Err(crate::Error::Message(
+                "the file holds no GlobeCraft settings".to_owned(),
+            ));
+        }
+        let mut settings = Self::default();
+        settings.apply_json(bytes)?;
+        Ok(settings)
+    }
     /// The saved settings, and an English message when `settings.json` exists but could not
     /// be used. A file that does not parse is renamed `settings.json.corrupt-<unix seconds>`
     /// first, so the next save cannot overwrite what it held, and the defaults are used.
@@ -449,6 +473,27 @@ mod tests {
             "values changed or lost:\n{}",
             lost.join("\n")
         );
+    }
+    #[test]
+    fn exported_settings_import_and_other_files_are_refused() {
+        let mut settings = Settings::default();
+        settings.ui_scale = 1.4;
+        settings.offline = true;
+        settings.kml_dir = "elsewhere".into();
+        let imported = Settings::import(&settings.export().unwrap()).unwrap();
+        assert!(imported.ui_scale == 1.4 && imported.offline && imported.kml_dir == "elsewhere");
+        for other in [
+            &b"{}"[..],
+            br#"{"type":"FeatureCollection"}"#,
+            b"[1, 2]",
+            b"not json",
+        ] {
+            assert!(
+                Settings::import(other).is_err(),
+                "{}",
+                String::from_utf8_lossy(other)
+            );
+        }
     }
     #[test]
     fn an_unreadable_settings_file_is_set_aside_not_overwritten() {

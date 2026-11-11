@@ -891,6 +891,14 @@ impl App {
                 self.status = self.lang.text("diagnostics-copied-status").to_owned();
                 json!({"copied": true})
             }
+            "file.exportSettings" => {
+                self.pick_settings_export();
+                json!({})
+            }
+            "file.importSettings" => {
+                self.pick_settings_import();
+                json!({})
+            }
             "app.workOffline" => {
                 let offline = toggled(p, self.settings.offline);
                 self.settings.offline = offline;

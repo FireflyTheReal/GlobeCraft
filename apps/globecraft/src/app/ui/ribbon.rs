@@ -97,6 +97,8 @@ impl App {
             menu_item(ui, self, "view.copyLink", Value::Null);
             ui.separator();
             menu_item(ui, self, "ui.settings", Value::Null);
+            menu_item(ui, self, "file.exportSettings", Value::Null);
+            menu_item(ui, self, "file.importSettings", Value::Null);
             menu_item(ui, self, "app.workOffline", Value::Null);
             ui.separator();
             menu_item(ui, self, "app.quit", Value::Null);

@@ -129,6 +129,8 @@ Parameters are a JSON object; none is required unless marked.
 | `places.saveAs` | Save As | Save My Places to a new KML or KMZ file. | — | asks first: it reads or writes files on this computer |
 | `ui.addData` | Add Data | Add a web map, points and lines from a file or URL, or a source from the library. | — | no |
 | `ui.settings` | Settings | Open the settings window. | — | no |
+| `file.exportSettings` | Export Settings… | Save every setting, added layers and saved sources included, to a file you can keep or bring to another computer. Service and assistant keys are not included. | — | no |
+| `file.importSettings` | Import Settings… | Replace the current settings with ones exported earlier. Keys and open places are kept. | — | no |
 | `app.workOffline` | Work Offline | Stop every download: maps, imagery and data come only from what is stored on this computer, and live layers, search, the assistant and update checks pause. | `on` (boolean): Omit to toggle | no |
 | `app.quit` | Quit | Close GlobeCraft. | — | asks first: it discards work or closes GlobeCraft |
 

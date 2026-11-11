@@ -5,6 +5,8 @@ use globecraft_core::language::Lang;
 use globecraft_data::files::{FileCompletion, FileKind, FileOutcome};
 pub(super) use session::KmlSession;
 use std::path::PathBuf;
+/// The file type offered by Export and Import Settings.
+const SETTINGS_FILTER: (&str, &[&str]) = ("GlobeCraft settings", &["json"]);
 /// A file status keeps its full path for hover while the toolbar abbreviates it.
 pub(super) struct FileStatus {
     pub(super) message: String,
@@ -169,12 +171,32 @@ impl App {
                         ],
                     );
                 }
+                Ok(FileOutcome::SettingsSaved { path }) => {
+                    self.status = self.lang.format(
+                        "settings-export-success",
+                        &[("path", path.display().to_string().into())],
+                    );
+                    self.status_file = Some(FileStatus {
+                        message: self.status.clone(),
+                        path,
+                    });
+                }
+                Ok(FileOutcome::SettingsLoaded { path, settings }) => {
+                    // Saved by the next frame's comparison; offline follows there too.
+                    self.settings = *settings;
+                    self.status = self.lang.format(
+                        "settings-import-success",
+                        &[("path", path.display().to_string().into())],
+                    );
+                }
                 Err(error) => {
                     let id = match kind {
                         FileKind::OpenKml | FileKind::RestoreKml => "kml-open-error",
                         FileKind::SaveKml => "kml-save-error",
                         FileKind::OpenSources => "kml-open-error",
                         FileKind::SaveSources => "kml-save-error",
+                        FileKind::OpenSettings => "settings-import-error",
+                        FileKind::SaveSettings => "settings-export-error",
                         FileKind::Image(globecraft_data::files::ImageTarget::FlatEarth) => {
                             self.flat_earth.image_failed = true;
                             self.status = format!("Flat Earth artwork failed: {error}");
@@ -188,6 +210,35 @@ impl App {
                     self.status = Lang::En.format(id, &[("error", error.to_string().into())]);
                 }
             }
+        }
+    }
+
+    pub(super) fn pick_settings_export(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter(SETTINGS_FILTER.0, SETTINGS_FILTER.1)
+            .set_file_name("globecraft-settings.json")
+            .set_title(self.lang.text("settings-export-dialog-title"));
+        if let Some(path) = dialog.save_file()
+            && let Err(error) = self.file_jobs.save_settings(path, &self.settings)
+        {
+            self.status = self.lang.format(
+                "settings-export-error",
+                &[("error", error.to_string().into())],
+            );
+        }
+    }
+
+    pub(super) fn pick_settings_import(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter(SETTINGS_FILTER.0, SETTINGS_FILTER.1)
+            .set_title(self.lang.text("settings-import-dialog-title"));
+        if let Some(path) = dialog.pick_file()
+            && let Err(error) = self.file_jobs.open_settings(path)
+        {
+            self.status = self.lang.format(
+                "settings-import-error",
+                &[("error", error.to_string().into())],
+            );
         }
     }
 

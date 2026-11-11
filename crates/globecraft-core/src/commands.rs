@@ -902,6 +902,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!("ui.about", "ui-about", "logo", Help, Interface, NO_PARAMS),
+    command!(
+        "file.exportSettings",
+        "file-export-settings",
+        "export",
+        File,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
+        "file.importSettings",
+        "file-import-settings",
+        "open",
+        File,
+        Interface,
+        NO_PARAMS
+    ),
     // Interface: the assistant itself needs the network, so only a person turns it off.
     command!(
         "app.workOffline",

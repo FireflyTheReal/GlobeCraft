@@ -46,6 +46,14 @@ pub enum FileOutcome {
         path: PathBuf,
         sources: Vec<crate::user_data::UserLayer>,
     },
+    /// Settings exported (File › Export Settings).
+    SettingsSaved {
+        path: PathBuf,
+    },
+    SettingsLoaded {
+        path: PathBuf,
+        settings: Box<crate::settings::Settings>,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -57,6 +65,8 @@ pub enum FileKind {
     SavePlanet,
     OpenSources,
     SaveSources,
+    OpenSettings,
+    SaveSettings,
 }
 pub struct FileCompletion {
     pub kind: FileKind,
@@ -71,6 +81,8 @@ enum Job {
     SavePlanet(PlanetSave),
     OpenSources(PathBuf),
     SaveSources(PathBuf, Vec<crate::user_data::UserLayer>),
+    OpenSettings(PathBuf),
+    SaveSettings(PathBuf, Box<crate::settings::Settings>),
 }
 impl Job {
     fn kind(&self) -> FileKind {
@@ -83,6 +95,8 @@ impl Job {
             Self::SavePlanet(..) => FileKind::SavePlanet,
             Self::OpenSources(..) => FileKind::OpenSources,
             Self::SaveSources(..) => FileKind::SaveSources,
+            Self::OpenSettings(..) => FileKind::OpenSettings,
+            Self::SaveSettings(..) => FileKind::SaveSettings,
         }
     }
     fn run(self) -> Result<FileOutcome, crate::Error> {
@@ -139,6 +153,14 @@ impl Job {
                     path,
                     count: sources.len(),
                 })
+            }
+            Self::OpenSettings(path) => Ok(FileOutcome::SettingsLoaded {
+                settings: Box::new(crate::settings::Settings::import(&std::fs::read(&path)?)?),
+                path,
+            }),
+            Self::SaveSettings(path, settings) => {
+                crate::paths::write_atomic(&path, &settings.export()?, false)?;
+                Ok(FileOutcome::SettingsSaved { path })
             }
         }
     }
@@ -220,6 +242,16 @@ impl FileJobs {
         self.submit(Job::SavePlanet(snapshot))
     }
     /// Reads an exported list of data sources.
+    pub fn open_settings(&self, path: PathBuf) -> Result<(), crate::Error> {
+        self.submit(Job::OpenSettings(path))
+    }
+    pub fn save_settings(
+        &self,
+        path: PathBuf,
+        settings: &crate::settings::Settings,
+    ) -> Result<(), crate::Error> {
+        self.submit(Job::SaveSettings(path, Box::new(settings.clone())))
+    }
     pub fn open_sources(&self, path: PathBuf) -> Result<(), crate::Error> {
         self.submit(Job::OpenSources(path))
     }
