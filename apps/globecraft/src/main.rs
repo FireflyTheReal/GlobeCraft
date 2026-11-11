@@ -26,9 +26,14 @@ fn main() -> Result<(), eframe::Error> {
     // First start after the rename: bring settings and caches over from EarthCraft. Before
     // the run log opens, which creates the data folder (an existing folder ends migration).
     let migration = globecraft_data::migrate_legacy_data();
+    // Then settings and keys leave the cache folder for the configuration folder.
+    let config_move = globecraft_data::migrate_config();
     globecraft_data::run_log::init();
     if let Err(error) = migration {
         globecraft_data::log_line!("Could not copy EarthCraft settings and caches: {error}");
+    }
+    if let Err(error) = config_move {
+        globecraft_data::log_line!("Could not move settings to the configuration folder: {error}");
     }
     // Downloads of the border pipeline removed on 2026-10-25.
     std::thread::spawn(globecraft_data::remove_retired_caches);

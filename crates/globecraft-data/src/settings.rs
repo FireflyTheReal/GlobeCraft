@@ -12,7 +12,7 @@ pub mod sidebar;
 pub mod sky;
 pub mod workspace;
 mod writer;
-use crate::paths::{cache_dir, default_out_dir};
+use crate::paths::{config_dir, default_out_dir};
 use globecraft_core::{earth_model::EarthModel, language::LanguagePreference, units::RulerUnit};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub const MIN_MAP_SCALE: f32 = 0.6;
 pub const MAX_MAP_SCALE: f32 = 3.0;
 
 fn lang_file() -> PathBuf {
-    cache_dir().join("lang.txt")
+    config_dir().join("lang.txt")
 }
 pub fn load_language_preference() -> LanguagePreference {
     load_language_preference_at(&lang_file())
@@ -149,7 +149,7 @@ pub const STATE_MAX_ALTITUDE_DEFAULT_KM: f64 = 1_609.0;
 pub const STATE_MAX_ALTITUDE_MAX_KM: f64 = 8_000.0;
 
 fn settings_file() -> PathBuf {
-    cache_dir().join("settings.json")
+    config_dir().join("settings.json")
 }
 #[derive(Default, Deserialize)]
 struct SettingsInput {

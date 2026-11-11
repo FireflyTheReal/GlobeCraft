@@ -200,7 +200,7 @@ impl FileJobs {
     /// Restore saved sources on the ordered file worker, without blocking the UI.
     pub fn restore_kml(&self, lang: Lang) -> Result<(), crate::Error> {
         self.submit(Job::Restore(
-            crate::paths::cache_dir().join("open-kml.json"),
+            crate::paths::config_dir().join("open-kml.json"),
             lang,
         ))
     }

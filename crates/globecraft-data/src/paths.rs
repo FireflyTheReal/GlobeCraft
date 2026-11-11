@@ -16,6 +16,78 @@ pub(crate) fn cache_dir() -> PathBuf {
     data_base().join(DATA_FOLDER)
 }
 
+/// The files that hold the user's choices rather than downloads. They live in
+/// [`config_dir`], which cache cleaners leave alone.
+const CONFIG_FILES: [&str; 5] = [
+    "settings.json",
+    "lang.txt",
+    "open-kml.json",
+    "service-keys.json",
+    "assistant-keys.json",
+];
+
+/// Folder for settings, the language choice, the open-KML list and the key files:
+/// `~/Library/Application Support/GlobeCraft` on macOS, `%APPDATA%\GlobeCraft` on
+/// Windows, `$XDG_CONFIG_HOME/globecraft` (or `~/.config/globecraft`) elsewhere.
+/// `GLOBECRAFT_CONFIG_DIR` names another. A cache folder named with `XDG_CACHE_HOME`
+/// and no `XDG_CONFIG_HOME` keeps the configuration beside the cache, so a run isolated
+/// that way (as the screenshot tests are) cannot write the user's real settings.
+pub(crate) fn config_dir() -> PathBuf {
+    let var = |name: &str| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if let Some(dir) = var("GLOBECRAFT_CONFIG_DIR") {
+        return dir;
+    }
+    if var("XDG_CACHE_HOME").is_some() && var("XDG_CONFIG_HOME").is_none() {
+        return cache_dir();
+    }
+    let base = if cfg!(windows) {
+        var("APPDATA")
+    } else if cfg!(target_os = "macos") {
+        var("HOME").map(|home| home.join("Library").join("Application Support"))
+    } else {
+        var("XDG_CONFIG_HOME").or_else(|| var("HOME").map(|home| home.join(".config")))
+    };
+    let folder = if cfg!(any(windows, target_os = "macos")) {
+        "GlobeCraft"
+    } else {
+        "globecraft"
+    };
+    base.map_or_else(cache_dir, |base| base.join(folder))
+}
+
+/// Moves settings and keys written by versions that kept them with the caches into
+/// [`config_dir`]. A file already there wins. Returns how many moved. Call once at
+/// startup, after [`migrate_legacy_data`] and before anything reads settings.
+pub fn migrate_config() -> std::io::Result<usize> {
+    migrate_config_in(&cache_dir(), &config_dir())
+}
+
+fn migrate_config_in(cache: &Path, config: &Path) -> std::io::Result<usize> {
+    if cache == config {
+        return Ok(0);
+    }
+    let mut moved = 0;
+    for name in CONFIG_FILES {
+        let (from, to) = (cache.join(name), config.join(name));
+        if !from.is_file() || to.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(config)?;
+        // A rename keeps a key file's private mode; across volumes, copy (which keeps
+        // the permission bits) and then remove the old one.
+        if std::fs::rename(&from, &to).is_err() {
+            std::fs::copy(&from, &to)?;
+            std::fs::remove_file(&from)?;
+        }
+        moved += 1;
+    }
+    Ok(moved)
+}
+
 /// Copies settings, placemarks, keys and caches from an EarthCraft installation the first
 /// time GlobeCraft starts. The old folder is left untouched. Returns whether anything
 /// was copied. Call once at startup, before anything reads settings.
@@ -163,6 +235,33 @@ mod tests {
         );
         // Nothing to migrate on a fresh machine.
         assert!(!migrate_folder(&root.join("missing"), &root.join("other")).unwrap());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn configuration_moves_out_of_the_cache_once_and_never_overwrites() {
+        let root = std::env::temp_dir().join(format!("globecraft-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (cache, config) = (root.join("cache"), root.join("config"));
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("settings.json"), b"old settings").unwrap();
+        std::fs::write(cache.join("service-keys.json"), b"{}").unwrap();
+        std::fs::write(cache.join("map_data_roads.sqlite"), b"cache").unwrap();
+        assert_eq!(migrate_config_in(&cache, &config).unwrap(), 2);
+        assert_eq!(
+            std::fs::read(config.join("settings.json")).unwrap(),
+            b"old settings"
+        );
+        assert!(!cache.join("settings.json").exists());
+        assert!(cache.join("map_data_roads.sqlite").exists(), "caches stay");
+        // A later file in the cache (an older version ran) does not replace the moved one.
+        std::fs::write(cache.join("settings.json"), b"stale").unwrap();
+        assert_eq!(migrate_config_in(&cache, &config).unwrap(), 0);
+        assert_eq!(
+            std::fs::read(config.join("settings.json")).unwrap(),
+            b"old settings"
+        );
+        assert_eq!(migrate_config_in(&cache, &cache).unwrap(), 0);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

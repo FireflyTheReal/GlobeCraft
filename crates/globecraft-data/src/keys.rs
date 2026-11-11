@@ -34,7 +34,7 @@ pub static SERVICES: &[KeyedService] = &[KeyedService {
 }];
 
 fn keys_file() -> PathBuf {
-    crate::paths::cache_dir().join("service-keys.json")
+    crate::paths::config_dir().join("service-keys.json")
 }
 
 /// The keys typed in Settings (the file's, then this session's edits).

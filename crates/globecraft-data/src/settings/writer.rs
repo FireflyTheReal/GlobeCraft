@@ -26,7 +26,7 @@ pub struct SettingsWriter {
 
 impl SettingsWriter {
     pub fn new(repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
-        Self::at(super::cache_dir(), repaint)
+        Self::at(super::config_dir(), repaint)
     }
     fn at(root: PathBuf, repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         let shared = Arc::new(Shared::default());

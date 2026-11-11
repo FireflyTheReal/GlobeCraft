@@ -39,7 +39,7 @@ impl AssistantPreferences {
 }
 
 fn keys_file() -> PathBuf {
-    crate::paths::cache_dir().join("assistant-keys.json")
+    crate::paths::config_dir().join("assistant-keys.json")
 }
 
 /// Saved API keys by provider id (empty when none were saved or the file is unreadable).
