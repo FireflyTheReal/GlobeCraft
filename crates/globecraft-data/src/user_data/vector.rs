@@ -546,7 +546,9 @@ pub async fn load(
     let bytes = if super::is_url(&location) {
         let client = crate::http::client(crate::http::Policy::UserData)?;
         let address = crate::keys::fill(&location)?;
-        crate::http::body(client.get(&address), MAX_BYTES).await?
+        crate::http::body(client.get(&address), MAX_BYTES)
+            .await
+            .map_err(crate::keys::redact_error)?
     } else {
         crate::cpu::run(crate::cpu::Service::Files, move || {
             use std::io::Read;

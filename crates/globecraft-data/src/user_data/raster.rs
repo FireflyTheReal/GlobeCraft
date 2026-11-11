@@ -324,7 +324,9 @@ async fn archive_tile(
 async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
     let client = crate::http::client(crate::http::Policy::UserData)?;
     let url = crate::keys::fill(&url)?;
-    let bytes = crate::http::body(client.get(&url), MAX_TILE_BYTES).await?;
+    let bytes = crate::http::body(client.get(&url), MAX_TILE_BYTES)
+        .await
+        .map_err(crate::keys::redact_error)?;
     crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes)).await
 }
 

@@ -18,6 +18,9 @@ pub struct KeyedService {
     pub help_key: &'static str,
     /// Where a key is had (free for all of these).
     pub signup_url: &'static str,
+    /// The only hosts an address may name for the key to be filled in: a key is sent
+    /// to its own service and nowhere else.
+    pub hosts: &'static [&'static str],
 }
 
 pub const TOMTOM: &str = "tomtom";
@@ -27,6 +30,7 @@ pub static SERVICES: &[KeyedService] = &[KeyedService {
     name_key: "keys-tomtom",
     help_key: "keys-tomtom-help",
     signup_url: "https://developer.tomtom.com/",
+    hosts: &["api.tomtom.com"],
 }];
 
 fn keys_file() -> PathBuf {
@@ -78,8 +82,14 @@ pub fn save(keys: &BTreeMap<String, String>) -> Result<(), crate::Error> {
 }
 
 /// `text` with every `{key:<service>}` replaced by that service's key; an error
-/// naming the service when a key is missing.
+/// naming the service when a key is missing, unknown, or the address is not on one
+/// of the service's own hosts (a key is never sent anywhere else).
 pub fn fill(text: &str) -> Result<String, crate::Error> {
+    if !text.contains("{key:") {
+        return Ok(text.to_owned());
+    }
+    let host = crate::network::host_of_url(text)
+        .map(|authority| authority.split(':').next().unwrap_or(authority).to_ascii_lowercase());
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("{key:") {
@@ -87,6 +97,20 @@ pub fn fill(text: &str) -> Result<String, crate::Error> {
         let after = &rest[start + "{key:".len()..];
         let end = after.find('}').ok_or("unclosed {key:…} in the address")?;
         let id = &after[..end];
+        let service = SERVICES
+            .iter()
+            .find(|service| service.id == id)
+            .ok_or_else(|| crate::Error::from(format!("no service named {id} takes a key")))?;
+        if !host
+            .as_deref()
+            .is_some_and(|host| service.hosts.contains(&host))
+        {
+            return Err(format!(
+                "a {id} key is only sent to {}; this address names another host",
+                service.hosts.join(", ")
+            )
+            .into());
+        }
         let key = get(id).ok_or_else(|| {
             crate::Error::from(format!(
                 "this layer needs a {id} key: add it in Settings → Keys"
@@ -97,6 +121,30 @@ pub fn fill(text: &str) -> Result<String, crate::Error> {
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// `text` with every key that [`fill`] could have put in it replaced by `{key:<id>}`,
+/// for error messages and logs about a filled address.
+pub fn redact(text: &str) -> String {
+    let mut out = text.to_owned();
+    for service in SERVICES {
+        if let Some(key) = get(service.id) {
+            out = out.replace(&key, &format!("{{key:{}}}", service.id));
+        }
+    }
+    out
+}
+
+/// An error from a request to a filled address, with any key taken out of its text
+/// (HTTP errors name the address they failed for). Errors without a key keep their type.
+pub(crate) fn redact_error(error: crate::Error) -> crate::Error {
+    let text = error.to_string();
+    let clean = redact(&text);
+    if clean == text {
+        error
+    } else {
+        crate::Error::from(clean)
+    }
 }
 
 /// A JSON map of strings from a file, empty when it is missing or unreadable.
@@ -147,27 +195,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_fill_addresses_only_when_requested_and_missing_ones_are_named() {
-        set("test_service", "  abc123 ");
-        assert_eq!(
-            fill("https://x.example/{key:test_service}/csv?a=1").unwrap(),
-            "https://x.example/abc123/csv?a=1"
-        );
+    fn keys_fill_addresses_only_on_their_own_hosts_and_missing_ones_are_named() {
+        set(TOMTOM, "  abc123 ");
+        // Not filled in from the environment in this test.
+        if !from_environment(TOMTOM) {
+            assert_eq!(
+                fill("https://api.tomtom.com/x/{key:tomtom}/y?a=1").unwrap(),
+                "https://api.tomtom.com/x/abc123/y?a=1"
+            );
+            assert_eq!(
+                redact("failed: https://api.tomtom.com/x/abc123/y"),
+                "failed: https://api.tomtom.com/x/{key:tomtom}/y"
+            );
+        }
         assert_eq!(
             fill("https://x.example/plain").unwrap(),
             "https://x.example/plain"
         );
-        let missing = fill("https://x.example/{key:nobody}")
-            .unwrap_err()
-            .to_string();
-        assert!(
-            missing.contains("nobody") && missing.contains("Settings"),
-            "{missing}"
-        );
-        assert!(fill("https://x.example/{key:test_service").is_err());
-        let all = set("test_service", "");
-        assert!(!all.contains_key("test_service"));
-        assert!(get("test_service").is_none());
+        // Another host never receives the key, however the address is spelled.
+        for address in [
+            "https://evil.example/{key:tomtom}",
+            "https://api.tomtom.com.evil.example/{key:tomtom}",
+            "https://api.tomtom.com@evil.example/{key:tomtom}",
+            "file:///tmp/{key:tomtom}",
+            "{key:tomtom}",
+        ] {
+            let error = fill(address).unwrap_err().to_string();
+            assert!(error.contains("only sent to"), "{address}: {error}");
+        }
+        assert!(fill("https://x.example/{key:nobody}").is_err());
+        assert!(fill("https://api.tomtom.com/{key:tomtom").is_err());
+        let all = set(TOMTOM, "");
+        assert!(!all.contains_key(TOMTOM));
+        if !from_environment(TOMTOM) {
+            let missing = fill("https://api.tomtom.com/{key:tomtom}")
+                .unwrap_err()
+                .to_string();
+            assert!(missing.contains("Settings"), "{missing}");
+        }
     }
 
     #[test]
