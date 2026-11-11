@@ -91,6 +91,9 @@ pub(crate) use update_restart::RestartRequest;
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
 const PAN_SPEED_POINTS_PER_SECOND: f64 = 350.0;
 const BOUNDARY_POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// How often the whole settings tree is compared with the saved copy. Settings change
+/// by hand, so a few checks a second save promptly without a deep compare every frame.
+const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 /// Live services refresh only while the interface runs: this heartbeat keeps them
 /// going while one is shown, so they do not wait for the user to move.
 const LIVE_SERVICE_HEARTBEAT: Duration = Duration::from_secs(30);
@@ -269,6 +272,8 @@ pub(crate) struct App {
     search: search::SearchState,
     settings: Settings,
     saved_settings: Settings,
+    /// When `settings` was last compared with `saved_settings` (see `persist_settings`).
+    settings_checked: Instant,
     settings_writer: globecraft_data::settings::SettingsWriter,
     /// The ruler.
     measure: measure::MeasureState,
@@ -506,6 +511,7 @@ impl App {
             cursor: None,
             settings: settings.clone(),
             saved_settings: settings,
+            settings_checked: Instant::now(),
             settings_writer: globecraft_data::settings::SettingsWriter::new({
                 let ctx = cc.egui_ctx.clone();
                 move || ctx.request_repaint()
@@ -588,6 +594,17 @@ impl App {
     }
 }
 
+impl App {
+    /// Queues the settings for writing when they differ from what was last queued.
+    fn persist_settings(&mut self) {
+        self.settings_checked = Instant::now();
+        if self.settings != self.saved_settings {
+            self.settings_writer.settings(&self.settings);
+            self.saved_settings = self.settings.clone();
+        }
+    }
+}
+
 impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let restarting = self
@@ -595,6 +612,7 @@ impl eframe::App for App {
             .request
             .requested
             .load(std::sync::atomic::Ordering::Acquire);
+        self.persist_settings();
         match self.settings_writer.finish() {
             Ok(()) => {}
             Err(error) if restarting => {
@@ -862,10 +880,13 @@ impl eframe::App for App {
             ui::theme::apply(ui, self.settings.ui_scale);
             self.styled_scale = Some(self.settings.ui_scale);
         }
-        // persist settings once a slider is released
-        if self.settings != self.saved_settings && !ui.input(|i| i.pointer.any_down()) {
-            self.settings_writer.settings(&self.settings);
-            self.saved_settings = self.settings.clone();
+        // persist settings once a slider is released; frames with no input (animation)
+        // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more
+        let (pointer_down, had_input) = ui.input(|i| (i.pointer.any_down(), !i.events.is_empty()));
+        if !pointer_down
+            && (had_input || self.settings_checked.elapsed() >= SETTINGS_CHECK_INTERVAL)
+        {
+            self.persist_settings();
         }
         if let Some(error) = self.settings_writer.take_error() {
             self.status = format!("Settings persistence failed: {error}");
