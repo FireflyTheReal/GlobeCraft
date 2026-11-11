@@ -11,6 +11,8 @@ pub enum Reach {
     Files,
     /// Discards work or closes the application.
     Destructive,
+    /// Downloads from a web address given in its parameters (not a built-in source).
+    Network,
     /// Opens interface surfaces; meaningless without a person at the window.
     Interface,
 }
@@ -87,8 +89,8 @@ pub struct CommandSpec {
 }
 
 impl CommandSpec {
-    /// Whether the assistant may run this command (after the user's approval for [`Reach::Files`]
-    /// and [`Reach::Destructive`]).
+    /// Whether the assistant may run this command (after the user's approval for [`Reach::Files`],
+    /// [`Reach::Destructive`] and [`Reach::Network`]).
     pub fn assistant_may_run(&self) -> bool {
         self.reach != Reach::Interface
     }
@@ -97,6 +99,7 @@ impl CommandSpec {
         match self.reach {
             Reach::Files => Some("it reads or writes files on this computer"),
             Reach::Destructive => Some("it discards work or closes GlobeCraft"),
+            Reach::Network => Some("it downloads from a web address you have not added yourself"),
             Reach::View | Reach::Interface => None,
         }
     }
@@ -383,7 +386,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data-add",
         "web_data",
         Map,
-        View,
+        Network,
         r#"{"type":"object","properties":{"preset":{"type":"string","enum":["gebco","emodnet_bathymetry","gibs_true_colour","forest_loss","earthquakes"],"description":"A library source: GEBCO seafloor, EMODnet European bathymetry, NASA GIBS yesterday's true colour, Global Forest Watch tree cover loss, USGS earthquakes of the past week"},"url":{"type":"string","description":"Instead of a preset: a web address. For tiles a template with {z}, {x} and {y}; for a WMS its service address; for features a GeoJSON, GPX or CSV file"},"kind":{"type":"string","enum":["tiles","wms","features"]},"layers":{"type":"string","description":"WMS layer names, comma-separated"},"format":{"type":"string","enum":["geojson","gpx","csv"]},"refresh_minutes":{"type":"integer","description":"Reload a feature URL this often; 0 loads it once"},"size_by":{"type":"string","description":"For features: the property points are sized and ranked by (for example mag or population); left out, the usual ones are found"},"max_zoom":{"type":"integer"},"name":{"type":"string"},"attribution":{"type":"string"}}}"#
     ),
     command!(

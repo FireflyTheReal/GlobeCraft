@@ -30,7 +30,10 @@ network.
   computer**; they are then stored in `assistant-keys.json` next to `settings.json`, readable
   only by your user account on Linux, macOS and BSD. Keys are never written to `settings.json`.
 - Commands that read or write files (open, save, screenshot) wait for your approval; you can
-  allow them for the rest of the conversation. Commands that discard work (Clear All, Quit)
+  allow them for the rest of the conversation. Adding a data layer from a web address the
+  assistant chose also waits for approval (allowing it covers that host for the rest of the
+  conversation); library sources are added without asking. Addresses on this computer or the
+  local network are refused. Commands that discard work (Clear All, Quit)
   are asked about every time. Commands that only open interface panes are not available to
   the assistant.
 - Place names, search results and placemark descriptions are passed to the model as data,

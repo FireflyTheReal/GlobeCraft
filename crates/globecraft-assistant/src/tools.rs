@@ -83,20 +83,97 @@ pub fn target(call: &ToolCall) -> Option<(String, Value)> {
 
 /// Whether a call needs the user's approval, and why (English, for the approval card).
 pub fn gate(call: &ToolCall) -> Option<String> {
-    let (id, _) = target(call)?;
-    commands::find(&id)?.approval_reason().map(str::to_string)
-}
-
-/// What "allow for this conversation" remembers: the command with its exact parameters. Only
-/// file access can be allowed for good; destructive commands are asked about every time.
-pub fn approval_key(call: &ToolCall) -> Option<String> {
-    let (id, _) = target(call)?;
+    let (id, params) = target(call)?;
     let spec = commands::find(&id)?;
-    if spec.reach != commands::Reach::Files {
+    // A network command that names no address uses a built-in source (a library preset).
+    if spec.reach == commands::Reach::Network && params.get("url").is_none() {
         return None;
     }
-    let params = params_arg(&call.args).ok()?;
-    Some(format!("{id} {params}"))
+    spec.approval_reason().map(str::to_string)
+}
+
+/// What "allow for this conversation" remembers: for file access the command with its exact
+/// parameters, for a web address the command and the address's host. Destructive commands are
+/// asked about every time.
+pub fn approval_key(call: &ToolCall) -> Option<String> {
+    let (id, params) = target(call)?;
+    let spec = commands::find(&id)?;
+    match spec.reach {
+        commands::Reach::Files => {
+            let params = params_arg(&call.args).ok()?;
+            Some(format!("{id} {params}"))
+        }
+        commands::Reach::Network => {
+            let host = url_host(params.get("url")?.as_str()?)?;
+            Some(format!("{id} host {host}"))
+        }
+        _ => None,
+    }
+}
+
+/// The lower-case host of an HTTP(S) address (no port, no user, no brackets), or `None`.
+fn url_host(url: &str) -> Option<String> {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))?;
+    let authority = &rest[..rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len())];
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
+        &bracketed[..bracketed.find(']')?]
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+    let host = host.trim_end_matches('.');
+    (!host.is_empty()).then(|| host.to_owned())
+}
+
+/// Whether a host is this computer or the local network: names such as `localhost` and
+/// `*.local`, private, loopback and link-local addresses, and any numeric host written in a
+/// form other than the four plain decimal parts (`2130706433`, `0x7f.1`) that a URL
+/// parser would still read as an IPv4 address.
+fn is_local_host(host: &str) -> bool {
+    use std::net::{IpAddr, Ipv4Addr};
+    let private_v4 = |ip: Ipv4Addr| {
+        let [a, b, ..] = ip.octets();
+        ip.is_private()
+            || ip.is_loopback()
+            || ip.is_link_local()
+            || ip.is_unspecified()
+            || ip.is_broadcast()
+            // Shared address space (carrier-grade NAT), 100.64.0.0/10.
+            || (a == 100 && (64..128).contains(&b))
+            || a == 0
+    };
+    if host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+    {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => private_v4(ip),
+        Ok(IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                // Unique local fc00::/7 and link-local fe80::/10.
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(private_v4)
+        }
+        Err(_) => {
+            // A last label of digits or 0x-hex makes the host an IPv4 address to URL parsers.
+            let last = host.rsplit('.').next().unwrap_or(host);
+            !last.is_empty()
+                && (last.bytes().all(|b| b.is_ascii_digit())
+                    || last.strip_prefix("0x").is_some_and(|hex| {
+                        hex.bytes().all(|b| b.is_ascii_hexdigit())
+                    }))
+        }
+    }
 }
 
 /// A one-line description of a call for the transcript and the approval card.
@@ -135,7 +212,21 @@ pub fn run(host: &mut dyn Host, call: &ToolCall, tokens: usize) -> Result<String
                     "'{id}' only opens part of the interface; the assistant can't use it"
                 ));
             }
-            host.run(&id, &params_arg(a)?)?
+            let params = params_arg(a)?;
+            if spec.reach == commands::Reach::Network
+                && let Some(url) = params.get("url")
+            {
+                let host = url
+                    .as_str()
+                    .and_then(url_host)
+                    .ok_or("url must be an https:// or http:// address")?;
+                if is_local_host(&host) {
+                    return Err(format!(
+                        "'{host}' is this computer or the local network; the assistant may only add public web addresses"
+                    ));
+                }
+            }
+            host.run(&id, &params)?
         }
         other => return Err(format!("unknown tool '{other}'")),
     };
@@ -326,6 +417,65 @@ mod tests {
             json!({"command": "camera.flyTo", "params": {"lat": 1, "lon": 2}}),
         );
         assert!(gate(&fly).is_none());
+    }
+
+    #[test]
+    fn web_addresses_are_gated_by_host_and_library_presets_are_not() {
+        let preset = call(
+            "run_command",
+            json!({"command": "data.add", "params": {"preset": "earthquakes"}}),
+        );
+        assert!(gate(&preset).is_none());
+        let web = |url: &str| {
+            call(
+                "run_command",
+                json!({"command": "data.add", "params": {"url": url, "kind": "features"}}),
+            )
+        };
+        let first = web("https://data.example/a.geojson");
+        assert!(gate(&first).is_some());
+        // Allowing a host covers other files on it, not other hosts.
+        assert_eq!(
+            approval_key(&first),
+            approval_key(&web("https://DATA.example:443/b.csv"))
+        );
+        assert_ne!(
+            approval_key(&first),
+            approval_key(&web("https://other.example/a.geojson"))
+        );
+        assert_eq!(
+            url_host("https://user@evil.example/x").as_deref(),
+            Some("evil.example")
+        );
+        assert_eq!(url_host("http://[::1]:8080/").as_deref(), Some("::1"));
+        assert_eq!(url_host("file:///etc/passwd"), None);
+    }
+
+    #[test]
+    fn local_and_private_hosts_are_recognised() {
+        for host in [
+            "localhost",
+            "printer.local",
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "2130706433",
+            "0x7f.1",
+            "127.1",
+        ] {
+            assert!(is_local_host(host), "{host}");
+        }
+        for host in ["example.org", "8.8.8.8", "2001:4860::8888", "cafe.de", "1.example"] {
+            assert!(!is_local_host(host), "{host}");
+        }
     }
 
     #[test]
