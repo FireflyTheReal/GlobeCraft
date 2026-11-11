@@ -131,35 +131,35 @@ impl App {
     /// Downloads for the selected flight; none while flights are off.
     pub(super) fn update_selected_flight(&mut self, ctx: &egui::Context, earth: bool) {
         if !(earth && self.layer(MapLayer::Flights)) {
-            if self.flight_selection.selected().is_some() {
-                self.flight_selection.clear();
+            if self.selection.flight.selected().is_some() {
+                self.selection.flight.clear();
             }
-            self.selected_snapshot = None;
+            self.selection.flights_shown = None;
             return;
         }
-        let snapshot = self.live_aircraft.snapshot();
-        let listed = self.flight_selection.selected().and_then(|flight| {
+        let snapshot = self.live.aircraft.snapshot();
+        let listed = self.selection.flight.selected().and_then(|flight| {
             snapshot
                 .aircraft
                 .iter()
                 .find(|aircraft| *aircraft.hex == *flight.hex)
         });
-        self.flight_selection.update(
+        self.selection.flight.update(
             &self.runtime,
-            self.live_airports.airports(),
+            self.live.airports.airports(),
             listed,
             super::live_services::repainter(ctx),
         );
-        self.selected_snapshot = self.merged_snapshot();
+        self.selection.flights_shown = self.merged_snapshot();
     }
 
     /// The flights with the selected one's newest position, when it is newer than
     /// the list's (it is asked for every few seconds) or missing from it.
     fn merged_snapshot(&self) -> Option<(usize, f64, Arc<AircraftSnapshot>)> {
-        let position = self.flight_selection.selected()?.position.clone()?;
-        let snapshot = self.live_aircraft.snapshot();
+        let position = self.selection.flight.selected()?.position.clone()?;
+        let snapshot = self.live.aircraft.snapshot();
         let key = (Arc::as_ptr(&snapshot) as usize, position.observed_unix);
-        if let Some((pointer, observed, merged)) = &self.selected_snapshot
+        if let Some((pointer, observed, merged)) = &self.selection.flights_shown
             && (*pointer, *observed) == key
         {
             return Some((key.0, key.1, merged.clone()));
@@ -188,8 +188,8 @@ impl App {
 
     /// The flights to draw: with the selected one's newest position.
     pub(super) fn aircraft_snapshot(&self) -> Arc<AircraftSnapshot> {
-        let snapshot = self.live_aircraft.snapshot();
-        match &self.selected_snapshot {
+        let snapshot = self.live.aircraft.snapshot();
+        match &self.selection.flights_shown {
             Some((pointer, _, merged)) if *pointer == Arc::as_ptr(&snapshot) as usize => {
                 merged.clone()
             }
@@ -231,12 +231,12 @@ impl App {
                     self.settings.set_layer_visible(MapLayer::Flights, true);
                 }
                 self.close_other_cards(super::here::Card::Flight);
-                self.flight_selection.select(&hex, &callsign, listed);
-                self.selected_snapshot = None;
+                self.selection.flight.select(&hex, &callsign, listed);
+                self.selection.flights_shown = None;
             }
             "flight.clear" => {
-                self.flight_selection.clear();
-                self.selected_snapshot = None;
+                self.selection.flight.clear();
+                self.selection.flights_shown = None;
             }
             _ => return Err(format!("unknown flight command {id}")),
         }
@@ -244,7 +244,7 @@ impl App {
     }
 
     fn flight_json(&self) -> Value {
-        let Some(flight) = self.flight_selection.selected() else {
+        let Some(flight) = self.selection.flight.selected() else {
             return json!({"selected": null});
         };
         let airport = |airport: &RouteAirport| json!({"code": airport.code, "name": airport.name});
@@ -262,7 +262,7 @@ impl App {
     /// The selected flight's track, the rest of its way and its airports, under the
     /// planes.
     pub(super) fn paint_selected_flight(&self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
-        let Some(flight) = self.flight_selection.selected() else {
+        let Some(flight) = self.selection.flight.selected() else {
             return;
         };
         let scale = self.settings.map_scale;
@@ -350,7 +350,7 @@ impl App {
 
     /// The card of the selected flight, at the top left of the globe.
     pub(super) fn selected_flight_card(&mut self, ctx: &egui::Context, rect: Rect) {
-        let Some(flight) = self.flight_selection.selected() else {
+        let Some(flight) = self.selection.flight.selected() else {
             return;
         };
         let lang = self.lang;
@@ -358,7 +358,7 @@ impl App {
             flight,
             lang,
             self.distance_units(),
-            self.flight_selection.loading(),
+            self.selection.flight.loading(),
         );
         // A card at the globe's top left, closed by its ✕ (or a click beside the
         // planes, see `globe.rs`).

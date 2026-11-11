@@ -774,9 +774,9 @@ impl App {
                             )],
                         ),
                     )
-                } else if let Some(error) = self.poi_tiles.error() {
+                } else if let Some(error) = self.live.poi.error() {
                     Some(lang.format("transport-error-status", &[("error", error.into())]))
-                } else if self.poi_tiles.loading() {
+                } else if self.live.poi.loading() {
                     Some(lang.text("transport-loading-status").into())
                 } else {
                     None
@@ -803,9 +803,9 @@ impl App {
                             )],
                         ),
                     )
-                } else if let Some(error) = self.transport_tiles.error() {
+                } else if let Some(error) = self.live.transport.error() {
                     Some(lang.format("transport-error-status", &[("error", error.into())]))
-                } else if self.transport_tiles.loading() {
+                } else if self.live.transport.loading() {
                     Some(lang.text("transport-loading-status").into())
                 } else {
                     None
@@ -885,14 +885,14 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT + 46.0);
                     ui.vertical(|ui| {
-                        super::aircraft::draw_status(ui, &self.live_aircraft.snapshot(), lang)
+                        super::aircraft::draw_status(ui, &self.live.aircraft.snapshot(), lang)
                     });
                 });
                 credit(ui, "OpenSky Network", "https://opensky-network.org/");
                 credit(ui, "ADSB.lol (ODbL)", "https://www.adsb.lol/");
             }
             MapLayer::Vessels => {
-                note(ui, t, &self.live_vessels.status(lang));
+                note(ui, t, &self.live.vessels.status(lang));
                 credit(ui, "OpenSeaFeed AIS", "https://openseafeed.com/");
                 credit(
                     ui,
@@ -901,7 +901,7 @@ impl App {
                 );
             }
             MapLayer::SeaNames => {
-                if let Some(error) = self.live_marine_names.error() {
+                if let Some(error) = self.live.marine_names.error() {
                     note(ui, t, &error);
                 } else {
                     note(ui, t, lang.text("sea-names-help"));
@@ -913,7 +913,7 @@ impl App {
                 );
             }
             MapLayer::TimeZones => {
-                note(ui, t, &self.live_time_zones.status(lang));
+                note(ui, t, &self.live.time_zones.status(lang));
                 credit(
                     ui,
                     lang.text("timezones-source"),
@@ -921,7 +921,7 @@ impl App {
                 );
             }
             MapLayer::Aurora => {
-                note(ui, t, &self.live_aurora.status(lang));
+                note(ui, t, &self.live.aurora.status(lang));
                 credit(
                     ui,
                     lang.text("aurora-source"),
@@ -930,7 +930,7 @@ impl App {
             }
             MapLayer::Satellites => {
                 self.flat_live_objects_control(ui);
-                note(ui, t, &self.live_satellites.status(lang));
+                note(ui, t, &self.live.satellites.status(lang));
                 credit(ui, "CelesTrak", "https://celestrak.org/");
             }
             MapLayer::MilkyWay if self.sky.image.is_none() => {

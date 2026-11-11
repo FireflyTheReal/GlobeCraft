@@ -926,7 +926,7 @@ impl App {
             "ui.here" => {
                 let (lat, lon) = position(p)?;
                 self.close_other_cards(super::here::Card::Here);
-                self.here_card = Some(super::here::HereCard { lat, lon });
+                self.selection.here = Some(super::here::HereCard { lat, lon });
                 json!({"lat": lat, "lon": lon})
             }
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
@@ -972,7 +972,7 @@ impl App {
                 checked: false,
             },
             "satellite.clear" => CommandState {
-                enabled: self.satellite_selection.selected().is_some(),
+                enabled: self.selection.satellite.selected().is_some(),
                 checked: false,
             },
             "satellite.select" => CommandState {
@@ -980,7 +980,7 @@ impl App {
                 checked: false,
             },
             "flight.clear" => CommandState {
-                enabled: self.flight_selection.selected().is_some(),
+                enabled: self.selection.flight.selected().is_some(),
                 checked: false,
             },
             "flight.select" => CommandState {

@@ -208,7 +208,7 @@ impl App {
             let step = input.view.motion_step();
             // A selected flight's track, route and plane go above the other planes,
             // which are dimmed so they stand out; the hover card goes above all.
-            let selected = self.flight_selection.selected().is_some();
+            let selected = self.selection.flight.selected().is_some();
             let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 };
             self.aircraft_overlay
                 .draw(painter, input, self.lang, opacity);
@@ -238,7 +238,7 @@ impl App {
             self.draw_satellite_overlay(painter, geometry);
             // Orbit predictions need to move even without another network fetch.
             let mut step = geometry.input.view.satellite_step();
-            if self.satellite_selection.selected().is_some() {
+            if self.selection.satellite.selected().is_some() {
                 step = step.min(motion::SELECTED_MAX_STEP_SECS);
             }
             painter
@@ -417,7 +417,8 @@ impl App {
                 .iter()
                 .cloned(),
         );
-        self.satellite_selection
+        self.selection
+            .satellite
             .set_drawn(
                 geometry
                     .satellites
@@ -492,7 +493,7 @@ impl App {
         if !self.layer(MapLayer::Aurora) {
             return;
         }
-        let Some(grid) = self.live_aurora.grid() else {
+        let Some(grid) = self.live.aurora.grid() else {
             return;
         };
         let scene = self.scene_unix();

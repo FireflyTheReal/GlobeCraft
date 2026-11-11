@@ -111,7 +111,8 @@ impl App {
                     })
                     .ok_or("norad (the satellite's catalogue number) is required")?;
                 let Some(satellite) = self
-                    .live_satellites
+                    .live
+                    .satellites
                     .snapshot()
                     .iter()
                     .find(|satellite| satellite.norad == norad)
@@ -120,11 +121,11 @@ impl App {
                 };
                 let name = satellite.name.clone();
                 self.close_other_cards(super::here::Card::Satellite);
-                self.satellite_selection.norad = Some(norad.clone());
+                self.selection.satellite.norad = Some(norad.clone());
                 Ok(json!({"norad": norad, "name": name}))
             }
             "satellite.clear" => {
-                self.satellite_selection.norad = None;
+                self.selection.satellite.norad = None;
                 Ok(json!({"cleared": true}))
             }
             _ => Err(format!("unknown command {id}")),
@@ -132,8 +133,9 @@ impl App {
     }
 
     fn selected_satellite(&self) -> Option<&Satellite> {
-        let norad = self.satellite_selection.selected()?;
-        self.live_satellites
+        let norad = self.selection.satellite.selected()?;
+        self.live
+            .satellites
             .snapshot()
             .iter()
             .find(|satellite| satellite.norad == norad)
@@ -228,7 +230,8 @@ impl App {
         // The craft docked to it (or flying with it), drawn as this one.
         if let Some(here) = position {
             let together: Vec<&str> = self
-                .live_satellites
+                .live
+                .satellites
                 .snapshot()
                 .iter()
                 .filter(|other| other.norad != satellite.norad)

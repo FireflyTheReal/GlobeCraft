@@ -102,7 +102,8 @@ impl App {
             });
         // An airport code (FRA, EDDF) goes first.
         if let Some(airport) = self
-            .live_airports
+            .live
+            .airports
             .airports()
             .and_then(|airports| airports.by_code(&self.search.query).cloned())
         {
@@ -243,7 +244,8 @@ impl App {
             Ok(None) => {}
         }
         if let Some(airport) = self
-            .live_airports
+            .live
+            .airports
             .airports()
             .and_then(|airports| airports.by_code(&q).cloned())
         {

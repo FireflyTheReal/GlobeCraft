@@ -82,29 +82,29 @@ impl App {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             credits.push(OSM_TILES_CREDIT.to_owned());
         }
-        if earth && self.layer(MapLayer::SeaNames) && self.live_marine_names.names().is_some() {
+        if earth && self.layer(MapLayer::SeaNames) && self.live.marine_names.names().is_some() {
             credits.push(lg.text("sea-names-credit").to_owned());
         }
-        if self.layer(MapLayer::TimeZones) && self.live_time_zones.zones().is_some() {
+        if self.layer(MapLayer::TimeZones) && self.live.time_zones.zones().is_some() {
             credits.push(lg.text("timezones-credit").to_owned());
         }
-        if self.layer(MapLayer::Aurora) && self.live_aurora.grid().is_some() {
+        if self.layer(MapLayer::Aurora) && self.live.aurora.grid().is_some() {
             credits.push(lg.text("aurora-credit").to_owned());
         }
         // The live objects, while there are some to show.
         if earth
             && self.layer(MapLayer::Flights)
-            && !self.live_aircraft.snapshot().aircraft.is_empty()
+            && !self.live.aircraft.snapshot().aircraft.is_empty()
         {
             credits.push(lg.text("aircraft-credit").to_owned());
         }
         if earth
             && self.layer(MapLayer::Vessels)
-            && let Some(key) = self.live_vessels.credit_key()
+            && let Some(key) = self.live.vessels.credit_key()
         {
             credits.push(lg.text(key).to_owned());
         }
-        if earth && self.layer(MapLayer::Satellites) && !self.live_satellites.snapshot().is_empty()
+        if earth && self.layer(MapLayer::Satellites) && !self.live.satellites.snapshot().is_empty()
         {
             credits.push(lg.text("satellites-credit").to_owned());
         }

@@ -77,6 +77,7 @@ mod ruler_profile;
 mod search;
 mod selected_flight;
 mod selected_satellite;
+mod selection;
 mod still_shot;
 mod time;
 mod timezones;
@@ -170,27 +171,18 @@ pub(crate) struct App {
     /// Keys of the other keyed services as typed in Settings -> Keys (the TomTom key
     /// is `tomtom_key`, also typed in the Layers pane).
     service_keys: std::collections::BTreeMap<&'static str, String>,
-    live_vessels: globecraft_data::vessels::LiveVessels,
-    transport_tiles: globecraft_data::transport::TransportTiles,
+    /// What is picked: a flight, a satellite, the What's here? card.
+    selection: selection::Selection,
+    /// The live data services that follow the view (see `live_services`).
+    live: live_services::LiveFeeds,
     transport_shapes: live_layers::TransportShapes,
-    poi_tiles: globecraft_data::poi::PoiTiles,
     poi_shapes: live_layers::PoiShapes,
     /// The layers the user added: their loading and drawing.
     user_layers: user_layers::UserLayers,
     /// The Add Data window, while open.
     add_data: Option<ui::add_data::AddDataDialog>,
-    /// The "What's here?" card, while open.
-    here_card: Option<here::HereCard>,
-    /// The card's state and municipality, with the border tile revision they were
-    /// looked up at (the lookup reads lines, so it is not repeated every frame).
-    here_admin: Option<(here::HereCard, u64, globecraft_data::boundaries::AdminAreas)>,
     /// Press and hold on the globe opens the card (touch screens and trackpads).
     long_press: long_press::LongPress,
-    live_satellites: globecraft_data::satellites::LiveSatellites,
-    live_aurora: globecraft_data::aurora::LiveAurora,
-    live_airports: globecraft_data::airports::LiveAirports,
-    live_time_zones: globecraft_data::timezones::LiveTimeZones,
-    live_marine_names: globecraft_data::marine_names::LiveMarineNames,
     /// Where the sea and undersea names went this frame.
     marine_placed: globecraft_render::overlays::PlacedLabels,
     time_zone_shapes: timezones::TimeZoneShapes,
@@ -198,20 +190,9 @@ pub(crate) struct App {
     traffic: traffic::TrafficOverlay,
     roads: roads::RoadOverlay,
     live_maps: live_maps::LiveMaps,
-    live_aircraft: globecraft_data::aircraft::LiveAircraft,
     aircraft_overlay: live_layers::AircraftOverlay,
     /// The colour keys window.
     legend: legend::Legend,
-    /// The flight picked on the globe, with its track and route.
-    flight_selection: globecraft_data::aircraft::route::FlightSelection,
-    satellite_selection: selected_satellite::SatelliteSelection,
-    /// The flights with the selected one's newest position: (list it was made from,
-    /// that position's time, flights).
-    selected_snapshot: Option<(
-        usize,
-        f64,
-        std::sync::Arc<globecraft_data::aircraft::AircraftSnapshot>,
-    )>,
     live_geometry: live_geometry::LiveOverlay,
     world_shapes: live_layers::WorldShapes,
 
@@ -248,7 +229,6 @@ pub(crate) struct App {
     windows: windows::WindowsState,
     /// The navigator's drags and eased turns.
     nav: navigation::NavState,
-    menu_pick: Option<(f64, f64)>,
     /// A `globecraft://view` link from the command line, opened on the first frame.
     pending_view_link: Option<String>,
     /// The layer shown alone (`layer.solo`), and what was visible before.
@@ -437,36 +417,21 @@ impl App {
                     )
                 })
                 .collect(),
-            live_vessels: globecraft_data::vessels::LiveVessels::default(),
-            transport_tiles: globecraft_data::transport::TransportTiles::default(),
+            live: live_services::LiveFeeds::new(&runtime, &cc.egui_ctx),
+            selection: selection::Selection::default(),
             transport_shapes: live_layers::TransportShapes::default(),
-            poi_tiles: globecraft_data::poi::PoiTiles::default(),
             poi_shapes: live_layers::PoiShapes::default(),
             user_layers: Default::default(),
             add_data: None,
-            here_card: None,
-            here_admin: None,
             long_press: long_press::LongPress::default(),
-            live_satellites: globecraft_data::satellites::LiveSatellites::default(),
-            live_aurora: globecraft_data::aurora::LiveAurora::default(),
-            live_airports: globecraft_data::airports::LiveAirports::default(),
-            live_time_zones: globecraft_data::timezones::LiveTimeZones::default(),
-            live_marine_names: globecraft_data::marine_names::LiveMarineNames::default(),
             marine_placed: Default::default(),
             time_zone_shapes: timezones::TimeZoneShapes::default(),
             aurora_shapes: live_layers::AuroraShapes::default(),
             traffic: traffic::TrafficOverlay::default(),
             roads: roads::RoadOverlay::default(),
             live_maps: live_maps::LiveMaps::default(),
-            live_aircraft: globecraft_data::aircraft::LiveAircraft::new(runtime.handle(), {
-                let ctx = cc.egui_ctx.clone();
-                move || ctx.request_repaint()
-            }),
             aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
             legend: Default::default(),
-            flight_selection: Default::default(),
-            satellite_selection: Default::default(),
-            selected_snapshot: None,
             live_geometry: live_geometry::LiveOverlay::new(
                 cc.egui_ctx.clone(),
                 Some(cache.clone()),
@@ -496,7 +461,6 @@ impl App {
             timeline: time::TimelineState::default(),
             windows: windows::WindowsState::new(settings.ui_scale),
             nav: navigation::NavState::default(),
-            menu_pick: None,
             pending_view_link: view_links::link_from_args(),
             solo: None,
             cursor: None,

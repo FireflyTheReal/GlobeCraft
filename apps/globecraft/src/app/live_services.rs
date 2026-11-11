@@ -17,6 +17,42 @@ const AIRCRAFT_QUERY_TILT_STEP_DEG: f64 = 45.0;
 /// ... and never more than this.
 const AIRCRAFT_QUERY_MAX_RADIUS_KM: f64 = 2500.0;
 
+/// The live data services: each loads for the view while its layer is shown. Drawing
+/// state (shapes, overlays) stays with the layers that draw it.
+pub(super) struct LiveFeeds {
+    pub(super) aircraft: globecraft_data::aircraft::LiveAircraft,
+    pub(super) vessels: globecraft_data::vessels::LiveVessels,
+    pub(super) satellites: globecraft_data::satellites::LiveSatellites,
+    pub(super) aurora: globecraft_data::aurora::LiveAurora,
+    pub(super) airports: globecraft_data::airports::LiveAirports,
+    pub(super) time_zones: globecraft_data::timezones::LiveTimeZones,
+    pub(super) marine_names: globecraft_data::marine_names::LiveMarineNames,
+    pub(super) transport: globecraft_data::transport::TransportTiles,
+    pub(super) poi: globecraft_data::poi::PoiTiles,
+}
+
+impl LiveFeeds {
+    pub(super) fn new(
+        runtime: &globecraft_data::runtime::ServiceRuntime,
+        ctx: &egui::Context,
+    ) -> Self {
+        Self {
+            aircraft: globecraft_data::aircraft::LiveAircraft::new(
+                runtime.handle(),
+                repainter(ctx),
+            ),
+            vessels: Default::default(),
+            satellites: Default::default(),
+            aurora: Default::default(),
+            airports: Default::default(),
+            time_zones: Default::default(),
+            marine_names: Default::default(),
+            transport: Default::default(),
+            poi: Default::default(),
+        }
+    }
+}
+
 /// The callback a service calls from its worker when it has something new to show.
 pub(super) fn repainter(ctx: &egui::Context) -> impl Fn() + Send + Sync + Clone + 'static {
     let ctx = ctx.clone();
@@ -38,7 +74,8 @@ impl App {
         let earth = self.earth_shown();
         let aircraft_enabled =
             self.layer(MapLayer::Flights) && self.explorer.on_earth() && !self.flat_earth.open;
-        self.live_aircraft
+        self.live
+            .aircraft
             .update(globecraft_data::aircraft::AircraftQuery {
                 enabled: aircraft_enabled,
                 latitude: view.latitude,
@@ -51,30 +88,30 @@ impl App {
         }
         self.update_selected_flight(ctx, aircraft_enabled);
         // Independent realtime layers, loaded only for the globe while enabled.
-        self.live_vessels.update(
+        self.live.vessels.update(
             &self.runtime,
             earth && self.layer(MapLayer::Vessels),
             repainter(ctx),
         );
-        self.live_satellites.update(
+        self.live.satellites.update(
             &self.runtime,
             earth && self.layer(MapLayer::Satellites),
             repainter(ctx),
         );
-        self.live_aurora.update(
+        self.live.aurora.update(
             &self.runtime,
             earth && self.layer(MapLayer::Aurora),
             repainter(ctx),
         );
         // Airports by code: for the search box and a selected flight's route.
-        self.live_airports.update(
+        self.live.airports.update(
             &self.runtime,
-            self.flight_selection.selected().is_some() || !self.search.query.trim().is_empty(),
+            self.selection.flight.selected().is_some() || !self.search.query.trim().is_empty(),
             repainter(ctx),
         );
         self.update_time_zones(ctx, earth);
         self.update_marine_names(ctx, earth);
-        self.transport_tiles.update(
+        self.live.transport.update(
             &self.runtime,
             globecraft_data::transport::TransportQuery {
                 enabled: earth && self.transport_shown(),
@@ -83,7 +120,7 @@ impl App {
             },
             repainter(ctx),
         );
-        self.poi_tiles.update(
+        self.live.poi.update(
             &self.runtime,
             globecraft_data::poi::PoiQuery {
                 enabled: earth && self.poi_layers().any(),

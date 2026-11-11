@@ -259,7 +259,7 @@ fn borders(
 
 impl App {
     pub(super) fn update_time_zones(&mut self, ctx: &egui::Context, earth: bool) {
-        self.live_time_zones.update(
+        self.live.time_zones.update(
             &self.runtime,
             earth && self.layer(MapLayer::TimeZones),
             super::live_services::repainter(ctx),
@@ -271,7 +271,7 @@ impl App {
         if !self.layer(MapLayer::TimeZones) {
             return;
         }
-        let Some(zones) = self.live_time_zones.zones() else {
+        let Some(zones) = self.live.time_zones.zones() else {
             return;
         };
         let style = &self.settings.map_style;
@@ -289,7 +289,7 @@ impl App {
     /// `15:15 CET (UTC+1)`.
     pub(super) fn cursor_local_time(&self) -> Option<String> {
         let (lat, lon) = self.cursor?;
-        let zones = self.live_time_zones.zones()?;
+        let zones = self.live.time_zones.zones()?;
         let local = zones.zone_at(lat, lon)?.local_time(self.scene_unix())?;
         Some(match local.abbreviation {
             Some(name) => format!("{} {name} ({})", local.time, local.offset),

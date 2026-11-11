@@ -151,7 +151,7 @@ impl App {
             && let Some(norad) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| self.satellite_selection.at(p, self.settings.map_scale))
+                .and_then(|p| self.selection.satellite.at(p, self.settings.map_scale))
                 .map(str::to_owned)
         {
             self.run_reporting("satellite.select", serde_json::json!({"norad": norad}));
@@ -171,14 +171,14 @@ impl App {
         } else if !ruler_captured
             && resp.clicked()
             && !self.measure.on
-            && (self.flight_selection.selected().is_some()
-                || self.satellite_selection.selected().is_some())
+            && (self.selection.flight.selected().is_some()
+                || self.selection.satellite.selected().is_some())
         {
             // A click beside the planes and satellites closes what was selected.
-            if self.flight_selection.selected().is_some() {
+            if self.selection.flight.selected().is_some() {
                 self.run_reporting("flight.clear", serde_json::json!({}));
             }
-            if self.satellite_selection.selected().is_some() {
+            if self.selection.satellite.selected().is_some() {
                 self.run_reporting("satellite.clear", serde_json::json!({}));
             }
         } else if !ruler_captured
@@ -195,7 +195,7 @@ impl App {
         // the card has opened by then.
         let menu_suppressed = press.swallow && resp.secondary_clicked();
         if resp.secondary_clicked() && !menu_suppressed {
-            self.menu_pick = resp
+            self.selection.menu_pick = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
                 .and_then(pick);
@@ -822,7 +822,7 @@ impl App {
         menu_suppressed: bool,
     ) {
         let lg = self.lang;
-        let pick = self.menu_pick;
+        let pick = self.selection.menu_pick;
         let mut chosen: Option<(&str, serde_json::Value)> = None;
         let show_menu = |ui: &mut egui::Ui| match pick {
             Some((la, lo)) => {

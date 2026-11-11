@@ -1359,7 +1359,7 @@ fn aurora_screenshot() {
     .expect("aurora sample");
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_aurora.set_grid(grid);
+    app.live.aurora.set_grid(grid);
     app.run("layer.show", json!({"layer": "aurora", "visible": true}))
         .expect("aurora");
     app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
@@ -1477,7 +1477,7 @@ fn ocean_presets_screenshot() {
     if let Some(path) = std::env::var_os("GLOBECRAFT_MARINE_NAMES_FILE") {
         let bytes = std::fs::read(path).expect("names file");
         let names = globecraft_data::marine_names::MarineNames::from_gzip(&bytes).expect("names");
-        h.state_mut().live_marine_names.set(names);
+        h.state_mut().live.marine_names.set(names);
     }
     // GLOBECRAFT_SHOT_LAYERS: built-in layers to turn on too (codes, comma-separated).
     for code in std::env::var("GLOBECRAFT_SHOT_LAYERS")
@@ -1958,7 +1958,8 @@ fn airport_search_screenshot() {
         L\tMUC\tEDDM\t48.35378\t11.78609\t1487\tDE\tMunich\tMunich Airport\n";
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_airports
+    app.live
+        .airports
         .set(globecraft_data::airports::Airports::parse(sample).expect("sample"));
     app.search.query = "fra".into();
     app.on_query_changed();
@@ -2078,7 +2079,7 @@ fn time_zones_screenshot() {
     .expect("zones");
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_time_zones.set(zones);
+    app.live.time_zones.set(zones);
     app.run(
         "layer.show",
         json!({"layer": "time_zones", "visible": true}),
@@ -2214,7 +2215,7 @@ fn selected_flight_screenshot() {
     let app = h.state_mut();
     app.run("layer.show", json!({"layer": "flights", "visible": true}))
         .expect("layer");
-    app.flight_selection.set(SelectedFlight {
+    app.selection.flight.set(SelectedFlight {
         hex: "3c6a9a".into(),
         callsign: "DLH400".into(),
         track: track.into(),
@@ -2301,7 +2302,8 @@ fn legend_screenshot() {
         app.run("layer.show", json!({"layer": layer, "visible": true}))
             .expect("layer");
     }
-    app.flight_selection
+    app.selection
+        .flight
         .set(globecraft_data::aircraft::route::SelectedFlight {
             hex: "3c6a9a".into(),
             callsign: "DLH400".into(),
@@ -2348,7 +2350,7 @@ fn polar_screenshot() {
         )
         .expect("zones");
         let app = h.state_mut();
-        app.live_time_zones.set(zones);
+        app.live.time_zones.set(zones);
         app.run(
             "layer.show",
             json!({"layer": "time_zones", "visible": true}),
@@ -2465,7 +2467,7 @@ fn live_symbols_screenshot() {
     let port = fake_aircraft_server(json!({"states": opensky}), json!({"ac": adsb}));
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_aircraft = LiveAircraft::with_sources(
+    app.live.aircraft = LiveAircraft::with_sources(
         app.runtime.handle(),
         || {},
         format!("http://127.0.0.1:{port}/api/states/all?extended=1"),
@@ -2522,19 +2524,19 @@ fn live_symbols_screenshot() {
             (group, serde_json::from_str(&text).expect("CelesTrak JSON"))
         })
         .collect();
-        h.state_mut().live_satellites.show_recorded(&answers);
+        h.state_mut().live.satellites.show_recorded(&answers);
     }
     for _ in 0..60 {
-        if !h.state().live_satellites.snapshot().is_empty() {
+        if !h.state().live.satellites.snapshot().is_empty() {
             break;
         }
         settle(&mut h, 1.0);
     }
-    let satellites = h.state().live_satellites.snapshot();
+    let satellites = h.state().live.satellites.snapshot();
     assert!(
         !satellites.is_empty(),
         "{}",
-        h.state().live_satellites.status(h.state().lang)
+        h.state().live.satellites.status(h.state().lang)
     );
     println!(
         "{} satellites, {} with SGP4",
@@ -2544,7 +2546,8 @@ fn live_symbols_screenshot() {
     // The ISS selected: one orbit at its height, from far away and from its side.
     let iss = h
         .state()
-        .live_satellites
+        .live
+        .satellites
         .snapshot()
         .iter()
         .find(|satellite| satellite.norad == "25544")
@@ -2585,7 +2588,8 @@ fn live_symbols_screenshot() {
     ] {
         let loaded = h
             .state()
-            .live_satellites
+            .live
+            .satellites
             .snapshot()
             .iter()
             .any(|satellite| satellite.norad == norad);

@@ -213,7 +213,7 @@ impl App {
         }
         self.layer_checkbox(ui, MapLayer::Flights, lg.text("layers-flights-toggle"));
         if self.layer(MapLayer::Flights) {
-            super::ui::aircraft::draw_status(ui, &self.live_aircraft.snapshot(), lg);
+            super::ui::aircraft::draw_status(ui, &self.live.aircraft.snapshot(), lg);
             ui.hyperlink_to("OpenSky Network", "https://opensky-network.org/");
             ui.hyperlink_to("ADSB.lol (ODbL)", "https://www.adsb.lol/");
         }

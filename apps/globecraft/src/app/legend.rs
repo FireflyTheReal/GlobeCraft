@@ -156,7 +156,7 @@ impl App {
             (LegendKind::Satellites, self.layer(MapLayer::Satellites)),
             (
                 LegendKind::FlightAltitude,
-                self.layer(MapLayer::Flights) && self.flight_selection.selected().is_some(),
+                self.layer(MapLayer::Flights) && self.selection.flight.selected().is_some(),
             ),
             (LegendKind::Radar, self.layer(MapLayer::Radar)),
             (LegendKind::Aurora, self.layer(MapLayer::Aurora)),

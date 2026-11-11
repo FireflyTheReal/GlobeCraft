@@ -114,14 +114,14 @@ impl App {
     /// Closes the cards other than `keep`, which is opening: the globe shows one card.
     pub(super) fn close_other_cards(&mut self, keep: Card) {
         if keep != Card::Flight {
-            self.flight_selection.clear();
-            self.selected_snapshot = None;
+            self.selection.flight.clear();
+            self.selection.flights_shown = None;
         }
         if keep != Card::Satellite {
-            self.satellite_selection.clear();
+            self.selection.satellite.clear();
         }
         if keep != Card::Here {
-            self.here_card = None;
+            self.selection.here = None;
         }
     }
 }
@@ -231,11 +231,11 @@ impl App {
     /// border tiles in memory change.
     fn here_admin(&mut self, card: HereCard) -> AdminAreas {
         let revision = self.boundary_loader.border_tiles_revision();
-        match &self.here_admin {
+        match &self.selection.here_admin {
             Some((at, seen, admin)) if *at == card && *seen == revision => admin.clone(),
             _ => {
                 let admin = self.boundary_loader.admin_areas_at(card.lat, card.lon);
-                self.here_admin = Some((card, revision, admin.clone()));
+                self.selection.here_admin = Some((card, revision, admin.clone()));
                 admin
             }
         }
@@ -243,7 +243,7 @@ impl App {
 
     /// The card, while one is open.
     pub(super) fn here_window(&mut self, ctx: &egui::Context, rect: egui::Rect) {
-        let Some(card) = self.here_card else {
+        let Some(card) = self.selection.here else {
             return;
         };
         let lang = self.lang;
@@ -363,7 +363,7 @@ impl App {
             self.run_reporting(id, params);
         }
         if !open {
-            self.here_card = None;
+            self.selection.here = None;
         }
     }
 }
