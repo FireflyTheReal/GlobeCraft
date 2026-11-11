@@ -296,7 +296,7 @@ fn new_view_retires_queued_work_and_stops_downloads_it_left_keeping_the_overview
     assert_eq!(cache.inflight(), 2);
     assert!(matches!(cache.lookup(stale), Lookup::Absent));
     assert!(matches!(cache.lookup(left), Lookup::Absent));
-    assert!(cache.downloading.lock().unwrap().is_empty());
+    assert!(cache.downloading.lock().unwrap().keys().next().is_none());
     let stopped = running.cancel.notified();
     tokio::pin!(stopped);
     assert!(futures_ready(stopped.as_mut()));
@@ -337,7 +337,7 @@ fn each_source_downloads_at_most_its_parallel_limit() {
     // The next streets tile waits; the imagery behind it does not.
     assert_eq!(cache.next_job().unwrap().key, imagery);
     assert!(cache.next_job().is_none());
-    cache.downloading.lock().unwrap().remove(&jobs[0].key);
+    cache.downloading.lock().unwrap().remove(jobs[0].key);
     cache.complete(jobs[0].key, Ok(tiny_tile(1)));
     assert_eq!(cache.next_job().unwrap().key, streets[limit]);
 }
@@ -367,13 +367,13 @@ fn sources_on_one_host_share_its_downloads_and_its_pauses() {
     // The polar tile has slots of its own source left, but not of the host.
     assert_eq!(cache.next_job().unwrap().key, imagery);
     assert!(cache.next_job().is_none());
-    cache.downloading.lock().unwrap().remove(&jobs[0].key);
+    cache.downloading.lock().unwrap().remove(jobs[0].key);
     cache.complete(jobs[0].key, Ok(tiny_tile(1)));
     assert_eq!(cache.next_job().unwrap().key, north);
     // A throttling answer to one of them pauses the host's other sources too.
     let south = make_key(Provider::PolarSouth, 3, 0, 0, 0);
     assert!(cache.request(south));
-    cache.downloading.lock().unwrap().remove(&north);
+    cache.downloading.lock().unwrap().remove(north);
     cache.throttle(north, Duration::from_secs(60));
     assert!(cache.next_job().is_none(), "the host is pausing");
     let paused: Vec<_> = cache
@@ -393,7 +393,7 @@ fn a_throttled_source_pauses_and_its_tile_waits_at_the_front() {
     let second = make_key(Provider::Topo, 9, 1, 0, 0);
     assert!(cache.request(first) && cache.request(second));
     let job = cache.next_job().unwrap();
-    cache.downloading.lock().unwrap().remove(&job.key);
+    cache.downloading.lock().unwrap().remove(job.key);
     cache.throttle(job.key, Duration::from_millis(200));
     assert!(matches!(cache.lookup(first), Lookup::Pending));
     assert!(cache.next_job().is_none(), "the source is pausing");
@@ -639,7 +639,7 @@ fn a_paused_host_does_not_hold_the_slots_of_other_hosts() {
     assert_eq!(cache.retry_delay(&[lights]), None);
     // The imagery host answers 429: its tiles wait, and stop holding the slots.
     let job = cache.next_job().unwrap();
-    cache.downloading.lock().unwrap().remove(&job.key);
+    cache.downloading.lock().unwrap().remove(job.key);
     cache.throttle(job.key, Duration::from_secs(60));
     assert_eq!(cache.retry_delay(&[lights]), Some(Duration::ZERO));
     assert!(cache.request(lights), "the paused imagery leaves room");

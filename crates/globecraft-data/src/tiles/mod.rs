@@ -323,6 +323,7 @@ impl Tile {
 
 mod cache;
 mod disk;
+mod downloads;
 pub mod source;
 pub use source::{Access, Prefetch, SourceKind, TileSource};
 mod elevation;
