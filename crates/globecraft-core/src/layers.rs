@@ -294,8 +294,8 @@ impl MapLayer {
     }
 
     /// Whether the layer has its own switch in the interface. Cinematic Sky was
-    /// dropped (2026-10-26): the Milky Way shows whenever it is on. Its code still
-    /// works in commands.
+    /// dropped (2026-10-26): the Milky Way always draws with it. Its variant remains so
+    /// layer bits and saved settings keep their meaning; commands refuse it.
     pub fn listed(self) -> bool {
         self != Self::CinematicSky
     }

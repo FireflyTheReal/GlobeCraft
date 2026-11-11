@@ -468,7 +468,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "eye",
         Map,
         View,
-        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
+        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
         "layer.opacity",
@@ -987,8 +987,10 @@ mod tests {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
+        // Layers without their own switch (the retired Cinematic Sky) are not offered.
         let codes: Vec<&str> = crate::layers::MapLayer::ALL
             .iter()
+            .filter(|l| l.listed())
             .map(|l| l.code())
             .collect();
         assert_eq!(listed, codes);

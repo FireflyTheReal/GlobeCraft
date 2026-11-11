@@ -24,6 +24,10 @@ const SCROLL_TILT_DEG_PER_POINT: f64 = 0.15;
 /// Shift+Up and Shift+Down tilt the view.
 const KEY_TILT_DEG_PER_SECOND: f64 = 40.0;
 const SCROLL_ZOOM_RATE_PER_POINT: f64 = 0.0025;
+/// Holding + or - changes the altitude by e^1.2 (about 3.3×) per second.
+const KEY_ZOOM_RATE_PER_SECOND: f64 = 1.2;
+/// A pinch smaller than this (relative change of the zoom factor) is ignored.
+const PINCH_ZOOM_DEADBAND: f64 = 1e-4;
 const POINT_FLY_ALTITUDE_RATIO: f64 = 0.35;
 const MIN_POINT_FLY_ALTITUDE_KM: f64 = 0.3;
 const AUTO_ROTATE_DEG_PER_SECOND: f64 = 6.0;
@@ -132,7 +136,7 @@ impl App {
                 );
                 interacting = true;
             }
-            if (zd - 1.0).abs() > 1e-4 {
+            if (zd - 1.0).abs() > PINCH_ZOOM_DEADBAND {
                 self.fly = None;
                 if self.explorer.active == globecraft_core::body::Body::Earth {
                     self.zoom_at(1.0 / zd, cur, rect, aspect);
@@ -189,27 +193,36 @@ impl App {
                 interacting = true;
             }
             let (zin, zout, north, top_down) = ui.input(|i| {
+                // Plain keys only: with Cmd or Ctrl, + and - zoom the interface itself, and
+                // letters belong to shortcuts. Shift stays allowed for + on keyboards
+                // that need it.
+                let m = i.modifiers;
+                let plain = !(m.command || m.ctrl || m.mac_cmd || m.alt);
+                let letter = plain && !m.shift;
                 (
-                    i.key_down(Key::Plus) || i.key_down(Key::Equals) || i.key_down(Key::PageUp),
-                    i.key_down(Key::Minus) || i.key_down(Key::PageDown),
-                    i.key_pressed(Key::N),
-                    i.key_pressed(Key::U),
+                    plain
+                        && (i.key_down(Key::Plus)
+                            || i.key_down(Key::Equals)
+                            || i.key_down(Key::PageUp)),
+                    plain && (i.key_down(Key::Minus) || i.key_down(Key::PageDown)),
+                    letter && i.key_pressed(Key::N),
+                    letter && i.key_pressed(Key::U),
                 )
             });
             if top_down {
-                self.cam.tilt = 0.0;
+                self.run_reporting("camera.topDown", serde_json::json!({}));
                 interacting = true;
             }
             if zin {
-                self.zoom((-1.2 * dt).exp());
+                self.zoom((-KEY_ZOOM_RATE_PER_SECOND * dt).exp());
                 interacting = true;
             }
             if zout {
-                self.zoom((1.2 * dt).exp());
+                self.zoom((KEY_ZOOM_RATE_PER_SECOND * dt).exp());
                 interacting = true;
             }
             if north {
-                self.cam.heading = 0.0;
+                self.run_reporting("camera.resetNorth", serde_json::json!({}));
             }
         }
         if interacting || resp.dragged() {
