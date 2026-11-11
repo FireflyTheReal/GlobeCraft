@@ -2,7 +2,7 @@
 mod release;
 #[cfg(test)]
 mod tests;
-use release::{SelectedRelease, check, install};
+use release::{Checked, SelectedRelease, check, install};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -151,7 +151,18 @@ impl UpdateService {
         let manual_reason = self.manual_reason.clone();
         self.runtime.spawn(async move {
             let snapshot = match check().await {
-                Ok(Some(selected)) => Snapshot {
+                Ok(Some(Checked::NoBuild { version })) => Snapshot {
+                    state: UpdateState::Unsupported {
+                        version,
+                        reason: format!(
+                            "No update is published for this system ({} {}). Open Releases to see what is available.",
+                            std::env::consts::OS,
+                            std::env::consts::ARCH
+                        ),
+                    },
+                    selected: None,
+                },
+                Ok(Some(Checked::Installable(selected))) => Snapshot {
                     state: if let Some(reason) = manual_reason {
                         UpdateState::Unsupported {
                             version: selected.version.clone(),

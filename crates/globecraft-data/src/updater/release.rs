@@ -95,25 +95,41 @@ fn checker() -> self_update::Result<AsyncUpdate> {
     builder().build_async()
 }
 
-pub(super) async fn check() -> self_update::Result<Option<SelectedRelease>> {
+/// What an update check found.
+pub(super) enum Checked {
+    /// A newer release with a download for this system.
+    Installable(SelectedRelease),
+    /// A newer release with no download for this system (an Intel Mac, for one): the
+    /// user is told, rather than shown "up to date".
+    NoBuild { version: String },
+}
+pub(super) async fn check() -> self_update::Result<Option<Checked>> {
     // GitHub's /latest endpoint excludes drafts and prereleases. Check semver too.
     let Some(release) = checker()?.is_update_available_async().await? else {
         return Ok(None);
     };
-    select_release(&release, VERSION, platform_suffix())
+    let suffix = platform_suffix();
+    if suffix.is_none() {
+        return Ok(newer_stable(&release, VERSION)?.map(|version| Checked::NoBuild { version }));
+    }
+    Ok(select_release(&release, VERSION, suffix)?.map(Checked::Installable))
+}
+/// The release's version when it is a stable version newer than `current`.
+fn newer_stable(release: &Release, current: &str) -> self_update::Result<Option<String>> {
+    let version = semver::Version::parse(release.version())
+        .map_err(|error| self_update::Error::archive_verification_rejected(error.to_string()))?;
+    let current = semver::Version::parse(current)
+        .map_err(|error| self_update::Error::archive_verification_rejected(error.to_string()))?;
+    Ok((version.pre.is_empty() && version > current).then(|| version.to_string()))
 }
 fn select_release(
     release: &Release,
     current: &str,
     suffix: Option<&str>,
 ) -> self_update::Result<Option<SelectedRelease>> {
-    let version = semver::Version::parse(release.version())
-        .map_err(|error| self_update::Error::archive_verification_rejected(error.to_string()))?;
-    let current = semver::Version::parse(current)
-        .map_err(|error| self_update::Error::archive_verification_rejected(error.to_string()))?;
-    if !version.pre.is_empty() || version <= current {
+    let Some(version) = newer_stable(release, current)? else {
         return Ok(None);
-    }
+    };
     let Some(suffix) = suffix else {
         return Ok(None);
     };
@@ -127,8 +143,8 @@ fn select_release(
     };
     validate_asset(asset)?;
     Ok(Some(SelectedRelease {
-        version: version.to_string(),
         tag: format!("v{version}"),
+        version,
         asset: asset.clone(),
     }))
 }
@@ -281,6 +297,12 @@ mod tests {
                 .is_none()
         );
         assert!(select_release(&newer, "0.9.0", None).unwrap().is_none());
+        // Without a build for this system the newer version is still reported.
+        assert_eq!(
+            newer_stable(&newer, "0.9.0").unwrap().as_deref(),
+            Some("0.10.0")
+        );
+        assert_eq!(newer_stable(&newer, "0.10.0").unwrap(), None);
         let prerelease = release(
             "1.0.0-beta.1",
             asset("globecraft-1.0.0-beta.1-linux-x64.tar.gz"),
