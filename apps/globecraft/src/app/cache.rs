@@ -180,7 +180,7 @@ impl App {
         let bytes = imagery.bytes + ahead.bytes + borders.bytes + disk.bytes;
         self.download_log = (Instant::now(), bytes);
         if bytes != logged_bytes {
-            eprintln!(
+            globecraft_data::log_line!(
                 "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles ({} confirmed unchanged by the server); {} downloads stopped (tile left the view)",
                 cache_size_text(imagery.bytes),
                 imagery.responses,

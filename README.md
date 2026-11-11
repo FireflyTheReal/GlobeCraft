@@ -70,6 +70,12 @@ Developers: start with [the architecture](docs/ARCHITECTURE.md),
 The [network policy](docs/NETWORK_POLICY.md) lists every built-in host, cadence and
 user agent.
 
+## When something goes wrong
+
+GlobeCraft writes problems and a short session summary to `globecraft.log` in its data
+folder (`~/.cache/globecraft_tiles` on macOS and Linux, `%LOCALAPPDATA%\globecraft_tiles`
+on Windows). Attach it when you [report an issue](https://github.com/FireflyTheReal/GlobeCraft/issues/new/choose).
+
 ## Credits
 
 GlobeCraft stands on open maps, data and code from many people and organisations:

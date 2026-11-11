@@ -70,6 +70,9 @@ User instructions and the requested scope take precedence over these defaults.
 - Write application-owned error messages and diagnostic logs in English, including
   error statuses displayed when the UI language is Portuguese. Normal UI labels
   and success messages remain localized. Preserve external names and source errors.
+- Write diagnostics with `globecraft_data::log_line!` (`crate::log_line!` inside data),
+  not `eprintln!`: it also reaches `globecraft.log`, which release builds on Windows and
+  apps started from Finder or a desktop menu otherwise lose. Tests and benchmarks may print.
 - Keep new error handling explicit and user-facing where appropriate. Do not add
   blanket lint allowances or swallow new errors just to make checks pass.
 - Write code comments and documentation in English only. The repository has no

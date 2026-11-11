@@ -759,7 +759,7 @@ fn report_first_failure(provider: super::Provider, url: &str, reason: &str) {
         && *reported & bit == 0
     {
         *reported |= bit;
-        eprintln!(
+        crate::log_line!(
             "Tile source {}: first failed download ({reason}): {url}",
             provider.code()
         );
@@ -772,7 +772,9 @@ fn report_disk_failure(result: Result<(), crate::Error>) {
     if let Err(error) = result
         && !REPORTED.swap(true, Ordering::Relaxed)
     {
-        eprintln!("Tile disk cache: a write failed ({error}); later failures are not reported");
+        crate::log_line!(
+            "Tile disk cache: a write failed ({error}); later failures are not reported"
+        );
     }
 }
 async fn fetch_tile(

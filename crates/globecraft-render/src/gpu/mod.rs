@@ -154,7 +154,7 @@ impl GpuRenderer {
         if let Some(error) = failure.lock().unwrap().take() {
             return Err(error);
         }
-        eprintln!(
+        globecraft_data::log_line!(
             "Experimental GPU globe rendering enabled: {} ({:?}), {} MiB tile atlas",
             adapter.get_info().name,
             adapter.get_info().backend,

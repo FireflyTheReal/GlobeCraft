@@ -180,7 +180,9 @@ impl App {
         match end {
             StillMessage::Saved { path, missing } => {
                 if missing > 0 {
-                    eprintln!("Screenshot saved with {missing} tiles that never arrived");
+                    globecraft_data::log_line!(
+                        "Screenshot saved with {missing} tiles that never arrived"
+                    );
                 }
                 self.screenshot_saved(path);
             }

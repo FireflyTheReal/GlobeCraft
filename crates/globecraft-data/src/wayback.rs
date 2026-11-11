@@ -84,7 +84,7 @@ pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error
                 .await?;
         if let Err(error) = written {
             // The list still applies; only a start without a connection loses it.
-            eprintln!("Could not keep the Wayback release list: {error}");
+            crate::log_line!("Could not keep the Wayback release list: {error}");
         }
         Ok::<_, crate::Error>(value)
     }

@@ -21,7 +21,7 @@ impl App {
         let all = keys::set(id, &value);
         self.runtime.handle().spawn_blocking(move || {
             if let Err(error) = keys::save(&all) {
-                eprintln!("Saving the service keys failed: {error}");
+                globecraft_data::log_line!("Saving the service keys failed: {error}");
             }
         });
     }

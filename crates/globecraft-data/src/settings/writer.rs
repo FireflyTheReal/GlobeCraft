@@ -125,7 +125,7 @@ impl Drop for SettingsWriter {
     fn drop(&mut self) {
         // Flush on final application shutdown only; normal UI updates never wait.
         if let Err(error) = self.finish() {
-            eprintln!("Settings persistence failed during shutdown: {error}");
+            crate::log_line!("Settings persistence failed during shutdown: {error}");
         }
     }
 }

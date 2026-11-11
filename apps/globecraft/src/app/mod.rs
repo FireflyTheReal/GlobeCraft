@@ -562,7 +562,7 @@ impl App {
             std::thread::sleep(Duration::from_millis(20));
         }
         if !self.cache.wait_for_disk_writes(QUIT_DISK_WAIT) {
-            eprintln!("Quit before every tile reached the disk cache");
+            globecraft_data::log_line!("Quit before every tile reached the disk cache");
         }
     }
 }
@@ -582,7 +582,7 @@ impl eframe::App for App {
                 ));
             }
             Err(error) => {
-                eprintln!("Settings persistence failed during shutdown: {error}");
+                globecraft_data::log_line!("Settings persistence failed during shutdown: {error}");
             }
         }
         #[cfg(feature = "profiling")]
@@ -601,14 +601,18 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         if restarting {
             if let Some(error) = self.update_restart.request.error.lock().unwrap().clone() {
-                eprintln!("Update restart stopped: {error}. Relaunch GlobeCraft manually.");
+                globecraft_data::log_line!(
+                    "Update restart stopped: {error}. Relaunch GlobeCraft manually."
+                );
                 std::process::exit(1);
             }
-            eprintln!("Restarting GlobeCraft to finish the update");
+            globecraft_data::log_line!("Restarting GlobeCraft to finish the update");
             match self_update::restart::restart() {
                 Ok(never) => match never {},
                 Err(error) => {
-                    eprintln!("Restart failed: {error}. Relaunch GlobeCraft manually.");
+                    globecraft_data::log_line!(
+                        "Restart failed: {error}. Relaunch GlobeCraft manually."
+                    );
                     std::process::exit(1);
                 }
             }

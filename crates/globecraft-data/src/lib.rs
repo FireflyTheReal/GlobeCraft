@@ -21,6 +21,7 @@ mod cpu;
 mod features;
 pub mod files;
 mod json_fields;
+pub mod run_log;
 pub mod runtime;
 
 #[cfg(feature = "profiling")]

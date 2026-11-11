@@ -20,11 +20,15 @@ const APP_ICON_PNG: &[u8] = std::cfg_select! {
 };
 
 fn main() -> Result<(), eframe::Error> {
+    globecraft_data::run_log::install_panic_hook();
     #[cfg(feature = "profiling")]
     globecraft_data::profiling::init();
-    // First start after the rename: bring settings and caches over from EarthCraft.
-    if let Err(error) = globecraft_data::migrate_legacy_data() {
-        eprintln!("Could not copy EarthCraft settings and caches: {error}");
+    // First start after the rename: bring settings and caches over from EarthCraft. Before
+    // the run log opens, which creates the data folder (an existing folder ends migration).
+    let migration = globecraft_data::migrate_legacy_data();
+    globecraft_data::run_log::init();
+    if let Err(error) = migration {
+        globecraft_data::log_line!("Could not copy EarthCraft settings and caches: {error}");
     }
     // Downloads of the border pipeline removed on 2026-10-25.
     std::thread::spawn(globecraft_data::remove_retired_caches);
@@ -33,7 +37,7 @@ fn main() -> Result<(), eframe::Error> {
     loop {
         let (settings, load_problem) = globecraft_data::settings::Settings::load();
         if let Some(problem) = load_problem {
-            eprintln!("{problem}");
+            globecraft_data::log_line!("{problem}");
             *restart.load_problem.lock().unwrap() = Some(problem);
         }
         let mut viewport = egui::ViewportBuilder::default()
@@ -74,7 +78,9 @@ fn main() -> Result<(), eframe::Error> {
         if let Err(error) = &result
             && presentation::retry_with_glow(renderer, error)
         {
-            eprintln!("The wgpu interface renderer could not start ({error}); using OpenGL");
+            globecraft_data::log_line!(
+                "The wgpu interface renderer could not start ({error}); using OpenGL"
+            );
             renderer = eframe::Renderer::Glow;
             continue;
         }
