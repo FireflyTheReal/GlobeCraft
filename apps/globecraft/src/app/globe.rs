@@ -6,6 +6,7 @@ use super::{OVERVIEW_WARMUP_ALTITUDE_KM, PAN_SPEED_POINTS_PER_SECOND};
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, PointerButton, Pos2, Rect, Sense, Stroke, Vec2,
 };
+use globecraft_core::camera::{Basis, Cam};
 use globecraft_core::layers::MapLayer;
 use globecraft_core::math::{now_unix, wrap_lon};
 use globecraft_data::tiles::Provider;
@@ -58,7 +59,6 @@ impl App {
         let resp = ui.allocate_rect(viewport, Sense::click_and_drag());
         let ppp = ui.pixels_per_point();
         let aspect = (rect.width() / rect.height()) as f64;
-        let shift = ui.input(|i| i.modifiers.shift);
 
         let ruler_captured = self.edit_ruler(ui, &resp, rect, aspect);
 
@@ -75,170 +75,7 @@ impl App {
             ui.ctx()
                 .request_repaint_after(Duration::from_secs_f64(secs));
         }
-        let mut interacting = self.controller_input(ui, rect.height());
-        if press.swallow {
-            // The held press stays put.
-        } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
-            let d =
-                ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
-            self.fly = None;
-            if self.explorer.on_earth() {
-                self.pan(d.x as f64, d.y as f64, rect.height());
-            } else {
-                self.cam.orbit_body(d.x as f64, d.y as f64, rect.height());
-            }
-            interacting = true;
-        } else if !ruler_captured
-            && (resp.dragged_by(PointerButton::Secondary)
-                || (resp.dragged_by(PointerButton::Primary) && shift))
-        {
-            let drag = ui.input(|i| i.pointer.delta());
-            let sensitivity = self.settings.navigation.rotation_sensitivity;
-            self.cam.heading = wrap_lon(
-                self.cam.heading - drag.x as f64 * DRAG_HEADING_DEG_PER_POINT * sensitivity,
-            );
-            // Up and down tilt: dragging up leans the view toward the horizon.
-            if self.explorer.on_earth() {
-                self.cam.tilt_zooming_out(
-                    self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
-                );
-            }
-            interacting = true;
-        }
-        if resp.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta);
-            // Shift+scroll tilts (the system may turn it into a sideways scroll).
-            let tilt_scroll = shift && self.explorer.on_earth();
-            let sc = if tilt_scroll { 0.0 } else { scroll.y as f64 };
-            if tilt_scroll {
-                let amount = if scroll.y != 0.0 { scroll.y } else { scroll.x } as f64;
-                if amount != 0.0 {
-                    self.fly = None;
-                    self.cam
-                        .tilt_zooming_out(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
-                    interacting = true;
-                }
-            }
-            let zd = ui.input(|i| i.zoom_delta()) as f64;
-            let cur = resp.hover_pos();
-            if sc != 0.0 {
-                self.fly = None;
-                let direction = if self.settings.navigation.invert_scroll {
-                    -1.0
-                } else {
-                    1.0
-                };
-                let factor = (-sc
-                    * SCROLL_ZOOM_RATE_PER_POINT
-                    * self.settings.navigation.zoom_sensitivity
-                    * direction)
-                    .exp();
-                if self.explorer.on_earth() {
-                    self.zoom_at(factor, cur, rect, aspect);
-                } else {
-                    self.zoom(factor);
-                }
-                interacting = true;
-            }
-            // Trackpad two-finger rotation turns the map with the fingers, as the
-            // navigator's ring does.
-            let turn = f64::from(ui.input(|i| i.rotation_delta()));
-            if turn != 0.0 {
-                self.fly = None;
-                self.cam.heading = wrap_lon(
-                    self.cam.heading
-                        - turn.to_degrees() * self.settings.navigation.rotation_sensitivity,
-                );
-                interacting = true;
-            }
-            if (zd - 1.0).abs() > PINCH_ZOOM_DEADBAND {
-                self.fly = None;
-                if self.explorer.on_earth() {
-                    self.zoom_at(1.0 / zd, cur, rect, aspect);
-                } else {
-                    self.zoom(1.0 / zd);
-                }
-                interacting = true;
-            }
-        }
-        // The arrow keys move the globe unless they move the focus between controls.
-        if !ui.egui_wants_keyboard_input() && ui.memory(|m| m.focused().is_none()) {
-            let dt = super::frame_timing::animation_delta_secs(ui);
-            let sp = PAN_SPEED_POINTS_PER_SECOND * dt;
-            let (mut dx, mut dy) = (0.0, 0.0);
-            // Shift+Up/Down tilt instead of moving.
-            let tilt_keys = ui.input(|i| i.modifiers.shift) && self.explorer.on_earth();
-            if tilt_keys {
-                let tilt = ui.input(|i| {
-                    f64::from(u8::from(i.key_down(Key::ArrowUp)))
-                        - f64::from(u8::from(i.key_down(Key::ArrowDown)))
-                });
-                if tilt != 0.0 {
-                    self.fly = None;
-                    self.cam
-                        .tilt_zooming_out(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
-                    interacting = true;
-                }
-            }
-            ui.input(|i| {
-                if tilt_keys {
-                    return;
-                }
-                if i.key_down(Key::ArrowLeft) {
-                    dx += sp;
-                }
-                if i.key_down(Key::ArrowRight) {
-                    dx -= sp;
-                }
-                if i.key_down(Key::ArrowUp) {
-                    dy += sp;
-                }
-                if i.key_down(Key::ArrowDown) {
-                    dy -= sp;
-                }
-            });
-            if dx != 0.0 || dy != 0.0 {
-                self.fly = None;
-                if self.explorer.on_earth() {
-                    self.pan(dx, dy, rect.height());
-                } else {
-                    self.cam.orbit_body(dx, dy, rect.height());
-                }
-                interacting = true;
-            }
-            let (zin, zout, north, top_down) = ui.input(|i| {
-                // Plain keys only: with Cmd or Ctrl, + and - zoom the interface itself, and
-                // letters belong to shortcuts. Shift stays allowed for + on keyboards
-                // that need it.
-                let m = i.modifiers;
-                let plain = !(m.command || m.ctrl || m.mac_cmd || m.alt);
-                let letter = plain && !m.shift;
-                (
-                    plain
-                        && (i.key_down(Key::Plus)
-                            || i.key_down(Key::Equals)
-                            || i.key_down(Key::PageUp)),
-                    plain && (i.key_down(Key::Minus) || i.key_down(Key::PageDown)),
-                    letter && i.key_pressed(Key::N),
-                    letter && i.key_pressed(Key::U),
-                )
-            });
-            if top_down {
-                self.run_reporting("camera.topDown", serde_json::json!({}));
-                interacting = true;
-            }
-            if zin {
-                self.zoom((-KEY_ZOOM_RATE_PER_SECOND * dt).exp());
-                interacting = true;
-            }
-            if zout {
-                self.zoom((KEY_ZOOM_RATE_PER_SECOND * dt).exp());
-                interacting = true;
-            }
-            if north {
-                self.run_reporting("camera.resetNorth", serde_json::json!({}));
-            }
-        }
+        let interacting = self.navigation_input(ui, &resp, rect, ruler_captured, press.swallow);
         if interacting || resp.dragged() {
             self.touch();
         }
@@ -410,6 +247,300 @@ impl App {
         if !idle {
             ui.request_repaint();
         }
+        self.pump_warmups(ui, idle, state, h, render_aspect);
+
+        // ── drawing
+        ui.painter_at(viewport)
+            .rect_filled(viewport, 0.0, Color32::BLACK);
+        // Until a matching frame arrives, clip the previous view at its original
+        // size rather than stretching its texture and projected overlays.
+        let painter = ui.painter_at(rect);
+        let fade = self
+            .fade_started
+            .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
+            .filter(|&progress| progress < 1.0);
+        if fade.is_none() {
+            self.fade_started = None;
+        }
+        let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        if let (Some(progress), Some(from)) = (fade, &self.fade_from) {
+            painter.image(from.id(), rect, whole, Color32::WHITE);
+            ui.ctx().request_repaint();
+            if let Some(tex) = &self.texture {
+                // Eased, so the change starts and ends gently.
+                let alpha = progress * progress * (3.0 - 2.0 * progress);
+                painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
+            }
+        } else if let Some(tex) = &self.texture {
+            painter.image(tex.id(), rect, whole, Color32::WHITE);
+        }
+        // The swipe compare: the compare release's frame, right of the split.
+        if let (Some(compare), Some((texture, _))) = (
+            self.active_compare(),
+            self.wayback
+                .compare_texture
+                .as_ref()
+                .filter(|(_, shown)| *shown == compare_release(self)),
+        ) {
+            let x = rect.left() + rect.width() * compare.split;
+            painter
+                .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max))
+                .image(texture.id(), rect, whole, Color32::WHITE);
+        }
+        if !self.explorer.on_earth() {
+            painter.rect_filled(rect, 0.0, Color32::BLACK);
+            if let Some(sky) = self
+                .explorer
+                .sky
+                .as_ref()
+                .filter(|_| self.explorer.active == globecraft_core::body::Body::Custom)
+            {
+                painter.image(sky.id(), rect, whole, Color32::WHITE);
+            }
+            if let Some(body) = self.explorer.active_texture() {
+                draw_planet(
+                    &painter,
+                    rect,
+                    body,
+                    self.cam.lat,
+                    self.cam.lon,
+                    self.cam.alt,
+                );
+            }
+        }
+        // Keep projected borders and labels aligned with the displayed raster
+        // while the coordinator works on the latest camera position.
+        let (display_cam, display_basis) =
+            self.renderer.displayed_view().unwrap_or((self.cam, basis));
+        if self.explorer.on_earth() {
+            self.paint_map_layers(&painter, rect, display_basis, display_cam);
+        }
+
+        // Google Earth style navigation controls (rotate / move / zoom)
+        let dt_nav = super::frame_timing::navigation_delta_secs(ui);
+        if self.nav_controls(ui, rect, dt_nav) {
+            self.touch();
+            ui.request_repaint();
+        }
+        self.timeline_bar(&ui.ctx().clone(), rect);
+        // One card at a time (the last selected; see `close_other_cards`).
+        self.selected_flight_card(&ui.ctx().clone(), rect);
+        if self.layer(MapLayer::Satellites) {
+            self.selected_satellite_card(&ui.ctx().clone(), rect);
+        }
+        self.here_window(&ui.ctx().clone(), rect);
+        self.legend_watch();
+        super::ui::surface::remember_globe_rect(ui.ctx(), rect);
+
+        self.paint_scale_bar(&painter, rect, &display_basis, display_cam);
+        self.compare_split(ui, &painter, rect);
+        let credits = self.map_credits(lg, &display_basis, rect);
+        self.paint_credits(&painter, rect, &credits);
+
+        self.paint_live_map_credit(&painter, rect);
+
+        self.globe_context_menu(ui, &resp, menu_suppressed);
+
+        // auto-rotate (keeps repainting)
+        if self.auto_rotate && self.fly.is_none() && !ruler_captured {
+            let dt = super::frame_timing::animation_delta_secs(ui);
+            self.cam.lon = wrap_lon(self.cam.lon + AUTO_ROTATE_DEG_PER_SECOND * dt);
+            self.touch();
+            ui.request_repaint();
+        }
+    }
+}
+
+impl App {
+    /// Pointer, trackpad, controller and keyboard navigation of the globe: whether the
+    /// view moved. `swallow`: a press held for "What's here?" neither pans nor turns.
+    fn navigation_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        resp: &egui::Response,
+        rect: Rect,
+        ruler_captured: bool,
+        swallow: bool,
+    ) -> bool {
+        let aspect = (rect.width() / rect.height()) as f64;
+        let shift = ui.input(|i| i.modifiers.shift);
+        let mut interacting = self.controller_input(ui, rect.height());
+        if swallow {
+            // The held press stays put.
+        } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
+            let d =
+                ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
+            self.fly = None;
+            if self.explorer.on_earth() {
+                self.pan(d.x as f64, d.y as f64, rect.height());
+            } else {
+                self.cam.orbit_body(d.x as f64, d.y as f64, rect.height());
+            }
+            interacting = true;
+        } else if !ruler_captured
+            && (resp.dragged_by(PointerButton::Secondary)
+                || (resp.dragged_by(PointerButton::Primary) && shift))
+        {
+            let drag = ui.input(|i| i.pointer.delta());
+            let sensitivity = self.settings.navigation.rotation_sensitivity;
+            self.cam.heading = wrap_lon(
+                self.cam.heading - drag.x as f64 * DRAG_HEADING_DEG_PER_POINT * sensitivity,
+            );
+            // Up and down tilt: dragging up leans the view toward the horizon.
+            if self.explorer.on_earth() {
+                self.cam.tilt_zooming_out(
+                    self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
+                );
+            }
+            interacting = true;
+        }
+        if resp.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta);
+            // Shift+scroll tilts (the system may turn it into a sideways scroll).
+            let tilt_scroll = shift && self.explorer.on_earth();
+            let sc = if tilt_scroll { 0.0 } else { scroll.y as f64 };
+            if tilt_scroll {
+                let amount = if scroll.y != 0.0 { scroll.y } else { scroll.x } as f64;
+                if amount != 0.0 {
+                    self.fly = None;
+                    self.cam
+                        .tilt_zooming_out(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
+                    interacting = true;
+                }
+            }
+            let zd = ui.input(|i| i.zoom_delta()) as f64;
+            let cur = resp.hover_pos();
+            if sc != 0.0 {
+                self.fly = None;
+                let direction = if self.settings.navigation.invert_scroll {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let factor = (-sc
+                    * SCROLL_ZOOM_RATE_PER_POINT
+                    * self.settings.navigation.zoom_sensitivity
+                    * direction)
+                    .exp();
+                if self.explorer.on_earth() {
+                    self.zoom_at(factor, cur, rect, aspect);
+                } else {
+                    self.zoom(factor);
+                }
+                interacting = true;
+            }
+            // Trackpad two-finger rotation turns the map with the fingers, as the
+            // navigator's ring does.
+            let turn = f64::from(ui.input(|i| i.rotation_delta()));
+            if turn != 0.0 {
+                self.fly = None;
+                self.cam.heading = wrap_lon(
+                    self.cam.heading
+                        - turn.to_degrees() * self.settings.navigation.rotation_sensitivity,
+                );
+                interacting = true;
+            }
+            if (zd - 1.0).abs() > PINCH_ZOOM_DEADBAND {
+                self.fly = None;
+                if self.explorer.on_earth() {
+                    self.zoom_at(1.0 / zd, cur, rect, aspect);
+                } else {
+                    self.zoom(1.0 / zd);
+                }
+                interacting = true;
+            }
+        }
+        // The arrow keys move the globe unless they move the focus between controls.
+        if !ui.egui_wants_keyboard_input() && ui.memory(|m| m.focused().is_none()) {
+            let dt = super::frame_timing::animation_delta_secs(ui);
+            let sp = PAN_SPEED_POINTS_PER_SECOND * dt;
+            let (mut dx, mut dy) = (0.0, 0.0);
+            // Shift+Up/Down tilt instead of moving.
+            let tilt_keys = ui.input(|i| i.modifiers.shift) && self.explorer.on_earth();
+            if tilt_keys {
+                let tilt = ui.input(|i| {
+                    f64::from(u8::from(i.key_down(Key::ArrowUp)))
+                        - f64::from(u8::from(i.key_down(Key::ArrowDown)))
+                });
+                if tilt != 0.0 {
+                    self.fly = None;
+                    self.cam
+                        .tilt_zooming_out(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
+                    interacting = true;
+                }
+            }
+            ui.input(|i| {
+                if tilt_keys {
+                    return;
+                }
+                if i.key_down(Key::ArrowLeft) {
+                    dx += sp;
+                }
+                if i.key_down(Key::ArrowRight) {
+                    dx -= sp;
+                }
+                if i.key_down(Key::ArrowUp) {
+                    dy += sp;
+                }
+                if i.key_down(Key::ArrowDown) {
+                    dy -= sp;
+                }
+            });
+            if dx != 0.0 || dy != 0.0 {
+                self.fly = None;
+                if self.explorer.on_earth() {
+                    self.pan(dx, dy, rect.height());
+                } else {
+                    self.cam.orbit_body(dx, dy, rect.height());
+                }
+                interacting = true;
+            }
+            let (zin, zout, north, top_down) = ui.input(|i| {
+                // Plain keys only: with Cmd or Ctrl, + and - zoom the interface itself, and
+                // letters belong to shortcuts. Shift stays allowed for + on keyboards
+                // that need it.
+                let m = i.modifiers;
+                let plain = !(m.command || m.ctrl || m.mac_cmd || m.alt);
+                let letter = plain && !m.shift;
+                (
+                    plain
+                        && (i.key_down(Key::Plus)
+                            || i.key_down(Key::Equals)
+                            || i.key_down(Key::PageUp)),
+                    plain && (i.key_down(Key::Minus) || i.key_down(Key::PageDown)),
+                    letter && i.key_pressed(Key::N),
+                    letter && i.key_pressed(Key::U),
+                )
+            });
+            if top_down {
+                self.run_reporting("camera.topDown", serde_json::json!({}));
+                interacting = true;
+            }
+            if zin {
+                self.zoom((-KEY_ZOOM_RATE_PER_SECOND * dt).exp());
+                interacting = true;
+            }
+            if zout {
+                self.zoom((KEY_ZOOM_RATE_PER_SECOND * dt).exp());
+                interacting = true;
+            }
+            if north {
+                self.run_reporting("camera.resetNorth", serde_json::json!({}));
+            }
+        }
+        interacting
+    }
+
+    /// Imagery loaded ahead of need: the overview, a flight's destination and what a zoom
+    /// out will show (see `globecraft_render::zoom_out`).
+    fn pump_warmups(
+        &mut self,
+        ui: &mut egui::Ui,
+        idle: bool,
+        state: u64,
+        h: usize,
+        render_aspect: f64,
+    ) {
         // The frame worker admits visible tiles before becoming idle. Speculative
         // work waits for it, and pauses during interaction/closer zoom/other layers.
         if idle
@@ -481,218 +612,151 @@ impl App {
                 ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
             }
         }
+    }
 
-        // ── drawing
-        ui.painter_at(viewport)
-            .rect_filled(viewport, 0.0, Color32::BLACK);
-        // Until a matching frame arrives, clip the previous view at its original
-        // size rather than stretching its texture and projected overlays.
-        let painter = ui.painter_at(rect);
-        let fade = self
-            .fade_started
-            .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
-            .filter(|&progress| progress < 1.0);
-        if fade.is_none() {
-            self.fade_started = None;
-        }
-        let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-        if let (Some(progress), Some(from)) = (fade, &self.fade_from) {
-            painter.image(from.id(), rect, whole, Color32::WHITE);
-            ui.ctx().request_repaint();
-            if let Some(tex) = &self.texture {
-                // Eased, so the change starts and ends gently.
-                let alpha = progress * progress * (3.0 - 2.0 * progress);
-                painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
-            }
-        } else if let Some(tex) = &self.texture {
-            painter.image(tex.id(), rect, whole, Color32::WHITE);
-        }
-        // The swipe compare: the compare release's frame, right of the split.
-        if let (Some(compare), Some((texture, _))) = (
-            self.active_compare(),
-            self.wayback
-                .compare_texture
-                .as_ref()
-                .filter(|(_, shown)| *shown == compare_release(self)),
-        ) {
-            let x = rect.left() + rect.width() * compare.split;
-            painter
-                .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max))
-                .image(texture.id(), rect, whole, Color32::WHITE);
-        }
-        if !self.explorer.on_earth() {
-            painter.rect_filled(rect, 0.0, Color32::BLACK);
-            if let Some(sky) = self
-                .explorer
-                .sky
-                .as_ref()
-                .filter(|_| self.explorer.active == globecraft_core::body::Body::Custom)
-            {
-                painter.image(sky.id(), rect, whole, Color32::WHITE);
-            }
-            if let Some(body) = self.explorer.active_texture() {
-                draw_planet(
-                    &painter,
-                    rect,
-                    body,
-                    self.cam.lat,
-                    self.cam.lon,
-                    self.cam.alt,
-                );
-            }
-        }
-        // Keep projected borders and labels aligned with the displayed raster
-        // while the coordinator works on the latest camera position.
-        let (display_cam, display_basis) =
-            self.renderer.displayed_view().unwrap_or((self.cam, basis));
-        if self.explorer.on_earth() {
-            // Layers with an opacity (roadmap 6.1) draw through a faded painter.
-            let opacity = self.settings.layers.opacity;
-            let faded = |layer: MapLayer| {
-                let mut faded = painter.clone();
-                faded.multiply_opacity(opacity.get(layer));
-                faded
-            };
-            self.live_maps.draw(
-                &painter,
-                &display_basis,
-                rect,
-                self.layer(MapLayer::Clouds)
-                    .then(|| opacity.get(MapLayer::Clouds)),
-                self.layer(MapLayer::Radar)
-                    .then(|| opacity.get(MapLayer::Radar)),
-            );
-            self.user_layers.draw_rasters(
-                &painter,
-                &display_basis,
-                rect,
-                &self.settings.user_layers,
-            );
-            let live_geometry = if self.layer(MapLayer::Roads)
-                || self.layer(MapLayer::Traffic)
-                || self.layer(MapLayer::Vessels)
-                || self.layer(MapLayer::Satellites)
-                || self.map_data_shown()
-            {
-                let input = self.live_layer_input(
-                    display_basis,
-                    rect,
-                    display_cam,
-                    painter.ctx().pixels_per_point(),
-                );
-                self.live_geometry.update(input)
-            } else {
-                None
-            };
-            self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect);
-            self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
-            self.paint_antarctic_claims(&painter, &display_basis, rect);
-            // All map names share one screen, placed in priority order, each layer
-            // where the ones before it left room (painting keeps its own order):
-            // the markers of the user's data (always drawn), the room of place
-            // names already on screen, places of interest already on screen (a
-            // name once drawn stays while the view zooms), place names, the
-            // user's point names, street names, airports, then new places of
-            // interest.
-            self.user_layers.prepare_features(
-                &painter,
-                &display_basis,
-                rect,
-                &self.settings.user_layers,
-                self.settings.map_scale,
-                &super::user_layers::FeatureTime {
-                    time: self.time,
-                    wall: now_unix(),
-                },
-            );
-            let frame = self.overlay_frame(&painter, &display_basis, rect, display_cam.alt);
-            let mut taken = LabelSpace::default();
-            taken.add(self.user_layers.markers());
-            if let Some(geometry) = &live_geometry {
-                // Place names keep their room even when the places of interest
-                // were projected first, as after a jump. When places of interest
-                // are on screen but none has settled yet, every place name
-                // reserves: this is the first view after the jump, and a
-                // district or city name that was never drawn must still be able
-                // to claim its room.
-                let include_new =
-                    self.poi_shapes.has_shown_name() && !self.poi_shapes.has_settled_name();
-                let remembered = self.reserve_place_names(&painter, frame, &taken, include_new);
-                self.poi_shapes
-                    .prepare_shown(&painter, geometry, &taken.with(&remembered));
-                taken.add(self.poi_shapes.shown_placed());
-            }
-            self.prepare_overlays(&painter, frame, &taken);
-            taken.add(&self.overlay_cache.placed());
-            self.user_layers
-                .prepare_names(&painter, self.settings.map_scale, &taken);
-            taken.add(self.user_layers.placed());
-            // Sea and undersea names where the land's names left room.
-            self.paint_marine_names(&painter, &display_basis, rect, &taken);
-            taken.add(&self.marine_placed);
-            if self.layer(MapLayer::Roads)
-                && let Some(geometry) = &live_geometry
-            {
-                self.roads.draw(
-                    &painter,
-                    geometry,
-                    self.settings.map_scale,
-                    &self.settings.map_style,
-                    &taken,
-                );
-                taken.add(self.roads.placed());
-            }
-            if self.layer(MapLayer::Traffic)
-                && let Some(geometry) = &live_geometry
-            {
-                self.traffic.draw(&faded(MapLayer::Traffic), geometry);
-            }
-            if let Some(geometry) = &live_geometry {
-                let style = self.settings.map_style;
-                self.transport_shapes
-                    .prepare(&painter, geometry, &style, &taken);
-                taken.add(self.transport_shapes.placed());
-                self.poi_shapes.prepare(&painter, geometry, &style, &taken);
-                self.poi_shapes.draw_lines(&painter);
-                self.transport_shapes.draw_lines(&painter);
-            }
-            self.draw_overlays(&painter, &display_basis, rect);
-            if let Some(geometry) = &live_geometry {
-                self.poi_shapes.draw_labels(&painter);
-                self.transport_shapes.draw_airports(&painter);
-                self.transport_shapes.hover(&painter, geometry, self.lang);
-            }
-            self.user_layers.paint_features(&painter);
-            self.user_layers.hover(&painter, rect, self.lang);
-            self.draw_live_layers(
-                &painter,
-                &display_basis,
-                rect,
-                display_cam.alt,
-                live_geometry.as_deref(),
-            );
-            self.draw_tile_diagnostics(&painter, &display_basis, rect);
-        }
-
-        // Google Earth style navigation controls (rotate / move / zoom)
-        let dt_nav = super::frame_timing::navigation_delta_secs(ui);
-        if self.nav_controls(ui, rect, dt_nav) {
-            self.touch();
-            ui.request_repaint();
-        }
-        self.timeline_bar(&ui.ctx().clone(), rect);
-        // One card at a time (the last selected; see `close_other_cards`).
-        self.selected_flight_card(&ui.ctx().clone(), rect);
-        if self.layer(MapLayer::Satellites) {
-            self.selected_satellite_card(&ui.ctx().clone(), rect);
-        }
-        self.here_window(&ui.ctx().clone(), rect);
-        self.legend_watch();
-        super::ui::surface::remember_globe_rect(ui.ctx(), rect);
-
-        // scale bar
-        if let Some(scale_bar) = self.scale_bar_cache.for_view(
+    /// The map's layers over the imagery, in drawing order, with their names placed so
+    /// none overlaps another.
+    fn paint_map_layers(
+        &mut self,
+        painter: &egui::Painter,
+        rect: Rect,
+        display_basis: Basis,
+        display_cam: Cam,
+    ) {
+        // Layers with an opacity (roadmap 6.1) draw through a faded painter.
+        let opacity = self.settings.layers.opacity;
+        let faded = |layer: MapLayer| {
+            let mut faded = painter.clone();
+            faded.multiply_opacity(opacity.get(layer));
+            faded
+        };
+        self.live_maps.draw(
+            painter,
             &display_basis,
+            rect,
+            self.layer(MapLayer::Clouds)
+                .then(|| opacity.get(MapLayer::Clouds)),
+            self.layer(MapLayer::Radar)
+                .then(|| opacity.get(MapLayer::Radar)),
+        );
+        self.user_layers
+            .draw_rasters(painter, &display_basis, rect, &self.settings.user_layers);
+        let live_geometry = if self.layer(MapLayer::Roads)
+            || self.layer(MapLayer::Traffic)
+            || self.layer(MapLayer::Vessels)
+            || self.layer(MapLayer::Satellites)
+            || self.map_data_shown()
+        {
+            let input = self.live_layer_input(
+                display_basis,
+                rect,
+                display_cam,
+                painter.ctx().pixels_per_point(),
+            );
+            self.live_geometry.update(input)
+        } else {
+            None
+        };
+        self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect);
+        self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
+        self.paint_antarctic_claims(painter, &display_basis, rect);
+        // All map names share one screen, placed in priority order, each layer
+        // where the ones before it left room (painting keeps its own order):
+        // the markers of the user's data (always drawn), the room of place
+        // names already on screen, places of interest already on screen (a
+        // name once drawn stays while the view zooms), place names, the
+        // user's point names, street names, airports, then new places of
+        // interest.
+        self.user_layers.prepare_features(
+            painter,
+            &display_basis,
+            rect,
+            &self.settings.user_layers,
+            self.settings.map_scale,
+            &super::user_layers::FeatureTime {
+                time: self.time,
+                wall: now_unix(),
+            },
+        );
+        let frame = self.overlay_frame(painter, &display_basis, rect, display_cam.alt);
+        let mut taken = LabelSpace::default();
+        taken.add(self.user_layers.markers());
+        if let Some(geometry) = &live_geometry {
+            // Place names keep their room even when the places of interest
+            // were projected first, as after a jump. When places of interest
+            // are on screen but none has settled yet, every place name
+            // reserves: this is the first view after the jump, and a
+            // district or city name that was never drawn must still be able
+            // to claim its room.
+            let include_new =
+                self.poi_shapes.has_shown_name() && !self.poi_shapes.has_settled_name();
+            let remembered = self.reserve_place_names(painter, frame, &taken, include_new);
+            self.poi_shapes
+                .prepare_shown(painter, geometry, &taken.with(&remembered));
+            taken.add(self.poi_shapes.shown_placed());
+        }
+        self.prepare_overlays(painter, frame, &taken);
+        taken.add(&self.overlay_cache.placed());
+        self.user_layers
+            .prepare_names(painter, self.settings.map_scale, &taken);
+        taken.add(self.user_layers.placed());
+        // Sea and undersea names where the land's names left room.
+        self.paint_marine_names(painter, &display_basis, rect, &taken);
+        taken.add(&self.marine_placed);
+        if self.layer(MapLayer::Roads)
+            && let Some(geometry) = &live_geometry
+        {
+            self.roads.draw(
+                painter,
+                geometry,
+                self.settings.map_scale,
+                &self.settings.map_style,
+                &taken,
+            );
+            taken.add(self.roads.placed());
+        }
+        if self.layer(MapLayer::Traffic)
+            && let Some(geometry) = &live_geometry
+        {
+            self.traffic.draw(&faded(MapLayer::Traffic), geometry);
+        }
+        if let Some(geometry) = &live_geometry {
+            let style = self.settings.map_style;
+            self.transport_shapes
+                .prepare(painter, geometry, &style, &taken);
+            taken.add(self.transport_shapes.placed());
+            self.poi_shapes.prepare(painter, geometry, &style, &taken);
+            self.poi_shapes.draw_lines(painter);
+            self.transport_shapes.draw_lines(painter);
+        }
+        self.draw_overlays(painter, &display_basis, rect);
+        if let Some(geometry) = &live_geometry {
+            self.poi_shapes.draw_labels(painter);
+            self.transport_shapes.draw_airports(painter);
+            self.transport_shapes.hover(painter, geometry, self.lang);
+        }
+        self.user_layers.paint_features(painter);
+        self.user_layers.hover(painter, rect, self.lang);
+        self.draw_live_layers(
+            painter,
+            &display_basis,
+            rect,
+            display_cam.alt,
+            live_geometry.as_deref(),
+        );
+        self.draw_tile_diagnostics(painter, &display_basis, rect);
+    }
+
+    /// The scale bar at the bottom left.
+    fn paint_scale_bar(
+        &mut self,
+        painter: &egui::Painter,
+        rect: Rect,
+        display_basis: &Basis,
+        display_cam: Cam,
+    ) {
+        if let Some(scale_bar) = self.scale_bar_cache.for_view(
+            display_basis,
             rect,
             display_cam.alt,
             self.distance_units(),
@@ -717,10 +781,11 @@ impl App {
                 Color32::WHITE,
             );
         }
-        self.compare_split(ui, &painter, rect);
-        let credits = self.map_credits(lg, &display_basis, rect);
-        self.paint_credits(&painter, rect, &credits);
+    }
 
+    /// The source and credit of the cloud and radar layers, when either is shown.
+    fn paint_live_map_credit(&self, painter: &egui::Painter, rect: Rect) {
+        let lg = self.lang;
         if self.explorer.on_earth() && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))
         {
             let source = self.live_maps.status(
@@ -747,8 +812,16 @@ impl App {
                 Color32::WHITE,
             );
         }
+    }
 
-        // Context menu (right-click): every entry is a command at the picked position.
+    /// The right-click menu: every entry is a command at the picked position.
+    fn globe_context_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        resp: &egui::Response,
+        menu_suppressed: bool,
+    ) {
+        let lg = self.lang;
         let pick = self.menu_pick;
         let mut chosen: Option<(&str, serde_json::Value)> = None;
         let show_menu = |ui: &mut egui::Ui| match pick {
@@ -799,14 +872,6 @@ impl App {
             }
             (Some((id, params)), _) => self.run_reporting(id, params),
             _ => {}
-        }
-
-        // auto-rotate (keeps repainting)
-        if self.auto_rotate && self.fly.is_none() && !ruler_captured {
-            let dt = super::frame_timing::animation_delta_secs(ui);
-            self.cam.lon = wrap_lon(self.cam.lon + AUTO_ROTATE_DEG_PER_SECOND * dt);
-            self.touch();
-            ui.request_repaint();
         }
     }
 }
