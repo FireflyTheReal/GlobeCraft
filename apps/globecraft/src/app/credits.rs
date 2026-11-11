@@ -5,7 +5,7 @@
 use super::App;
 use super::globe::OSM_TILES_CREDIT;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect};
-use globecraft_core::{body::Body, camera::Basis, language::Lang, layers::MapLayer};
+use globecraft_core::{camera::Basis, language::Lang, layers::MapLayer};
 use globecraft_data::tiles::Provider;
 
 const SEPARATOR: &str = " · ";
@@ -59,7 +59,7 @@ impl App {
             );
         }
         credits.push(base);
-        let earth = self.explorer.active == Body::Earth;
+        let earth = self.explorer.on_earth();
         if self.layer(MapLayer::NightLights) {
             credits.push(self.night_lights_credit(lg));
         }

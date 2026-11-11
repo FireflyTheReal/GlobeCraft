@@ -30,6 +30,10 @@ pub(super) struct Explorer {
 }
 
 impl Explorer {
+    /// Whether the globe shows the Earth (not the Moon or a custom planet).
+    pub(super) fn on_earth(&self) -> bool {
+        self.active == Body::Earth
+    }
     pub fn choose(&mut self, body: Body, jobs: &FileJobs) {
         self.active = body;
         self.activate_on_completion = false;

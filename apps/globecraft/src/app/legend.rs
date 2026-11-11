@@ -146,8 +146,7 @@ fn swatch(ui: &mut egui::Ui, colour: Color32, text: &str) {
 impl App {
     /// The colour keys of what is on the globe now.
     pub(super) fn legend_kinds(&self) -> Vec<LegendKind> {
-        let earth =
-            self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
+        let earth = self.earth_shown();
         if !earth {
             return Vec::new();
         }

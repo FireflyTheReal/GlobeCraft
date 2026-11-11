@@ -288,7 +288,7 @@ impl App {
                     // elevation tile is requested under the cursor (about 40 km wide at
                     // level 10, so moving the pointer loads few). Padded so the readouts
                     // after it hold still.
-                    if self.explorer.active == globecraft_core::body::Body::Earth {
+                    if self.explorer.on_earth() {
                         let metres = self.cursor.and_then(|(lat, lon)| {
                             if self.terrain_active() {
                                 self.cache.loaded_elevation_m(

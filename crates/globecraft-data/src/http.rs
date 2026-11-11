@@ -117,7 +117,10 @@ async fn read_limited(
     mut response: reqwest::Response,
     limit: u64,
 ) -> Result<Vec<u8>, crate::Error> {
-    if response.content_length().is_some_and(|length| length > limit) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit)
+    {
         return Err(crate::Error::TooLarge { limit });
     }
     let mut bytes = Vec::new();

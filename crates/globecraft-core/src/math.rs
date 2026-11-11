@@ -76,15 +76,18 @@ pub fn great_circle(a: (f64, f64), b: (f64, f64), n: usize) -> Vec<DVec3> {
         })
         .collect()
 }
+/// Below this a distance rounds to fewer than 1,000 m and shows in metres; from it, in
+/// kilometres (999.6 m reads 1.00 km, not 1000 m).
+const METRES_DISPLAY_LIMIT_KM: f64 = 0.9995;
 pub fn fmt_dist(km: f64) -> String {
-    if km < 1.0 {
+    if km < METRES_DISPLAY_LIMIT_KM {
         format!("{:.0} m", km * METERS_PER_KM)
     } else {
         format!("{:.2} km", km)
     }
 }
 pub fn fmt_alt(km: f64) -> String {
-    if km < 1.0 {
+    if km < METRES_DISPLAY_LIMIT_KM {
         format!("{:.0} m", km * METERS_PER_KM)
     } else {
         format!("{:.0} km", km)
@@ -93,7 +96,7 @@ pub fn fmt_alt(km: f64) -> String {
 
 /// Approximate subsolar point (lat, lon) for the given Unix time.
 pub fn subsolar(unix: f64) -> (f64, f64) {
-    let n = unix / SECONDS_PER_DAY - UNIX_EPOCH_TO_J2000_DAYS; // Days since J2000 / dias desde J2000
+    let n = unix / SECONDS_PER_DAY - UNIX_EPOCH_TO_J2000_DAYS; // Days since J2000
     let l = (MEAN_LONGITUDE_AT_J2000_DEG + MEAN_LONGITUDE_RATE_DEG_PER_DAY * n).rem_euclid(360.0);
     let g = (MEAN_ANOMALY_AT_J2000_DEG + MEAN_ANOMALY_RATE_DEG_PER_DAY * n)
         .rem_euclid(360.0)

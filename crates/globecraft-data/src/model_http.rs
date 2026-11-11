@@ -83,7 +83,7 @@ fn client() -> Result<reqwest::Client, reqwest::Error> {
 
 fn failure(error: &reqwest::Error) -> ModelFailure {
     // Never include the URL: some providers carry keys in query strings.
-    let text = error.without_url_ref().to_string();
+    let text = redact_url(error);
     if error.is_timeout() {
         ModelFailure::Timeout(text)
     } else if error.is_connect() || error.is_request() {
@@ -93,16 +93,12 @@ fn failure(error: &reqwest::Error) -> ModelFailure {
     }
 }
 
-trait WithoutUrl {
-    fn without_url_ref(&self) -> String;
-}
-impl WithoutUrl for reqwest::Error {
-    fn without_url_ref(&self) -> String {
-        let mut text = self.to_string();
-        if let Some(url) = self.url() {
-            text = text.replace(url.as_str(), "<provider>");
-        }
-        text
+/// The error's text with its address replaced by `<provider>`.
+fn redact_url(error: &reqwest::Error) -> String {
+    let text = error.to_string();
+    match error.url() {
+        Some(url) => text.replace(url.as_str(), "<provider>"),
+        None => text,
     }
 }
 

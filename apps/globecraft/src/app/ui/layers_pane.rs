@@ -329,7 +329,7 @@ impl App {
     pub(in crate::app) fn layers_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
-        let earth = self.explorer.active == globecraft_core::body::Body::Earth;
+        let earth = self.explorer.on_earth();
         let raw_query = self.layers_ui.query.clone();
         let query = fold_name(&raw_query);
         let active_only = self.layers_ui.active_only;

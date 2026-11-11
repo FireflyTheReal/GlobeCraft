@@ -79,10 +79,9 @@ pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error
         .await?;
         let (value, bytes) = parsed?;
         let kept = path.clone();
-        let written = tokio::task::spawn_blocking(move || {
-            crate::paths::write_atomic(&kept, &bytes, false)
-        })
-        .await?;
+        let written =
+            tokio::task::spawn_blocking(move || crate::paths::write_atomic(&kept, &bytes, false))
+                .await?;
         if let Err(error) = written {
             // The list still applies; only a start without a connection loses it.
             eprintln!("Could not keep the Wayback release list: {error}");

@@ -15,7 +15,7 @@ impl App {
         rect: Rect,
         aspect: f64,
     ) -> bool {
-        if !self.measure.on || self.explorer.active != globecraft_core::body::Body::Earth {
+        if !self.measure.on || !self.explorer.on_earth() {
             self.measure.paths.end_move();
             self.measure.drag = None;
             return false;

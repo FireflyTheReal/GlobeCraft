@@ -15,7 +15,13 @@ use globecraft_core::language::Lang;
 /// `GlobeCraft/<version> (<purpose>)`: every agent names the running version.
 macro_rules! user_agent {
     ($purpose:literal) => {
-        concat!("GlobeCraft/", env!("CARGO_PKG_VERSION"), " (", $purpose, ")")
+        concat!(
+            "GlobeCraft/",
+            env!("CARGO_PKG_VERSION"),
+            " (",
+            $purpose,
+            ")"
+        )
     };
 }
 pub const TILE_USER_AGENT: &str =
@@ -28,7 +34,8 @@ pub(crate) const SUGGEST_USER_AGENT: &str = user_agent!("search suggestions");
 pub(crate) const CLOUD_USER_AGENT: &str = user_agent!("attribution: Matt Eason, EUMETSAT");
 pub(crate) const RADAR_USER_AGENT: &str = user_agent!("radar viewer");
 pub(crate) const TRAFFIC_USER_AGENT: &str = user_agent!("traffic; TomTom");
-pub(crate) const AIRCRAFT_USER_AGENT: &str = user_agent!("live aircraft viewer; OpenSky / ADSB.lol");
+pub(crate) const AIRCRAFT_USER_AGENT: &str =
+    user_agent!("live aircraft viewer; OpenSky / ADSB.lol");
 pub(crate) const VESSELS_USER_AGENT: &str =
     user_agent!("live vessel viewer; OpenSeaFeed / Digitraffic");
 pub(crate) const AURORA_USER_AGENT: &str = user_agent!("aurora forecast; NOAA SWPC");

@@ -100,7 +100,11 @@ pub fn save_kml(path: &str, places: &Places) -> Result<(), crate::Error> {
     } else {
         bytes
     };
-    Ok(crate::paths::write_atomic(std::path::Path::new(path), &bytes, false)?)
+    Ok(crate::paths::write_atomic(
+        std::path::Path::new(path),
+        &bytes,
+        false,
+    )?)
 }
 fn metadata(elements: &[Kml<f64>], field: &str) -> Option<String> {
     elements.iter().find_map(|entry| match entry {

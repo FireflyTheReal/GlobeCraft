@@ -340,7 +340,8 @@ impl App {
                 &mut self.cam,
                 dt,
                 height_points,
-                (self.explorer.active == globecraft_core::body::Body::Earth)
+                self.explorer
+                    .on_earth()
                     .then_some(self.settings.earth_model),
             );
             return true;

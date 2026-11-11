@@ -204,6 +204,9 @@ mod tests {
             "2640 ft"
         );
         assert_eq!(DistanceUnits::Metric.distance(1.5), "1.50 km");
+        // A distance that would round to 1000 m shows in kilometres.
+        assert_eq!(DistanceUnits::Metric.distance(0.9996), "1.00 km");
+        assert_eq!(DistanceUnits::Metric.distance(0.9994), "999 m");
         assert_eq!(DistanceUnits::Metric.altitude(14000.0), "14000 km");
         assert_eq!(
             DistanceUnits::Imperial.scale_label(KM_PER_MILE * METERS_PER_KM),

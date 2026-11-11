@@ -169,9 +169,9 @@ fn is_local_host(host: &str) -> bool {
             let last = host.rsplit('.').next().unwrap_or(host);
             !last.is_empty()
                 && (last.bytes().all(|b| b.is_ascii_digit())
-                    || last.strip_prefix("0x").is_some_and(|hex| {
-                        hex.bytes().all(|b| b.is_ascii_hexdigit())
-                    }))
+                    || last
+                        .strip_prefix("0x")
+                        .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit())))
         }
     }
 }
@@ -473,7 +473,13 @@ mod tests {
         ] {
             assert!(is_local_host(host), "{host}");
         }
-        for host in ["example.org", "8.8.8.8", "2001:4860::8888", "cafe.de", "1.example"] {
+        for host in [
+            "example.org",
+            "8.8.8.8",
+            "2001:4860::8888",
+            "cafe.de",
+            "1.example",
+        ] {
             assert!(!is_local_host(host), "{host}");
         }
     }

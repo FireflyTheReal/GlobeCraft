@@ -90,6 +90,28 @@ pub(crate) use update_restart::RestartRequest;
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
 const PAN_SPEED_POINTS_PER_SECOND: f64 = 350.0;
 const BOUNDARY_POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// Live services refresh only while the interface runs: this heartbeat keeps them
+/// going while one is shown, so they do not wait for the user to move.
+const LIVE_SERVICE_HEARTBEAT: Duration = Duration::from_secs(30);
+/// The ground radius asked for live aircraft: half the view's diagonal on the ground (a
+/// 16:10 window's half diagonal is about 1.89 times its half height) ...
+const AIRCRAFT_QUERY_HALF_DIAGONAL_RATIO: f64 = 1.89;
+/// ... longer when tilted, by one more radius per this many degrees of tilt ...
+const AIRCRAFT_QUERY_TILT_STEP_DEG: f64 = 45.0;
+/// ... and never more than this.
+const AIRCRAFT_QUERY_MAX_RADIUS_KM: f64 = 2500.0;
+
+/// egui's theme for the saved choice.
+fn egui_theme(
+    theme: globecraft_data::settings::appearance::ThemePreference,
+) -> egui::ThemePreference {
+    use globecraft_data::settings::appearance::ThemePreference;
+    match theme {
+        ThemePreference::System => egui::ThemePreference::System,
+        ThemePreference::Dark => egui::ThemePreference::Dark,
+        ThemePreference::Light => egui::ThemePreference::Light,
+    }
+}
 
 type SuggestionResponse = (String, Result<Vec<Suggestion>, globecraft_data::Error>);
 
@@ -265,7 +287,10 @@ pub(crate) struct App {
 }
 
 impl App {
-    /// Whether a map layer is shown (its own switch; parents are checked by callers that care).
+    /// Whether the Earth is on screen as a globe (not another body, not the flat map).
+    pub(super) fn earth_shown(&self) -> bool {
+        self.explorer.on_earth() && !self.flat_earth.open
+    }
     /// Whether any layer draws from the border tiles (borders or place names).
     pub(super) fn uses_border_tiles(&self) -> bool {
         self.layer(MapLayer::CountryBorders)
@@ -285,14 +310,13 @@ impl App {
                 )
         })
     }
+    /// Whether a map layer is shown: its own switch and, for a refinement (grid labels),
+    /// its parent's too.
     pub(crate) fn layer(&self, layer: MapLayer) -> bool {
-        match layer {
-            // Refinements draw only with their parent.
-            MapLayer::GridLabels | MapLayer::CinematicSky => {
-                self.settings.visible_layers().effective(layer)
-            }
-            _ => self.settings.layer_visible(layer),
-        }
+        self.settings.layer_visible(layer)
+            && layer
+                .parent()
+                .is_none_or(|parent| self.settings.layer_visible(parent))
     }
     fn distance_units(&self) -> globecraft_core::units::DistanceUnits {
         self.settings.distance_units.resolve(self.system_units)
@@ -627,9 +651,8 @@ impl eframe::App for App {
         }
         self.updater.start_once();
         self.updater.poll();
-        let aircraft_enabled = self.layer(MapLayer::Flights)
-            && self.explorer.active == globecraft_core::body::Body::Earth
-            && !self.flat_earth.open;
+        let aircraft_enabled =
+            self.layer(MapLayer::Flights) && self.explorer.on_earth() && !self.flat_earth.open;
         self.live_aircraft
             .update(globecraft_data::aircraft::AircraftQuery {
                 enabled: aircraft_enabled,
@@ -640,17 +663,16 @@ impl eframe::App for App {
                 // when tilted towards the horizon.
                 radius_km: (self.cam.alt
                     * globecraft_core::VERTICAL_FOV_HALF_TAN
-                    * 1.89
-                    * (1.0 + self.cam.tilt.max(0.0) / 45.0))
-                    .min(2500.0),
+                    * AIRCRAFT_QUERY_HALF_DIAGONAL_RATIO
+                    * (1.0 + self.cam.tilt.max(0.0) / AIRCRAFT_QUERY_TILT_STEP_DEG))
+                    .min(AIRCRAFT_QUERY_MAX_RADIUS_KM),
             });
         if aircraft_enabled {
             ctx.request_repaint_after(live_layers::FLIGHT_REPAINT_INTERVAL);
         }
         self.update_selected_flight(ctx, aircraft_enabled);
         // Independent realtime layers, loaded only for the globe while enabled.
-        let earth =
-            self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
+        let earth = self.earth_shown();
         let vessel_wake = ctx.clone();
         self.live_vessels.update(
             &self.runtime,
@@ -758,7 +780,7 @@ impl eframe::App for App {
                 || self.layer(MapLayer::Aurora)
                 || self.user_layers_refresh())
         {
-            ctx.request_repaint_after(Duration::from_secs(30));
+            ctx.request_repaint_after(LIVE_SERVICE_HEARTBEAT);
         }
         self.poll_files(ctx);
         self.poll_assistant();
@@ -794,17 +816,7 @@ impl eframe::App for App {
             self.overlay_cache.font_atlas_reset();
         }
         self.font_atlas_fill = atlas_fill;
-        ui.set_theme(match self.settings.appearance.theme {
-            globecraft_data::settings::appearance::ThemePreference::System => {
-                egui::ThemePreference::System
-            }
-            globecraft_data::settings::appearance::ThemePreference::Dark => {
-                egui::ThemePreference::Dark
-            }
-            globecraft_data::settings::appearance::ThemePreference::Light => {
-                egui::ThemePreference::Light
-            }
-        });
+        ui.set_theme(egui_theme(self.settings.appearance.theme));
         let dt = frame_timing::animation_delta_secs(ui);
         if self
             .styled_scale
@@ -869,8 +881,7 @@ impl eframe::App for App {
         );
         #[cfg(feature = "profiling")]
         watchdog.checkpoint("ui.slow.boundary");
-        let earth_visible =
-            self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
+        let earth_visible = self.earth_shown();
         // The vector sets (transport, roads, places, points of interest) keep their
         // tiles on disk under the same limit as the border tiles, each.
         globecraft_data::vector_tiles::set_disk_cache_limit(self.settings.cache.border_bytes());

@@ -88,8 +88,13 @@ pub fn fill(text: &str) -> Result<String, crate::Error> {
     if !text.contains("{key:") {
         return Ok(text.to_owned());
     }
-    let host = crate::network::host_of_url(text)
-        .map(|authority| authority.split(':').next().unwrap_or(authority).to_ascii_lowercase());
+    let host = crate::network::host_of_url(text).map(|authority| {
+        authority
+            .split(':')
+            .next()
+            .unwrap_or(authority)
+            .to_ascii_lowercase()
+    });
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("{key:") {

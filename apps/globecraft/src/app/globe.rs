@@ -36,6 +36,21 @@ const IDLE_RENDER_DELAY: Duration = Duration::from_millis(250);
 const OVERVIEW_WARMUP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 impl App {
+    /// The imagery source a tile warmup loads, with the releases on screen: the shown
+    /// Wayback release (0 for other sources) and the swipe compare's, if any.
+    fn warmup_releases(&self) -> (Provider, Vec<u16>) {
+        let provider = self.effective_provider();
+        let mut releases = vec![if provider == Provider::Wayback {
+            self.wayback.index as u16
+        } else {
+            0
+        }];
+        if let Some(compare) = self.active_compare() {
+            releases.push(compare.index as u16);
+        }
+        (provider, releases)
+    }
+
     pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         let viewport = ui.available_rect_before_wrap();
@@ -67,7 +82,7 @@ impl App {
             let d =
                 ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
             self.fly = None;
-            if self.explorer.active == globecraft_core::body::Body::Earth {
+            if self.explorer.on_earth() {
                 self.pan(d.x as f64, d.y as f64, rect.height());
             } else {
                 self.cam.orbit_body(d.x as f64, d.y as f64, rect.height());
@@ -83,7 +98,7 @@ impl App {
                 self.cam.heading - drag.x as f64 * DRAG_HEADING_DEG_PER_POINT * sensitivity,
             );
             // Up and down tilt: dragging up leans the view toward the horizon.
-            if self.explorer.active == globecraft_core::body::Body::Earth {
+            if self.explorer.on_earth() {
                 self.cam.tilt_zooming_out(
                     self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
                 );
@@ -93,7 +108,7 @@ impl App {
         if resp.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
             // Shift+scroll tilts (the system may turn it into a sideways scroll).
-            let tilt_scroll = shift && self.explorer.active == globecraft_core::body::Body::Earth;
+            let tilt_scroll = shift && self.explorer.on_earth();
             let sc = if tilt_scroll { 0.0 } else { scroll.y as f64 };
             if tilt_scroll {
                 let amount = if scroll.y != 0.0 { scroll.y } else { scroll.x } as f64;
@@ -118,7 +133,7 @@ impl App {
                     * self.settings.navigation.zoom_sensitivity
                     * direction)
                     .exp();
-                if self.explorer.active == globecraft_core::body::Body::Earth {
+                if self.explorer.on_earth() {
                     self.zoom_at(factor, cur, rect, aspect);
                 } else {
                     self.zoom(factor);
@@ -138,7 +153,7 @@ impl App {
             }
             if (zd - 1.0).abs() > PINCH_ZOOM_DEADBAND {
                 self.fly = None;
-                if self.explorer.active == globecraft_core::body::Body::Earth {
+                if self.explorer.on_earth() {
                     self.zoom_at(1.0 / zd, cur, rect, aspect);
                 } else {
                     self.zoom(1.0 / zd);
@@ -152,8 +167,7 @@ impl App {
             let sp = PAN_SPEED_POINTS_PER_SECOND * dt;
             let (mut dx, mut dy) = (0.0, 0.0);
             // Shift+Up/Down tilt instead of moving.
-            let tilt_keys = ui.input(|i| i.modifiers.shift)
-                && self.explorer.active == globecraft_core::body::Body::Earth;
+            let tilt_keys = ui.input(|i| i.modifiers.shift) && self.explorer.on_earth();
             if tilt_keys {
                 let tilt = ui.input(|i| {
                     f64::from(u8::from(i.key_down(Key::ArrowUp)))
@@ -185,7 +199,7 @@ impl App {
             });
             if dx != 0.0 || dy != 0.0 {
                 self.fly = None;
-                if self.explorer.active == globecraft_core::body::Body::Earth {
+                if self.explorer.on_earth() {
                     self.pan(dx, dy, rect.height());
                 } else {
                     self.cam.orbit_body(dx, dy, rect.height());
@@ -423,15 +437,7 @@ impl App {
                     .as_ref()
                     .is_none_or(|(listed, _)| *listed != listed_for)
                 {
-                    let provider = self.effective_provider();
-                    let mut releases = vec![if provider == Provider::Wayback {
-                        self.wayback.index as u16
-                    } else {
-                        0
-                    }];
-                    if let Some(compare) = self.active_compare() {
-                        releases.push(compare.index as u16);
-                    }
+                    let (provider, releases) = self.warmup_releases();
                     let keys = globecraft_render::zoom_out::arrival_tiles(
                         destination,
                         h,
@@ -458,15 +464,7 @@ impl App {
                 .as_ref()
                 .is_none_or(|(view, _)| *view != state)
             {
-                let provider = self.effective_provider();
-                let mut releases = vec![if provider == Provider::Wayback {
-                    self.wayback.index as u16
-                } else {
-                    0
-                }];
-                if let Some(compare) = self.active_compare() {
-                    releases.push(compare.index as u16);
-                }
+                let (provider, releases) = self.warmup_releases();
                 let keys = globecraft_render::zoom_out::zoom_out_tiles(
                     self.cam,
                     h,
@@ -520,14 +518,9 @@ impl App {
             let x = rect.left() + rect.width() * compare.split;
             painter
                 .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max))
-                .image(
-                    texture.id(),
-                    rect,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                .image(texture.id(), rect, whole, Color32::WHITE);
         }
-        if self.explorer.active != globecraft_core::body::Body::Earth {
+        if !self.explorer.on_earth() {
             painter.rect_filled(rect, 0.0, Color32::BLACK);
             if let Some(sky) = self
                 .explorer
@@ -535,12 +528,7 @@ impl App {
                 .as_ref()
                 .filter(|_| self.explorer.active == globecraft_core::body::Body::Custom)
             {
-                painter.image(
-                    sky.id(),
-                    rect,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                painter.image(sky.id(), rect, whole, Color32::WHITE);
             }
             if let Some(body) = self.explorer.active_texture() {
                 draw_planet(
@@ -557,7 +545,7 @@ impl App {
         // while the coordinator works on the latest camera position.
         let (display_cam, display_basis) =
             self.renderer.displayed_view().unwrap_or((self.cam, basis));
-        if self.explorer.active == globecraft_core::body::Body::Earth {
+        if self.explorer.on_earth() {
             // Layers with an opacity (roadmap 6.1) draw through a faded painter.
             let opacity = self.settings.layers.opacity;
             let faded = |layer: MapLayer| {
@@ -641,7 +629,7 @@ impl App {
             taken.add(self.user_layers.placed());
             // Sea and undersea names where the land's names left room.
             self.paint_marine_names(&painter, &display_basis, rect, &taken);
-            taken.add(&self.marine_placed.clone());
+            taken.add(&self.marine_placed);
             if self.layer(MapLayer::Roads)
                 && let Some(geometry) = &live_geometry
             {
@@ -733,8 +721,7 @@ impl App {
         let credits = self.map_credits(lg, &display_basis, rect);
         self.paint_credits(&painter, rect, &credits);
 
-        if self.explorer.active == globecraft_core::body::Body::Earth
-            && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))
+        if self.explorer.on_earth() && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))
         {
             let source = self.live_maps.status(
                 self.layer(MapLayer::Clouds),

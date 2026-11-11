@@ -314,8 +314,7 @@ impl App {
             lod_scale,
             level_blend: true,
             fixed_level: None,
-            night_lights: (self.layer(MapLayer::NightLights)
-                && self.explorer.active == globecraft_core::body::Body::Earth)
+            night_lights: (self.layer(MapLayer::NightLights) && self.explorer.on_earth())
                 .then(|| self.night_lights_edition()),
             stars: self.layer(MapLayer::Stars),
         }
@@ -355,8 +354,7 @@ impl App {
             cfg,
             compare,
             presentation,
-            aircraft: (self.layer(MapLayer::Flights)
-                && self.explorer.active == globecraft_core::body::Body::Earth)
+            aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
                 .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
             live_layers: (self.layer(MapLayer::Roads)
                 || self.layer(MapLayer::Traffic)

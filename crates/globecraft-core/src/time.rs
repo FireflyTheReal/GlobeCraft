@@ -226,7 +226,10 @@ mod tests {
         assert_eq!(parse_iso("2026-11-04T09:38:00.5"), Some(WALL + 0.5));
         assert_eq!(parse_iso("yesterday"), None);
         assert_eq!(parse_iso("2026-13-01"), None);
-        assert_eq!(parse_iso("2026-11-04T09:38-02:30"), Some(WALL + 2.5 * HOUR_SECS));
+        assert_eq!(
+            parse_iso("2026-11-04T09:38-02:30"),
+            Some(WALL + 2.5 * HOUR_SECS)
+        );
         // Text from a user's file: no panic on characters of several bytes, wherever they are.
         for odd in [
             "2026-11-04T09:38é1234",

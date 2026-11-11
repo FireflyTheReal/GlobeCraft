@@ -2,9 +2,7 @@ use crate::app::App;
 use eframe::egui;
 impl App {
     pub(in crate::app) fn sky_ready(&self) -> bool {
-        self.settings.sky.enabled
-            && self.sky.image.is_some()
-            && self.explorer.active == globecraft_core::body::Body::Earth
+        self.settings.sky.enabled && self.sky.image.is_some() && self.explorer.on_earth()
     }
     pub(super) fn settings_sky(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
