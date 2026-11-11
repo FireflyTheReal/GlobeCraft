@@ -57,8 +57,14 @@ impl UnitPreference {
         }
     }
 }
+/// The settings file format. Raise it when a release changes what a saved value means,
+/// and teach [`migrate`] to bring older files forward.
+pub const SETTINGS_VERSION: u64 = 1;
+
 #[derive(Clone, PartialEq, Serialize)]
 pub struct Settings {
+    /// Always [`SETTINGS_VERSION`] once loaded; files without one are version 0.
+    pub version: u64,
     pub sky: sky::SkyPreferences,
     pub controllers: controllers::ControllerPreferences,
     pub appearance: appearance::AppearancePreferences,
@@ -115,6 +121,7 @@ fn serialize_ruler_unit<S: serde::Serializer>(
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            version: SETTINGS_VERSION,
             sky: sky::SkyPreferences::default(),
             controllers: controllers::ControllerPreferences::default(),
             appearance: appearance::AppearancePreferences::default(),
@@ -150,6 +157,26 @@ impl Default for Settings {
 /// the shipped default and a sane clamp ceiling for the Layers panel input.
 pub const STATE_MAX_ALTITUDE_DEFAULT_KM: f64 = 1_609.0;
 pub const STATE_MAX_ALTITUDE_MAX_KM: f64 = 8_000.0;
+
+/// Brings a settings file written by an older version to [`SETTINGS_VERSION`], in place.
+/// Fields a version renamed or whose meaning changed are rewritten here, so the readers
+/// below only know the current format.
+fn migrate(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    let version = map
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if version < 1 {
+        // Version 0 files without a level were written before levels existed: they
+        // keep showing everything.
+        map.entry("experience")
+            .or_insert_with(|| serde_json::Value::from("advanced"));
+    }
+    map.insert("version".to_owned(), SETTINGS_VERSION.into());
+}
 
 fn settings_file() -> PathBuf {
     config_dir().join("settings.json")
@@ -202,13 +229,16 @@ struct SettingsInput {
 }
 impl Settings {
     fn apply_json(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
-        let input: SettingsInput = serde_json::from_slice(bytes)?;
-        // A file without a level was written before it existed: show everything.
-        self.experience = input
+        let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
+        migrate(&mut value);
+        let input: SettingsInput = serde_json::from_value(value)?;
+        if let Some(level) = input
             .experience
             .as_deref()
             .and_then(experience::ExperienceLevel::from_code)
-            .unwrap_or(experience::ExperienceLevel::Advanced);
+        {
+            self.experience = level;
+        }
         if let Some(value) = input.sky {
             self.sky.apply(&value);
         }
@@ -540,6 +570,13 @@ mod tests {
             .apply_json(&serde_json::to_vec(&Settings::default()).unwrap())
             .unwrap();
         assert_eq!(restored.experience, ExperienceLevel::Basic);
+        // From version 1 on, a missing level is the default, not the version 0 rule.
+        let mut current = Settings::default();
+        current
+            .apply_json(br#"{"version": 1, "ui_scale": 1.2}"#)
+            .unwrap();
+        assert_eq!(current.experience, ExperienceLevel::Basic);
+        assert_eq!(current.version, SETTINGS_VERSION);
     }
     #[test]
     fn layer_visibility_uses_one_field_per_layer() {
@@ -730,6 +767,7 @@ mod tests {
     #[test]
     fn partial_invalid_settings_preserve_valid_fields_and_clamping() {
         let mut settings = Settings {
+            version: SETTINGS_VERSION,
             sky: sky::SkyPreferences::default(),
             controllers: controllers::ControllerPreferences::default(),
             appearance: appearance::AppearancePreferences::default(),
