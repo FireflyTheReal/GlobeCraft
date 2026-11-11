@@ -476,10 +476,12 @@ mod tests {
     }
     #[test]
     fn exported_settings_import_and_other_files_are_refused() {
-        let mut settings = Settings::default();
-        settings.ui_scale = 1.4;
-        settings.offline = true;
-        settings.kml_dir = "elsewhere".into();
+        let settings = Settings {
+            ui_scale: 1.4,
+            offline: true,
+            kml_dir: "elsewhere".into(),
+            ..Settings::default()
+        };
         let imported = Settings::import(&settings.export().unwrap()).unwrap();
         assert!(imported.ui_scale == 1.4 && imported.offline && imported.kml_dir == "elsewhere");
         for other in [
