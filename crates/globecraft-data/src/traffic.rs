@@ -59,9 +59,7 @@ impl TrafficTiles {
 pub struct TrafficQuery<'a> {
     pub enabled: bool,
     pub key: &'a str,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub altitude_km: f64,
+    pub view: crate::ViewQuery,
 }
 
 #[derive(Default)]
@@ -116,13 +114,8 @@ impl LiveTraffic {
         query: TrafficQuery<'_>,
         repaint: impl Fn() + Send + Sync + 'static,
     ) {
-        let TrafficQuery {
-            enabled,
-            key,
-            latitude: lat,
-            longitude: lon,
-            altitude_km: alt,
-        } = query;
+        let TrafficQuery { enabled, key, view } = query;
+        let (lat, lon, alt) = (view.latitude, view.longitude, view.altitude_km);
         let key = key.trim();
         self.set_key(key);
         self.poll(key);

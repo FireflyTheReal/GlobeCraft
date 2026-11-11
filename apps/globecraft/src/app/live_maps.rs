@@ -19,9 +19,8 @@ impl LiveMaps {
         clouds: bool,
         radar: bool,
     ) {
-        let wake = ctx.clone();
         self.service
-            .update(runtime, clouds, radar, move || wake.request_repaint());
+            .update(runtime, clouds, radar, super::live_services::repainter(ctx));
         if clouds || radar {
             ctx.request_repaint_after(Duration::from_secs(60));
         }

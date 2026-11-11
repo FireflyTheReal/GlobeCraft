@@ -259,11 +259,10 @@ fn borders(
 
 impl App {
     pub(super) fn update_time_zones(&mut self, ctx: &egui::Context, earth: bool) {
-        let wake = ctx.clone();
         self.live_time_zones.update(
             &self.runtime,
             earth && self.layer(MapLayer::TimeZones),
-            move || wake.request_repaint(),
+            super::live_services::repainter(ctx),
         );
     }
 

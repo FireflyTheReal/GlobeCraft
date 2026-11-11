@@ -46,6 +46,8 @@ pub mod updater;
 pub mod user_data;
 pub mod vector_tiles;
 pub mod vessels;
+pub mod view_query;
+pub use view_query::ViewQuery;
 
 pub mod sky;
 #[cfg(test)]

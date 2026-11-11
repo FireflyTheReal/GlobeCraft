@@ -110,10 +110,7 @@ pub type PoiSnapshot = Snapshot<PoiTile>;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PoiQuery {
     pub enabled: bool,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub altitude_km: f64,
-    pub tilt_deg: f64,
+    pub view: crate::ViewQuery,
 }
 
 /// The tile layer behind the places of interest, peaks, waters and parks layers.
@@ -148,15 +145,12 @@ impl PoiTiles {
         query: PoiQuery,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
-        if !query.enabled || query.altitude_km > MAX_ALTITUDE_KM {
+        if !query.enabled || query.view.altitude_km > MAX_ALTITUDE_KM {
             self.stream.hide();
             return;
         }
         let view = View {
-            latitude: query.latitude,
-            longitude: query.longitude,
-            altitude_km: query.altitude_km,
-            tilt_deg: query.tilt_deg,
+            at: query.view,
             floor: SPEC.min_zoom,
         };
         self.stream.update(runtime, view, repaint);

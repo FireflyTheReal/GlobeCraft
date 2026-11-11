@@ -69,27 +69,22 @@ pub struct RoadTiles {
 }
 
 impl RoadTiles {
-    /// `view`: latitude, longitude, altitude (km) and tilt (degrees).
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
         enabled: bool,
-        view: (f64, f64, f64, f64),
+        view: crate::ViewQuery,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
         let stream = self.stream.get_or_insert_with(|| TileStream::new(&SPEC));
-        let (latitude, longitude, altitude_km, tilt_deg) = view;
-        if !enabled || altitude_km > MAX_ALTITUDE_KM {
+        if !enabled || view.altitude_km > MAX_ALTITUDE_KM {
             stream.hide();
             return;
         }
         stream.update(
             runtime,
             View {
-                latitude,
-                longitude,
-                altitude_km,
-                tilt_deg,
+                at: view,
                 floor: SPEC.min_zoom,
             },
             repaint,

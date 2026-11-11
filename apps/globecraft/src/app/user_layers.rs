@@ -89,7 +89,7 @@ impl UserLayers {
         ctx: &egui::Context,
         runtime: &globecraft_data::runtime::ServiceRuntime,
         layers: &[UserLayer],
-        view: (f64, f64, f64, f64),
+        view: globecraft_data::ViewQuery,
         earth: bool,
         scene_unix: f64,
     ) {
@@ -129,8 +129,7 @@ impl UserLayers {
             if !layer.visible || !earth {
                 continue;
             }
-            let wake = ctx.clone();
-            let repaint = move || wake.request_repaint();
+            let repaint = super::live_services::repainter(ctx);
             match &mut loaded.stream {
                 Stream::Raster { tiles, snapshot } => {
                     tiles.set_date(date.clone());

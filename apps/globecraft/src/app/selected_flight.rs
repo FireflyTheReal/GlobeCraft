@@ -137,7 +137,6 @@ impl App {
             self.selected_snapshot = None;
             return;
         }
-        let wake = ctx.clone();
         let snapshot = self.live_aircraft.snapshot();
         let listed = self.flight_selection.selected().and_then(|flight| {
             snapshot
@@ -149,7 +148,7 @@ impl App {
             &self.runtime,
             self.live_airports.airports(),
             listed,
-            move || wake.request_repaint(),
+            super::live_services::repainter(ctx),
         );
         self.selected_snapshot = self.merged_snapshot();
     }

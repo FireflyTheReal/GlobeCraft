@@ -125,10 +125,7 @@ pub struct TransportQuery {
     pub enabled: bool,
     /// Railways or airports are on (they need zoom 8 tiles; ferries do not).
     pub rail_or_airports: bool,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub altitude_km: f64,
-    pub tilt_deg: f64,
+    pub view: crate::ViewQuery,
 }
 
 /// The transport tile layer: call [`Self::update`] every frame it is shown.
@@ -166,20 +163,18 @@ impl TransportTiles {
         query: TransportQuery,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
-        if !query.enabled || query.altitude_km > MAX_ALTITUDE_KM {
+        if !query.enabled || query.view.altitude_km > MAX_ALTITUDE_KM {
             self.stream.hide();
             return;
         }
-        let floor = if query.rail_or_airports && query.altitude_km <= DETAIL_FLOOR_MAX_ALTITUDE_KM {
-            DETAIL_FLOOR_ZOOM
-        } else {
-            SPEC.min_zoom
-        };
+        let floor =
+            if query.rail_or_airports && query.view.altitude_km <= DETAIL_FLOOR_MAX_ALTITUDE_KM {
+                DETAIL_FLOOR_ZOOM
+            } else {
+                SPEC.min_zoom
+            };
         let view = View {
-            latitude: query.latitude,
-            longitude: query.longitude,
-            altitude_km: query.altitude_km,
-            tilt_deg: query.tilt_deg,
+            at: query.view,
             floor,
         };
         self.stream.update(runtime, view, repaint);
@@ -409,10 +404,12 @@ mod tests {
         crate::vector_tiles::wanted(
             &SPEC,
             View {
-                latitude: lat,
-                longitude: lon,
-                altitude_km,
-                tilt_deg,
+                at: crate::ViewQuery {
+                    latitude: lat,
+                    longitude: lon,
+                    altitude_km,
+                    tilt_deg,
+                },
                 floor,
             },
         )

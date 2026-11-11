@@ -148,15 +148,19 @@ impl RasterTiles {
         }
     }
 
-    /// Requests the tiles the view needs and returns what is loaded for it. `view`:
-    /// latitude, longitude, altitude (km), tilt (degrees).
+    /// Requests the tiles the view needs and returns what is loaded for it.
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
-        view: (f64, f64, f64, f64),
+        view: crate::ViewQuery,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) -> Option<Arc<RasterSnapshot>> {
-        let (lat, lon, altitude_km, tilt_deg) = view;
+        let crate::ViewQuery {
+            latitude: lat,
+            longitude: lon,
+            altitude_km,
+            tilt_deg,
+        } = view;
         // Tiles across the view: a 256-pixel tile about every 400 screen pixels keeps
         // the overlay about as sharp as the imagery under it.
         let across = 4.0 * 256.0 / f64::from(self.tile_px);

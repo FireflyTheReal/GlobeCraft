@@ -65,11 +65,10 @@ fn layout(painter: &egui::Painter, name: &MarineName, scale: f32) -> std::sync::
 
 impl App {
     pub(super) fn update_marine_names(&mut self, ctx: &egui::Context, earth: bool) {
-        let wake = ctx.clone();
         self.live_marine_names.update(
             &self.runtime,
             earth && self.layer(MapLayer::SeaNames),
-            move || wake.request_repaint(),
+            super::live_services::repainter(ctx),
         );
     }
 
