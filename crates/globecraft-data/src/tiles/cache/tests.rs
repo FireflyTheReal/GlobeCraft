@@ -602,3 +602,25 @@ fn only_changing_sources_are_revalidated_and_old_caches_start_fresh() {
         assert_eq!(needs_revalidation(never, Some(&fetched(10_000)), now), None);
     }
 }
+
+#[test]
+fn expired_failures_leave_the_request_map_in_passes_and_missing_tiles_stay() {
+    let (cache, _rx) = test_cache(4096);
+    cache.complete(1, Err(TileFailure::Unavailable));
+    let expired = Instant::now() - FAILED_TILE_RETRY_DELAY;
+    {
+        let mut requests = cache.requests.lock().unwrap();
+        for key in 10..10 + REQUEST_PRUNE_MIN_ENTRIES as TileKey {
+            requests.insert(key, RequestState::Failed(expired));
+        }
+    }
+    cache.complete(2, Ok(tiny_tile(10)));
+    let requests = cache.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1, "only the missing tile is remembered");
+    assert!(matches!(requests.get(&1), Some(RequestState::Unavailable)));
+    drop(requests);
+    assert_eq!(
+        cache.prune_above.load(Ordering::Relaxed),
+        REQUEST_PRUNE_MIN_ENTRIES
+    );
+}

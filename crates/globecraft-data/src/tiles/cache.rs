@@ -28,6 +28,12 @@ const MAX_REVALIDATIONS_QUEUED: usize = 512;
 /// Revalidations running at once: one, and only while no tile waits for a slot.
 const MAX_REVALIDATIONS_RUNNING: usize = 1;
 pub const MAX_INFLIGHT: usize = 48;
+/// Expired failures leave the request map in passes, once it has doubled since the last
+/// pass (and never below this size), not on every finished tile.
+const REQUEST_PRUNE_MIN_ENTRIES: usize = 1024;
+/// Tiles a source does not have are remembered for the session, up to about this many;
+/// past it they are forgotten together and each is asked for once more.
+const MAX_REMEMBERED_REQUESTS: usize = 100_000;
 
 enum RequestState {
     /// The disk epoch at admission, and whether the tile is loaded ahead of need (a
@@ -129,6 +135,8 @@ pub struct TileCache {
     /// again with their validators. Lock after `downloading`.
     revalidations: Mutex<VecDeque<(TileKey, Validity)>>,
     revalidating: AtomicUsize,
+    /// The request map's size at which the next prune pass runs (see `complete`).
+    prune_above: AtomicUsize,
 }
 
 /// One tile source's downloads (`TileCache::diagnostics`).
@@ -203,6 +211,7 @@ impl TileCache {
             throttled: Mutex::new(HashMap::new()),
             revalidations: Mutex::new(VecDeque::new()),
             revalidating: AtomicUsize::new(0),
+            prune_above: AtomicUsize::new(REQUEST_PRUNE_MIN_ENTRIES),
         }
     }
     pub fn new(
@@ -465,14 +474,15 @@ impl TileCache {
         let requests = self.requests.lock().unwrap();
         keys.iter()
             .filter_map(|key| match requests.get(key) {
-                Some(RequestState::Failed(time)) => {
+                Some(RequestState::Failed(time)) if time.elapsed() < FAILED_TILE_RETRY_DELAY => {
                     Some(FAILED_TILE_RETRY_DELAY.saturating_sub(time.elapsed()))
                 }
                 Some(RequestState::Loading(..) | RequestState::Unavailable) => None,
-                None if self.inflight() < MAX_INFLIGHT && !self.ready.contains_key(key) => {
+                // Never asked, or a failure old enough to be asked again.
+                _ if self.inflight() < MAX_INFLIGHT && !self.ready.contains_key(key) => {
                     Some(Duration::ZERO)
                 }
-                None => None,
+                _ => None,
             })
             .min()
     }
@@ -605,7 +615,18 @@ impl TileCache {
         let mut requests = self.requests.lock().unwrap();
         self.queue.lock().unwrap().retain(|&queued| queued != key);
         let was_loading = matches!(requests.remove(&key), Some(RequestState::Loading(..)));
-        requests.retain(|_, state| state.is_pending());
+        // The map also holds every tile its source lacks, so scanning it on each finished
+        // tile grew slower through a session. Expired failures go in passes instead.
+        if requests.len() >= self.prune_above.load(Ordering::Relaxed) {
+            requests.retain(|_, state| state.is_pending());
+            if requests.len() > MAX_REMEMBERED_REQUESTS {
+                requests.retain(|_, state| !matches!(state, RequestState::Unavailable));
+            }
+            self.prune_above.store(
+                (requests.len() * 2).max(REQUEST_PRUNE_MIN_ENTRIES),
+                Ordering::Relaxed,
+            );
+        }
         if unavailable {
             requests.insert(key, RequestState::Unavailable);
         } else if !admitted {
