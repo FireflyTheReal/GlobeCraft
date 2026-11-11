@@ -24,6 +24,9 @@ User instructions and the requested scope take precedence over these defaults.
 - Every user action is a command in `globecraft_core::commands`. Add a command there (with
   Fluent `cmd-…` label and help keys in both catalogs) and implement it in
   `apps/globecraft/src/app/commands.rs`; widgets, menus and the assistant run it by id.
+  Then regenerate `docs/COMMANDS.md` with
+  `UPDATE_COMMAND_REFERENCE=1 cargo test -p globecraft-core --test command_reference`;
+  the test fails while the reference is out of date.
 - `crates/globecraft-render` owns rasterization, frame coordination, geographic
   overlay projection/visibility/occupancy and tile request prioritization.
   It depends on core and data, never on the desktop application.
