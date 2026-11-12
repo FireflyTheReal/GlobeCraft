@@ -1214,7 +1214,12 @@ fn a_screenshot_in_progress_does_not_freeze_the_view() {
         )));
         h.event(wheel(if (i / 60) % 2 == 0 { 1.0 } else { -1.0 }));
         pass(&mut h);
-        let shown = h.state().renderer.displayed_view().map(|(cam, _)| cam.alt);
+        let shown = h
+            .state()
+            .imagery
+            .renderer
+            .displayed_view()
+            .map(|(cam, _)| cam.alt);
         run = if shown == shown_before { run + 1 } else { 0 };
         longest = longest.max(run);
         shown_before = shown;
@@ -2787,8 +2792,9 @@ fn idle_window_requests_no_repaints() {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(50));
         let app = h.state();
-        let loading =
-            !app.renderer.is_idle() || app.cache.inflight() > 0 || app.borders.loader.is_loading();
+        let loading = !app.imagery.renderer.is_idle()
+            || app.cache.inflight() > 0
+            || app.borders.loader.is_loading();
         quiet = if loading || delay(&h) < std::time::Duration::from_secs(5) {
             0
         } else {

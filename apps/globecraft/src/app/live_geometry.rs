@@ -106,7 +106,10 @@ impl App {
                 pixels_per_point,
                 traffic_width_px: width,
                 traffic_height_px: height,
-                ground: self.renderer.displayed_ground(self.overlay_ground()),
+                ground: self
+                    .imagery
+                    .renderer
+                    .displayed_ground(self.overlay_ground()),
             },
             roads: self.roads.current.clone(),
             vessels: self

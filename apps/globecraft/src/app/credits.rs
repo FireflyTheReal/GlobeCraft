@@ -127,7 +127,7 @@ impl App {
                     .map(|layer| layer.attribution.clone()),
             );
         }
-        if self.renderer.displayed_sky {
+        if self.imagery.renderer.displayed_sky {
             credits.push(lg.text("sky-short-credit").to_owned());
         }
         credits.dedup();

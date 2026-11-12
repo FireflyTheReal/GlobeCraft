@@ -106,7 +106,10 @@ impl App {
     pub(super) fn ground_source(&self) -> GroundSource {
         GroundSource {
             cache: self.cache.clone(),
-            ground: self.renderer.displayed_ground(self.overlay_ground()),
+            ground: self
+                .imagery
+                .renderer
+                .displayed_ground(self.overlay_ground()),
             altitude_km: self.cam.alt,
         }
     }

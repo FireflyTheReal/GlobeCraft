@@ -44,7 +44,7 @@ impl App {
         if self.still_shot.is_some() {
             return Err("A screenshot is still being made.".into());
         }
-        let Some((width, height, _)) = self.image.as_ref() else {
+        let Some((width, height, _)) = self.imagery.image.as_ref() else {
             return Err("The globe has not finished drawing yet.".into());
         };
         let scale = quality.render_scale();
@@ -65,7 +65,7 @@ impl App {
             now_unix() as u64,
             quality.code()
         ));
-        let credits = self.renderer.displayed_credits.clone();
+        let credits = self.imagery.renderer.displayed_credits.clone();
         let (sender, receiver) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();

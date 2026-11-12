@@ -391,6 +391,7 @@ impl App {
                     }
                     separator(ui, &t);
                     let heading = self
+                        .imagery
                         .renderer
                         .displayed_view()
                         .map_or(self.cam.heading, |(cam, _)| cam.heading);

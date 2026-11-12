@@ -86,7 +86,7 @@ impl App {
             self.command_state(id, &params).checked
         };
         MenuState {
-            image: self.image.is_some(),
+            image: self.imagery.image.is_some(),
             undo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_undo(),
             redo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_redo(),
             sidebar: checked(Action::Sidebar),

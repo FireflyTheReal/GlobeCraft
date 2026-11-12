@@ -176,12 +176,15 @@ impl App {
                 altitude_km,
                 state_max_km: self.settings.state_max_altitude_km,
                 grid_step_deg: if self.layer(MapLayer::GridLabels) {
-                    self.renderer.displayed_grid_step()
+                    self.imagery.renderer.displayed_grid_step()
                 } else {
                     None
                 },
                 pixels_per_point: painter.ctx().pixels_per_point(),
-                ground: self.renderer.displayed_ground(self.overlay_ground()),
+                ground: self
+                    .imagery
+                    .renderer
+                    .displayed_ground(self.overlay_ground()),
             },
             style: OverlayStyle {
                 layers: self.overlay_layers(),

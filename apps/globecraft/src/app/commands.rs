@@ -436,7 +436,7 @@ impl App {
                 self.ruler_json()
             }
             "file.screenshot" => {
-                if self.image.is_none() {
+                if self.imagery.image.is_none() {
                     return Err("The globe has not finished drawing yet.".into());
                 }
                 let quality = match str_param(p, "quality") {
@@ -546,7 +546,7 @@ impl App {
                     self.set_wayback(left);
                 }
                 self.wayback.compare = Some(compare);
-                self.last_state = 0;
+                self.imagery.last_state = 0;
                 json!({
                     "compare": true,
                     "left": self.wayback.releases[self.wayback.index].date,
@@ -968,7 +968,7 @@ impl App {
                 checked: false,
             },
             "file.screenshot" => CommandState {
-                enabled: self.image.is_some() && !self.screenshot_running(),
+                enabled: self.imagery.image.is_some() && !self.screenshot_running(),
                 checked: false,
             },
             "satellite.clear" => CommandState {

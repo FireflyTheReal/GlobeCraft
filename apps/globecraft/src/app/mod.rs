@@ -20,7 +20,7 @@ use globecraft_data::{
     boundaries::{BoundaryData, BoundaryUpdates, StatusLog, load_boundaries_async},
     search::Suggestion,
     settings::{Settings, load_language_preference},
-    tiles::{TileCache, TileWarmup},
+    tiles::TileCache,
 };
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -41,6 +41,7 @@ mod fonts;
 mod frame_timing;
 mod globe;
 mod here;
+mod imagery;
 mod layer_solo;
 mod legend;
 mod live_geometry;
@@ -150,12 +151,6 @@ pub(crate) struct App {
     fly: Option<globecraft_core::flight::Flight>,
     cache: Arc<TileCache>,
     cache_controls: cache::CacheControls,
-    tile_warmup: TileWarmup,
-    /// Imagery loaded ahead of a zoom out, for the view (state key) it was made for.
-    zoom_out_warmup: Option<(u64, TileWarmup)>,
-    /// The imagery a running flight lands on, loaded while it flies (roadmap 1.4),
-    /// with the destination it was listed for.
-    arrival_warmup: Option<([u64; 5], TileWarmup)>,
     auto_rotate: bool,
     /// Keys of the keyed services as typed in Settings -> Keys (the TomTom key is also
     /// typed in the Layers pane).
@@ -187,21 +182,13 @@ pub(crate) struct App {
     live_geometry: live_geometry::LiveOverlay,
     world_shapes: live_layers::WorldShapes,
 
-    renderer: rendering::Renderer,
+    /// The globe picture: the renderer, the frame shown and fading, the warmups.
+    imagery: imagery::Imagery,
     scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache,
-    texture: Option<egui::TextureHandle>,
-    /// The picture shown before the current one, while the current one fades in over
-    /// it (a new frame of the same view: tiles arrived, or the view came to rest).
-    fade_from: Option<egui::TextureHandle>,
-    fade_started: Option<Instant>,
     /// The streaming diagnostics overlay shows (`ui.tileDiagnostics`; not saved).
     tile_diagnostics: bool,
     download_meter: ui::tile_diagnostics::DownloadMeter,
-    image: Option<(usize, usize, Arc<Vec<u8>>)>,
-    last_state: u64,
-    wake: render_wake::RenderWakeup,
     layer_arrivals: overlays::LayerArrivals,
-    last_render: Instant,
     last_interact: Instant,
 
     status: String,
@@ -377,11 +364,8 @@ impl App {
             cam: settings.navigation.startup.camera(),
             fly: None,
             cache: cache.clone(),
-            renderer,
+            imagery: imagery::Imagery::new(renderer),
             scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache::default(),
-            tile_warmup: TileWarmup::startup_satellite(),
-            zoom_out_warmup: None,
-            arrival_warmup: None,
             cache_controls: cache::CacheControls::default(),
             borders: borders::Borders {
                 drawn: Arc::new(BoundaryData::default()),
@@ -427,16 +411,9 @@ impl App {
                 Some(cache.clone()),
             ),
             world_shapes: live_layers::WorldShapes::default(),
-            texture: None,
-            fade_from: None,
-            fade_started: None,
             tile_diagnostics: false,
             download_meter: Default::default(),
-            image: None,
-            last_state: 0,
-            wake: render_wake::RenderWakeup::default(),
             layer_arrivals: overlays::LayerArrivals::default(),
-            last_render: Instant::now(),
             last_interact: Instant::now(),
             search: search::SearchState::new(local_search),
             status: lang.text("app-ready-status").into(),
@@ -771,7 +748,8 @@ impl eframe::App for App {
                 altitude_km: self.cam.alt,
                 tilt_deg: self.cam.tilt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
-                load_ahead: self.renderer.is_idle() && !self.renderer.waits_for_tiles(),
+                load_ahead: self.imagery.renderer.is_idle()
+                    && !self.imagery.renderer.waits_for_tiles(),
                 // From where the state lines' fade-in is past its first few percent.
                 states_visible: self.layer(MapLayer::StateBorders)
                     && self.cam.alt

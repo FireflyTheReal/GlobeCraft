@@ -79,6 +79,7 @@ impl App {
         painter.circle_filled(c1, r_disc, fill);
         painter.circle_stroke(c1, r_disc, Stroke::new(1.0_f32, edge));
         let displayed_heading = self
+            .imagery
             .renderer
             .displayed_view()
             .map_or(self.cam.heading, |(cam, _)| cam.heading);

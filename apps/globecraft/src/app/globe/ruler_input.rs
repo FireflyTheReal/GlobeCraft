@@ -20,7 +20,7 @@ impl App {
             self.measure.drag = None;
             return false;
         }
-        let basis = self.renderer.picking_basis(self.view_basis(aspect));
+        let basis = self.imagery.renderer.picking_basis(self.view_basis(aspect));
         let source = self.ground_source();
         let heights = source.heights();
         let ground = heights

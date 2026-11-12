@@ -68,9 +68,9 @@ impl App {
         if self.cache_controls.clearing() {
             return;
         }
-        self.tile_warmup.cancel();
-        self.zoom_out_warmup = None;
-        self.arrival_warmup = None;
+        self.imagery.warmup.cancel();
+        self.imagery.zoom_out_warmup = None;
+        self.imagery.arrival_warmup = None;
         let (tx, rx) = mpsc::channel();
         self.cache_controls.clear_rx = Some(rx);
         self.cache_controls.usage_rx = None;

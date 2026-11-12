@@ -55,7 +55,7 @@ impl App {
     pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         let viewport = ui.available_rect_before_wrap();
-        let rect = self.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = self.imagery.renderer.displayed_rect().unwrap_or(viewport);
         let resp = ui.allocate_rect(viewport, Sense::click_and_drag());
         let ppp = ui.pixels_per_point();
         let aspect = (rect.width() / rect.height()) as f64;
@@ -116,9 +116,9 @@ impl App {
         let generation = self.cache.generation();
         let presentation = keys.presentation;
         self.poll_render(presentation, ui);
-        let rect = self.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = self.imagery.renderer.displayed_rect().unwrap_or(viewport);
 
-        let pick_basis = self.renderer.picking_basis(basis);
+        let pick_basis = self.imagery.renderer.picking_basis(basis);
         let ground = self.ground_source();
         let pick = |p: egui::Pos2| ground.pick(&pick_basis, rect, p);
         self.cursor = resp
@@ -205,19 +205,20 @@ impl App {
         // wake-up for tiles arriving inside the redraw horizon, or nothing.
         // `changed_before` preserves the pre-decision marker for tile request
         // prioritization, which runs after the pass consumed its own result.
-        let changed_before = self.wake.changed(generation);
-        let outcome = self.wake.decide(
+        let changed_before = self.imagery.wake.changed(generation);
+        let outcome = self.imagery.wake.decide(
             render_wake::RenderPass {
                 state,
                 generation,
-                tiles_changed: self.renderer.tiles_changed(&self.cache),
-                has_texture: self.texture.is_some(),
-                needs_first_frame: self.texture.is_none() && self.renderer.is_idle(),
+                tiles_changed: self.imagery.renderer.tiles_changed(&self.cache),
+                has_texture: self.imagery.texture.is_some(),
+                needs_first_frame: self.imagery.texture.is_none()
+                    && self.imagery.renderer.is_idle(),
                 // The panes do not animate, so the view is always at rest.
                 at_rest: true,
             },
-            self.last_state,
-            Some(self.last_render.elapsed()),
+            self.imagery.last_state,
+            Some(self.imagery.last_render.elapsed()),
         );
         match outcome {
             WakeOutcome::Submit => {
@@ -234,15 +235,17 @@ impl App {
                     viewport,
                     ppp,
                 );
-                self.last_state = state;
-                self.last_render = Instant::now();
+                self.imagery.last_state = state;
+                self.imagery.last_render = Instant::now();
             }
             WakeOutcome::Defer(remaining) => ui.request_repaint_after(remaining),
             WakeOutcome::Pause | WakeOutcome::Settled => {}
         }
-        if state == self.last_state && self.renderer.is_idle() {
+        if state == self.imagery.last_state && self.imagery.renderer.is_idle() {
             let refill = changed_before && !matches!(outcome, WakeOutcome::Submit);
-            self.renderer.refill_requests(&self.cache, refill, ui);
+            self.imagery
+                .renderer
+                .refill_requests(&self.cache, refill, ui);
         }
         if !idle {
             ui.request_repaint();
@@ -256,22 +259,23 @@ impl App {
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
         let fade = self
+            .imagery
             .fade_started
             .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
             .filter(|&progress| progress < 1.0);
         if fade.is_none() {
-            self.fade_started = None;
+            self.imagery.fade_started = None;
         }
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-        if let (Some(progress), Some(from)) = (fade, &self.fade_from) {
+        if let (Some(progress), Some(from)) = (fade, &self.imagery.fade_from) {
             painter.image(from.id(), rect, whole, Color32::WHITE);
             ui.ctx().request_repaint();
-            if let Some(tex) = &self.texture {
+            if let Some(tex) = &self.imagery.texture {
                 // Eased, so the change starts and ends gently.
                 let alpha = progress * progress * (3.0 - 2.0 * progress);
                 painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
             }
-        } else if let Some(tex) = &self.texture {
+        } else if let Some(tex) = &self.imagery.texture {
             painter.image(tex.id(), rect, whole, Color32::WHITE);
         }
         // The swipe compare: the compare release's frame, right of the split.
@@ -310,8 +314,11 @@ impl App {
         }
         // Keep projected borders and labels aligned with the displayed raster
         // while the coordinator works on the latest camera position.
-        let (display_cam, display_basis) =
-            self.renderer.displayed_view().unwrap_or((self.cam, basis));
+        let (display_cam, display_basis) = self
+            .imagery
+            .renderer
+            .displayed_view()
+            .unwrap_or((self.cam, basis));
         if self.explorer.on_earth() {
             self.paint_map_layers(&painter, rect, display_basis, display_cam);
         }
@@ -544,10 +551,10 @@ impl App {
         // The frame worker admits visible tiles before becoming idle. Speculative
         // work waits for it, and pauses during interaction/closer zoom/other layers.
         if idle
-            && self.renderer.is_idle()
+            && self.imagery.renderer.is_idle()
             && self.settings.layers.basemap == Provider::Satellite
             && self.cam.alt >= OVERVIEW_WARMUP_ALTITUDE_KM
-            && self.tile_warmup.pump(&self.cache)
+            && self.imagery.warmup.pump(&self.cache)
         {
             ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
         }
@@ -564,6 +571,7 @@ impl App {
                 ]
                 .map(f64::to_bits);
                 if self
+                    .imagery
                     .arrival_warmup
                     .as_ref()
                     .is_none_or(|(listed, _)| *listed != listed_for)
@@ -576,21 +584,22 @@ impl App {
                         provider,
                         &releases,
                     );
-                    self.arrival_warmup = Some((
+                    self.imagery.arrival_warmup = Some((
                         listed_for,
                         globecraft_data::tiles::TileWarmup::of_keys(keys),
                     ));
                 }
-                if let Some((_, warmup)) = &mut self.arrival_warmup {
+                if let Some((_, warmup)) = &mut self.imagery.arrival_warmup {
                     warmup.pump(&self.cache);
                 }
             }
-            None => self.arrival_warmup = None,
+            None => self.imagery.arrival_warmup = None,
         }
         // The coarser imagery a zoom out will show, loaded once the view rests (see
         // `globecraft_render::zoom_out`); a new view starts a new list.
-        if idle && self.renderer.is_idle() {
+        if idle && self.imagery.renderer.is_idle() {
             if self
+                .imagery
                 .zoom_out_warmup
                 .as_ref()
                 .is_none_or(|(view, _)| *view != state)
@@ -603,10 +612,10 @@ impl App {
                     provider,
                     &releases,
                 );
-                self.zoom_out_warmup =
+                self.imagery.zoom_out_warmup =
                     Some((state, globecraft_data::tiles::TileWarmup::of_keys(keys)));
             }
-            if let Some((_, warmup)) = &mut self.zoom_out_warmup
+            if let Some((_, warmup)) = &mut self.imagery.zoom_out_warmup
                 && warmup.pump(&self.cache)
             {
                 ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
