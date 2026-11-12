@@ -840,7 +840,6 @@ controllers-curve = Curva de resposta
 controllers-buttons = Ações dos botões
 controllers-monitor = Entradas normalizadas ao vivo
 
-sky-cinematic = Céu cinematográfico (visível durante o dia)
 sky-help = A Via Láctea é o mapa difuso da NASA, preparado como fundo SDR 4K; Estrelas desenha estrelas pontuais sobre ele. Sem catálogo de estrelas selecionável nem navegação astronômica.
 sky-loading = Preparando fundo celeste…
 sky-retry = Tentar carregar o fundo novamente
@@ -1224,7 +1223,6 @@ ribbon-layer-sunlight = Luz solar
 ribbon-layer-night-lights = Luzes noturnas
 ribbon-layer-stars = Estrelas
 ribbon-layer-milky-way = Via Láctea
-ribbon-layer-cinematic = Céu cinematográfico
 ribbon-layer-radar = Radar de chuva
 ribbon-layer-clouds = Nuvens
 ribbon-layer-flights = Aviões

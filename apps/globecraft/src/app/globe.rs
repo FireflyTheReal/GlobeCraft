@@ -108,7 +108,6 @@ impl App {
                 .layer(MapLayer::NightLights)
                 .then(|| self.night_lights_edition()),
             sky: self.sky_ready(),
-            cinematic_sky: true,
             stars: self.layer(MapLayer::Stars),
         }
         .keys(now_unix());

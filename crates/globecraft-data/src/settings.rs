@@ -339,7 +339,6 @@ impl Settings {
         match layer {
             MapLayer::Stars => self.sky.stars,
             MapLayer::MilkyWay => self.sky.enabled,
-            MapLayer::CinematicSky => self.sky.cinematic,
             MapLayer::GridLabels => self.grid_numbers,
             _ => self.layers.visible.contains(layer),
         }
@@ -349,7 +348,6 @@ impl Settings {
         match layer {
             MapLayer::Stars => self.sky.stars = visible,
             MapLayer::MilkyWay => self.sky.enabled = visible,
-            MapLayer::CinematicSky => self.sky.cinematic = visible,
             MapLayer::GridLabels => self.grid_numbers = visible,
             _ => self.layers.visible.set(layer, visible),
         }

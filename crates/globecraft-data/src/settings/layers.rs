@@ -8,8 +8,8 @@ pub const MAX_TERRAIN_EXAGGERATION: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct LayerPreferences {
-    /// Layers other than those stored elsewhere for compatibility (stars, cinematic sky and grid
-    /// labels live in `sky` and `grid_numbers`; see `Settings::layer_visible`).
+    /// Layers other than those stored elsewhere for compatibility (stars, the Milky Way and
+    /// grid labels live in `sky` and `grid_numbers`; see `Settings::layer_visible`).
     #[serde(serialize_with = "serialize_layers")]
     pub visible: LayerSet,
     #[serde(serialize_with = "serialize_basemap")]

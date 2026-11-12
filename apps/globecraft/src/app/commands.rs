@@ -557,7 +557,6 @@ impl App {
             "layer.show" => {
                 let layer = str_param(p, "layer")
                     .and_then(MapLayer::from_code)
-                    .filter(|layer| layer.listed())
                     .ok_or("unknown layer; see the layer.show parameters")?;
                 let visible = bool_param(p, "visible").unwrap_or(!self.layer(layer));
                 self.settings.set_layer_visible(layer, visible);

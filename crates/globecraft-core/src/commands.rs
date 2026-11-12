@@ -1021,10 +1021,8 @@ mod tests {
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        // Layers without their own switch (the retired Cinematic Sky) are not offered.
         let codes: Vec<&str> = crate::layers::MapLayer::ALL
             .iter()
-            .filter(|l| l.listed())
             .map(|l| l.code())
             .collect();
         assert_eq!(listed, codes);

@@ -393,7 +393,6 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Sunlight => "ribbon-layer-sunlight",
         MapLayer::Stars => "ribbon-layer-stars",
         MapLayer::MilkyWay => "ribbon-layer-milky-way",
-        MapLayer::CinematicSky => "ribbon-layer-cinematic",
         MapLayer::Radar => "ribbon-layer-radar",
         MapLayer::Clouds => "ribbon-layer-clouds",
         MapLayer::Aurora => "ribbon-layer-aurora",

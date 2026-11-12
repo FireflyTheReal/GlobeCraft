@@ -840,7 +840,6 @@ controllers-curve = Response curve
 controllers-buttons = Button actions
 controllers-monitor = Live normalized inputs
 
-sky-cinematic = Cinematic sky (visible during daylight)
 sky-help = The Milky Way is NASA’s diffuse map, prepared as a 4K SDR background; Stars draws point stars over it. No selectable star catalog or astronomical navigation.
 sky-loading = Preparing celestial background…
 sky-retry = Retry background loading
@@ -1224,7 +1223,6 @@ ribbon-layer-sunlight = Sunlight
 ribbon-layer-night-lights = Night Lights
 ribbon-layer-stars = Stars
 ribbon-layer-milky-way = Milky Way
-ribbon-layer-cinematic = Cinematic Sky
 ribbon-layer-radar = Rain Radar
 ribbon-layer-clouds = Clouds
 ribbon-layer-flights = Aircraft
