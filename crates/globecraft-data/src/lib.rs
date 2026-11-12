@@ -47,5 +47,5 @@ pub mod vessels;
 pub mod view_query;
 pub mod wayback;
 pub use error::Error;
-pub use paths::{migrate_config, migrate_legacy_data, remove_retired_caches};
+pub use paths::{migrate_cache, migrate_config, migrate_legacy_data, remove_retired_caches};
 pub use view_query::ViewQuery;

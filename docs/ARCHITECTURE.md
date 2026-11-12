@@ -406,9 +406,10 @@ is available for auxiliary catalogs; it is not duplicated in the tile hot path.
 
 Satellite overview warming covers zooms 0–4 globally: 341 tiles, 85.25 MiB decoded.
 It runs while idle at 14,000 km or farther away, after visible work, with bounded
-admission. Other providers stay on demand. Cache roots resolve `LOCALAPPDATA`,
-`XDG_CACHE_HOME`, `HOME/.cache`, then the temporary directory, under
-`globecraft_tiles`. Preferences (`settings.json`, `lang.txt`, `open-kml.json`) and the
+admission. Other providers stay on demand. The cache folder (`paths::cache_dir`) is
+`XDG_CACHE_HOME/globecraft` when that is set, else Caches on macOS, `LOCALAPPDATA` on
+Windows and `~/.cache/globecraft` elsewhere; `migrate_cache` renames the
+`globecraft_tiles` folder of earlier versions into place once. Preferences (`settings.json`, `lang.txt`, `open-kml.json`) and the
 key files live in the configuration folder instead (`paths::config_dir`: Application
 Support on macOS, `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere), where cache
 cleaners leave them; `migrate_config` moves them out of the cache folder once.

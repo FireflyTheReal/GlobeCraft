@@ -73,8 +73,8 @@ user agent.
 ## When something goes wrong
 
 GlobeCraft writes problems and a short session summary to `globecraft.log` in its cache
-folder (`~/.cache/globecraft_tiles` on macOS and Linux, `%LOCALAPPDATA%\globecraft_tiles`
-on Windows). Settings are kept apart from the caches, in
+folder (`~/Library/Caches/GlobeCraft` on macOS, `~/.cache/globecraft` on Linux,
+`%LOCALAPPDATA%\GlobeCraft` on Windows). Settings are kept apart from the caches, in
 `~/Library/Application Support/GlobeCraft` (macOS), `%APPDATA%\GlobeCraft` (Windows) or
 `~/.config/globecraft` (Linux). Attach it when you [report an issue](https://github.com/FireflyTheReal/GlobeCraft/issues/new/choose).
 

@@ -1,9 +1,18 @@
 use std::path::{Path, PathBuf};
-/// Folder for settings, placemarks, keys and caches (the name predates the extra uses).
-const DATA_FOLDER: &str = "globecraft_tiles";
+/// The cache folder's name beside [`data_base`] until caches moved to the system's cache
+/// location (see [`migrate_cache`]).
+const OLD_CACHE_FOLDER: &str = "globecraft_tiles";
 /// The same folder before the project was renamed from EarthCraft.
 const LEGACY_DATA_FOLDER: &str = "earthcraft_tiles";
 
+/// An environment variable naming a folder; unset and empty are the same.
+fn env_dir(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Where the old cache folders were made.
 fn data_base() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -12,8 +21,48 @@ fn data_base() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
+/// Downloads and anything else GlobeCraft can fetch again: `~/Library/Caches/GlobeCraft`
+/// on macOS, `%LOCALAPPDATA%\GlobeCraft` on Windows, `~/.cache/globecraft` elsewhere.
+/// `XDG_CACHE_HOME` names the parent on every system, so a run can be isolated.
 pub(crate) fn cache_dir() -> PathBuf {
-    data_base().join(DATA_FOLDER)
+    if let Some(base) = env_dir("XDG_CACHE_HOME") {
+        return base.join("globecraft");
+    }
+    let base = if cfg!(windows) {
+        env_dir("LOCALAPPDATA")
+    } else if cfg!(target_os = "macos") {
+        env_dir("HOME").map(|home| home.join("Library").join("Caches"))
+    } else {
+        env_dir("HOME").map(|home| home.join(".cache"))
+    };
+    let folder = if cfg!(any(windows, target_os = "macos")) {
+        "GlobeCraft"
+    } else {
+        "globecraft"
+    };
+    base.unwrap_or_else(std::env::temp_dir).join(folder)
+}
+
+fn old_cache_dir() -> PathBuf {
+    data_base().join(OLD_CACHE_FOLDER)
+}
+
+/// Moves the cache folder of earlier versions (`globecraft_tiles`) to [`cache_dir`] by
+/// renaming it, once. Returns whether it moved. Call first at startup, before anything
+/// writes to the cache.
+pub fn migrate_cache() -> std::io::Result<bool> {
+    migrate_cache_in(&old_cache_dir(), &cache_dir())
+}
+
+fn migrate_cache_in(old: &Path, new: &Path) -> std::io::Result<bool> {
+    if old == new || !old.is_dir() || new.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(old, new)?;
+    Ok(true)
 }
 
 /// The files that hold the user's choices rather than downloads. They live in
@@ -33,11 +82,7 @@ const CONFIG_FILES: [&str; 5] = [
 /// and no `XDG_CONFIG_HOME` keeps the configuration beside the cache, so a run isolated
 /// that way (as the screenshot tests are) cannot write the user's real settings.
 pub(crate) fn config_dir() -> PathBuf {
-    let var = |name: &str| {
-        std::env::var_os(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
+    let var = env_dir;
     if let Some(dir) = var("GLOBECRAFT_CONFIG_DIR") {
         return dir;
     }
@@ -63,7 +108,9 @@ pub(crate) fn config_dir() -> PathBuf {
 /// [`config_dir`]. A file already there wins. Returns how many moved. Call once at
 /// startup, after [`migrate_legacy_data`] and before anything reads settings.
 pub fn migrate_config() -> std::io::Result<usize> {
-    migrate_config_in(&cache_dir(), &config_dir())
+    // The old cache folder too, in case moving it failed.
+    Ok(migrate_config_in(&cache_dir(), &config_dir())?
+        + migrate_config_in(&old_cache_dir(), &config_dir())?)
 }
 
 fn migrate_config_in(cache: &Path, config: &Path) -> std::io::Result<usize> {
@@ -219,7 +266,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("globecraft-migrate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let legacy = root.join(LEGACY_DATA_FOLDER);
-        let target = root.join(DATA_FOLDER);
+        let target = root.join(OLD_CACHE_FOLDER);
         std::fs::create_dir_all(legacy.join("geo")).unwrap();
         std::fs::write(legacy.join("settings.json"), b"{}").unwrap();
         std::fs::write(legacy.join("geo/a.json"), b"[]").unwrap();
@@ -235,6 +282,23 @@ mod tests {
         );
         // Nothing to migrate on a fresh machine.
         assert!(!migrate_folder(&root.join("missing"), &root.join("other")).unwrap());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_old_cache_folder_is_renamed_once() {
+        let root = std::env::temp_dir().join(format!("globecraft-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (old, new) = (root.join(OLD_CACHE_FOLDER), root.join("Caches/GlobeCraft"));
+        std::fs::create_dir_all(old.join("esri_sat")).unwrap();
+        std::fs::write(old.join("esri_sat/1.tile"), b"tile").unwrap();
+        assert!(migrate_cache_in(&old, &new).unwrap());
+        assert_eq!(std::fs::read(new.join("esri_sat/1.tile")).unwrap(), b"tile");
+        assert!(!old.exists());
+        // A later old folder never replaces the new one.
+        std::fs::create_dir_all(&old).unwrap();
+        assert!(!migrate_cache_in(&old, &new).unwrap());
+        assert!(!migrate_cache_in(&root.join("missing"), &root.join("other")).unwrap());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
