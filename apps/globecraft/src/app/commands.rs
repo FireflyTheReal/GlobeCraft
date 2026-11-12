@@ -4,7 +4,6 @@ use super::App;
 use eframe::egui;
 use globecraft_core::{
     body::Body,
-    commands,
     coordinates::CoordinateFormat,
     earth_model::EarthModel,
     language::{Lang, LanguagePreference},
@@ -267,7 +266,10 @@ impl App {
                 checked: false,
             },
             "assistant.stop" => CommandState {
+                #[cfg(feature = "assistant")]
                 enabled: self.assistant.busy(),
+                #[cfg(not(feature = "assistant"))]
+                enabled: false,
                 checked: false,
             },
             "layer.basemap" => CommandState {
@@ -328,9 +330,10 @@ impl App {
                 on(self.settings.sidebar.open
                     && self.settings.sidebar.panel == SidebarPanel::Places)
             }
-            "ui.pane.assistant" => {
-                on(self.settings.workspace.right_pane == Some(RightPane::Assistant))
-            }
+            "ui.pane.assistant" => CommandState {
+                enabled: cfg!(feature = "assistant"),
+                checked: self.settings.workspace.right_pane == Some(RightPane::Assistant),
+            },
             "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
@@ -575,11 +578,14 @@ impl App {
 }
 
 /// The assistant's view of the application: commands run through [`App::run`].
+#[cfg(feature = "assistant")]
 pub(in crate::app) struct AssistantHost<'a>(pub &'a mut App);
 
+#[cfg(feature = "assistant")]
 impl globecraft_assistant::Host for AssistantHost<'_> {
     fn run(&mut self, id: &str, params: &Value) -> Result<Value, String> {
-        let spec = commands::find(id).ok_or_else(|| format!("unknown command '{id}'"))?;
+        let spec =
+            globecraft_core::commands::find(id).ok_or_else(|| format!("unknown command '{id}'"))?;
         if !spec.assistant_may_run() {
             return Err(format!("'{id}' is reserved to the user"));
         }
@@ -591,6 +597,7 @@ impl globecraft_assistant::Host for AssistantHost<'_> {
 }
 
 /// A compact description of the view, sent with the user's message when it changed.
+#[cfg(feature = "assistant")]
 pub(in crate::app) fn context_text(app: &App) -> String {
     let v = app.view_json();
     let mut lines = vec![format!(

@@ -27,6 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod antarctica;
+#[cfg(feature = "assistant")]
 mod assistant;
 mod borders;
 mod cache;
@@ -119,6 +120,7 @@ pub(crate) struct App {
     ctx: egui::Context,
     /// The UI scale the style was last built for.
     styled_scale: Option<f32>,
+    #[cfg(feature = "assistant")]
     assistant: assistant::AssistantState,
     command_search: Option<ui::palette::CommandSearch>,
     /// egui's font atlas fill at the start of the last frame (see `ui`).
@@ -324,6 +326,7 @@ impl App {
         let mut app = App {
             ctx: cc.egui_ctx.clone(),
             styled_scale: None,
+            #[cfg(feature = "assistant")]
             assistant: assistant::AssistantState::default(),
             command_search: None,
             ribbon_tools: Default::default(),
@@ -632,6 +635,7 @@ impl eframe::App for App {
         self.updater.poll();
         self.update_live_services(ctx);
         self.poll_files(ctx);
+        #[cfg(feature = "assistant")]
         self.poll_assistant();
         self.poll_update_restart(ctx);
         self.ensure_wayback(ctx);

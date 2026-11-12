@@ -316,7 +316,12 @@ impl App {
                 let mut body =
                     ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(*ui.layout()));
                 match pane {
+                    #[cfg(feature = "assistant")]
                     RightPane::Assistant => self.assistant_pane(&mut body, &t),
+                    #[cfg(not(feature = "assistant"))]
+                    RightPane::Assistant => {
+                        body.weak("This build of GlobeCraft has no assistant.");
+                    }
                     RightPane::Legend => {
                         egui::ScrollArea::vertical()
                             .id_salt("legend-scroll")

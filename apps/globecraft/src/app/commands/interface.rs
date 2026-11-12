@@ -47,6 +47,11 @@ impl App {
                 }
                 json!({})
             }
+            #[cfg(not(feature = "assistant"))]
+            "ui.pane.assistant" | "assistant.stop" => {
+                return Err("this build of GlobeCraft has no assistant".into());
+            }
+            #[cfg(feature = "assistant")]
             "ui.pane.assistant" => {
                 match str_param(p, "ask").filter(|q| !q.is_empty()) {
                     Some(question) => {
@@ -57,6 +62,7 @@ impl App {
                 }
                 json!({})
             }
+            #[cfg(feature = "assistant")]
             "assistant.stop" => {
                 let running = self.assistant.busy();
                 self.assistant_stop();

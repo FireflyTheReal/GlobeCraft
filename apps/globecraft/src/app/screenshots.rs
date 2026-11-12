@@ -13,6 +13,7 @@ use globecraft_data::settings::{Settings, appearance::ThemePreference, workspace
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+#[cfg(feature = "assistant")]
 mod assistant;
 mod interface;
 mod live;
@@ -133,6 +134,7 @@ fn scroll_settings(h: &mut Harness<'static, App>, at: egui::Pos2, down: bool, st
 }
 
 /// Answers OpenAI-compatible chat requests in order with `replies`, one connection each.
+#[cfg(feature = "assistant")]
 fn fake_model(replies: Vec<serde_json::Value>) -> u16 {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");

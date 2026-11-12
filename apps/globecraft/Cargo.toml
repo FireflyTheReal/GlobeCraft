@@ -11,17 +11,19 @@ authors = ["Julien Foss (@FireflyTheReal)"]
 workspace = true
 
 [features]
-default = ["gpu", "updater"]
+default = ["gpu", "updater", "assistant"]
 gpu = ["globecraft-render/gpu"]
 # The self-updater; packagers that update through a package manager build without it.
 updater = ["globecraft-data/updater"]
+# The AI assistant pane and its model connections.
+assistant = ["dep:globecraft-assistant"]
 profiling = ["globecraft-data/profiling", "globecraft-render/profiling"]
 
 [dependencies]
 globecraft-core.workspace = true
 globecraft-data.workspace = true
 globecraft-render.workspace = true
-globecraft-assistant.workspace = true
+globecraft-assistant = { workspace = true, optional = true }
 serde_json.workspace = true
 # glow: the OpenGL interface renderer, used when wgpu cannot start (issue #1).
 eframe = { workspace = true, features = ["glow"] }
