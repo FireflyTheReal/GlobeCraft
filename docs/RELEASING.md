@@ -109,7 +109,26 @@ and replaces the entire `GlobeCraft.app` bundle; `codesign --verify --deep --str
 checks the extracted bundle before replacement. The existing DMG remains the
 first-install download. The ZIP contains the same ad-hoc signed bundle as the DMG;
 checksums and ad-hoc signing do not establish independent publisher authenticity.
-No trusted signing key or attestation verification is configured.
+
+### Signed updates (zipsign)
+
+The updater archives (`*-update.zip`, `*-portable.zip`, `*.tar.gz`) can carry an
+ed25519 signature that builds check before installing, so a release replaced by
+someone with access to the GitHub account is refused. It is off until a key exists:
+
+1. On a trusted machine: `cargo install zipsign --locked`, then
+   `zipsign gen-key globecraft-release.key release-signing.pub`. Keep the private
+   `globecraft-release.key` out of the repository and back it up offline.
+2. Add the repository secret `ZIPSIGN_PRIVATE_KEY` with
+   `base64 < globecraft-release.key` as its value. The release workflow's
+   *Sign the updater archives* step then signs every updater archive before the
+   checksums are made; without the secret it warns and skips.
+3. Replace the empty `crates/globecraft-data/release-signing.pub` with the public
+   file (32 bytes) and commit it. Builds made from then on refuse any update archive
+   without a matching signature, so publish one signed release before relying on it.
+
+Losing the private key means shipping a build with a new public key through a manual
+download; keep the backup.
 
 After installation, **Restart to update** appears. Clicking it offers the existing
 save dialogs for a nonempty places tree and any loaded custom planet. Canceling

@@ -56,6 +56,8 @@ fn main() -> Result<(), eframe::Error> {
     loop {
         let (settings, load_problem) = globecraft_data::settings::Settings::load();
         globecraft_data::network::set_offline(settings.offline);
+        // Before anything reads a key: they are read from where this setting keeps them.
+        globecraft_data::keys::keep_in_keychain(settings.keys_in_keychain);
         if let Some(problem) = load_problem {
             globecraft_data::log_line!("{problem}");
             *restart

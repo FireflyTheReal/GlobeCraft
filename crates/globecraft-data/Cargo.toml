@@ -40,3 +40,7 @@ chrono-tz.workspace = true
 sgp4.workspace = true
 self_update = { workspace = true, optional = true }
 semver.workspace = true
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+# Settings › Keys can keep the keys in the system keychain (off by default).
+keyring = { version = "3.6", features = ["apple-native", "windows-native"] }

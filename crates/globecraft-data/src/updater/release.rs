@@ -70,6 +70,11 @@ pub(super) fn manual_install_reason(path: &Path) -> Option<String> {
         None
     }
 }
+/// The public half of the release signing key (`zipsign gen-key`, 32 bytes). While the
+/// file is empty, archives are checked by origin and SHA-256 only; once it holds a key,
+/// an archive without a matching signature is refused. See docs/RELEASING.md.
+const VERIFYING_KEY: &[u8] = include_bytes!("../../release-signing.pub");
+
 fn builder() -> self_update::backends::github::UpdateBuilder {
     let mut builder = Update::configure();
     builder
@@ -89,6 +94,9 @@ fn builder() -> self_update::backends::github::UpdateBuilder {
         .retries(UPDATE_RETRIES);
     #[cfg(target_os = "macos")]
     builder.bundle_path_in_archive("GlobeCraft.app");
+    if let Ok(key) = <[u8; 32]>::try_from(VERIFYING_KEY) {
+        builder.verifying_keys(vec![key]);
+    }
     builder
 }
 fn checker() -> self_update::Result<AsyncUpdate> {

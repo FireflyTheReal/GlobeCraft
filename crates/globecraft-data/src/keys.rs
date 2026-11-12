@@ -153,10 +153,50 @@ pub(crate) fn redact_error(error: crate::Error) -> crate::Error {
 
 /// A JSON map of strings from a file, empty when it is missing or unreadable.
 pub(crate) fn read_private(path: &Path) -> BTreeMap<String, String> {
+    if crate::secret_store::enabled() {
+        match crate::secret_store::read(&account(path)) {
+            Ok(Some(text)) => return serde_json::from_str(&text).unwrap_or_default(),
+            Ok(None) => {}
+            Err(error) => crate::log_line!("Reading keys from the keychain failed: {error}"),
+        }
+    }
     std::fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
+}
+
+/// The keychain entry that holds the keys of `path` (its file stem).
+fn account(path: &Path) -> String {
+    path.file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Where keys are read from and written to: the system keychain when `on`, else the
+/// key files. Call at startup, before anything reads a key.
+pub fn keep_in_keychain(on: bool) {
+    crate::secret_store::set_enabled(on);
+}
+
+/// Turns keeping keys in the system keychain on or off (Settings › Keys) and moves the
+/// saved service and assistant keys there or back to their files. Runs on the
+/// caller's thread: call it from a background task.
+pub fn move_to_keychain(on: bool) -> Result<(), crate::Error> {
+    let files = [keys_file(), crate::settings::assistant::keys_path()];
+    let maps: Vec<_> = files.iter().map(|path| read_private(path)).collect();
+    let was = crate::secret_store::enabled();
+    crate::secret_store::set_enabled(on);
+    for (path, map) in files.iter().zip(&maps) {
+        write_private(path, map)?;
+    }
+    if was && !crate::secret_store::enabled() {
+        for path in &files {
+            crate::secret_store::write(&account(path), None)?;
+        }
+    }
+    Ok(())
 }
 
 /// Writes a JSON map of strings readable by the user only; an empty map removes the
@@ -165,6 +205,21 @@ pub(crate) fn write_private(
     path: &Path,
     keys: &BTreeMap<String, String>,
 ) -> Result<(), crate::Error> {
+    if crate::secret_store::enabled() {
+        let text = (!keys.is_empty())
+            .then(|| serde_json::to_string(keys))
+            .transpose()?;
+        match crate::secret_store::write(&account(path), text.as_deref()) {
+            // In the keychain now: no copy stays on disk.
+            Ok(()) => {
+                return match std::fs::remove_file(path) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                    _ => Ok(()),
+                };
+            }
+            Err(error) => crate::log_line!("Saving keys to the keychain failed: {error}"),
+        }
+    }
     if keys.is_empty() {
         return match std::fs::remove_file(path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),

@@ -86,6 +86,8 @@ pub struct Settings {
     pub uncap_fps: bool,
     /// Work offline: no request leaves GlobeCraft; tiles and data come from disk only.
     pub offline: bool,
+    /// Keep service and assistant keys in the system keychain (Settings › Keys).
+    pub keys_in_keychain: bool,
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
@@ -140,6 +142,7 @@ impl Default for Settings {
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             offline: false,
+            keys_in_keychain: false,
             gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,
@@ -210,6 +213,8 @@ struct SettingsInput {
     uncap_fps: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     offline: Option<bool>,
+    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
+    keys_in_keychain: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
     gpu_globe: Option<bool>,
     #[serde(default, deserialize_with = "crate::json_fields::boolean")]
@@ -303,6 +308,9 @@ impl Settings {
         }
         if let Some(offline) = input.offline {
             self.offline = offline;
+        }
+        if let Some(keychain) = input.keys_in_keychain {
+            self.keys_in_keychain = keychain;
         }
         if let Some(gpu) = input.gpu_globe {
             self.gpu_globe = gpu;
@@ -784,6 +792,7 @@ mod tests {
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             offline: false,
+            keys_in_keychain: false,
             gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,

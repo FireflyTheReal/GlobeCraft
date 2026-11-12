@@ -38,19 +38,19 @@ impl AssistantPreferences {
     }
 }
 
-fn keys_file() -> PathBuf {
+pub(crate) fn keys_path() -> PathBuf {
     crate::paths::config_dir().join("assistant-keys.json")
 }
 
 /// Saved API keys by provider id (empty when none were saved or the file is unreadable).
 pub fn load_keys() -> BTreeMap<String, String> {
-    crate::keys::read_private(&keys_file())
+    crate::keys::read_private(&keys_path())
 }
 
 /// Replaces the saved API keys; an empty map removes the file. Runs on the caller's thread:
 /// call it from a background task.
 pub fn save_keys(keys: &BTreeMap<String, String>) -> Result<(), crate::Error> {
-    crate::keys::write_private(&keys_file(), keys)
+    crate::keys::write_private(&keys_path(), keys)
 }
 
 #[cfg(test)]

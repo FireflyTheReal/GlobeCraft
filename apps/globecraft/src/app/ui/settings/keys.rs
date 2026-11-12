@@ -30,6 +30,21 @@ impl App {
     pub(super) fn settings_keys(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
         ui.weak(lang.text("settings-keys-intro"));
+        if globecraft_data::secret_store::available() {
+            let mut on = self.settings.keys_in_keychain;
+            if ui
+                .checkbox(&mut on, lang.text("settings-keys-keychain"))
+                .on_hover_text(lang.text("settings-keys-keychain-help"))
+                .changed()
+            {
+                self.settings.keys_in_keychain = on;
+                self.runtime.handle().spawn_blocking(move || {
+                    if let Err(error) = keys::move_to_keychain(on) {
+                        globecraft_data::log_line!("Moving the keys failed: {error}");
+                    }
+                });
+            }
+        }
         for service in SERVICES {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {

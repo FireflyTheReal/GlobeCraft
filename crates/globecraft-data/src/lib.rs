@@ -32,6 +32,7 @@ pub mod run_log;
 pub mod runtime;
 pub mod satellites;
 pub mod search;
+pub mod secret_store;
 pub mod settings;
 pub mod sky;
 #[cfg(test)]
