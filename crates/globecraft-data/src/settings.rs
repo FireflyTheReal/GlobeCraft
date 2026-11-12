@@ -181,6 +181,13 @@ fn migrate(value: &mut serde_json::Value) {
     map.insert("version".to_owned(), SETTINGS_VERSION.into());
 }
 
+/// `settings.json.bak` beside `path`: the last settings file that loaded.
+fn backup_path(path: &std::path::Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".bak");
+    path.with_file_name(name)
+}
+
 fn settings_file() -> PathBuf {
     config_dir().join("settings.json")
 }
@@ -376,7 +383,12 @@ impl Settings {
                 );
             }
         };
+        let backup = backup_path(path);
         let Err(error) = settings.apply_json(&bytes) else {
+            // The last file that loaded, for when a later one cannot be read.
+            if let Err(error) = crate::paths::write_atomic(&backup, &bytes, false) {
+                crate::log_line!("Could not keep a copy of the settings: {error}");
+            }
             return (settings, None);
         };
         let seconds = std::time::SystemTime::now()
@@ -385,16 +397,31 @@ impl Settings {
         let mut kept_name = path.file_name().unwrap_or_default().to_owned();
         kept_name.push(format!(".corrupt-{seconds}"));
         let kept = path.with_file_name(kept_name);
-        let message = match std::fs::rename(path, &kept) {
+        let set_aside = std::fs::rename(path, &kept);
+        // The copy of the last file that loaded, if there is one and it reads.
+        let mut restored = Self::default();
+        let from_backup = std::fs::read(&backup)
+            .ok()
+            .is_some_and(|bytes| restored.apply_json(&bytes).is_ok());
+        let fallback = if from_backup {
+            "the settings from the last start are in use"
+        } else {
+            "default settings are in use"
+        };
+        let message = match set_aside {
             Ok(()) => format!(
-                "The settings file could not be read ({error}). It was kept as {} and default settings are in use.",
+                "The settings file could not be read ({error}). It was kept as {} and {fallback}.",
                 kept.display()
             ),
             Err(rename) => format!(
-                "The settings file could not be read ({error}) or set aside ({rename}); default settings are in use."
+                "The settings file could not be read ({error}) or set aside ({rename}); {fallback}."
             ),
         };
-        (Self::default(), Some(message))
+        if from_backup {
+            (restored, Some(message))
+        } else {
+            (Self::default(), Some(message))
+        }
     }
 }
 #[cfg(test)]
@@ -524,6 +551,12 @@ mod tests {
         let (settings, problem) = Settings::load_from(&path);
         assert!(problem.is_none());
         assert!((settings.ui_scale - 1.5).abs() < 1e-6);
+        // That load kept a copy, so a file damaged later falls back to it.
+        assert!(backup_path(&path).exists());
+        std::fs::write(&path, br#"{"ui_scale": 1.2, "map_sc"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert!((settings.ui_scale - 1.5).abs() < 1e-6);
+        assert!(problem.unwrap().contains("from the last start"));
         std::fs::remove_dir_all(&root).unwrap();
     }
     #[test]
