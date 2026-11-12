@@ -690,6 +690,97 @@ mod dispatch_tests {
     /// Every command in the catalog is a match arm of `App::run` or of the handler it
     /// hands a prefix to, so a command added to the catalog without a handler (which
     /// would only fail at run time, as "unknown command") fails here.
+    /// Functions whose first text argument (after at most two plain arguments such as
+    /// `ui, self`) is a command id.
+    const COMMAND_CALLS: [&str; 12] = [
+        "run",
+        "run_reporting",
+        "small",
+        "big",
+        "small_with",
+        "big_with",
+        "menu_item",
+        "menu_item_with",
+        "user_shortcut",
+        "shortcut",
+        "tool_key",
+        "command_state",
+    ];
+
+    /// The command ids passed to [`COMMAND_CALLS`] in `source`.
+    fn command_ids_called(source: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        for call in COMMAND_CALLS {
+            let pattern = format!("{call}(");
+            for (start, _) in source.match_indices(&pattern) {
+                let before = source[..start].chars().next_back();
+                if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                    continue;
+                }
+                let rest = &source[start + pattern.len()..];
+                let Some(quote) = rest.find('"') else {
+                    continue;
+                };
+                let leading = &rest[..quote];
+                if leading.matches(',').count() > 2
+                    || !leading
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || "_&, \n".contains(c))
+                {
+                    continue;
+                }
+                let literal = &rest[quote + 1..];
+                if let Some(end) = literal.find('"') {
+                    found.push(&literal[..end]);
+                }
+            }
+        }
+        found
+    }
+
+    /// A command id mistyped where the interface runs or shows a command compiles and
+    /// fails only when clicked; every id passed to the command functions must be in the
+    /// catalog.
+    #[test]
+    fn every_command_id_in_the_interface_is_in_the_catalog() {
+        fn check(path: &std::path::Path, checked: &mut usize) {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(path).unwrap() {
+                    check(&entry.unwrap().path(), checked);
+                }
+                return;
+            }
+            if path.extension().is_none_or(|ext| ext != "rs") {
+                return;
+            }
+            let source = std::fs::read_to_string(path).unwrap();
+            for id in command_ids_called(&source) {
+                let prefix = id.split('.').next().unwrap_or_default();
+                let is_command_prefix = globecraft_core::commands::COMMANDS
+                    .iter()
+                    .any(|spec| spec.id.split('.').next() == Some(prefix));
+                if !id.contains('.') || !is_command_prefix {
+                    continue;
+                }
+                *checked += 1;
+                assert!(
+                    globecraft_core::commands::find(id).is_some(),
+                    "{} names command {id:?}, which is not in the catalog",
+                    path.display()
+                );
+            }
+        }
+        let mut checked = 0;
+        check(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut checked,
+        );
+        assert!(
+            checked > 200,
+            "only {checked} command ids found; the scan is broken"
+        );
+    }
+
     #[test]
     fn every_catalog_command_has_a_handler() {
         let commands = include_str!("commands.rs");
