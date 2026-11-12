@@ -202,10 +202,10 @@ impl FileJobs {
     fn reserve(&self) -> Result<tokio::sync::mpsc::Permit<'_, Job>, crate::Error> {
         self.sender.try_reserve().map_err(|error| match error {
             tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                crate::Error::from("file job queue is full")
+                crate::Error::msg("file job queue is full")
             }
             tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                crate::Error::from("file service is unavailable")
+                crate::Error::msg("file service is unavailable")
             }
         })
     }

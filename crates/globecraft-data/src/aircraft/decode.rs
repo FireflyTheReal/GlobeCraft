@@ -27,9 +27,9 @@ pub(super) async fn adsb_lol(
         .expect("ADSB.lol pause poisoned");
     if let Some(until) = paused.filter(|until| *until > Instant::now()) {
         let left = until.saturating_duration_since(Instant::now()).as_secs() + 1;
-        return Err(
-            format!("ADSB.lol asked to wait (too many requests); again in {left} s").into(),
-        );
+        return Err(crate::Error::msg(format!(
+            "ADSB.lol asked to wait (too many requests); again in {left} s"
+        )));
     }
     match crate::http::body_or_retry_after(request, limit).await? {
         crate::http::Fetched::Body(bytes) => Ok(bytes),
@@ -38,11 +38,10 @@ pub(super) async fn adsb_lol(
             *ADSB_LOL_PAUSED_UNTIL
                 .lock()
                 .expect("ADSB.lol pause poisoned") = Some(Instant::now() + wait);
-            Err(format!(
+            Err(crate::Error::msg(format!(
                 "ADSB.lol asked to wait (too many requests); again in {} s",
                 wait.as_secs()
-            )
-            .into())
+            )))
         }
     }
 }
@@ -65,7 +64,7 @@ pub(super) async fn download_global(url: String) -> Result<Arc<[Aircraft]>, crat
         move || -> Result<_, crate::Error> {
             let json: serde_json::Value = serde_json::from_slice(&bytes)?;
             if !json.get("states").is_some_and(|states| states.is_array()) {
-                return Err("OpenSky response lacks state vectors".into());
+                return Err(crate::Error::msg("OpenSky response lacks state vectors"));
             }
             Ok(parse_opensky(&json, now_unix()).into())
         },
@@ -85,7 +84,7 @@ pub(super) async fn download_local(
         move || -> Result<_, crate::Error> {
             let json: serde_json::Value = serde_json::from_slice(&bytes)?;
             if !json.get("ac").is_some_and(|aircraft| aircraft.is_array()) {
-                return Err("ADSB.lol response lacks aircraft".into());
+                return Err(crate::Error::msg("ADSB.lol response lacks aircraft"));
             }
             Ok(parse_adsb_lol(&json, now_unix()).into())
         },

@@ -643,7 +643,7 @@ async fn fetch_many_stored<T: Send + 'static>(
 ) -> Result<Vec<(TileKey, Result<(T, Vec<u8>), crate::Error>)>, crate::Error> {
     let archives = template
         .strip_prefix(crate::map_data::PMTILES_PREFIX)
-        .ok_or("map data tiles need GlobeCraft's archives")?
+        .ok_or_else(|| crate::Error::msg("map data tiles need GlobeCraft's archives"))?
         .to_owned();
     let tiles: Vec<(u8, u32, u32)> = keys.iter().map(|key| (key.z, key.x, key.y)).collect();
     let parts = crate::map_data::tile_parts_many(&tiles, &archives).await?;
@@ -659,7 +659,7 @@ async fn fetch_many_stored<T: Send + 'static>(
                             bytes.extend(crate::map_data::gunzip_if_needed(part)?);
                         }
                         let tile = (spec.decode)(key, &bytes).ok_or_else(|| {
-                            crate::Error::from(format!(
+                            crate::Error::msg(format!(
                                 "malformed {} tile {}/{}/{}",
                                 spec.set, key.z, key.x, key.y
                             ))

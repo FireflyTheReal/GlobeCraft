@@ -43,7 +43,7 @@ struct Address {
 }
 impl Address {
     fn parse(root: &Path, path: &Path) -> Result<Self, crate::Error> {
-        let fail = || crate::Error::from("invalid tile cache path");
+        let fail = || crate::Error::msg("invalid tile cache path");
         let xyz_row: u32 = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -322,7 +322,7 @@ fn write(
     limit: u64,
 ) -> Result<(), crate::Error> {
     if bytes.len() as u64 > limit {
-        return Err("encoded tile exceeds disk cache budget".into());
+        return Err(crate::Error::msg("encoded tile exceeds disk cache budget"));
     }
     let (suffix, format) = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         FORMATS[1]
@@ -361,16 +361,16 @@ fn write(
 fn ensure_owned_path(root: &Path, path: &Path) -> Result<(), crate::Error> {
     let relative = path
         .strip_prefix(root)
-        .map_err(|_| crate::Error::from("tile path is outside cache root"))?;
+        .map_err(|_| crate::Error::msg("tile path is outside cache root"))?;
     let mut current = root.to_path_buf();
     for part in relative.components() {
         if !matches!(part, std::path::Component::Normal(_)) {
-            return Err("invalid tile path component".into());
+            return Err(crate::Error::msg("invalid tile path component"));
         }
         current.push(part);
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err("tile cache path contains a symlink".into());
+                return Err(crate::Error::msg("tile cache path contains a symlink"));
             }
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -389,7 +389,10 @@ fn with_database<T>(
 ) -> Result<T, crate::Error> {
     ensure_owned_path(root, file)?;
     if create {
-        std::fs::create_dir_all(file.parent().ok_or("missing tileset directory")?)?;
+        std::fs::create_dir_all(
+            file.parent()
+                .ok_or_else(|| crate::Error::msg("missing tileset directory"))?,
+        )?;
     }
     connection.busy_timeout(std::time::Duration::from_millis(DATABASE_BUSY_TIMEOUT_MS))?;
     connection.execute(

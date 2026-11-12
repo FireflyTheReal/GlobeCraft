@@ -29,11 +29,12 @@ pub fn save_planet(
     source: &str,
     sky: &str,
 ) -> Result<String, crate::Error> {
-    let texture_bytes = fs::read(source).map_err(|e| format!("Planet image: {e}"))?;
+    let texture_bytes =
+        fs::read(source).map_err(|e| crate::Error::msg(format!("Planet image: {e}")))?;
     let sky_bytes = if sky.trim().is_empty() {
         Vec::new()
     } else {
-        fs::read(sky).map_err(|e| format!("Sky: {e}"))?
+        fs::read(sky).map_err(|e| crate::Error::msg(format!("Sky: {e}")))?
     };
     fs::write(path, encode_planet(name, texture_bytes, sky_bytes)?)?;
     Ok(format!("Planet and sky embedded in {}", path.display()))
@@ -73,13 +74,13 @@ pub fn decode_planet(
     let data = if doc.version == 1 {
         let rel = Path::new(&doc.texture);
         if rel.components().count() != 1 {
-            return Err("Invalid path".into());
+            return Err(crate::Error::msg("Invalid path"));
         }
         read_texture(&doc.texture)?
     } else if doc.version == 2 {
         doc.texture_bytes
     } else {
-        return Err("Unsupported version".into());
+        return Err(crate::Error::Unsupported("Unsupported version".into()));
     };
     let planet = image::load_from_memory(&data)?.to_rgba8();
     let sky = if doc.sky_bytes.is_empty() {

@@ -119,7 +119,9 @@ impl Budget {
             let victim = victims
                 .into_iter()
                 .min_by_key(|v| (v.overview, v.age))
-                .ok_or("disk cache budget is occupied by unmanaged files")?;
+                .ok_or_else(|| {
+                    crate::Error::msg("disk cache budget is occupied by unmanaged files")
+                })?;
             if let Some((zoom, x, y)) = victim.coordinates {
                 let format = FORMATS
                     .iter()
@@ -129,7 +131,7 @@ impl Budget {
                             .file_name()
                             .is_some_and(|name| name == format!("tiles-{suffix}.mbtiles").as_str())
                     })
-                    .ok_or("unknown MBTiles format")?
+                    .ok_or_else(|| crate::Error::msg("unknown MBTiles format"))?
                     .1;
                 with_database(connection, root, &victim.path, false, format, |db| {
                     db.execute("DELETE FROM tile_cache.tiles WHERE zoom_level=?1 AND tile_column=?2 AND tile_row=?3",rusqlite::params![zoom,x,y])?;

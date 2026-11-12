@@ -90,11 +90,11 @@ pub fn parse_trace(json: &serde_json::Value) -> Result<Trace, crate::Error> {
     let start = json
         .get("timestamp")
         .and_then(serde_json::Value::as_f64)
-        .ok_or("trace without timestamp")?;
+        .ok_or_else(|| crate::Error::msg("trace without timestamp"))?;
     let points = json
         .get("trace")
         .and_then(serde_json::Value::as_array)
-        .ok_or("trace without points")?;
+        .ok_or_else(|| crate::Error::msg("trace without points"))?;
     let mut track = Vec::new();
     for point in points {
         let Some(fields) = point.as_array() else {

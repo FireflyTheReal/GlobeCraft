@@ -121,7 +121,7 @@ impl TimeZones {
         let features = json
             .get("features")
             .and_then(serde_json::Value::as_array)
-            .ok_or("time zones without features")?;
+            .ok_or_else(|| crate::Error::msg("time zones without features"))?;
         let ring = |value: &serde_json::Value| -> Option<Vec<(f64, f64)>> {
             value
                 .as_array()?
@@ -206,7 +206,7 @@ impl TimeZones {
             });
         }
         if zones.is_empty() {
-            return Err("the time zone file holds no zones".into());
+            return Err(crate::Error::msg("the time zone file holds no zones"));
         }
         Ok(Self {
             zones,

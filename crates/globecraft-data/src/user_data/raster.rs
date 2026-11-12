@@ -338,11 +338,10 @@ pub(super) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
     // A WMS answers an error as XML with status 200.
     if bytes.starts_with(b"<") || bytes.starts_with(b"\xef\xbb\xbf<") {
         let text = String::from_utf8_lossy(&bytes[..bytes.len().min(400)]);
-        return Err(format!(
+        return Err(crate::Error::msg(format!(
             "the server answered with text, not an image: {}",
             text.trim()
-        )
-        .into());
+        )));
     }
     Ok(image::load_from_memory(bytes)?.to_rgba8())
 }

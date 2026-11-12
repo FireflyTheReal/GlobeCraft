@@ -172,7 +172,7 @@ impl LocalSearch {
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.snapshots
             .send(Some(Arc::new(Snapshot { generation, labels })))
-            .map_err(|_| crate::Error::from("local prefix index worker is unavailable"))
+            .map_err(|_| crate::Error::msg("local prefix index worker is unavailable"))
     }
     /// None while a current index is being built; callers retain the scan fallback.
     pub fn merge(&self, query: &str, lang: Lang, remote: &[Suggestion]) -> Option<Vec<Suggestion>> {

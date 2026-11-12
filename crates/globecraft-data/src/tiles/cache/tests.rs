@@ -79,7 +79,7 @@ fn unavailable_tiles_are_never_requested_again() {
     assert_eq!(cache.inflight(), 0);
     assert!(!cache.request(1));
     // Other requests finishing must not forget it.
-    cache.complete(2, Err("network failure".into()));
+    cache.complete(2, Err(TileFailure::Error));
     assert!(matches!(cache.lookup(1), Lookup::Unavailable));
 }
 
@@ -93,7 +93,7 @@ fn only_the_exact_esri_placeholder_counts_as_missing() {
 #[test]
 fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weight() {
     let (cache, _rx) = test_cache(4);
-    cache.complete(1, Err("network failure".into()));
+    cache.complete(1, Err(TileFailure::Error));
     cache.complete(
         2,
         Ok(Tile {
@@ -116,7 +116,7 @@ fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weig
     assert!(matches!(cache.lookup(1), Lookup::Absent));
     assert!(cache.request(1));
     assert_eq!(cache.inflight(), 1);
-    cache.complete(1, Err("network failure".into()));
+    cache.complete(1, Err(TileFailure::Error));
     assert_eq!(cache.inflight(), 0);
     assert_eq!(cache.generation(), 3);
 }
@@ -235,7 +235,7 @@ fn overview_skips_cached_loading_and_failed_tiles_without_blocking_foreground() 
     let failed = make_key(Provider::Satellite, 1, 0, 0, 0);
     let loading = make_key(Provider::Satellite, 1, 0, 1, 0);
     cache.complete(cached, Ok(tiny_tile(1)));
-    cache.complete(failed, Err("fixture failure".into()));
+    cache.complete(failed, Err(TileFailure::Error));
     assert!(cache.request(loading));
     assert_eq!(rx.try_recv().unwrap(), loading);
     let mut warmup = TileWarmup::startup_satellite();
@@ -426,7 +426,7 @@ fn retired_wake_tickets_stay_bounded_and_duplicate_priorities_do_not_duplicate_j
 #[test]
 fn failed_visible_tiles_keep_retry_deadlines_without_raster_invalidation() {
     let (cache, _rx) = test_cache(4096);
-    cache.complete(1, Err("offline".into()));
+    cache.complete(1, Err(TileFailure::Error));
     assert!(cache.retry_delay(&[1]).unwrap() > Duration::ZERO);
     cache.requests.lock().unwrap().insert(
         1,

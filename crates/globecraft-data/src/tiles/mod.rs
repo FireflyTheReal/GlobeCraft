@@ -173,8 +173,9 @@ impl Tile {
             .map_err(crate::Error::from)?
             .to_rgba8();
         let (w, h) = (img.width() as usize, img.height() as usize);
-        let elevation = Elevation::from_terrarium(w, h, img.as_raw())
-            .ok_or("elevation tiles must be square with a power-of-two size")?;
+        let elevation = Elevation::from_terrarium(w, h, img.as_raw()).ok_or_else(|| {
+            crate::Error::msg("elevation tiles must be square with a power-of-two size")
+        })?;
         Ok(Self {
             w,
             h,

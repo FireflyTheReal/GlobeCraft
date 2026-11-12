@@ -25,7 +25,7 @@ fn create_unique(path: &Path) -> Result<(File, PathBuf), crate::Error> {
                 suffix += 1;
                 let mut name = path
                     .file_stem()
-                    .ok_or("Screenshot path has no filename")?
+                    .ok_or_else(|| crate::Error::msg("Screenshot path has no filename"))?
                     .to_os_string();
                 name.push(format!("_{suffix}"));
                 if let Some(extension) = path.extension() {
@@ -81,13 +81,19 @@ impl PngStrips {
     }
     /// Appends whole rows of RGBA pixels.
     pub fn write_rows(&mut self, rows: &[u8]) -> Result<(), crate::Error> {
-        let stream = self.stream.as_mut().ok_or("Screenshot already finished")?;
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| crate::Error::msg("Screenshot already finished"))?;
         stream.write_all(rows)?;
         Ok(())
     }
     /// Completes the file once every row was written.
     pub fn finish(mut self) -> Result<PathBuf, crate::Error> {
-        let stream = self.stream.take().ok_or("Screenshot already finished")?;
+        let stream = self
+            .stream
+            .take()
+            .ok_or_else(|| crate::Error::msg("Screenshot already finished"))?;
         let finished = (|| -> Result<(), crate::Error> {
             stream.finish()?;
             Ok(())

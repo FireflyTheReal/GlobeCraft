@@ -18,16 +18,15 @@ pub(super) fn decode(path: &str) -> Result<String, crate::Error> {
         let mut xml = Vec::new();
         entry.take(MAX_DOCUMENT_BYTES + 1).read_to_end(&mut xml)?;
         if xml.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(format!(
+            return Err(crate::Error::msg(format!(
                 "KMZ document exceeds the {} MiB import limit",
                 MAX_DOCUMENT_BYTES / (1024 * 1024)
-            )
-            .into());
+            )));
         }
         return String::from_utf8(xml)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error).into());
     }
-    Err("KMZ archive contains no KML document".into())
+    Err(crate::Error::msg("KMZ archive contains no KML document"))
 }
 
 pub(super) fn encode(xml: &[u8]) -> Result<Vec<u8>, crate::Error> {

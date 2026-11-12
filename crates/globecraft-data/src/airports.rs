@@ -51,14 +51,14 @@ impl Airports {
         let mut lines = text.lines();
         let header: Vec<&str> = lines
             .next()
-            .ok_or("empty airport list")?
+            .ok_or_else(|| crate::Error::msg("empty airport list"))?
             .split('\t')
             .collect();
         let column = |name: &str| {
             header
                 .iter()
                 .position(|h| *h == name)
-                .ok_or_else(|| crate::Error::from(format!("airport list without {name}")))
+                .ok_or_else(|| crate::Error::msg(format!("airport list without {name}")))
         };
         let [
             kind,
@@ -114,7 +114,7 @@ impl Airports {
             });
         }
         if airports.airports.is_empty() {
-            return Err("the airport list holds no airports".into());
+            return Err(crate::Error::msg("the airport list holds no airports"));
         }
         Ok(airports)
     }

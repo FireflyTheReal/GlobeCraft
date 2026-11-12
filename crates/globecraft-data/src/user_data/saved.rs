@@ -102,12 +102,14 @@ pub fn import_sources(bytes: &[u8]) -> Result<Vec<UserLayer>, crate::Error> {
             if let Some(format) = map.get("format").and_then(serde_json::Value::as_str)
                 && format != EXPORT_FORMAT
             {
-                return Err(format!("not a GlobeCraft source list ({format})").into());
+                return Err(crate::Error::msg(format!(
+                    "not a GlobeCraft source list ({format})"
+                )));
             }
             map.get("sources")
-                .ok_or("not a GlobeCraft source list (no sources)")?
+                .ok_or_else(|| crate::Error::msg("not a GlobeCraft source list (no sources)"))?
         }
-        _ => return Err("not a GlobeCraft source list".into()),
+        _ => return Err(crate::Error::msg("not a GlobeCraft source list")),
     };
     let mut saved = SavedSources::default();
     saved.apply(&serde_json::json!({ "favorites": list }));

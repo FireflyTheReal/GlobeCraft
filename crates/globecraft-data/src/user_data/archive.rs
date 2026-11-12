@@ -69,7 +69,7 @@ impl TileArchive {
                 .optional()?)
         })
         .await
-        .map_err(|error| crate::Error::from(error.to_string()))?
+        .map_err(|error| crate::Error::msg(error.to_string()))?
     }
 
     /// The zoom levels held and a tile that exists, for the Add Data form.
@@ -97,7 +97,7 @@ impl TileArchive {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?
-            .ok_or("the MBTiles file holds no tiles")?;
+            .ok_or_else(|| crate::Error::msg("the MBTiles file holds no tiles"))?;
             Ok(ArchiveInfo {
                 min_zoom,
                 max_zoom,
@@ -109,7 +109,7 @@ impl TileArchive {
             })
         })
         .await
-        .map_err(|error| crate::Error::from(error.to_string()))?
+        .map_err(|error| crate::Error::msg(error.to_string()))?
     }
 }
 
@@ -132,12 +132,13 @@ fn open_mbtiles(path: &std::path::Path) -> Result<rusqlite::Connection, crate::E
 /// The zoom levels a `pmtiles:` or `mbtiles:` template's archive holds, and the size
 /// of one of its tiles: the Add Data form's "Test".
 pub async fn describe_archive(template: String) -> Result<(ArchiveInfo, (u32, u32)), crate::Error> {
-    let archive = TileArchive::from_template(&template).ok_or("not a tile archive")?;
+    let archive = TileArchive::from_template(&template)
+        .ok_or_else(|| crate::Error::msg("not a tile archive"))?;
     let info = archive.describe().await?;
     let bytes = archive
         .tile(info.sample)
         .await?
-        .ok_or("the archive has no tile where it says it does")?;
+        .ok_or_else(|| crate::Error::msg("the archive has no tile where it says it does"))?;
     let image = crate::cpu::run(crate::cpu::Service::Tiles, move || {
         super::raster::decode(&bytes)
     })

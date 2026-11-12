@@ -170,7 +170,7 @@ impl LiveTraffic {
         let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Err("TomTom disconnected".into()),
+            Err(mpsc::TryRecvError::Disconnected) => Err(crate::Error::msg("TomTom disconnected")),
         };
         self.rx = None;
         if self.pending_key.take().as_deref() != Some(key) {
@@ -241,9 +241,9 @@ async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles
         }
     }
     if decoded.is_empty() {
-        return Err(
-            "No live traffic tiles (invalid key, rate limit or provider unavailable)".into(),
-        );
+        return Err(crate::Error::msg(
+            "No live traffic tiles (invalid key, rate limit or provider unavailable)",
+        ));
     }
     crate::cpu::run(crate::cpu::Service::Features, move || {
         let mut image = RgbaImage::new(TRAFFIC_COMPOSITE_SIZE_PX, TRAFFIC_COMPOSITE_SIZE_PX);

@@ -937,7 +937,7 @@ async fn fetch_tile(
         None => provider.url(zoom, x, y, release),
     };
     if url.is_empty() {
-        return Err(crate::Error::from("empty tile URL").into());
+        return Err(crate::Error::msg("empty tile URL").into());
     }
     let request = crate::http::client(crate::http::Policy::Tile)?.get(url.as_str());
     let request = match &revalidate {

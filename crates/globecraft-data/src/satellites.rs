@@ -264,7 +264,7 @@ impl LiveSatellites {
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.error = Some("CelesTrak disconnected".into());
+                    self.error = Some(crate::Error::msg("CelesTrak disconnected"));
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -351,7 +351,10 @@ async fn download() -> Result<Arc<[Satellite]>, crate::Error> {
     crate::cpu::run(crate::cpu::Service::Features, move || {
         let all = merged(groups.into_iter().map(|(_, s)| s));
         if all.is_empty() {
-            return Err(format!("CelesTrak unavailable: {}", errors.join("; ")).into());
+            return Err(crate::Error::msg(format!(
+                "CelesTrak unavailable: {}",
+                errors.join("; ")
+            )));
         }
         Ok(all)
     })

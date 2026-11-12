@@ -19,7 +19,7 @@ const MANIFEST_REUSE: Duration = Duration::from_secs(10 * 60);
 pub(crate) async fn template(set: &str) -> Result<String, crate::Error> {
     let json = manifest().await?;
     manifest_template(&json[set])
-        .ok_or_else(|| format!("map data manifest without the {set} set").into())
+        .ok_or_else(|| crate::Error::msg(format!("map data manifest without the {set} set")))
 }
 
 /// The address of manifest entry `set`'s single file (`"file"`, e.g. the airports).
@@ -29,7 +29,7 @@ pub(crate) async fn file(set: &str) -> Result<String, crate::Error> {
         .as_str()
         .filter(|url| url.starts_with("https://"))
         .map(str::to_owned)
-        .ok_or_else(|| format!("map data manifest without the {set} file").into())
+        .ok_or_else(|| crate::Error::msg(format!("map data manifest without the {set} file")))
 }
 
 /// One set read from several manifest entries: `set` and its zoom bands (`bands`,
@@ -46,7 +46,9 @@ pub(crate) async fn banded_template(set: &str, bands: &[&str]) -> Result<String,
         .map(|template| template.replace(' ', "|"))
         .collect();
     if parts.is_empty() {
-        return Err(format!("map data manifest without the {set} set").into());
+        return Err(crate::Error::msg(format!(
+            "map data manifest without the {set} set"
+        )));
     }
     Ok(format!("{PMTILES_PREFIX}{}", parts.join("|")))
 }
@@ -142,8 +144,7 @@ pub(crate) async fn tile_parts_many(
     let mut located: Vec<Vec<Option<(usize, TileLocation)>>> =
         vec![vec![None; tiles.len()]; sets.len()];
     while let Some(result) = locate_jobs.join_next().await {
-        let (set_index, found) =
-            result.map_err(|error| crate::Error::from(error.to_string()))??;
+        let (set_index, found) = result.map_err(|error| crate::Error::msg(error.to_string()))??;
         located[set_index] = found;
     }
 
@@ -180,11 +181,11 @@ pub(crate) async fn tile_parts_many(
                     .saturating_sub(1);
                 let (start, end) = runs[run];
                 let local = usize::try_from(location.offset - start)
-                    .map_err(|_| crate::Error::from("bad PMTiles tile offset"))?;
+                    .map_err(|_| crate::Error::msg("bad PMTiles tile offset"))?;
                 let length = location.length as usize;
                 let window = run_bytes[run]
                     .get(local..local + length)
-                    .ok_or_else(|| crate::Error::from("truncated PMTiles tile range"))?;
+                    .ok_or_else(|| crate::Error::msg("truncated PMTiles tile range"))?;
                 debug_assert!(location.offset + u64::from(location.length) <= end);
                 found.push((tile_index, set_index, window.to_vec()));
             }
@@ -192,7 +193,7 @@ pub(crate) async fn tile_parts_many(
         });
     }
     while let Some(result) = reads.join_next().await {
-        let found = result.map_err(|error| crate::Error::from(error.to_string()))??;
+        let found = result.map_err(|error| crate::Error::msg(error.to_string()))??;
         for (tile_index, set_index, bytes) in found {
             parts[tile_index][set_index] = bytes;
         }
@@ -242,7 +243,7 @@ async fn locate_set(
                 first_error.get_or_insert(error);
             }
             Err(error) => {
-                first_error.get_or_insert_with(|| crate::Error::from(error.to_string()));
+                first_error.get_or_insert_with(|| crate::Error::msg(error.to_string()));
             }
         }
     }

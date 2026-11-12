@@ -144,10 +144,10 @@ impl SettingsWriter {
         if let Some(thread) = self.thread.take() {
             thread
                 .join()
-                .map_err(|_| crate::Error::from("Settings writer panicked during shutdown"))?;
+                .map_err(|_| crate::Error::msg("Settings writer panicked during shutdown"))?;
         }
         match self.take_error() {
-            Some(error) => Err(crate::Error::from(error)),
+            Some(error) => Err(crate::Error::msg(error)),
             None => Ok(()),
         }
     }

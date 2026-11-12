@@ -232,9 +232,9 @@ impl LiveAircraft {
                     aircraft: self.latest.aircraft.clone(),
                     global: self.latest.global.clone(),
                     local: self.latest.local.clone(),
-                    error: Some(Arc::new(
-                        "Aircraft service stopped before publishing its result".into(),
-                    )),
+                    error: Some(Arc::new(crate::Error::msg(
+                        "Aircraft service stopped before publishing its result",
+                    ))),
                     valid_until: self.latest.valid_until,
                 });
             }

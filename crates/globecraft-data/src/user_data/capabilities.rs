@@ -77,7 +77,9 @@ fn parse(bytes: &[u8]) -> Result<Vec<WmsLayer>, crate::Error> {
         buffer.clear();
     }
     if layers.is_empty() {
-        return Err("the service lists no named layers (is it a WMS?)".into());
+        return Err(crate::Error::msg(
+            "the service lists no named layers (is it a WMS?)",
+        ));
     }
     Ok(layers)
 }

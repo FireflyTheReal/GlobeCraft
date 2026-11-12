@@ -130,7 +130,9 @@ pub fn parse_features(
     set.value_field = reader.value_field().map(str::to_owned);
     let set = set.finish();
     if set.points.is_empty() && set.lines.is_empty() {
-        return Err("no points or lines with coordinates were found".into());
+        return Err(crate::Error::msg(
+            "no points or lines with coordinates were found",
+        ));
     }
     Ok(set)
 }
@@ -358,7 +360,9 @@ fn coordinates(element: &quick_xml::events::BytesStart) -> Option<(f64, f64)> {
 fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::Error> {
     let text = String::from_utf8_lossy(bytes);
     let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-    let header = lines.next().ok_or("the file is empty")?;
+    let header = lines
+        .next()
+        .ok_or_else(|| crate::Error::msg("the file is empty"))?;
     let delimiter = [',', ';', '\t', '|']
         .into_iter()
         .max_by_key(|d| header.matches(*d).count())
@@ -375,7 +379,7 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
         .collect();
     let find = |names: &[&str]| columns.iter().position(|c| names.contains(&c.as_str()));
     let lat = find(&["lat", "latitude", "y", "lat_dd", "decimallatitude"])
-        .ok_or("no latitude column (lat, latitude or y)")?;
+        .ok_or_else(|| crate::Error::msg("no latitude column (lat, latitude or y)"))?;
     let lon = find(&[
         "lon",
         "lng",
@@ -385,7 +389,7 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
         "lon_dd",
         "decimallongitude",
     ])
-    .ok_or("no longitude column (lon, lng, longitude or x)")?;
+    .ok_or_else(|| crate::Error::msg("no longitude column (lon, lng, longitude or x)"))?;
     let name = find(&["name", "title", "label", "place", "city"]);
     let mut set = FeatureSet::default();
     for line in lines {

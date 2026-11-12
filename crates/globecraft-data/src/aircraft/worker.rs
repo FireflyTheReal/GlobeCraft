@@ -55,7 +55,7 @@ mod tests {
         provider.attempt = Some(now);
         assert_eq!(provider.deadline(now, GLOBAL_REFRESH), now + GLOBAL_REFRESH);
         assert_eq!(provider.deadline(now, LOCAL_REFRESH), now + LOCAL_REFRESH);
-        provider.samples.status.error = Some(Arc::new("fixture error".into()));
+        provider.samples.status.error = Some(Arc::new(crate::Error::msg("fixture error")));
         assert_eq!(provider.deadline(now, GLOBAL_REFRESH), now + FAILURE_RETRY);
         assert_eq!(
             provider.deadline(now, LOCAL_REFRESH),

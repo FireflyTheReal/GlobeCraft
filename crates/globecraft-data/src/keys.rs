@@ -100,26 +100,25 @@ pub fn fill(text: &str) -> Result<String, crate::Error> {
     while let Some(start) = rest.find("{key:") {
         out.push_str(&rest[..start]);
         let after = &rest[start + "{key:".len()..];
-        let end = after.find('}').ok_or("unclosed {key:…} in the address")?;
+        let end = after
+            .find('}')
+            .ok_or_else(|| crate::Error::msg("unclosed {key:…} in the address"))?;
         let id = &after[..end];
         let service = SERVICES
             .iter()
             .find(|service| service.id == id)
-            .ok_or_else(|| crate::Error::from(format!("no service named {id} takes a key")))?;
+            .ok_or_else(|| crate::Error::msg(format!("no service named {id} takes a key")))?;
         if !host
             .as_deref()
             .is_some_and(|host| service.hosts.contains(&host))
         {
-            return Err(format!(
+            return Err(crate::Error::msg(format!(
                 "a {id} key is only sent to {}; this address names another host",
                 service.hosts.join(", ")
-            )
-            .into());
+            )));
         }
-        let key = get(id).ok_or_else(|| {
-            crate::Error::from(format!(
-                "this layer needs a {id} key: add it in Settings → Keys"
-            ))
+        let key = get(id).ok_or(crate::Error::MissingKey {
+            service: service.id,
         })?;
         out.push_str(&key);
         rest = &after[end + 1..];
@@ -148,7 +147,7 @@ pub(crate) fn redact_error(error: crate::Error) -> crate::Error {
     if clean == text {
         error
     } else {
-        crate::Error::from(clean)
+        crate::Error::msg(clean)
     }
 }
 

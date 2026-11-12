@@ -89,10 +89,13 @@ impl Header {
     }
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, crate::Error> {
         if bytes.len() < HEADER_BYTES || &bytes[..7] != b"PMTiles" {
-            return Err("not a PMTiles archive".into());
+            return Err(crate::Error::msg("not a PMTiles archive"));
         }
         if bytes[7] != 3 {
-            return Err(format!("PMTiles version {} is not supported", bytes[7]).into());
+            return Err(crate::Error::Unsupported(format!(
+                "PMTiles version {} is not supported",
+                bytes[7]
+            )));
         }
         let u64_at = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().expect("8 bytes"));
         let header = Self {
@@ -126,7 +129,9 @@ impl Header {
             header.internal_compression,
             Compression::None | Compression::Gzip
         ) {
-            return Err("PMTiles directories must be uncompressed or gzip".into());
+            return Err(crate::Error::Unsupported(
+                "PMTiles directories must be uncompressed or gzip".into(),
+            ));
         }
         Ok(header)
     }
@@ -168,23 +173,26 @@ pub(crate) fn tile_id(z: u8, x: u32, y: u32) -> u64 {
 fn varint(bytes: &[u8], at: &mut usize) -> Result<u64, crate::Error> {
     let mut value = 0u64;
     for shift in (0..64).step_by(7) {
-        let byte = *bytes.get(*at).ok_or("truncated PMTiles directory")?;
+        let byte = *bytes
+            .get(*at)
+            .ok_or_else(|| crate::Error::msg("truncated PMTiles directory"))?;
         *at += 1;
         value |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
             return Ok(value);
         }
     }
-    Err("overlong varint in a PMTiles directory".into())
+    Err(crate::Error::msg("overlong varint in a PMTiles directory"))
 }
 
 /// Decodes an (already decompressed) directory.
 pub(crate) fn parse_directory(bytes: &[u8]) -> Result<Vec<Entry>, crate::Error> {
     let mut at = 0;
-    let count = usize::try_from(varint(bytes, &mut at)?).map_err(|_| "huge directory")?;
+    let count = usize::try_from(varint(bytes, &mut at)?)
+        .map_err(|_| crate::Error::msg("huge directory"))?;
     // Every entry takes at least four bytes: a larger count is corrupt.
     if count > bytes.len() {
-        return Err("corrupt PMTiles directory".into());
+        return Err(crate::Error::msg("corrupt PMTiles directory"));
     }
     let mut entries = vec![
         Entry {
@@ -201,17 +209,21 @@ pub(crate) fn parse_directory(bytes: &[u8]) -> Result<Vec<Entry>, crate::Error> 
         entry.tile_id = last;
     }
     for entry in &mut entries {
-        entry.run_length = u32::try_from(varint(bytes, &mut at)?).map_err(|_| "huge run")?;
+        entry.run_length =
+            u32::try_from(varint(bytes, &mut at)?).map_err(|_| crate::Error::msg("huge run"))?;
     }
     for entry in &mut entries {
-        entry.length = u32::try_from(varint(bytes, &mut at)?).map_err(|_| "huge entry")?;
+        entry.length =
+            u32::try_from(varint(bytes, &mut at)?).map_err(|_| crate::Error::msg("huge entry"))?;
     }
     for i in 0..count {
         let value = varint(bytes, &mut at)?;
         entries[i].offset = if value == 0 && i > 0 {
             entries[i - 1].offset + u64::from(entries[i - 1].length)
         } else {
-            value.checked_sub(1).ok_or("corrupt PMTiles offset")?
+            value
+                .checked_sub(1)
+                .ok_or_else(|| crate::Error::msg("corrupt PMTiles offset"))?
         };
     }
     Ok(entries)
@@ -235,7 +247,9 @@ fn decompress(bytes: Vec<u8>, compression: Compression) -> Result<Vec<u8>, crate
             std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
             Ok(out)
         }
-        other => Err(format!("unsupported PMTiles compression {other:?}").into()),
+        other => Err(crate::Error::Unsupported(format!(
+            "unsupported PMTiles compression {other:?}"
+        ))),
     }
 }
 
@@ -288,8 +302,11 @@ impl Archive {
         };
         let first = archive.range(0, FIRST_READ_BYTES).await?;
         let header = Header::parse(&first)?;
-        let start = usize::try_from(header.root_offset).map_err(|_| "bad root offset")?;
-        let end = start + usize::try_from(header.root_length).map_err(|_| "bad root length")?;
+        let start = usize::try_from(header.root_offset)
+            .map_err(|_| crate::Error::msg("bad root offset"))?;
+        let end = start
+            + usize::try_from(header.root_length)
+                .map_err(|_| crate::Error::msg("bad root length"))?;
         let root_bytes = match first.get(start..end) {
             Some(bytes) => bytes.to_vec(),
             None => {
@@ -349,7 +366,7 @@ impl Archive {
             };
             if entry.run_length > 0 {
                 if u64::from(entry.length) > MAX_TILE_BYTES {
-                    return Err("PMTiles tile too large".into());
+                    return Err(crate::Error::msg("PMTiles tile too large"));
                 }
                 return Ok(Some(TileLocation {
                     offset: self.header.tile_offset + entry.offset,
@@ -358,7 +375,7 @@ impl Archive {
             }
             directory = Some(self.leaf(entry).await?);
         }
-        Err("PMTiles directories nest too deep".into())
+        Err(crate::Error::msg("PMTiles directories nest too deep"))
     }
 
     async fn leaf(&self, entry: Entry) -> Result<std::sync::Arc<Vec<Entry>>, crate::Error> {
@@ -373,7 +390,7 @@ impl Archive {
             return Ok(cached.entries.clone());
         }
         if u64::from(entry.length) > MAX_DIRECTORY_BYTES {
-            return Err("PMTiles directory too large".into());
+            return Err(crate::Error::msg("PMTiles directory too large"));
         }
         let bytes = self.range(offset, u64::from(entry.length)).await?;
         let compression = self.header.internal_compression;
@@ -413,7 +430,7 @@ impl Archive {
                 limit
                     .acquire()
                     .await
-                    .map_err(|_| crate::Error::from("HTTP range limiter closed"))?,
+                    .map_err(|_| crate::Error::msg("HTTP range limiter closed"))?,
             ),
             None => None,
         };
@@ -446,7 +463,10 @@ impl Archive {
             }
             let response = response.error_for_status()?;
             if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-                return Err(format!("{} does not serve byte ranges", self.url).into());
+                return Err(crate::Error::msg(format!(
+                    "{} does not serve byte ranges",
+                    self.url
+                )));
             }
             if url == self.url && response.url().as_str() != self.url {
                 *self
@@ -475,7 +495,7 @@ impl Archive {
             }
             return Ok(bytes);
         }
-        Err(format!("{} could not be read", self.url).into())
+        Err(crate::Error::msg(format!("{} could not be read", self.url)))
     }
 }
 

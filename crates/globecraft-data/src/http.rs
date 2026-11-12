@@ -155,7 +155,9 @@ pub(crate) async fn body_or_retry_after(
         Conditional::Body { bytes, .. } => Fetched::Body(bytes),
         Conditional::RetryAfter(wait) => Fetched::RetryAfter(wait),
         Conditional::NotModified => {
-            return Err("304 Not Modified for an unconditional request".into());
+            return Err(crate::Error::msg(
+                "304 Not Modified for an unconditional request",
+            ));
         }
     })
 }

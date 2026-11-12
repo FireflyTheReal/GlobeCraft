@@ -73,7 +73,7 @@ impl LiveVessels {
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.error = Some("AIS disconnected".into());
+                    self.error = Some(crate::Error::msg("AIS disconnected"));
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -135,11 +135,13 @@ impl LiveVessels {
 async fn download() -> Result<VesselBatch, crate::Error> {
     if let Ok(url) = std::env::var("GLOBECRAFT_AIS_GEOJSON_URL") {
         if !url.starts_with("https://") {
-            return Err("AIS endpoint must use HTTPS".into());
+            return Err(crate::Error::msg("AIS endpoint must use HTTPS"));
         }
         let json = request_json(&url).await?;
         if !json["features"].is_array() {
-            return Err("Custom AIS endpoint must return a GeoJSON FeatureCollection".into());
+            return Err(crate::Error::msg(
+                "Custom AIS endpoint must return a GeoJSON FeatureCollection",
+            ));
         }
         return Ok(VesselBatch {
             vessels: crate::cpu::run(crate::cpu::Service::Features, move || {
@@ -162,7 +164,9 @@ async fn download() -> Result<VesselBatch, crate::Error> {
     }
     let json = request_json(FINNISH_URL).await?;
     if !json["features"].is_array() {
-        return Err("No compatible worldwide or Finnish AIS feed".into());
+        return Err(crate::Error::msg(
+            "No compatible worldwide or Finnish AIS feed",
+        ));
     }
     Ok(VesselBatch {
         vessels: crate::cpu::run(crate::cpu::Service::Features, move || {

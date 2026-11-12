@@ -43,7 +43,7 @@ impl MarineNames {
         let features = json
             .get("features")
             .and_then(serde_json::Value::as_array)
-            .ok_or("marine names: no features")?;
+            .ok_or_else(|| crate::Error::msg("marine names: no features"))?;
         let mut names: Vec<MarineName> = features
             .iter()
             .filter_map(|feature| {

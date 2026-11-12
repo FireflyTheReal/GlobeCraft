@@ -26,7 +26,7 @@ impl Service {
                 .map_err(|error| error.to_string())
         })
         .as_ref()
-        .map_err(|error| crate::Error::from(error.clone()))
+        .map_err(|error| crate::Error::msg(error.clone()))
     }
 }
 
@@ -40,7 +40,9 @@ fn catch_panic<T>(work: impl FnOnce() -> Result<T, crate::Error>) -> Result<T, c
             .map(String::as_str)
             .or_else(|| payload.downcast_ref::<&str>().copied())
             .unwrap_or("non-string panic payload");
-        Err(format!("CPU service job panicked: {message}").into())
+        Err(crate::Error::msg(format!(
+            "CPU service job panicked: {message}"
+        )))
     })
 }
 
@@ -66,7 +68,7 @@ pub(crate) async fn run<T: Send + 'static>(
     });
     receive
         .await
-        .map_err(|_| crate::Error::from("CPU service stopped before returning its result"))?
+        .map_err(|_| crate::Error::msg("CPU service stopped before returning its result"))?
 }
 
 #[cfg(test)]

@@ -99,7 +99,9 @@ impl App {
                 self.cache_controls.clear_rx = Some(rx);
                 return;
             }
-            Err(mpsc::TryRecvError::Disconnected) => Err("cache clearing task stopped".into()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err(globecraft_data::Error::msg("cache clearing task stopped"))
+            }
         };
         self.cache_controls.last_usage_scan = None;
         self.cache_controls.usage = None;
@@ -155,7 +157,9 @@ impl App {
                 self.cache_controls.usage_rx = Some(rx);
                 return;
             }
-            Err(mpsc::TryRecvError::Disconnected) => Err("cache measurement task stopped".into()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("cache measurement task stopped".to_owned())
+            }
         };
         self.cache_controls.usage = Some(result);
     }

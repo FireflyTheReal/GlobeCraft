@@ -190,7 +190,7 @@ mod tests {
         assert!(restart.kml.is_some());
         restart.file_completed(
             FileKind::SaveKml,
-            &Err(globecraft_data::Error::from("disk full")),
+            &Err(globecraft_data::Error::msg("disk full")),
         );
         assert!(!restart.saving);
         assert!(restart.error.unwrap().contains("disk full"));

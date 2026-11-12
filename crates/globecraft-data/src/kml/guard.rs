@@ -28,7 +28,7 @@ fn start(
     writer: &mut Writer<Vec<u8>>,
 ) -> Result<(), crate::Error> {
     if stack.len() >= MAX_XML_DEPTH {
-        return Err("KML nesting exceeds the supported depth".into());
+        return Err(crate::Error::msg("KML nesting exceeds the supported depth"));
     }
     let mut tag = tag.into_owned();
     // kml 0.14's Folder reader discards unknown feature fields, including
@@ -89,7 +89,7 @@ pub(super) fn prepare(txt: &str) -> Result<Vec<u8>, crate::Error> {
             }
             Event::End(_) => {
                 if stack.is_empty() {
-                    return Err("KML contains an unexpected closing tag".into());
+                    return Err(crate::Error::msg("KML contains an unexpected closing tag"));
                 }
                 close(&mut stack, &mut writer)?;
             }
@@ -100,7 +100,9 @@ pub(super) fn prepare(txt: &str) -> Result<Vec<u8>, crate::Error> {
                     .iter()
                     .any(|f| f.is("coordinates") || f.is("name") || f.is("description"))
                 {
-                    return Err("KML ends inside a text or coordinates field".into());
+                    return Err(crate::Error::msg(
+                        "KML ends inside a text or coordinates field",
+                    ));
                 }
                 while !stack.is_empty() {
                     close(&mut stack, &mut writer)?;

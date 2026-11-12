@@ -101,7 +101,7 @@ pub async fn load_wayback_releases() -> Result<Vec<WaybackRelease>, crate::Error
     };
     let list = parse_wayback_config(&json);
     if list.is_empty() {
-        Err("empty Wayback release list".into())
+        Err(crate::Error::msg("empty Wayback release list"))
     } else {
         Ok(list)
     }
