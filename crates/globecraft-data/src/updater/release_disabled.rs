@@ -8,6 +8,10 @@ use tokio::sync::watch;
 pub(super) struct SelectedRelease {
     pub(super) version: String,
 }
+#[allow(
+    dead_code,
+    reason = "never built: check() always fails without the updater"
+)]
 pub(super) enum Checked {
     Installable(SelectedRelease),
     NoBuild { version: String },
