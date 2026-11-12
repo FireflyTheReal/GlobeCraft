@@ -313,10 +313,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${ZIPSIGN_PRIVATE_KEY}" ]; then
+            # Builds with a public key refuse unsigned updates: never publish one.
+            if [ -s "$GITHUB_WORKSPACE/crates/globecraft-data/release-signing.pub" ]; then
+              echo "::error::release-signing.pub holds a key but ZIPSIGN_PRIVATE_KEY is not set."
+              exit 1
+            fi
             echo "::warning::ZIPSIGN_PRIVATE_KEY is not set; updater archives are not signed."
             exit 0
           fi
-          cargo install zipsign --locked
+          # The signature format must match the zipsign-api version self_update uses (0.2).
+          cargo install zipsign --locked --version '^0.2'
           key="$RUNNER_TEMP/zipsign.key"
           printf '%s' "$ZIPSIGN_PRIVATE_KEY" | base64 --decode > "$key"
           for archive in *-update.zip *-portable.zip; do
