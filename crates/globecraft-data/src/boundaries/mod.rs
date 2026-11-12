@@ -10,7 +10,7 @@ mod geojson;
 mod load;
 pub(crate) mod osm_tiles;
 mod place_names;
-pub use place_names::PlaceNameTiles;
+pub use place_names::{PlaceNameSnapshot, PlaceNameTiles};
 mod sources;
 mod updates;
 pub use geojson::dedupe_city_labels;

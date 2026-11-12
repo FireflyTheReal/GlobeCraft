@@ -161,7 +161,10 @@ impl App {
             &self.runtime,
             globecraft_data::traffic::TrafficQuery {
                 enabled: earth && self.layer(MapLayer::Traffic),
-                key: &self.tomtom_key,
+                key: self
+                    .service_keys
+                    .get(globecraft_data::keys::TOMTOM)
+                    .map_or("", String::as_str),
                 view,
             },
             repainter(ctx),

@@ -8,6 +8,9 @@ use super::osm_tiles::content::{TileBounds, TileKey};
 use crate::vector_tiles::{Snapshot, Spec, TileStream, View};
 use std::sync::Arc;
 
+/// The close-up place names loaded for the view at one moment.
+pub type PlaceNameSnapshot = Arc<Snapshot<PlaceTile>>;
+
 /// Tiles across the view: as the border tiles' finer choice, so zoom 13 takes over
 /// from the border tiles' zoom 12 where those would go finer.
 const TILES_ACROSS_VIEW: f64 = 4.0;
@@ -84,7 +87,7 @@ impl PlaceNameTiles {
     }
 
     /// The names on show: the same snapshot while the tiles do not change.
-    pub fn snapshot(&self) -> Option<Arc<Snapshot<PlaceTile>>> {
+    pub fn snapshot(&self) -> Option<PlaceNameSnapshot> {
         self.stream.as_ref().and_then(TileStream::shared_snapshot)
     }
 }

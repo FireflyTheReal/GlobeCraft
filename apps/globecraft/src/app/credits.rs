@@ -108,7 +108,13 @@ impl App {
         {
             credits.push(lg.text("satellites-credit").to_owned());
         }
-        if earth && self.layer(MapLayer::Traffic) && !self.tomtom_key.trim().is_empty() {
+        if earth
+            && self.layer(MapLayer::Traffic)
+            && !self
+                .service_key(globecraft_data::keys::TOMTOM)
+                .trim()
+                .is_empty()
+        {
             credits.push(lg.text("traffic-credit").to_owned());
         }
         // Credits of the layers the user added, as their licences ask.

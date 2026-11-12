@@ -138,7 +138,7 @@ impl App {
     /// The loader's boundaries with the close-up place names on show.
     fn with_place_names(&mut self) -> Arc<BoundaryData> {
         let places = self.borders.place_names.snapshot();
-        self.borders.place_names_shown = places.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
+        self.borders.place_names_shown = places.clone();
         match places {
             Some(places) => Arc::new(self.borders.source.with_place_names(Some(&places))),
             None => self.borders.source.clone(),
@@ -147,12 +147,13 @@ impl App {
 
     /// Rebuilds the drawn boundaries when the close-up place names change.
     pub(super) fn refresh_place_names(&mut self) {
-        let shown = self
-            .borders
-            .place_names
-            .snapshot()
-            .map_or(0, |s| Arc::as_ptr(&s) as usize);
-        if shown != self.borders.place_names_shown {
+        let current = self.borders.place_names.snapshot();
+        let unchanged = match (&current, &self.borders.place_names_shown) {
+            (Some(current), Some(shown)) => Arc::ptr_eq(current, shown),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
             self.borders.drawn = self.with_place_names();
             self.borders.overlay_cache.merge_boundaries();
         }

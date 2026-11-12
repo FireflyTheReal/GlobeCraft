@@ -852,9 +852,11 @@ impl App {
                     ui.add_space(INDENT + 46.0);
                     if ui
                         .add(
-                            egui::TextEdit::singleline(&mut self.tomtom_key)
-                                .password(true)
-                                .hint_text(lang.text("layers-traffic-key")),
+                            egui::TextEdit::singleline(
+                                self.key_buffer(globecraft_data::keys::TOMTOM),
+                            )
+                            .password(true)
+                            .hint_text(lang.text("layers-traffic-key")),
                         )
                         .changed()
                     {
@@ -864,10 +866,11 @@ impl App {
                 note(
                     ui,
                     t,
-                    &self
-                        .traffic
-                        .service
-                        .status(&self.tomtom_key, self.cam.alt, lang),
+                    &self.traffic.service.status(
+                        self.service_key(globecraft_data::keys::TOMTOM),
+                        self.cam.alt,
+                        lang,
+                    ),
                 );
                 credit(ui, "TomTom Traffic", "https://developer.tomtom.com/");
             }

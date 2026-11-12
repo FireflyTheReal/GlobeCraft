@@ -10,8 +10,9 @@ pub(super) struct Borders {
     pub(super) source: Arc<BoundaryData>,
     /// Zoom 13–14 place names around the view.
     pub(super) place_names: globecraft_data::boundaries::PlaceNameTiles,
-    /// The place-name snapshot `drawn` was built with (its address; 0 for none).
-    pub(super) place_names_shown: usize,
+    /// The place-name snapshot `drawn` was built with. Kept, not just its address, so
+    /// a new snapshot can never reuse the address and look unchanged.
+    pub(super) place_names_shown: Option<globecraft_data::boundaries::PlaceNameSnapshot>,
     pub(super) overlay_cache: super::overlays::OverlayCache,
     pub(super) updates: BoundaryUpdates,
     pub(super) loader: globecraft_data::boundaries::BoundaryLoader,

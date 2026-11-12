@@ -156,9 +156,8 @@ pub(crate) struct App {
     /// with the destination it was listed for.
     arrival_warmup: Option<([u64; 5], TileWarmup)>,
     auto_rotate: bool,
-    tomtom_key: String,
-    /// Keys of the other keyed services as typed in Settings -> Keys (the TomTom key
-    /// is `tomtom_key`, also typed in the Layers pane).
+    /// Keys of the keyed services as typed in Settings -> Keys (the TomTom key is also
+    /// typed in the Layers pane).
     service_keys: std::collections::BTreeMap<&'static str, String>,
     /// The borders and names: loading, the drawn set and its painted overlay.
     borders: borders::Borders,
@@ -387,7 +386,7 @@ impl App {
                 drawn: Arc::new(BoundaryData::default()),
                 source: Arc::new(BoundaryData::default()),
                 place_names: Default::default(),
-                place_names_shown: 0,
+                place_names_shown: None,
                 overlay_cache,
                 updates: BoundaryUpdates::new(boundaries_rx, {
                     let ctx = cc.egui_ctx.clone();
@@ -398,11 +397,8 @@ impl App {
                 log: boundary_log,
             },
             auto_rotate: false,
-            tomtom_key: globecraft_data::keys::get(globecraft_data::keys::TOMTOM)
-                .unwrap_or_default(),
             service_keys: globecraft_data::keys::SERVICES
                 .iter()
-                .filter(|service| service.id != globecraft_data::keys::TOMTOM)
                 .map(|service| {
                     (
                         service.id,
