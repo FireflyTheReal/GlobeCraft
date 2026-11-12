@@ -1,14 +1,20 @@
 //! Globe geometry, camera operations, language selection, and placemark values.
 //! No network, filesystem, windowing, or widget dependencies.
 #![forbid(unsafe_code)]
+pub mod body;
 pub mod camera;
+pub mod celestial;
 pub mod commands;
 pub mod compass;
+pub mod controller;
 pub mod coordinates;
+pub mod earth_model;
+pub mod flight;
 pub mod language;
 pub mod layers;
 mod localization;
 pub mod math;
+pub mod orbit;
 pub mod placemark;
 pub mod polar;
 pub mod profile;
@@ -16,6 +22,10 @@ pub mod ruler;
 #[cfg(test)]
 mod test_inputs;
 pub mod time;
+pub mod units;
+pub mod view_link;
+pub mod web_address;
+
 /// Mean Earth radius used by the globe model, in kilometers.
 pub const EARTH_RADIUS_KM: f64 = 6371.0088;
 pub const METERS_PER_KM: f64 = 1000.0;
@@ -29,19 +39,3 @@ pub const MAX_CAMERA_ALTITUDE_KM: f64 = 50_000.0;
 pub const METERS_PER_LATITUDE_DEGREE: f64 = 111_195.0;
 /// Stop short of the poles so camera orientation remains well-defined.
 pub const MAX_CAMERA_LATITUDE_DEG: f64 = 89.9;
-
-pub mod flight;
-
-pub mod body;
-
-pub mod units;
-pub mod view_link;
-pub mod web_address;
-
-pub mod earth_model;
-
-pub mod orbit;
-
-pub mod controller;
-
-pub mod celestial;

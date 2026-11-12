@@ -63,8 +63,8 @@ def summarize(rows):
             "p95_ms": round(values[max(0, math.ceil(len(values) * 0.95) - 1)], 3),
             "max_ms": round(values[-1], 3),
         })
-    # `frame.raster` puts camera altitude in resident_bytes, so it cannot
-    # contribute to the decoded-cache estimate.
+    # Captures made before the altitude_m column put the camera altitude in
+    # `frame.raster`'s resident_bytes, so those rows stay out of the estimate.
     decoded = (int(row["resident_bytes"]) for row in rows if row["operation"] != "frame.raster")
     return {
         "timings": timings,

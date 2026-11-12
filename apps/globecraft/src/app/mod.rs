@@ -37,20 +37,6 @@ mod diagnostics;
 mod explorer;
 mod files;
 mod flat_earth;
-/// State lines (which need border tiles of zoom 5 or finer) count as showing below this
-/// share of their threshold altitude, where their fade-in reaches about 6 %.
-const STATE_TILES_FROM_RATIO: f64 = 0.85;
-/// Just after the scene's minute turns over (see [`clock_wake`]).
-const CLOCK_WAKE_MARGIN_SECS: f64 = 0.05;
-
-/// How long until the wall clock reaches the next scene minute, when something on
-/// screen shows it.
-fn clock_wake(now_unix: f64, shows_clock: bool) -> Option<Duration> {
-    let minute = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-    shows_clock.then(|| {
-        Duration::from_secs_f64(minute - now_unix.rem_euclid(minute) + CLOCK_WAKE_MARGIN_SECS)
-    })
-}
 mod fonts;
 mod frame_timing;
 mod globe;
@@ -91,12 +77,27 @@ mod view_links;
 mod wayback;
 mod windows;
 pub(crate) use update_restart::RestartRequest;
+
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
 const PAN_SPEED_POINTS_PER_SECOND: f64 = 350.0;
 const BOUNDARY_POLL_INTERVAL: Duration = Duration::from_millis(300);
 /// How often the whole settings tree is compared with the saved copy. Settings change
 /// by hand, so a few checks a second save promptly without a deep compare every frame.
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(250);
+/// State lines (which need border tiles of zoom 5 or finer) count as showing below this
+/// share of their threshold altitude, where their fade-in reaches about 6 %.
+const STATE_TILES_FROM_RATIO: f64 = 0.85;
+/// Just after the scene's minute turns over (see [`clock_wake`]).
+const CLOCK_WAKE_MARGIN_SECS: f64 = 0.05;
+
+/// How long until the wall clock reaches the next scene minute, when something on
+/// screen shows it.
+fn clock_wake(now_unix: f64, shows_clock: bool) -> Option<Duration> {
+    let minute = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
+    shows_clock.then(|| {
+        Duration::from_secs_f64(minute - now_unix.rem_euclid(minute) + CLOCK_WAKE_MARGIN_SECS)
+    })
+}
 
 /// egui's theme for the saved choice.
 fn egui_theme(

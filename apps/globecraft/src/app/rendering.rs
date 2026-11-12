@@ -84,10 +84,9 @@ impl Renderer {
                         profile.values.width = request.width;
                         profile.values.height = request.height;
                         profile.values.inflight = cache.inflight();
-                        // The view: altitude in metres and tilt in tenths of a degree, so a
-                        // capture shows where slow frames happened.
-                        profile.values.resident_bytes = (request.cam.alt * 1000.0) as usize;
-                        profile.values.count = (request.cam.tilt * 10.0) as usize;
+                        // The view, so a capture shows where slow frames happened.
+                        profile.values.altitude_m = (request.cam.alt * 1000.0) as usize;
+                        profile.values.tilt_decideg = (request.cam.tilt * 10.0) as usize;
                     }
                     let mut frame = backend.render(request, &cache, buffer);
                     if let Some(compare) = request.compare {
