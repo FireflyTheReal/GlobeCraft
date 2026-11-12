@@ -17,7 +17,8 @@ license = "MIT"
 
 [workspace.dependencies]
 globecraft-core = { path = "crates/globecraft-core" }
-globecraft-data = { path = "crates/globecraft-data" }
+# Without its default features; the app turns the updater on (feature `updater`).
+globecraft-data = { path = "crates/globecraft-data", default-features = false }
 globecraft-render = { path = "crates/globecraft-render", default-features = false }
 globecraft-assistant = { path = "crates/globecraft-assistant" }
 eframe = "0.36.2"

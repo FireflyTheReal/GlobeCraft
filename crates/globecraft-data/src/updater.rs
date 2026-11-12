@@ -1,8 +1,12 @@
 //! One startup check and click-to-install updates, independent of the desktop UI.
+#[cfg(feature = "updater")]
+mod release;
+#[cfg(not(feature = "updater"))]
+#[path = "updater/release_disabled.rs"]
 mod release;
 #[cfg(test)]
 mod tests;
-use release::{Checked, SelectedRelease, check, install};
+use release::{Checked, SelectedRelease, check, install, install_path_protected};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -72,7 +76,7 @@ impl UpdateService {
         Self::configured(
             runtime,
             Arc::new(repaint),
-            development_build || mode == "off",
+            development_build || mode == "off" || !cfg!(feature = "updater"),
             if mode == "manual" {
                 Some("This installation uses manual or package-manager updates.".into())
             } else {
@@ -225,7 +229,7 @@ impl UpdateService {
             let state = match result {
                 Ok(true) => UpdateState::ReadyToRestart { version: selected.version.clone() },
                 Ok(false) => UpdateState::Failed { operation: UpdateOperation::Install, message: "The updater did not install the selected release. Open Releases to update manually.".into() },
-                Err(error @ self_update::Error::InstallPathNotWritable { .. }) => UpdateState::Unsupported { version: selected.version.clone(), reason: format!("Update installation is protected: {error}. Open Releases or use your package manager to update.") },
+                Err(error) if install_path_protected(&error) => UpdateState::Unsupported { version: selected.version.clone(), reason: format!("Update installation is protected: {error}. Open Releases or use your package manager to update.") },
                 Err(error) => UpdateState::Failed { operation: UpdateOperation::Install, message: format!("Update installation failed: {error}. Open Releases to update manually if this installation is protected.") },
             };
             sender.send_replace(Snapshot { state, selected: Some(selected) });

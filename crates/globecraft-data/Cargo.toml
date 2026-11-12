@@ -10,7 +10,10 @@ publish = false
 workspace = true
 
 [features]
+default = ["updater"]
 profiling = []
+# The self-updater (GitHub releases). Off for packages updated by a package manager.
+updater = ["dep:self_update"]
 
 [dependencies]
 globecraft-core.workspace = true
@@ -35,5 +38,5 @@ flate2.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 sgp4.workspace = true
-self_update.workspace = true
+self_update = { workspace = true, optional = true }
 semver.workspace = true

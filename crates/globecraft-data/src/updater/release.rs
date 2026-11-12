@@ -175,6 +175,10 @@ fn validate_asset(asset: &ReleaseAsset) -> self_update::Result<()> {
     }
     Ok(())
 }
+/// The install failed because this installation's folder may not be written.
+pub(super) fn install_path_protected(error: &self_update::Error) -> bool {
+    matches!(error, self_update::Error::InstallPathNotWritable { .. })
+}
 pub(super) async fn install(
     selected: &SelectedRelease,
     sender: watch::Sender<Snapshot>,
