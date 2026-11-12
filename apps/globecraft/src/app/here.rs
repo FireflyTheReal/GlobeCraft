@@ -234,11 +234,17 @@ impl App {
     fn here_admin(&mut self, card: HereCard) -> AdminAreas {
         let revision = self.borders.loader.border_tiles_revision();
         match &self.selection.here_admin {
-            Some((at, seen, admin)) if *at == card && *seen == revision => admin.clone(),
+            Some(known) if known.card == card && known.border_revision == revision => {
+                known.areas.clone()
+            }
             _ => {
-                let admin = self.borders.loader.admin_areas_at(card.lat, card.lon);
-                self.selection.here_admin = Some((card, revision, admin.clone()));
-                admin
+                let areas = self.borders.loader.admin_areas_at(card.lat, card.lon);
+                self.selection.here_admin = Some(super::selection::HereAdmin {
+                    card,
+                    border_revision: revision,
+                    areas: areas.clone(),
+                });
+                areas
             }
         }
     }

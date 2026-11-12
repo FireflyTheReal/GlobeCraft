@@ -6,6 +6,13 @@ use super::App;
 use globecraft_core::layers::{LayerSet, MapLayer};
 use serde_json::{Value, json};
 
+/// The layer shown alone, and what was visible before it was.
+#[derive(Clone, Copy)]
+pub(super) struct Solo {
+    pub(super) layer: MapLayer,
+    pub(super) before: LayerSet,
+}
+
 /// The layers to show while `only` is soloed: it (and its parent) among the map's
 /// content, everything else unchanged.
 fn soloed(visible: LayerSet, only: MapLayer) -> LayerSet {
@@ -39,16 +46,19 @@ impl App {
         };
         let visible = self.settings.visible_layers();
         let next = match (self.solo, layer) {
-            (Some((current, before)), Some(layer)) if current != layer => {
-                self.solo = Some((layer, before));
+            (Some(solo), Some(layer)) if solo.layer != layer => {
+                self.solo = Some(Solo { layer, ..solo });
                 soloed(visible, layer)
             }
-            (Some((_, before)), _) => {
+            (Some(solo), _) => {
                 self.solo = None;
-                restored(visible, before)
+                restored(visible, solo.before)
             }
             (None, Some(layer)) => {
-                self.solo = Some((layer, visible));
+                self.solo = Some(Solo {
+                    layer,
+                    before: visible,
+                });
                 soloed(visible, layer)
             }
             (None, None) => visible,
@@ -58,12 +68,12 @@ impl App {
                 self.settings.set_layer_visible(layer, next.contains(layer));
             }
         }
-        Ok(json!({"solo": self.solo.map(|(layer, _)| layer.code())}))
+        Ok(json!({"solo": self.solo.map(|solo| solo.layer.code())}))
     }
 
     /// The layer shown alone, if one is.
     pub(super) fn soloed_layer(&self) -> Option<MapLayer> {
-        self.solo.map(|(layer, _)| layer)
+        self.solo.map(|solo| solo.layer)
     }
 }
 

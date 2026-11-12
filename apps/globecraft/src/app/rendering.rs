@@ -467,8 +467,11 @@ impl App {
                     Some(ctx.load_texture("globe", img, egui::TextureOptions::LINEAR))
             }
         }
-        if let Some((_, _, previous)) = self.imagery.image.replace((w, h, Arc::new(buf)))
-            && let Ok(previous) = Arc::try_unwrap(previous)
+        if let Some(previous) = self.imagery.image.replace(super::imagery::Frame {
+            width: w,
+            height: h,
+            pixels: Arc::new(buf),
+        }) && let Ok(previous) = Arc::try_unwrap(previous.pixels)
         {
             self.imagery.renderer.worker.recycle(previous);
         }

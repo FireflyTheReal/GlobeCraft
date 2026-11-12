@@ -5,6 +5,13 @@ use eframe::egui;
 use globecraft_data::tiles::TileWarmup;
 use std::{sync::Arc, time::Instant};
 
+/// A drawn frame: RGBA pixels, row by row.
+pub(super) struct Frame {
+    pub(super) width: usize,
+    pub(super) height: usize,
+    pub(super) pixels: Arc<Vec<u8>>,
+}
+
 pub(super) struct Imagery {
     pub(super) renderer: rendering::Renderer,
     pub(super) texture: Option<egui::TextureHandle>,
@@ -12,8 +19,8 @@ pub(super) struct Imagery {
     /// it (a new frame of the same view: tiles arrived, or the view came to rest).
     pub(super) fade_from: Option<egui::TextureHandle>,
     pub(super) fade_started: Option<Instant>,
-    /// The last frame's pixels: width, height, RGBA.
-    pub(super) image: Option<(usize, usize, Arc<Vec<u8>>)>,
+    /// The last frame's pixels.
+    pub(super) image: Option<Frame>,
     /// The state key of the view last drawn; 0 asks for a new frame.
     pub(super) last_state: u64,
     pub(super) wake: render_wake::RenderWakeup,

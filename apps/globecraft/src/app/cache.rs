@@ -164,13 +164,19 @@ impl App {
 /// How often the session's download totals go to the run log (stderr), when they changed.
 const DOWNLOAD_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
+/// When the download totals were last written to the run log, and what they were.
+pub(super) struct DownloadLog {
+    pub(super) at: Instant,
+    pub(super) bytes: u64,
+}
+
 impl App {
     /// Writes where the bandwidth went to the run log, at most once a minute and only
     /// after new downloads: a bounded diagnostic, not a timing log.
     pub(super) fn log_downloads(&mut self) {
         use globecraft_data::download_stats::{DownloadKind, totals};
-        let (last, logged_bytes) = self.download_log;
-        if last.elapsed() < DOWNLOAD_LOG_INTERVAL {
+        let logged_bytes = self.download_log.bytes;
+        if self.download_log.at.elapsed() < DOWNLOAD_LOG_INTERVAL {
             return;
         }
         let imagery = totals(DownloadKind::Imagery);
@@ -178,7 +184,10 @@ impl App {
         let borders = totals(DownloadKind::BorderTiles);
         let disk = totals(DownloadKind::ImageryFromDisk);
         let bytes = imagery.bytes + ahead.bytes + borders.bytes + disk.bytes;
-        self.download_log = (Instant::now(), bytes);
+        self.download_log = DownloadLog {
+            at: Instant::now(),
+            bytes,
+        };
         if bytes != logged_bytes {
             globecraft_data::log_line!(
                 "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles ({} confirmed unchanged by the server); {} downloads stopped (tile left the view)",

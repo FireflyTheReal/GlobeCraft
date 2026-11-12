@@ -44,7 +44,7 @@ impl App {
         if self.still_shot.is_some() {
             return Err("A screenshot is still being made.".into());
         }
-        let Some((width, height, _)) = self.imagery.image.as_ref() else {
+        let Some(super::imagery::Frame { width, height, .. }) = self.imagery.image.as_ref() else {
             return Err("The globe has not finished drawing yet.".into());
         };
         let scale = quality.render_scale();

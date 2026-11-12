@@ -210,10 +210,7 @@ pub(crate) struct App {
     /// A `globecraft://view` link from the command line, opened on the first frame.
     pending_view_link: Option<String>,
     /// The layer shown alone (`layer.solo`), and what was visible before.
-    solo: Option<(
-        globecraft_core::layers::MapLayer,
-        globecraft_core::layers::LayerSet,
-    )>,
+    solo: Option<layer_solo::Solo>,
 
     cursor: Option<(f64, f64)>,
 
@@ -238,7 +235,7 @@ pub(crate) struct App {
     /// elevation tiles so a finer tile arriving does not jolt the view.
     ground_km: f64,
     /// When the download totals were last written to the run log, and what they were.
-    download_log: (Instant, u64),
+    download_log: cache::DownloadLog,
 }
 
 impl App {
@@ -444,7 +441,10 @@ impl App {
             time: globecraft_core::time::AppTime::default(),
             still_shot: None,
             ground_km: 0.0,
-            download_log: (Instant::now(), 0),
+            download_log: cache::DownloadLog {
+                at: Instant::now(),
+                bytes: 0,
+            },
             runtime,
         };
         app.restore_kml_session();
@@ -655,8 +655,7 @@ impl eframe::App for App {
         let mut profile = globecraft_data::profiling::Span::new("ui.update");
         #[cfg(feature = "profiling")]
         let mut watchdog = globecraft_data::profiling::PassWatchdog::new("ui.slow");
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.setup");
+        profile_checkpoint!(watchdog, "ui.slow.setup");
         // egui recreates its font atlas when it fills up, before the frame: the atlas is
         // then emptier than at the last frame's start. Label shapes kept across frames
         // must be laid out again, or they show other glyphs.
@@ -685,8 +684,7 @@ impl eframe::App for App {
         if let Some(error) = self.settings_writer.take_error() {
             self.status = format!("Settings persistence failed: {error}");
         }
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.input");
+        profile_checkpoint!(watchdog, "ui.slow.input");
         if self.update_restart.is_saving() {
             ui.disable();
         } else {
@@ -701,21 +699,16 @@ impl eframe::App for App {
         if self.fly.is_some() {
             ui.request_repaint();
         }
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.header");
+        profile_checkpoint!(watchdog, "ui.slow.header");
         self.header(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.ribbon");
+        profile_checkpoint!(watchdog, "ui.slow.ribbon");
         self.ribbon(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.status");
+        profile_checkpoint!(watchdog, "ui.slow.status");
         self.status_bar(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.panes");
+        profile_checkpoint!(watchdog, "ui.slow.panes");
         self.left_pane(ui);
         self.right_pane(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.windows");
+        profile_checkpoint!(watchdog, "ui.slow.windows");
         self.settings_window(ui);
         self.menu_windows(ui);
         self.altitude_window(ui);
@@ -723,16 +716,14 @@ impl eframe::App for App {
         self.command_search_window(ui);
         self.shortcut_dialog(ui);
         ui::focus::paint_focus_ring(ui.ctx());
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.live_maps");
+        profile_checkpoint!(watchdog, "ui.slow.live_maps");
         self.live_maps.update(
             ui,
             &self.runtime,
             self.layer(MapLayer::Clouds),
             self.layer(MapLayer::Radar),
         );
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.boundary");
+        profile_checkpoint!(watchdog, "ui.slow.boundary");
         let earth_visible = self.earth_shown();
         // The vector sets (transport, roads, places, points of interest) keep their
         // tiles on disk under the same limit as the border tiles, each.
@@ -764,8 +755,7 @@ impl eframe::App for App {
         self.log_downloads();
         self.poll_still_shot();
         self.follow_ground(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.globe");
+        profile_checkpoint!(watchdog, "ui.slow.globe");
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::Tokens::get(ui).canvas))
             .show(ui, |ui| {
@@ -776,8 +766,7 @@ impl eframe::App for App {
                     self.globe_view(ui);
                 }
             });
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.native_menu");
+        profile_checkpoint!(watchdog, "ui.slow.native_menu");
         #[cfg(target_os = "macos")]
         self.refresh_native_menu(ui);
         #[cfg(feature = "profiling")]

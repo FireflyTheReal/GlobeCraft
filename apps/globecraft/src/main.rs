@@ -8,6 +8,15 @@
     windows_subsystem = "windows"
 )]
 
+/// `watchdog.checkpoint(name)` in profiling builds and nothing otherwise, so a pass
+/// can be marked in one line.
+macro_rules! profile_checkpoint {
+    ($watchdog:ident, $name:literal) => {
+        #[cfg(feature = "profiling")]
+        $watchdog.checkpoint($name);
+    };
+}
+
 mod app;
 mod presentation;
 use app::{App, RestartRequest, WINDOW_TITLE};
