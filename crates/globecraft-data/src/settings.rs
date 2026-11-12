@@ -14,7 +14,7 @@ pub mod workspace;
 mod writer;
 use crate::paths::{config_dir, default_out_dir};
 use globecraft_core::{earth_model::EarthModel, language::LanguagePreference, units::RulerUnit};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 pub use writer::SettingsWriter;
 pub const MIN_UI_SCALE: f32 = 0.7;
@@ -184,159 +184,123 @@ fn migrate(value: &mut serde_json::Value) {
 fn settings_file() -> PathBuf {
     config_dir().join("settings.json")
 }
-#[derive(Default, Deserialize)]
-struct SettingsInput {
-    sky: Option<serde_json::Value>,
-    controllers: Option<serde_json::Value>,
-    appearance: Option<serde_json::Value>,
-    navigation: Option<serde_json::Value>,
-    cache: Option<serde_json::Value>,
-    sidebar: Option<serde_json::Value>,
-    workspace: Option<serde_json::Value>,
-    layers: Option<serde_json::Value>,
-    assistant: Option<serde_json::Value>,
-    coordinate_display: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    screenshot_dir: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    screenshot_quality: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    kml_dir: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::number")]
-    ui_scale: Option<f64>,
-    #[serde(default, deserialize_with = "crate::json_fields::number")]
-    map_scale: Option<f64>,
-    map_style: Option<serde_json::Value>,
-    user_layers: Option<serde_json::Value>,
-    saved_sources: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    uncap_fps: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    offline: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    keys_in_keychain: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    gpu_globe: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    grid_numbers: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    hide_navigation_controls: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::number")]
-    state_max_altitude_km: Option<f64>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    distance_units: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    earth_model: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    ruler_unit: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    experience: Option<String>,
+/// The top-level fields of a settings file. A field of the wrong type reads as absent,
+/// so the setting keeps its current value; sections read their own objects.
+struct Fields<'a>(&'a serde_json::Map<String, serde_json::Value>);
+impl Fields<'_> {
+    fn value(&self, key: &str) -> Option<&serde_json::Value> {
+        self.0.get(key)
+    }
+    fn string(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(serde_json::Value::as_str)
+    }
+    fn number(&self, key: &str) -> Option<f64> {
+        self.0.get(key).and_then(serde_json::Value::as_f64)
+    }
+    /// Sets `target` when the field is a boolean.
+    fn flag(&self, key: &str, target: &mut bool) {
+        if let Some(value) = self.0.get(key).and_then(serde_json::Value::as_bool) {
+            *target = value;
+        }
+    }
 }
 impl Settings {
     fn apply_json(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
         let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
         migrate(&mut value);
-        let input: SettingsInput = serde_json::from_value(value)?;
-        if let Some(level) = input
-            .experience
-            .as_deref()
+        let Some(map) = value.as_object() else {
+            return Err(crate::Error::msg("a settings file holds a JSON object"));
+        };
+        let fields = Fields(map);
+        if let Some(level) = fields
+            .string("experience")
             .and_then(experience::ExperienceLevel::from_code)
         {
             self.experience = level;
         }
-        if let Some(value) = input.sky {
-            self.sky.apply(&value);
+        if let Some(value) = fields.value("sky") {
+            self.sky.apply(value);
         }
-        if let Some(value) = input.controllers {
-            self.controllers.apply(&value);
+        if let Some(value) = fields.value("controllers") {
+            self.controllers.apply(value);
         }
-        if let Some(value) = input.appearance {
-            self.appearance.apply(&value);
+        if let Some(value) = fields.value("appearance") {
+            self.appearance.apply(value);
         }
-        if let Some(value) = input.navigation {
-            self.navigation.apply(&value);
+        if let Some(value) = fields.value("navigation") {
+            self.navigation.apply(value);
         }
-        if let Some(value) = input.cache {
-            self.cache.apply(&value);
+        if let Some(value) = fields.value("cache") {
+            self.cache.apply(value);
         }
-        if let Some(value) = input.coordinate_display {
-            coordinates::apply(&mut self.coordinate_display, &value);
+        if let Some(value) = fields.value("coordinate_display") {
+            coordinates::apply(&mut self.coordinate_display, value);
         }
-        if let Some(sidebar) = input.sidebar {
-            self.sidebar.apply_json(&sidebar);
+        if let Some(value) = fields.value("sidebar") {
+            self.sidebar.apply_json(value);
         }
-        if let Some(value) = input.workspace {
-            self.workspace.apply(&value);
+        if let Some(value) = fields.value("workspace") {
+            self.workspace.apply(value);
         }
-        if let Some(value) = input.layers {
-            self.layers.apply(&value);
+        if let Some(value) = fields.value("layers") {
+            self.layers.apply(value);
         }
-        if let Some(value) = input.assistant {
-            self.assistant.apply(&value);
+        if let Some(value) = fields.value("assistant") {
+            self.assistant.apply(value);
         }
-        if let Some(path) = input.screenshot_dir.filter(|s| !s.is_empty()) {
-            self.screenshot_dir = path;
+        if let Some(path) = fields.string("screenshot_dir").filter(|s| !s.is_empty()) {
+            self.screenshot_dir = path.to_owned();
         }
-        if let Some(quality) = input
-            .screenshot_quality
-            .as_deref()
+        if let Some(quality) = fields
+            .string("screenshot_quality")
             .and_then(screenshot::ScreenshotQuality::from_code)
         {
             self.screenshot_quality = quality;
         }
-        if let Some(path) = input.kml_dir.filter(|s| !s.is_empty()) {
-            self.kml_dir = path;
+        if let Some(path) = fields.string("kml_dir").filter(|s| !s.is_empty()) {
+            self.kml_dir = path.to_owned();
         }
-        if let Some(scale) = input.ui_scale {
+        if let Some(scale) = fields.number("ui_scale") {
             self.ui_scale = (scale as f32).clamp(MIN_UI_SCALE, MAX_UI_SCALE);
         }
-        if let Some(scale) = input.map_scale {
+        if let Some(scale) = fields.number("map_scale") {
             self.map_scale = (scale as f32).clamp(MIN_MAP_SCALE, MAX_MAP_SCALE);
         }
-        if let Some(value) = input.map_style {
-            self.map_style.apply(&value);
+        if let Some(value) = fields.value("map_style") {
+            self.map_style.apply(value);
         }
-        if let Some(value) = input.user_layers {
-            self.user_layers = crate::user_data::layers_from_json(&value);
+        if let Some(value) = fields.value("user_layers") {
+            self.user_layers = crate::user_data::layers_from_json(value);
             crate::user_data::presets::refresh_sources(&mut self.user_layers);
         }
-        if let Some(value) = input.saved_sources {
-            self.saved_sources.apply(&value);
+        if let Some(value) = fields.value("saved_sources") {
+            self.saved_sources.apply(value);
         }
-        if let Some(uncap) = input.uncap_fps {
-            self.uncap_fps = uncap;
-        }
-        if let Some(offline) = input.offline {
-            self.offline = offline;
-        }
-        if let Some(keychain) = input.keys_in_keychain {
-            self.keys_in_keychain = keychain;
-        }
-        if let Some(gpu) = input.gpu_globe {
-            self.gpu_globe = gpu;
-        }
-        if let Some(hide) = input.hide_navigation_controls {
-            self.hide_navigation_controls = hide;
-        }
-        if let Some(state_max) = input.state_max_altitude_km {
+        fields.flag("uncap_fps", &mut self.uncap_fps);
+        fields.flag("offline", &mut self.offline);
+        fields.flag("keys_in_keychain", &mut self.keys_in_keychain);
+        fields.flag("gpu_globe", &mut self.gpu_globe);
+        fields.flag(
+            "hide_navigation_controls",
+            &mut self.hide_navigation_controls,
+        );
+        fields.flag("grid_numbers", &mut self.grid_numbers);
+        if let Some(state_max) = fields.number("state_max_altitude_km") {
             self.state_max_altitude_km = state_max.clamp(0.0, STATE_MAX_ALTITUDE_MAX_KM);
         }
-        if let Some(model) = input.earth_model.as_deref().and_then(EarthModel::from_code) {
+        if let Some(model) = fields.string("earth_model").and_then(EarthModel::from_code) {
             self.earth_model = model;
         }
-        if let Some(units) = input.distance_units {
-            self.distance_units = match units.as_str() {
+        if let Some(units) = fields.string("distance_units") {
+            self.distance_units = match units {
                 "metric" => UnitPreference::Metric,
                 "imperial" => UnitPreference::Imperial,
                 "system" => UnitPreference::System,
                 _ => self.distance_units,
             };
         }
-        if let Some(unit) = input.ruler_unit.as_deref().and_then(RulerUnit::from_code) {
+        if let Some(unit) = fields.string("ruler_unit").and_then(RulerUnit::from_code) {
             self.ruler_unit = unit;
-        }
-        if let Some(value) = input.grid_numbers {
-            self.grid_numbers = value;
         }
         Ok(())
     }
