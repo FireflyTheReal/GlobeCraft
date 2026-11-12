@@ -24,7 +24,7 @@ Parameters are a JSON object; none is required unless marked.
 | `places.add` | Add Placemark At | Add a placemark at a latitude and longitude. | `description` (string)<br>`folder` (string): Name of an existing folder to put it in<br>`lat` (number), required<br>`lon` (number), required<br>`name` (string) | yes |
 | `places.addFolder` | New Folder | Add a folder to My Places. | `name` (string) | yes |
 | `places.flyTo` | Fly To Place | Fly to a placemark by its name. | `name` (string), required: Placemark name (case-insensitive) | yes |
-| `places.remove` | Remove Place | Remove a placemark or folder by its name. | `name` (string), required: Placemark or folder name | yes |
+| `places.remove` | Remove Place | Remove a placemark or folder by its name. | `name` (string), required: Placemark or folder name | asks first: it discards work or closes GlobeCraft |
 | `places.clear` | Clear All | Remove every place and forget the open KML files (the files are kept). | — | asks first: it discards work or closes GlobeCraft |
 | `ruler.enable` | Ruler | Measure geodesic distances: click the globe to add points, Alt-click to start a new path. | `on` (boolean): Omit to toggle | yes |
 | `ruler.addPoint` | Add Ruler Point | Add a measuring point at a latitude and longitude. | `lat` (number), required<br>`lon` (number), required<br>`new_path` (boolean): Start a separate path | yes |
@@ -56,7 +56,7 @@ Parameters are a JSON object; none is required unless marked.
 | `data.opacity` | User Layer Opacity | Set how opaque a layer you added is. | `id` (integer), required<br>`opacity` (number), required: 0 (invisible) to 1 (opaque) | yes |
 | `data.move` | Move User Layer | Draw a layer you added over or under its neighbour. | `direction` (string): one of `up`, `down`: Up draws it over the next layer<br>`id` (integer), required | yes |
 | `data.zoomTo` | Zoom To User Layer | Fly to the area a feature layer covers. | `id` (integer), required: A feature layer's id | yes |
-| `data.remove` | Remove User Layer | Remove a layer you added. | `id` (integer), required | yes |
+| `data.remove` | Remove User Layer | Remove a layer you added. | `id` (integer), required | asks first: it discards work or closes GlobeCraft |
 | `layer.basemap` | Basemap | Choose the imagery draped on the globe. | `basemap` (string), required: one of `satellite`, `wayback`, `streets`, `topo` | yes |
 | `layer.waybackRelease` | Imagery Date | Pick an Esri World Imagery Wayback release by date. | `date` (string): Release date as listed, e.g. 2021-06-30<br>`step` (integer): +1 for an older, -1 for a newer release | yes |
 | `layer.waybackCompare` | Compare Dates | Swipe between two Wayback imagery dates on either side of a draggable split; set either date, or swap them. | `date` (string): Release shown right of the split, as listed<br>`enabled` (boolean): Omit to toggle<br>`left_date` (string): Release shown left of the split, as listed<br>`split` (number): Where the split runs, 0 (left edge) .. 1 (right edge)<br>`step` (integer): +1 for an older, -1 for a newer comparison release<br>`swap` (boolean): Exchange the two sides' releases | yes |
@@ -118,7 +118,7 @@ Parameters are a JSON object; none is required unless marked.
 | `settings.language` | Language | Choose the interface language. | `language` (string), required: one of `system`, `en`, `pt-BR` | yes |
 | `style.line` | Map line style | Set the color, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines. | `color` (string): Hex colour #rrggbb or #rrggbbaa (aa is opacity)<br>`dash` (string): one of `solid`, `dashed`, `dotted`<br>`line` (string), required: one of `country`, `state`, `municipal`, `disputed`, `major_road`, `minor_road`, `roadworks`, `railway`, `service_rail`, `subway`, `tram`, `ferry`, `runway`, `taxiway`, `river`, `canal`, `park`, `time_zone`: Borders (country, state/province, municipal, disputed), roads (motorway to secondary, smaller roads, roadworks), transport (railways, yards and sidings, subways, trams, ferries, runways, taxiways), rivers, canals, park outlines or time zone lines<br>`width` (number): Line width in points, 0.5..6 | yes |
 | `style.labelSize` | Name size | Set the font size of country, state, city or street names, or of the time zones' offsets. | `label` (string), required: one of `country`, `state`, `city`, `road`, `time_zone`<br>`size` (number), required: Font size in points before the map text scale, 6..24 | yes |
-| `style.reset` | Reset map style | Restore the default border colors, widths, dashes and name sizes. | — | yes |
+| `style.reset` | Reset map style | Restore the default border colors, widths, dashes and name sizes. | — | asks first: it discards work or closes GlobeCraft |
 
 ## File
 

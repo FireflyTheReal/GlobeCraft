@@ -253,7 +253,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places-remove",
         "delete",
         Explore,
-        View,
+        // No undo (Edit › Undo covers the ruler only): the placemark and its folder are gone.
+        Destructive,
         r#"{"type":"object","properties":{"name":{"type":"string","description":"Placemark or folder name"}},"required":["name"]}"#
     ),
     command!("places.open", "places-open", "open", File, Files, NO_PARAMS),
@@ -435,7 +436,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data-remove",
         "delete",
         Map,
-        View,
+        // No undo: the layer's address, style and settings are gone.
+        Destructive,
         r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#
     ),
     // Layers.
@@ -865,7 +867,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         "style-reset",
         "symbology",
         View,
-        View,
+        // No undo: every style choice returns to its default.
+        Destructive,
         NO_PARAMS
     ),
     // Help.
