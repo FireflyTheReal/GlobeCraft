@@ -434,79 +434,40 @@ impl eframe::App for App {
         let aircraft_enabled = self.layer(MapLayer::Flights)
             && self.explorer.active == globecraft_core::body::Body::Earth
             && !self.flat_earth.open;
-        self.live
-            .aircraft
-            .update(globecraft_data::aircraft::AircraftQuery {
-                enabled: aircraft_enabled,
-                latitude: self.cam.lat,
-                longitude: self.cam.lon,
-                altitude_km: self.cam.alt,
-                // Half the view's diagonal on the ground (a 16:10 window), longer
-                // when tilted towards the horizon.
-                radius_km: (self.cam.alt
-                    * globecraft_core::VERTICAL_FOV_HALF_TAN
-                    * 1.89
-                    * (1.0 + self.cam.tilt.max(0.0) / 45.0))
-                    .min(2500.0),
-            });
-        if aircraft_enabled {
-            ctx.request_repaint_after(live_layers::FLIGHT_REPAINT_INTERVAL);
-        }
+        self.live.update_aircraft(ctx, aircraft_enabled, &self.cam);
         self.update_selected_flight(ctx, aircraft_enabled);
         // Independent realtime layers, loaded only for the globe while enabled.
         let earth =
             self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
-        let vessel_wake = ctx.clone();
-        self.live.vessels.update(
+        self.live.update_feeds(
             &self.runtime,
-            earth && self.layer(MapLayer::Vessels),
-            move || vessel_wake.request_repaint(),
-        );
-        let satellite_wake = ctx.clone();
-        self.live.satellites.update(
-            &self.runtime,
-            earth && self.layer(MapLayer::Satellites),
-            move || satellite_wake.request_repaint(),
-        );
-        let aurora_wake = ctx.clone();
-        self.live.aurora.update(
-            &self.runtime,
-            earth && self.layer(MapLayer::Aurora),
-            move || aurora_wake.request_repaint(),
-        );
-        // Airports by code: for the search box and a selected flight's route.
-        let airports_wake = ctx.clone();
-        self.live.airports.update(
-            &self.runtime,
-            self.picked.flight.selected().is_some() || !self.search.query.trim().is_empty(),
-            move || airports_wake.request_repaint(),
+            ctx,
+            live::LiveQuery {
+                earth,
+                cam: &self.cam,
+                vessels: self.layer(MapLayer::Vessels),
+                satellites: self.layer(MapLayer::Satellites),
+                aurora: self.layer(MapLayer::Aurora),
+                traffic: self.layer(MapLayer::Traffic),
+                // Airports by code: for the search box and a selected flight's route.
+                airports: self.picked.flight.selected().is_some()
+                    || !self.search.query.trim().is_empty(),
+                tomtom_key: &self.keys.tomtom,
+            },
         );
         self.update_time_zones(ctx, earth);
         self.update_marine_names(ctx, earth);
-        let transport_wake = ctx.clone();
-        self.map_data.transport.update(
+        self.map_data.update(
             &self.runtime,
-            globecraft_data::transport::TransportQuery {
-                enabled: earth && self.transport_shown(),
+            ctx,
+            map_data::MapDataQuery {
+                earth,
+                view: (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+                transport: self.transport_shown(),
                 rail_or_airports: self.layer(MapLayer::Railways) || self.layer(MapLayer::Airports),
-                latitude: self.cam.lat,
-                longitude: self.cam.lon,
-                altitude_km: self.cam.alt,
-                tilt_deg: self.cam.tilt,
+                poi: self.poi_layers().any(),
+                roads: self.layer(MapLayer::Roads),
             },
-            move || transport_wake.request_repaint(),
-        );
-        let poi_wake = ctx.clone();
-        self.map_data.poi.update(
-            &self.runtime,
-            globecraft_data::poi::PoiQuery {
-                enabled: earth && self.poi_layers().any(),
-                latitude: self.cam.lat,
-                longitude: self.cam.lon,
-                altitude_km: self.cam.alt,
-                tilt_deg: self.cam.tilt,
-            },
-            move || poi_wake.request_repaint(),
         );
         let scene = self.imagery_time();
         self.user_layers.update(
@@ -529,30 +490,6 @@ impl eframe::App for App {
             move || place_wake.request_repaint(),
         );
         self.refresh_place_names();
-        let road_tile_wake = ctx.clone();
-        self.map_data.roads.tiles.update(
-            &self.runtime,
-            earth && self.layer(MapLayer::Roads),
-            (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
-            move || road_tile_wake.request_repaint(),
-        );
-        self.map_data.roads.current = if earth && self.layer(MapLayer::Roads) {
-            self.map_data.roads.tiles.roads()
-        } else {
-            None
-        };
-        let traffic_wake = ctx.clone();
-        self.live.traffic.service.update(
-            &self.runtime,
-            globecraft_data::traffic::TrafficQuery {
-                enabled: earth && self.layer(MapLayer::Traffic),
-                key: &self.keys.tomtom,
-                latitude: self.cam.lat,
-                longitude: self.cam.lon,
-                altitude_km: self.cam.alt,
-            },
-            move || traffic_wake.request_repaint(),
-        );
         // The services below refresh only when the interface runs: a heartbeat
         // while one is on, so they do not wait for the user to move.
         if earth

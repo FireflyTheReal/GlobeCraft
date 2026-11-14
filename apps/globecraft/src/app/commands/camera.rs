@@ -1,8 +1,7 @@
 //! Camera and place search commands (`camera.*`, `search.*`).
 use super::{bool_param, f64_param, position, str_param, toggled};
 use crate::app::App;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// Camera altitude of the Global View.
 const GLOBAL_VIEW_ALTITUDE_KM: f64 = 14_000.0;

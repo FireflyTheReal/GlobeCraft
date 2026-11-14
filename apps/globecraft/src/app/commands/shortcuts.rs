@@ -1,8 +1,7 @@
 //! Keyboard shortcuts of commands: the defaults, the user's, and running them.
 use crate::app::App;
 use eframe::egui;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// The keyboard shortcut of a command, as text for tooltips and menus.
 pub(in crate::app) fn shortcut_text(id: &str) -> String {

@@ -1,12 +1,9 @@
 //! Layer commands (`layer.*`) and the worlds (`world.*`).
 use super::{bool_param, required_f64, str_param};
 use crate::app::App;
-use globecraft_core::body::Body;
-use globecraft_core::earth_model::EarthModel;
-use globecraft_core::layers::MapLayer;
+use globecraft_core::{body::Body, earth_model::EarthModel, layers::MapLayer};
 use globecraft_data::settings::workspace::RightPane;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 
 impl App {
     /// Runs a `layer.*` command.

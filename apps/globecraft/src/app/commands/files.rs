@@ -2,8 +2,7 @@
 use super::str_param;
 use crate::app::App;
 use globecraft_data::settings::screenshot::ScreenshotQuality;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 
 impl App {
     /// Runs a `file.*` or `view.*` command.

@@ -1,11 +1,8 @@
 //! Places commands (`places.*`).
 use super::{position, str_param};
 use crate::app::App;
-use globecraft_core::placemark::PlaceItem;
-use globecraft_core::placemark::PlaceNode;
-use globecraft_core::placemark::Placemark;
-use serde_json::Value;
-use serde_json::json;
+use globecraft_core::placemark::{PlaceItem, PlaceNode, Placemark};
+use serde_json::{Value, json};
 
 /// Altitude a placemark is shown from, as in the Places tree.
 const PLACE_FLY_ALTITUDE_KM: f64 = 3.0;

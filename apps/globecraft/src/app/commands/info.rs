@@ -1,13 +1,13 @@
 //! Read-only views of the application (`info.*`), for the interface and the assistant.
 use super::position;
 use crate::app::App;
-use globecraft_core::body::Body;
-use globecraft_core::language::Lang;
-use globecraft_core::layers::MapLayer;
-use globecraft_core::placemark::PlaceItem;
-use globecraft_core::placemark::PlaceNode;
-use serde_json::Value;
-use serde_json::json;
+use globecraft_core::{
+    body::Body,
+    language::Lang,
+    layers::MapLayer,
+    placemark::{PlaceItem, PlaceNode},
+};
+use serde_json::{Value, json};
 
 impl App {
     /// Runs an `info.*` command, or `ui.here`.

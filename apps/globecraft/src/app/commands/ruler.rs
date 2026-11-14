@@ -3,8 +3,7 @@ use super::{bool_param, position, str_param, toggled};
 use crate::app::App;
 use globecraft_core::units::RulerUnit;
 use globecraft_data::settings::workspace::RightPane;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 
 impl App {
     /// Runs a `ruler.*` or `edit.*` command.

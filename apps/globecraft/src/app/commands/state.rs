@@ -1,12 +1,10 @@
 //! Whether each command can run now and whether it is on, for buttons and menus.
 use super::{CommandState, str_param};
 use crate::app::App;
-use globecraft_core::body::Body;
-use globecraft_core::layers::MapLayer;
-use globecraft_data::settings::UnitPreference;
-use globecraft_data::settings::appearance::ThemePreference;
-use globecraft_data::settings::sidebar::SidebarPanel;
-use globecraft_data::settings::workspace::RightPane;
+use globecraft_core::{body::Body, layers::MapLayer};
+use globecraft_data::settings::{
+    UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
+};
 use serde_json::Value;
 
 impl App {

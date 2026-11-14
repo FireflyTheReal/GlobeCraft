@@ -1,12 +1,9 @@
 //! Settings and map style commands (`settings.*`, `style.*`).
 use super::{required_f64, str_param};
 use crate::app::App;
-use globecraft_core::coordinates::CoordinateFormat;
-use globecraft_core::language::LanguagePreference;
-use globecraft_data::settings::UnitPreference;
-use globecraft_data::settings::experience::ExperienceLevel;
-use serde_json::Value;
-use serde_json::json;
+use globecraft_core::{coordinates::CoordinateFormat, language::LanguagePreference};
+use globecraft_data::settings::{UnitPreference, experience::ExperienceLevel};
+use serde_json::{Value, json};
 
 impl App {
     /// Runs a `settings.*` or `style.*` command.

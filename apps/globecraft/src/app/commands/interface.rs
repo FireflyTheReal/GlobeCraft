@@ -2,11 +2,10 @@
 use super::{bool_param, str_param, toggled};
 use crate::app::App;
 use eframe::egui;
-use globecraft_data::settings::appearance::ThemePreference;
-use globecraft_data::settings::sidebar::SidebarPanel;
-use globecraft_data::settings::workspace::RightPane;
-use serde_json::Value;
-use serde_json::json;
+use globecraft_data::settings::{
+    appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
+};
+use serde_json::{Value, json};
 
 const DOCUMENTATION_URL: &str = "https://github.com/FireflyTheReal/GlobeCraft#readme";
 const ISSUES_URL: &str = "https://github.com/FireflyTheReal/GlobeCraft/issues/new/choose";
