@@ -33,7 +33,7 @@ impl App {
     /// The distance units, on a right-click of `response`.
     pub(super) fn units_menu(&mut self, response: &Response) {
         let lang = self.lang;
-        let system_unit = match self.system_units {
+        let system_unit = match self.locale.system_units {
             globecraft_core::units::DistanceUnits::Metric => "km",
             globecraft_core::units::DistanceUnits::Imperial => "mi",
         };

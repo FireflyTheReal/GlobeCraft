@@ -114,14 +114,14 @@ impl App {
     /// Closes the cards other than `keep`, which is opening: the globe shows one card.
     pub(super) fn close_other_cards(&mut self, keep: Card) {
         if keep != Card::Flight {
-            self.flight_selection.clear();
-            self.selected_snapshot = None;
+            self.picked.flight.clear();
+            self.picked.snapshot = None;
         }
         if keep != Card::Satellite {
-            self.satellite_selection.clear();
+            self.picked.satellite.clear();
         }
         if keep != Card::Here {
-            self.here_card = None;
+            self.pointer.here_card = None;
         }
     }
 }
@@ -139,13 +139,14 @@ impl App {
             })
             .collect();
         // The finest ground height; asking for it loads the elevation tile.
-        let elevation_m = self.cache.elevation_m(
+        let elevation_m = self.tiles.cache.elevation_m(
             lat,
             lon,
             globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
         );
         let nearest = self
-            .boundaries
+            .borders
+            .shown
             .labels
             .iter()
             .filter(|label| label.kind == globecraft_data::boundaries::LabelKind::City)
@@ -166,7 +167,8 @@ impl App {
             coordinates,
             elevation_m,
             country: self
-                .boundaries
+                .borders
+                .shown
                 .country_name_at(lat, lon, self.lang)
                 .map(str::to_owned),
             admin,
@@ -180,7 +182,7 @@ impl App {
 
     /// `info.here`: what is known about a point, as JSON.
     pub(super) fn here_json(&self, lat: f64, lon: f64) -> Value {
-        let admin = self.boundary_loader.admin_areas_at(lat, lon);
+        let admin = self.borders.loader.admin_areas_at(lat, lon);
         let info = self.here_info(lat, lon, admin);
         let (state, state_unavailable) = admin_json(
             &info.admin.state,
@@ -230,12 +232,12 @@ impl App {
     /// The card's state and municipality, looked up again only when the point or the
     /// border tiles in memory change.
     fn here_admin(&mut self, card: HereCard) -> AdminAreas {
-        let revision = self.boundary_loader.border_tiles_revision();
-        match &self.here_admin {
+        let revision = self.borders.loader.border_tiles_revision();
+        match &self.pointer.here_admin {
             Some((at, seen, admin)) if *at == card && *seen == revision => admin.clone(),
             _ => {
-                let admin = self.boundary_loader.admin_areas_at(card.lat, card.lon);
-                self.here_admin = Some((card, revision, admin.clone()));
+                let admin = self.borders.loader.admin_areas_at(card.lat, card.lon);
+                self.pointer.here_admin = Some((card, revision, admin.clone()));
                 admin
             }
         }
@@ -243,7 +245,7 @@ impl App {
 
     /// The card, while one is open.
     pub(super) fn here_window(&mut self, ctx: &egui::Context, rect: egui::Rect) {
-        let Some(card) = self.here_card else {
+        let Some(card) = self.pointer.here_card else {
             return;
         };
         let lang = self.lang;
@@ -363,7 +365,7 @@ impl App {
             self.run_reporting(id, params);
         }
         if !open {
-            self.here_card = None;
+            self.pointer.here_card = None;
         }
     }
 }

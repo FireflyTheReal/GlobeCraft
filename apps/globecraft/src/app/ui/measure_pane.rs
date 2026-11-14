@@ -17,7 +17,7 @@ impl App {
         });
         self.ruler_points_section(ui);
         let selected =
-            super::ruler::unit_selector(ui, self.settings.ruler_unit, self.us_locale, lg);
+            super::ruler::unit_selector(ui, self.settings.ruler_unit, self.locale.us, lg);
         if selected != self.settings.ruler_unit {
             self.settings.ruler_unit = selected;
         }

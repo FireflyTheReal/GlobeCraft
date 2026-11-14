@@ -289,31 +289,31 @@ impl App {
     pub(in crate::app) fn layers_search(&mut self, ui: &mut Ui) {
         let lang = self.lang;
         ui.horizontal(|ui| {
-            let clear_width = if self.layers_ui.query.is_empty() {
+            let clear_width = if self.panes.layers.query.is_empty() {
                 0.0
             } else {
                 ui.spacing().interact_size.y + ui.spacing().item_spacing.x
             };
             let width = (ui.available_width() - clear_width).max(80.0);
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.layers_ui.query)
+                egui::TextEdit::singleline(&mut self.panes.layers.query)
                     .id(egui::Id::new("layers-search"))
                     .hint_text(lang.text("layers-search-placeholder"))
                     .desired_width(width),
             );
-            if !self.layers_ui.query.is_empty()
+            if !self.panes.layers.query.is_empty()
                 && icons::icon_button(ui, "close", lang.text("layers-search-clear")).clicked()
             {
-                self.layers_ui.query.clear();
+                self.panes.layers.query.clear();
             }
             if response.has_focus()
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
-                self.layers_ui.query.clear();
+                self.panes.layers.query.clear();
             }
         });
         ui.checkbox(
-            &mut self.layers_ui.active_only,
+            &mut self.panes.layers.active_only,
             lang.text("layers-search-active-only"),
         )
         .on_hover_text(lang.text("layers-search-active-help"));
@@ -322,17 +322,17 @@ impl App {
     /// Sets the Layers pane search from a test harness.
     #[cfg(test)]
     pub(in crate::app) fn set_layers_search(&mut self, query: &str, active_only: bool) {
-        self.layers_ui.query = query.to_owned();
-        self.layers_ui.active_only = active_only;
+        self.panes.layers.query = query.to_owned();
+        self.panes.layers.active_only = active_only;
     }
 
     pub(in crate::app) fn layers_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
         let earth = self.explorer.active == globecraft_core::body::Body::Earth;
-        let raw_query = self.layers_ui.query.clone();
+        let raw_query = self.panes.layers.query.clone();
         let query = fold_name(&raw_query);
-        let active_only = self.layers_ui.active_only;
+        let active_only = self.panes.layers.active_only;
         let filtering = !query.is_empty() || active_only;
         let mut shown_any = false;
         if let Some(layer) = self.soloed_layer() {
@@ -484,15 +484,16 @@ impl App {
                 }
             }
             if group == LayerGroup::Geography && !filtering {
-                if self.boundary_loader.is_loading_base_layers() {
+                if self.borders.loader.is_loading_base_layers() {
                     loading_note(ui, &t, lang.text("boundaries-loading-status"));
                 }
-                if self.boundary_loader.is_loading_local() {
+                if self.borders.loader.is_loading_local() {
                     loading_note(ui, &t, lang.text("boundaries-osm-loading-status"));
                 }
                 // The loader appends; only the latest lines are worth reading here.
                 let log: Vec<String> = self
-                    .boundary_log
+                    .borders
+                    .log
                     .lock()
                     .map(|l| {
                         let skip = l.len().saturating_sub(BOUNDARY_LOG_LINES);
@@ -774,9 +775,9 @@ impl App {
                             )],
                         ),
                     )
-                } else if let Some(error) = self.poi_tiles.error() {
+                } else if let Some(error) = self.map_data.poi.error() {
                     Some(lang.format("transport-error-status", &[("error", error.into())]))
-                } else if self.poi_tiles.loading() {
+                } else if self.map_data.poi.loading() {
                     Some(lang.text("transport-loading-status").into())
                 } else {
                     None
@@ -803,9 +804,9 @@ impl App {
                             )],
                         ),
                     )
-                } else if let Some(error) = self.transport_tiles.error() {
+                } else if let Some(error) = self.map_data.transport.error() {
                     Some(lang.format("transport-error-status", &[("error", error.into())]))
-                } else if self.transport_tiles.loading() {
+                } else if self.map_data.transport.loading() {
                     Some(lang.text("transport-loading-status").into())
                 } else {
                     None
@@ -830,9 +831,9 @@ impl App {
                                 .into(),
                         )],
                     )
-                } else if let Some(error) = self.roads.tiles.error() {
+                } else if let Some(error) = self.map_data.roads.tiles.error() {
                     lang.format("transport-error-status", &[("error", error.into())])
-                } else if self.roads.tiles.loading() {
+                } else if self.map_data.roads.tiles.loading() {
                     lang.text("transport-loading-status").into()
                 } else {
                     lang.text("roads-legend").into()
@@ -851,7 +852,7 @@ impl App {
                     ui.add_space(INDENT + 46.0);
                     if ui
                         .add(
-                            egui::TextEdit::singleline(&mut self.tomtom_key)
+                            egui::TextEdit::singleline(&mut self.keys.tomtom)
                                 .password(true)
                                 .hint_text(lang.text("layers-traffic-key")),
                         )
@@ -864,9 +865,10 @@ impl App {
                     ui,
                     t,
                     &self
+                        .live
                         .traffic
                         .service
-                        .status(&self.tomtom_key, self.cam.alt, lang),
+                        .status(&self.keys.tomtom, self.cam.alt, lang),
                 );
                 credit(ui, "TomTom Traffic", "https://developer.tomtom.com/");
             }
@@ -885,14 +887,14 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT + 46.0);
                     ui.vertical(|ui| {
-                        super::aircraft::draw_status(ui, &self.live_aircraft.snapshot(), lang)
+                        super::aircraft::draw_status(ui, &self.live.aircraft.snapshot(), lang)
                     });
                 });
                 credit(ui, "OpenSky Network", "https://opensky-network.org/");
                 credit(ui, "ADSB.lol (ODbL)", "https://www.adsb.lol/");
             }
             MapLayer::Vessels => {
-                note(ui, t, &self.live_vessels.status(lang));
+                note(ui, t, &self.live.vessels.status(lang));
                 credit(ui, "OpenSeaFeed AIS", "https://openseafeed.com/");
                 credit(
                     ui,
@@ -901,7 +903,7 @@ impl App {
                 );
             }
             MapLayer::SeaNames => {
-                if let Some(error) = self.live_marine_names.error() {
+                if let Some(error) = self.live.marine_names.error() {
                     note(ui, t, &error);
                 } else {
                     note(ui, t, lang.text("sea-names-help"));
@@ -913,7 +915,7 @@ impl App {
                 );
             }
             MapLayer::TimeZones => {
-                note(ui, t, &self.live_time_zones.status(lang));
+                note(ui, t, &self.live.time_zones.status(lang));
                 credit(
                     ui,
                     lang.text("timezones-source"),
@@ -921,7 +923,7 @@ impl App {
                 );
             }
             MapLayer::Aurora => {
-                note(ui, t, &self.live_aurora.status(lang));
+                note(ui, t, &self.live.aurora.status(lang));
                 credit(
                     ui,
                     lang.text("aurora-source"),
@@ -930,7 +932,7 @@ impl App {
             }
             MapLayer::Satellites => {
                 self.flat_live_objects_control(ui);
-                note(ui, t, &self.live_satellites.status(lang));
+                note(ui, t, &self.live.satellites.status(lang));
                 credit(ui, "CelesTrak", "https://celestrak.org/");
             }
             MapLayer::MilkyWay if self.sky.image.is_none() => {

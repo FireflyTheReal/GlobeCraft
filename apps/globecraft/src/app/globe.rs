@@ -35,7 +35,7 @@ impl App {
     pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         let viewport = ui.available_rect_before_wrap();
-        let rect = self.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = self.frame.renderer.displayed_rect().unwrap_or(viewport);
         let resp = ui.allocate_rect(viewport, Sense::click_and_drag());
         let ppp = ui.pixels_per_point();
         let aspect = (rect.width() / rect.height()) as f64;
@@ -50,7 +50,7 @@ impl App {
             let (down, pos, now) =
                 ui.input(|i| (i.pointer.primary_down(), i.pointer.interact_pos(), i.time));
             let on_globe = down && resp.is_pointer_button_down_on() && !ruler_captured;
-            self.long_press.update(on_globe, pos, now)
+            self.pointer.long_press.update(on_globe, pos, now)
         };
         if let Some(secs) = press.wake_in_secs {
             ui.ctx()
@@ -62,7 +62,7 @@ impl App {
         } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
             let d =
                 ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
-            self.fly = None;
+            self.motion.fly = None;
             if self.explorer.active == globecraft_core::body::Body::Earth {
                 self.pan(d.x as f64, d.y as f64, rect.height());
             } else {
@@ -94,7 +94,7 @@ impl App {
             if tilt_scroll {
                 let amount = if scroll.y != 0.0 { scroll.y } else { scroll.x } as f64;
                 if amount != 0.0 {
-                    self.fly = None;
+                    self.motion.fly = None;
                     self.cam
                         .tilt_zooming_out(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
                     interacting = true;
@@ -103,7 +103,7 @@ impl App {
             let zd = ui.input(|i| i.zoom_delta()) as f64;
             let cur = resp.hover_pos();
             if sc != 0.0 {
-                self.fly = None;
+                self.motion.fly = None;
                 let direction = if self.settings.navigation.invert_scroll {
                     -1.0
                 } else {
@@ -125,7 +125,7 @@ impl App {
             // navigator's ring does.
             let turn = f64::from(ui.input(|i| i.rotation_delta()));
             if turn != 0.0 {
-                self.fly = None;
+                self.motion.fly = None;
                 self.cam.heading = wrap_lon(
                     self.cam.heading
                         - turn.to_degrees() * self.settings.navigation.rotation_sensitivity,
@@ -133,7 +133,7 @@ impl App {
                 interacting = true;
             }
             if (zd - 1.0).abs() > 1e-4 {
-                self.fly = None;
+                self.motion.fly = None;
                 if self.explorer.active == globecraft_core::body::Body::Earth {
                     self.zoom_at(1.0 / zd, cur, rect, aspect);
                 } else {
@@ -156,7 +156,7 @@ impl App {
                         - f64::from(u8::from(i.key_down(Key::ArrowDown)))
                 });
                 if tilt != 0.0 {
-                    self.fly = None;
+                    self.motion.fly = None;
                     self.cam
                         .tilt_zooming_out(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
                     interacting = true;
@@ -180,7 +180,7 @@ impl App {
                 }
             });
             if dx != 0.0 || dy != 0.0 {
-                self.fly = None;
+                self.motion.fly = None;
                 if self.explorer.active == globecraft_core::body::Body::Earth {
                     self.pan(dx, dy, rect.height());
                 } else {
@@ -219,7 +219,7 @@ impl App {
         let basis = self.view_basis(aspect);
         // ── rendering
         // A playing time moves the sun every frame: it renders like a moving camera.
-        let idle = self.last_interact.elapsed() > IDLE_RENDER_DELAY
+        let idle = self.frame.last_interact.elapsed() > IDLE_RENDER_DELAY
             && !resp.dragged()
             && self.time.speed() == 0.0;
         let render_aspect = (viewport.width() / viewport.height()) as f64;
@@ -238,7 +238,7 @@ impl App {
             atmosphere: self.layer(MapLayer::Atmosphere),
             terrain: relief,
             terrain_exaggeration: self.settings.layers.terrain_exaggeration,
-            ground_km: self.ground_km,
+            ground_km: self.motion.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
             night_lights: self
                 .layer(MapLayer::NightLights)
@@ -249,15 +249,15 @@ impl App {
         }
         .keys(now_unix());
         let state = keys.state;
-        let generation = self.cache.generation();
+        let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;
         self.poll_render(presentation, ui);
-        let rect = self.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = self.frame.renderer.displayed_rect().unwrap_or(viewport);
 
-        let pick_basis = self.renderer.picking_basis(basis);
+        let pick_basis = self.frame.renderer.picking_basis(basis);
         let ground = self.ground_source();
         let pick = |p: egui::Pos2| ground.pick(&pick_basis, rect, p);
-        self.cursor = resp
+        self.pointer.cursor = resp
             .hover_pos()
             .filter(|p| rect.contains(*p))
             .and_then(pick);
@@ -287,7 +287,7 @@ impl App {
             && let Some(norad) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| self.satellite_selection.at(p, self.settings.map_scale))
+                .and_then(|p| self.picked.satellite.at(p, self.settings.map_scale))
                 .map(str::to_owned)
         {
             self.run_reporting("satellite.select", serde_json::json!({"norad": norad}));
@@ -298,7 +298,7 @@ impl App {
             && let Some(plane) = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
-                .and_then(|p| self.aircraft_overlay.flight_at(p))
+                .and_then(|p| self.live.aircraft_overlay.flight_at(p))
         {
             self.run_reporting(
                 "flight.select",
@@ -307,14 +307,14 @@ impl App {
         } else if !ruler_captured
             && resp.clicked()
             && !self.measure.on
-            && (self.flight_selection.selected().is_some()
-                || self.satellite_selection.selected().is_some())
+            && (self.picked.flight.selected().is_some()
+                || self.picked.satellite.selected().is_some())
         {
             // A click beside the planes and satellites closes what was selected.
-            if self.flight_selection.selected().is_some() {
+            if self.picked.flight.selected().is_some() {
                 self.run_reporting("flight.clear", serde_json::json!({}));
             }
-            if self.satellite_selection.selected().is_some() {
+            if self.picked.satellite.selected().is_some() {
                 self.run_reporting("satellite.clear", serde_json::json!({}));
             }
         } else if !ruler_captured
@@ -331,7 +331,7 @@ impl App {
         // the card has opened by then.
         let menu_suppressed = press.swallow && resp.secondary_clicked();
         if resp.secondary_clicked() && !menu_suppressed {
-            self.menu_pick = resp
+            self.pointer.menu_pick = resp
                 .interact_pointer_pos()
                 .filter(|p| rect.contains(*p))
                 .and_then(pick);
@@ -341,19 +341,19 @@ impl App {
         // wake-up for tiles arriving inside the redraw horizon, or nothing.
         // `changed_before` preserves the pre-decision marker for tile request
         // prioritization, which runs after the pass consumed its own result.
-        let changed_before = self.wake.changed(generation);
-        let outcome = self.wake.decide(
+        let changed_before = self.frame.wake.changed(generation);
+        let outcome = self.frame.wake.decide(
             render_wake::RenderPass {
                 state,
                 generation,
-                tiles_changed: self.renderer.tiles_changed(&self.cache),
-                has_texture: self.texture.is_some(),
-                needs_first_frame: self.texture.is_none() && self.renderer.is_idle(),
+                tiles_changed: self.frame.renderer.tiles_changed(&self.tiles.cache),
+                has_texture: self.frame.texture.is_some(),
+                needs_first_frame: self.frame.texture.is_none() && self.frame.renderer.is_idle(),
                 // The panes do not animate, so the view is always at rest.
                 at_rest: true,
             },
-            self.last_state,
-            Some(self.last_render.elapsed()),
+            self.frame.last_state,
+            Some(self.frame.last_render.elapsed()),
         );
         match outcome {
             WakeOutcome::Submit => {
@@ -370,15 +370,17 @@ impl App {
                     viewport,
                     ppp,
                 );
-                self.last_state = state;
-                self.last_render = Instant::now();
+                self.frame.last_state = state;
+                self.frame.last_render = Instant::now();
             }
             WakeOutcome::Defer(remaining) => ui.request_repaint_after(remaining),
             WakeOutcome::Pause | WakeOutcome::Settled => {}
         }
-        if state == self.last_state && self.renderer.is_idle() {
+        if state == self.frame.last_state && self.frame.renderer.is_idle() {
             let refill = changed_before && !matches!(outcome, WakeOutcome::Submit);
-            self.renderer.refill_requests(&self.cache, refill, ui);
+            self.frame
+                .renderer
+                .refill_requests(&self.tiles.cache, refill, ui);
         }
         if !idle {
             ui.request_repaint();
@@ -386,15 +388,15 @@ impl App {
         // The frame worker admits visible tiles before becoming idle. Speculative
         // work waits for it, and pauses during interaction/closer zoom/other layers.
         if idle
-            && self.renderer.is_idle()
+            && self.frame.renderer.is_idle()
             && self.settings.layers.basemap == Provider::Satellite
             && self.cam.alt >= OVERVIEW_WARMUP_ALTITUDE_KM
-            && self.tile_warmup.pump(&self.cache)
+            && self.tiles.warmup.pump(&self.tiles.cache)
         {
             ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
         }
         // A flight's destination imagery loads while it flies.
-        match &self.fly {
+        match &self.motion.fly {
             Some(flight) => {
                 let destination = flight.destination();
                 let listed_for = [
@@ -406,6 +408,7 @@ impl App {
                 ]
                 .map(f64::to_bits);
                 if self
+                    .tiles
                     .arrival_warmup
                     .as_ref()
                     .is_none_or(|(listed, _)| *listed != listed_for)
@@ -426,21 +429,22 @@ impl App {
                         provider,
                         &releases,
                     );
-                    self.arrival_warmup = Some((
+                    self.tiles.arrival_warmup = Some((
                         listed_for,
                         globecraft_data::tiles::TileWarmup::of_keys(keys),
                     ));
                 }
-                if let Some((_, warmup)) = &mut self.arrival_warmup {
-                    warmup.pump(&self.cache);
+                if let Some((_, warmup)) = &mut self.tiles.arrival_warmup {
+                    warmup.pump(&self.tiles.cache);
                 }
             }
-            None => self.arrival_warmup = None,
+            None => self.tiles.arrival_warmup = None,
         }
         // The coarser imagery a zoom out will show, loaded once the view rests (see
         // `globecraft_render::zoom_out`); a new view starts a new list.
-        if idle && self.renderer.is_idle() {
+        if idle && self.frame.renderer.is_idle() {
             if self
+                .tiles
                 .zoom_out_warmup
                 .as_ref()
                 .is_none_or(|(view, _)| *view != state)
@@ -461,11 +465,11 @@ impl App {
                     provider,
                     &releases,
                 );
-                self.zoom_out_warmup =
+                self.tiles.zoom_out_warmup =
                     Some((state, globecraft_data::tiles::TileWarmup::of_keys(keys)));
             }
-            if let Some((_, warmup)) = &mut self.zoom_out_warmup
-                && warmup.pump(&self.cache)
+            if let Some((_, warmup)) = &mut self.tiles.zoom_out_warmup
+                && warmup.pump(&self.tiles.cache)
             {
                 ui.request_repaint_after(OVERVIEW_WARMUP_POLL_INTERVAL);
             }
@@ -478,22 +482,23 @@ impl App {
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
         let fade = self
+            .frame
             .fade_started
             .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
             .filter(|&progress| progress < 1.0);
         if fade.is_none() {
-            self.fade_started = None;
+            self.frame.fade_started = None;
         }
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-        if let (Some(progress), Some(from)) = (fade, &self.fade_from) {
+        if let (Some(progress), Some(from)) = (fade, &self.frame.fade_from) {
             painter.image(from.id(), rect, whole, Color32::WHITE);
             ui.ctx().request_repaint();
-            if let Some(tex) = &self.texture {
+            if let Some(tex) = &self.frame.texture {
                 // Eased, so the change starts and ends gently.
                 let alpha = progress * progress * (3.0 - 2.0 * progress);
                 painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
             }
-        } else if let Some(tex) = &self.texture {
+        } else if let Some(tex) = &self.frame.texture {
             painter.image(tex.id(), rect, whole, Color32::WHITE);
         }
         // The swipe compare: the compare release's frame, right of the split.
@@ -542,8 +547,11 @@ impl App {
         }
         // Keep projected borders and labels aligned with the displayed raster
         // while the coordinator works on the latest camera position.
-        let (display_cam, display_basis) =
-            self.renderer.displayed_view().unwrap_or((self.cam, basis));
+        let (display_cam, display_basis) = self
+            .frame
+            .renderer
+            .displayed_view()
+            .unwrap_or((self.cam, basis));
         if self.explorer.active == globecraft_core::body::Body::Earth {
             // Layers with an opacity (roadmap 6.1) draw through a faded painter.
             let opacity = self.settings.layers.opacity;
@@ -552,7 +560,7 @@ impl App {
                 faded.multiply_opacity(opacity.get(layer));
                 faded
             };
-            self.live_maps.draw(
+            self.live.maps.draw(
                 &painter,
                 &display_basis,
                 rect,
@@ -579,7 +587,7 @@ impl App {
                     display_cam,
                     painter.ctx().pixels_per_point(),
                 );
-                self.live_geometry.update(input)
+                self.live.geometry.update(input)
             } else {
                 None
             };
@@ -614,52 +622,60 @@ impl App {
                 // reserves: this is the first view after the jump, and a
                 // district or city name that was never drawn must still be able
                 // to claim its room.
-                let include_new =
-                    self.poi_shapes.has_shown_name() && !self.poi_shapes.has_settled_name();
+                let include_new = self.map_data.poi_shapes.has_shown_name()
+                    && !self.map_data.poi_shapes.has_settled_name();
                 let remembered = self.reserve_place_names(&painter, frame, &taken, include_new);
-                self.poi_shapes
-                    .prepare_shown(&painter, geometry, &taken.with(&remembered));
-                taken.add(self.poi_shapes.shown_placed());
+                self.map_data.poi_shapes.prepare_shown(
+                    &painter,
+                    geometry,
+                    &taken.with(&remembered),
+                );
+                taken.add(self.map_data.poi_shapes.shown_placed());
             }
             self.prepare_overlays(&painter, frame, &taken);
-            taken.add(&self.overlay_cache.placed());
+            taken.add(&self.borders.overlay_cache.placed());
             self.user_layers
                 .prepare_names(&painter, self.settings.map_scale, &taken);
             taken.add(self.user_layers.placed());
             // Sea and undersea names where the land's names left room.
             self.paint_marine_names(&painter, &display_basis, rect, &taken);
-            taken.add(&self.marine_placed.clone());
+            taken.add(&self.live.marine_placed.clone());
             if self.layer(MapLayer::Roads)
                 && let Some(geometry) = &live_geometry
             {
-                self.roads.draw(
+                self.map_data.roads.draw(
                     &painter,
                     geometry,
                     self.settings.map_scale,
                     &self.settings.map_style,
                     &taken,
                 );
-                taken.add(self.roads.placed());
+                taken.add(self.map_data.roads.placed());
             }
             if self.layer(MapLayer::Traffic)
                 && let Some(geometry) = &live_geometry
             {
-                self.traffic.draw(&faded(MapLayer::Traffic), geometry);
+                self.live.traffic.draw(&faded(MapLayer::Traffic), geometry);
             }
             if let Some(geometry) = &live_geometry {
                 let style = self.settings.map_style;
-                self.transport_shapes
+                self.map_data
+                    .transport_shapes
                     .prepare(&painter, geometry, &style, &taken);
-                taken.add(self.transport_shapes.placed());
-                self.poi_shapes.prepare(&painter, geometry, &style, &taken);
-                self.poi_shapes.draw_lines(&painter);
-                self.transport_shapes.draw_lines(&painter);
+                taken.add(self.map_data.transport_shapes.placed());
+                self.map_data
+                    .poi_shapes
+                    .prepare(&painter, geometry, &style, &taken);
+                self.map_data.poi_shapes.draw_lines(&painter);
+                self.map_data.transport_shapes.draw_lines(&painter);
             }
             self.draw_overlays(&painter, &display_basis, rect);
             if let Some(geometry) = &live_geometry {
-                self.poi_shapes.draw_labels(&painter);
-                self.transport_shapes.draw_airports(&painter);
-                self.transport_shapes.hover(&painter, geometry, self.lang);
+                self.map_data.poi_shapes.draw_labels(&painter);
+                self.map_data.transport_shapes.draw_airports(&painter);
+                self.map_data
+                    .transport_shapes
+                    .hover(&painter, geometry, self.lang);
             }
             self.user_layers.paint_features(&painter);
             self.user_layers.hover(&painter, rect, self.lang);
@@ -690,7 +706,7 @@ impl App {
         super::ui::surface::remember_globe_rect(ui.ctx(), rect);
 
         // scale bar
-        if let Some(scale_bar) = self.scale_bar_cache.for_view(
+        if let Some(scale_bar) = self.frame.scale_bar.for_view(
             &display_basis,
             rect,
             display_cam.alt,
@@ -723,7 +739,7 @@ impl App {
         if self.explorer.active == globecraft_core::body::Body::Earth
             && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))
         {
-            let source = self.live_maps.status(
+            let source = self.live.maps.status(
                 self.layer(MapLayer::Clouds),
                 self.layer(MapLayer::Radar),
                 lg,
@@ -749,7 +765,7 @@ impl App {
         }
 
         // Context menu (right-click): every entry is a command at the picked position.
-        let pick = self.menu_pick;
+        let pick = self.pointer.menu_pick;
         let mut chosen: Option<(&str, serde_json::Value)> = None;
         let show_menu = |ui: &mut egui::Ui| match pick {
             Some((la, lo)) => {
@@ -802,7 +818,7 @@ impl App {
         }
 
         // auto-rotate (keeps repainting)
-        if self.auto_rotate && self.fly.is_none() && !ruler_captured {
+        if self.motion.auto_rotate && self.motion.fly.is_none() && !ruler_captured {
             let dt = super::frame_timing::animation_delta_secs(ui);
             self.cam.lon = wrap_lon(self.cam.lon + AUTO_ROTATE_DEG_PER_SECOND * dt);
             self.touch();

@@ -469,7 +469,7 @@ pub(in crate::app) fn group(
     let start = ui.cursor().min;
     let label = galley(ui, title, regular(11.0), t.group_label);
     let label_w = label.size().x + GROUP_CARET_W;
-    app.ribbon_tools.begin(id);
+    app.chrome.ribbon_tools.begin(id);
     forget_last_column(ui.ctx());
     let inner = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = vec2(2.0, 1.0);
@@ -483,7 +483,7 @@ pub(in crate::app) fn group(
         let (_, title_resp) = ui.allocate_exact_size(vec2(w, LABEL_H), Sense::hover());
         (w, title_resp.rect)
     });
-    let rows = app.ribbon_tools.end();
+    let rows = app.chrome.ribbon_tools.end();
     let (w, title_rect) = inner.inner;
     let label_pos = pos2(
         start.x + (w - label_w) / 2.0,

@@ -14,7 +14,7 @@ impl App {
             if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
                 return 0.0;
             }
-            self.traffic_lights_width_native / ctx.zoom_factor()
+            self.chrome.traffic_lights_width_native / ctx.zoom_factor()
         }
         #[cfg(not(target_os = "macos"))]
         {

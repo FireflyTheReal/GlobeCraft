@@ -306,10 +306,10 @@ impl App {
             && !self.windows.settings
             && !self.windows.about
             && !self.windows.shortcuts
-            && self.altitude_editor.is_none()
+            && self.windows.altitude_editor.is_none()
             && self.measure.point_editor.is_none()
             && !self.flat_earth.open
-            && !self.update_restart.is_saving()
+            && !self.updates.restart.is_saving()
             && !egui::Popup::is_any_open(ctx);
         let (motion, actions) = self
             .controllers
@@ -322,7 +322,7 @@ impl App {
                 ControllerAction::Settings => Some("ui.settings"),
                 ControllerAction::Placemark => Some("places.addAtCenter"),
                 ControllerAction::Cancel => {
-                    self.fly = None;
+                    self.motion.fly = None;
                     self.measure.paths.end_move();
                     self.measure.drag = None;
                     None
@@ -334,7 +334,7 @@ impl App {
             }
         }
         if motion.is_active() && !self.windows.settings {
-            self.fly = None;
+            self.motion.fly = None;
             let dt = super::frame_timing::navigation_delta_secs(ctx);
             motion.apply(
                 &mut self.cam,

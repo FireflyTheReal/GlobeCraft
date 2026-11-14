@@ -101,12 +101,12 @@ impl LayerArrivals {
 
 impl App {
     pub(super) fn invalidate_font_layout(&mut self) {
-        self.overlay_cache.invalidate();
-        self.aircraft_overlay.invalidate_text();
-        self.world_shapes = super::live_layers::WorldShapes::default();
-        self.roads.invalidate_text();
-        self.transport_shapes.invalidate();
-        self.poi_shapes.invalidate();
+        self.borders.overlay_cache.invalidate();
+        self.live.aircraft_overlay.invalidate_text();
+        self.live.world_shapes = super::live_layers::WorldShapes::default();
+        self.map_data.roads.invalidate_text();
+        self.map_data.transport_shapes.invalidate();
+        self.map_data.poi_shapes.invalidate();
     }
     pub(super) fn overlay_layers(&self) -> globecraft_render::overlays::OverlayLayers {
         OverlayLayers {
@@ -123,37 +123,39 @@ impl App {
     }
 
     pub(super) fn merge_snapshot(&mut self, snapshot: BoundarySnapshot) {
-        self.layer_arrivals
-            .observe(&self.boundary_source, &snapshot.data, Instant::now());
-        self.boundary_source = snapshot.data;
-        self.boundaries = self.with_place_names();
+        self.borders
+            .arrivals
+            .observe(&self.borders.source, &snapshot.data, Instant::now());
+        self.borders.source = snapshot.data;
+        self.borders.shown = self.with_place_names();
         if let Err(error) = self.search.local.update_shared(snapshot.names) {
             self.status = format!("Local prefix index failed: {error}");
         }
         // Data-only change: hold the previous overlay on screen until the
         // replacement is prepared instead of flashing the borders away.
-        self.overlay_cache.merge_boundaries();
+        self.borders.overlay_cache.merge_boundaries();
     }
 
     /// The loader's boundaries with the close-up place names on show.
     fn with_place_names(&mut self) -> Arc<BoundaryData> {
-        let places = self.place_names.snapshot();
-        self.place_names_shown = places.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
+        let places = self.borders.place_names.snapshot();
+        self.borders.place_names_shown = places.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
         match places {
-            Some(places) => Arc::new(self.boundary_source.with_place_names(Some(&places))),
-            None => self.boundary_source.clone(),
+            Some(places) => Arc::new(self.borders.source.with_place_names(Some(&places))),
+            None => self.borders.source.clone(),
         }
     }
 
     /// Rebuilds the drawn boundaries when the close-up place names change.
     pub(super) fn refresh_place_names(&mut self) {
         let shown = self
+            .borders
             .place_names
             .snapshot()
             .map_or(0, |s| Arc::as_ptr(&s) as usize);
-        if shown != self.place_names_shown {
-            self.boundaries = self.with_place_names();
-            self.overlay_cache.merge_boundaries();
+        if shown != self.borders.place_names_shown {
+            self.borders.shown = self.with_place_names();
+            self.borders.overlay_cache.merge_boundaries();
         }
     }
 
@@ -166,7 +168,7 @@ impl App {
         rect: Rect,
         altitude_km: f64,
     ) -> OverlayFrame {
-        let arrival = self.layer_arrivals.fade(Instant::now());
+        let arrival = self.borders.arrivals.fade(Instant::now());
         OverlayFrame {
             view: OverlayView {
                 basis: *basis,
@@ -174,12 +176,12 @@ impl App {
                 altitude_km,
                 state_max_km: self.settings.state_max_altitude_km,
                 grid_step_deg: if self.layer(MapLayer::GridLabels) {
-                    self.renderer.displayed_grid_step()
+                    self.frame.renderer.displayed_grid_step()
                 } else {
                     None
                 },
                 pixels_per_point: painter.ctx().pixels_per_point(),
-                ground: self.renderer.displayed_ground(self.overlay_ground()),
+                ground: self.frame.renderer.displayed_ground(self.overlay_ground()),
             },
             style: OverlayStyle {
                 layers: self.overlay_layers(),
@@ -202,8 +204,13 @@ impl App {
         taken: &globecraft_render::overlays::LabelSpace,
         include_new: bool,
     ) -> globecraft_render::overlays::PlacedLabels {
-        self.overlay_cache
-            .remembered_placed(painter, frame.view, frame.style, taken, include_new)
+        self.borders.overlay_cache.remembered_placed(
+            painter,
+            frame.view,
+            frame.style,
+            taken,
+            include_new,
+        )
     }
 
     /// Brings the borders and place names up to date for the displayed view, before
@@ -218,13 +225,18 @@ impl App {
             painter.ctx().request_repaint();
         }
         meshes::BorderWidths::of(&frame.style.map_style).publish(painter.ctx());
-        self.overlay_cache
-            .prepare(painter, frame.view, &self.boundaries, frame.style, taken);
+        self.borders.overlay_cache.prepare(
+            painter,
+            frame.view,
+            &self.borders.shown,
+            frame.style,
+            taken,
+        );
     }
 
     /// Paints what `prepare_overlays` prepared, then the ruler and placemarks.
     pub(super) fn draw_overlays(&mut self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
-        self.overlay_cache.paint(painter);
+        self.borders.overlay_cache.paint(painter);
         let ms = self.settings.map_scale;
         // The ruler and placemarks sit on the relief, where they are picked.
         let source = self.ground_source();

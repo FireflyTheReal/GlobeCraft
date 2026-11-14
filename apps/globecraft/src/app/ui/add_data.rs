@@ -837,7 +837,7 @@ impl AddDataDialog {
 
 impl App {
     pub(in crate::app) fn add_data_window(&mut self, ctx: &egui::Context) {
-        let Some(dialog) = &mut self.add_data else {
+        let Some(dialog) = &mut self.windows.add_data else {
             return;
         };
         let added: Vec<String> = self
@@ -849,7 +849,7 @@ impl App {
         let advanced = self.settings.experience.is_advanced();
         match dialog.show(ctx, self.lang, &self.runtime, &added, advanced) {
             Action::None => {}
-            Action::Close => self.add_data = None,
+            Action::Close => self.windows.add_data = None,
             Action::Add(layer) => {
                 let name = layer.name.clone();
                 self.add_user_layer(layer);
@@ -858,18 +858,19 @@ impl App {
                     .format("add-data-added-status", &[("name", name.into())]);
                 // The library stays open for more; a form is done.
                 if self
+                    .windows
                     .add_data
                     .as_ref()
                     .is_some_and(|d| d.tab != Tab::Library)
                 {
-                    self.add_data = None;
+                    self.windows.add_data = None;
                 }
                 self.settings.sidebar.open = true;
                 self.settings.sidebar.panel =
                     globecraft_data::settings::sidebar::SidebarPanel::Layers;
             }
             Action::OpenKml => {
-                self.add_data = None;
+                self.windows.add_data = None;
                 self.run_reporting("places.open", serde_json::Value::Null);
             }
         }

@@ -172,8 +172,8 @@ impl App {
         let previous_model = self.settings.earth_model;
         let mut open = self.windows.settings;
         let mut close_requested = false;
-        let mut language_preference = self.language_preference;
-        let mut state = std::mem::take(&mut self.settings_ui);
+        let mut language_preference = self.locale.preference;
+        let mut state = std::mem::take(&mut self.panes.settings);
         let (still_open, _) = super::surface::Surface::dialog(
             "settings-window",
             lang.text("settings-title"),
@@ -279,18 +279,18 @@ impl App {
             }
         });
         open &= still_open;
-        if language_preference != self.language_preference {
+        if language_preference != self.locale.preference {
             self.set_language_preference(language_preference);
             ctx.request_repaint();
         }
         if previous_model != self.settings.earth_model
             && self.explorer.active == globecraft_core::body::Body::Earth
         {
-            self.fly = None;
+            self.motion.fly = None;
             self.measure.paths.end_move();
             self.measure.drag = None;
         }
-        self.settings_ui = state;
+        self.panes.settings = state;
         self.windows.settings = open && !close_requested;
     }
 }

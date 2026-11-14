@@ -572,7 +572,7 @@ fn add_data_screenshots() {
     let _ = app.run("ui.addData", Value::Null);
     settle(&mut h, 4.0);
     save(&mut h, &dir, "08-add-data-library");
-    h.state_mut().add_data = None;
+    h.state_mut().windows.add_data = None;
     settle(&mut h, 1.0);
     save(&mut h, &dir, "09-user-layer");
     // The Data pane, with the sample starred and the earthquakes in the history.
@@ -629,7 +629,7 @@ fn poi_zoom_stability() {
     for step in 0..30 {
         at(&mut h, 6.0 * 0.96f64.powi(step + 1));
         settle(&mut h, 0.4);
-        let drawn: Vec<_> = h.state().poi_shapes.drawn().to_vec();
+        let drawn: Vec<_> = h.state().map_data.poi_shapes.drawn().to_vec();
         let now: HashMap<String, (Option<usize>, egui::Pos2)> = drawn
             .iter()
             .filter(|(_, side, _)| side.is_some())
@@ -648,6 +648,7 @@ fn poi_zoom_stability() {
                         Some(_) => "name blocked",
                         None if h
                             .state()
+                            .map_data
                             .poi_shapes
                             .blocked()
                             .iter()
@@ -1131,7 +1132,7 @@ fn boundary_streaming_descent() {
         let t = std::time::Instant::now();
         h.step();
         slowest.push((t.elapsed().as_secs_f64() * 1000.0, altitude));
-        let data = &h.state().boundaries;
+        let data = &h.state().borders.shown;
         if first_states.is_none() && !data.osm_borders.state.is_empty() {
             first_states = Some(altitude);
         }
@@ -1154,7 +1155,7 @@ fn boundary_streaming_descent() {
         sorted[sorted.len() * 99 / 100]
     );
     println!("states arrived at {first_states:?} km, municipal at {first_municipal:?} km");
-    for line in h.state().boundary_log.lock().unwrap().iter() {
+    for line in h.state().borders.log.lock().unwrap().iter() {
         println!("  {line}");
     }
 }
@@ -1214,7 +1215,12 @@ fn a_screenshot_in_progress_does_not_freeze_the_view() {
         )));
         h.event(wheel(if (i / 60) % 2 == 0 { 1.0 } else { -1.0 }));
         pass(&mut h);
-        let shown = h.state().renderer.displayed_view().map(|(cam, _)| cam.alt);
+        let shown = h
+            .state()
+            .frame
+            .renderer
+            .displayed_view()
+            .map(|(cam, _)| cam.alt);
         run = if shown == shown_before { run + 1 } else { 0 };
         longest = longest.max(run);
         shown_before = shown;
@@ -1359,7 +1365,7 @@ fn aurora_screenshot() {
     .expect("aurora sample");
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_aurora.set_grid(grid);
+    app.live.aurora.set_grid(grid);
     app.run("layer.show", json!({"layer": "aurora", "visible": true}))
         .expect("aurora");
     app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
@@ -1477,7 +1483,7 @@ fn ocean_presets_screenshot() {
     if let Some(path) = std::env::var_os("GLOBECRAFT_MARINE_NAMES_FILE") {
         let bytes = std::fs::read(path).expect("names file");
         let names = globecraft_data::marine_names::MarineNames::from_gzip(&bytes).expect("names");
-        h.state_mut().live_marine_names.set(names);
+        h.state_mut().live.marine_names.set(names);
     }
     // GLOBECRAFT_SHOT_LAYERS: built-in layers to turn on too (codes, comma-separated).
     for code in std::env::var("GLOBECRAFT_SHOT_LAYERS")
@@ -1817,7 +1823,10 @@ fn ribbon_menus_screenshot() {
         });
         settle(&mut h, 0.2);
         let app = h.state_mut();
-        assert!(app.ribbon_tools.capture.is_none(), "the dialog closed");
+        assert!(
+            app.chrome.ribbon_tools.capture.is_none(),
+            "the dialog closed"
+        );
         assert_eq!(
             app.settings.workspace.shortcuts["ui.legend"],
             "command+alt+L"
@@ -1958,7 +1967,8 @@ fn airport_search_screenshot() {
         L\tMUC\tEDDM\t48.35378\t11.78609\t1487\tDE\tMunich\tMunich Airport\n";
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_airports
+    app.live
+        .airports
         .set(globecraft_data::airports::Airports::parse(sample).expect("sample"));
     app.search.query = "fra".into();
     app.on_query_changed();
@@ -2078,7 +2088,7 @@ fn time_zones_screenshot() {
     .expect("zones");
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_time_zones.set(zones);
+    app.live.time_zones.set(zones);
     app.run(
         "layer.show",
         json!({"layer": "time_zones", "visible": true}),
@@ -2109,7 +2119,7 @@ fn time_zones_screenshot() {
             "28-time-zones"
         },
     );
-    let cursor = h.state().cursor.expect("pointer over the globe");
+    let cursor = h.state().pointer.cursor.expect("pointer over the globe");
     assert!((2.5..17.5).contains(&cursor.1), "{cursor:?}");
     let local = h.state().cursor_local_time().expect("local time");
     assert_eq!(local, "14:00 CEST (UTC+2)");
@@ -2214,7 +2224,7 @@ fn selected_flight_screenshot() {
     let app = h.state_mut();
     app.run("layer.show", json!({"layer": "flights", "visible": true}))
         .expect("layer");
-    app.flight_selection.set(SelectedFlight {
+    app.picked.flight.set(SelectedFlight {
         hex: "3c6a9a".into(),
         callsign: "DLH400".into(),
         track: track.into(),
@@ -2301,7 +2311,8 @@ fn legend_screenshot() {
         app.run("layer.show", json!({"layer": layer, "visible": true}))
             .expect("layer");
     }
-    app.flight_selection
+    app.picked
+        .flight
         .set(globecraft_data::aircraft::route::SelectedFlight {
             hex: "3c6a9a".into(),
             callsign: "DLH400".into(),
@@ -2348,7 +2359,7 @@ fn polar_screenshot() {
         )
         .expect("zones");
         let app = h.state_mut();
-        app.live_time_zones.set(zones);
+        app.live.time_zones.set(zones);
         app.run(
             "layer.show",
             json!({"layer": "time_zones", "visible": true}),
@@ -2465,7 +2476,7 @@ fn live_symbols_screenshot() {
     let port = fake_aircraft_server(json!({"states": opensky}), json!({"ac": adsb}));
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.live_aircraft = LiveAircraft::with_sources(
+    app.live.aircraft = LiveAircraft::with_sources(
         app.runtime.handle(),
         || {},
         format!("http://127.0.0.1:{port}/api/states/all?extended=1"),
@@ -2522,19 +2533,19 @@ fn live_symbols_screenshot() {
             (group, serde_json::from_str(&text).expect("CelesTrak JSON"))
         })
         .collect();
-        h.state_mut().live_satellites.show_recorded(&answers);
+        h.state_mut().live.satellites.show_recorded(&answers);
     }
     for _ in 0..60 {
-        if !h.state().live_satellites.snapshot().is_empty() {
+        if !h.state().live.satellites.snapshot().is_empty() {
             break;
         }
         settle(&mut h, 1.0);
     }
-    let satellites = h.state().live_satellites.snapshot();
+    let satellites = h.state().live.satellites.snapshot();
     assert!(
         !satellites.is_empty(),
         "{}",
-        h.state().live_satellites.status(h.state().lang)
+        h.state().live.satellites.status(h.state().lang)
     );
     println!(
         "{} satellites, {} with SGP4",
@@ -2544,7 +2555,8 @@ fn live_symbols_screenshot() {
     // The ISS selected: one orbit at its height, from far away and from its side.
     let iss = h
         .state()
-        .live_satellites
+        .live
+        .satellites
         .snapshot()
         .iter()
         .find(|satellite| satellite.norad == "25544")
@@ -2585,7 +2597,8 @@ fn live_symbols_screenshot() {
     ] {
         let loaded = h
             .state()
-            .live_satellites
+            .live
+            .satellites
             .snapshot()
             .iter()
             .any(|satellite| satellite.norad == norad);
@@ -2783,8 +2796,9 @@ fn idle_window_requests_no_repaints() {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(50));
         let app = h.state();
-        let loading =
-            !app.renderer.is_idle() || app.cache.inflight() > 0 || app.boundary_loader.is_loading();
+        let loading = !app.frame.renderer.is_idle()
+            || app.tiles.cache.inflight() > 0
+            || app.borders.loader.is_loading();
         quiet = if loading || delay(&h) < std::time::Duration::from_secs(5) {
             0
         } else {

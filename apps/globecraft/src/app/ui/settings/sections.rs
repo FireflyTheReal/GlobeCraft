@@ -15,9 +15,9 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(lg.text("settings-language-label"));
             let choices = LanguagePreference::ALL
-                .map(|choice| (choice, choice.label(lg, &self.system_locale)));
+                .map(|choice| (choice, choice.label(lg, &self.locale.system)));
             egui::ComboBox::from_id_salt("settings_language")
-                .selected_text((*language_preference).label(lg, &self.system_locale))
+                .selected_text((*language_preference).label(lg, &self.locale.system))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
                         ui,
@@ -165,7 +165,7 @@ impl App {
                     "settings-units-system",
                     &[(
                         "unit",
-                        match self.system_units {
+                        match self.locale.system_units {
                             globecraft_core::units::DistanceUnits::Metric => "km",
                             globecraft_core::units::DistanceUnits::Imperial => "mi",
                         }
@@ -320,7 +320,7 @@ impl App {
                     (
                         "size",
                         crate::app::cache::cache_size_text(
-                            self.boundary_loader.border_cache_usage(),
+                            self.borders.loader.border_cache_usage(),
                         )
                         .into(),
                     ),
@@ -354,12 +354,12 @@ impl App {
             "settings-cache-resident-label",
             &[(
                 "size",
-                crate::app::cache::cache_size_text(self.cache.resident_bytes() as u64).into(),
+                crate::app::cache::cache_size_text(self.tiles.cache.resident_bytes() as u64).into(),
             )],
         ));
         ui.separator();
         ui.weak(lg.text("settings-cache-clear-help"));
-        let clearing = self.cache_controls.clearing();
+        let clearing = self.tiles.controls.clearing();
         ui.horizontal(|ui| {
             let label = lg.text(if clearing {
                 "settings-cache-clearing-label"
@@ -375,7 +375,7 @@ impl App {
             if clearing {
                 ui.spinner();
             }
-            match &self.cache_controls.usage {
+            match &self.tiles.controls.usage {
                 Some(Ok(bytes)) => {
                     ui.label(lg.format(
                         "settings-cache-disk-usage",

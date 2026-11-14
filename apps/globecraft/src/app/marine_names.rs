@@ -66,7 +66,7 @@ fn layout(painter: &egui::Painter, name: &MarineName, scale: f32) -> std::sync::
 impl App {
     pub(super) fn update_marine_names(&mut self, ctx: &egui::Context, earth: bool) {
         let wake = ctx.clone();
-        self.live_marine_names.update(
+        self.live.marine_names.update(
             &self.runtime,
             earth && self.layer(MapLayer::SeaNames),
             move || wake.request_repaint(),
@@ -83,11 +83,12 @@ impl App {
         room: &LabelSpace,
     ) {
         let names = self
-            .live_marine_names
+            .live
+            .marine_names
             .names()
             .filter(|_| self.layer(MapLayer::SeaNames));
         let Some(names) = names else {
-            self.marine_placed.clear();
+            self.live.marine_placed.clear();
             return;
         };
         let scale = self.settings.map_scale;
@@ -138,7 +139,7 @@ impl App {
             );
         }
         painter.extend(shapes);
-        self.marine_placed.replace(taken);
+        self.live.marine_placed.replace(taken);
     }
 }
 

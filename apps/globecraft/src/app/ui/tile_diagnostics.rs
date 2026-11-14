@@ -72,7 +72,7 @@ impl App {
         basis: &Basis,
         rect: Rect,
     ) {
-        if !self.tile_diagnostics {
+        if !self.frame.diagnostics {
             return;
         }
         // The levels of the full-resolution frame, as the renderer picks them.
@@ -106,10 +106,10 @@ impl App {
         let mut counts = [0usize; 4];
         let label_font = FontId::monospace(LABEL_FONT_POINTS);
         for tile in &tiles {
-            let (state, color) = match self.cache.lookup(tile.key) {
+            let (state, color) = match self.tiles.cache.lookup(tile.key) {
                 Lookup::Ready(_) => (0, READY_COLOR),
                 Lookup::Pending => (1, LOADING_COLOR),
-                _ if self.cache.failed(tile.key) => (3, FAILED_COLOR),
+                _ if self.tiles.cache.failed(tile.key) => (3, FAILED_COLOR),
                 _ => (2, MISSING_COLOR),
             };
             counts[state] += 1;
@@ -146,9 +146,9 @@ impl App {
         )];
         lines.push(lang.format(
             "diagnostics-downloads-line",
-            &[("count", (self.cache.inflight() as i64).into())],
+            &[("count", (self.tiles.cache.inflight() as i64).into())],
         ));
-        for source in self.cache.diagnostics() {
+        for source in self.tiles.cache.diagnostics() {
             if source.queued == 0 && source.downloading == 0 && !source.paused {
                 continue;
             }
@@ -166,7 +166,7 @@ impl App {
                 ],
             ));
         }
-        let [view, ahead, borders] = self.download_meter.sample();
+        let [view, ahead, borders] = self.frame.download_meter.sample();
         lines.push(lang.format(
             "diagnostics-rates-line",
             &[

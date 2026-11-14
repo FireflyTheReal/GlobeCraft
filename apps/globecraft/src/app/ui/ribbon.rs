@@ -18,12 +18,12 @@ impl App {
     pub(in crate::app) fn ribbon(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         // The tabs live in the header row (`chrome.rs`); this is only the ribbon body.
-        if self.settings.workspace.ribbon_minimized && !self.ribbon_peek {
+        if self.settings.workspace.ribbon_minimized && !self.chrome.ribbon_peek {
             return;
         }
         // A peeked ribbon closes on the next click outside it and the tab strip. Popups opened
         // from the ribbon draw outside it, so a click in one must not close it.
-        let peek_click = self.ribbon_peek
+        let peek_click = self.chrome.ribbon_peek
             && ui.input(|i| i.pointer.any_click())
             && !egui::Popup::is_any_open(ui.ctx());
         let ribbon = egui::Panel::top("ribbon")
@@ -61,10 +61,10 @@ impl App {
             let pos = ui.input(|i| i.pointer.interact_pos());
             let inside = pos.is_some_and(|p| {
                 ribbon.response.rect.contains(p)
-                    || self.tab_strip_rect.is_some_and(|r| r.contains(p))
+                    || self.chrome.tab_strip_rect.is_some_and(|r| r.contains(p))
             });
             if !inside {
-                self.ribbon_peek = false;
+                self.chrome.ribbon_peek = false;
             }
         }
     }
@@ -158,7 +158,7 @@ impl App {
                             se: 0,
                         };
                         let ribbon_open =
-                            !self.settings.workspace.ribbon_minimized || self.ribbon_peek;
+                            !self.settings.workspace.ribbon_minimized || self.chrome.ribbon_peek;
                         if active && ribbon_open {
                             ui.painter().rect_filled(body, top, t.ribbon);
                             ui.painter().rect_stroke(
@@ -202,7 +202,7 @@ impl App {
                             self.run_reporting("ui.ribbon", Value::Null);
                         } else if resp.clicked() {
                             if self.settings.workspace.ribbon_minimized {
-                                self.ribbon_peek = !(self.ribbon_peek && active);
+                                self.chrome.ribbon_peek = !(self.chrome.ribbon_peek && active);
                             }
                             self.settings.workspace.ribbon_tab = *tab;
                         }

@@ -72,13 +72,13 @@ impl App {
         enabled: bool,
         checked: bool,
     ) -> bool {
-        let Some(group) = self.ribbon_tools.group else {
+        let Some(group) = self.chrome.ribbon_tools.group else {
             return true;
         };
         let key = tool_key(id, params);
         let shown = self.tool_pinned(group, &key);
-        if !self.ribbon_tools.rows.iter().any(|r| r.key == key) {
-            self.ribbon_tools.rows.push(ToolRow {
+        if !self.chrome.ribbon_tools.rows.iter().any(|r| r.key == key) {
+            self.chrome.ribbon_tools.rows.push(ToolRow {
                 key,
                 id: id.to_string(),
                 params: params.clone(),
@@ -300,7 +300,7 @@ impl App {
 
     /// The dialog that listens for a tool's new keyboard shortcut.
     pub(in crate::app) fn shortcut_dialog(&mut self, ctx: &egui::Context) {
-        let Some(key) = self.ribbon_tools.capture.clone() else {
+        let Some(key) = self.chrome.ribbon_tools.capture.clone() else {
             return;
         };
         let lang = self.lang;
@@ -400,7 +400,7 @@ impl App {
             cancel = true;
         }
         if cancel {
-            self.ribbon_tools.capture = None;
+            self.chrome.ribbon_tools.capture = None;
         }
     }
 }

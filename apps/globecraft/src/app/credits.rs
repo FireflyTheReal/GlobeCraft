@@ -78,37 +78,37 @@ impl App {
             && self.cam.alt <= globecraft_data::transport::MAX_ALTITUDE_KM)
             || (self.layer(MapLayer::Roads)
                 && self.cam.alt <= globecraft_data::roads::MAX_ALTITUDE_KM);
-        if (self.uses_border_tiles() && self.boundary_loader.has_osm_tiles()) || transport_drawn {
+        if (self.uses_border_tiles() && self.borders.loader.has_osm_tiles()) || transport_drawn {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             credits.push(OSM_TILES_CREDIT.to_owned());
         }
-        if earth && self.layer(MapLayer::SeaNames) && self.live_marine_names.names().is_some() {
+        if earth && self.layer(MapLayer::SeaNames) && self.live.marine_names.names().is_some() {
             credits.push(lg.text("sea-names-credit").to_owned());
         }
-        if self.layer(MapLayer::TimeZones) && self.live_time_zones.zones().is_some() {
+        if self.layer(MapLayer::TimeZones) && self.live.time_zones.zones().is_some() {
             credits.push(lg.text("timezones-credit").to_owned());
         }
-        if self.layer(MapLayer::Aurora) && self.live_aurora.grid().is_some() {
+        if self.layer(MapLayer::Aurora) && self.live.aurora.grid().is_some() {
             credits.push(lg.text("aurora-credit").to_owned());
         }
         // The live objects, while there are some to show.
         if earth
             && self.layer(MapLayer::Flights)
-            && !self.live_aircraft.snapshot().aircraft.is_empty()
+            && !self.live.aircraft.snapshot().aircraft.is_empty()
         {
             credits.push(lg.text("aircraft-credit").to_owned());
         }
         if earth
             && self.layer(MapLayer::Vessels)
-            && let Some(key) = self.live_vessels.credit_key()
+            && let Some(key) = self.live.vessels.credit_key()
         {
             credits.push(lg.text(key).to_owned());
         }
-        if earth && self.layer(MapLayer::Satellites) && !self.live_satellites.snapshot().is_empty()
+        if earth && self.layer(MapLayer::Satellites) && !self.live.satellites.snapshot().is_empty()
         {
             credits.push(lg.text("satellites-credit").to_owned());
         }
-        if earth && self.layer(MapLayer::Traffic) && !self.tomtom_key.trim().is_empty() {
+        if earth && self.layer(MapLayer::Traffic) && !self.keys.tomtom.trim().is_empty() {
             credits.push(lg.text("traffic-credit").to_owned());
         }
         // Credits of the layers the user added, as their licences ask.
@@ -121,7 +121,7 @@ impl App {
                     .map(|layer| layer.attribution.clone()),
             );
         }
-        if self.renderer.displayed_sky {
+        if self.frame.renderer.displayed_sky {
             credits.push(lg.text("sky-short-credit").to_owned());
         }
         credits.dedup();

@@ -32,7 +32,7 @@ impl App {
             return self;
         }
         match NativeMenu::new(cc, self.lang) {
-            Ok(menu) => self.native_menu = Some(menu),
+            Ok(menu) => self.chrome.native_menu = Some(menu),
             Err(error) => self.status = format!("Native menu initialization failed: {error}"),
         }
         self
@@ -40,14 +40,14 @@ impl App {
     #[cfg(target_os = "macos")]
     pub(super) fn refresh_native_menu(&mut self, ctx: &egui::Context) {
         let state = self.menu_state(ctx);
-        if let Some(menu) = &mut self.native_menu {
+        if let Some(menu) = &mut self.chrome.native_menu {
             menu.update(self.lang, state);
         }
     }
     #[cfg(target_os = "macos")]
     pub(super) fn poll_native_menu(&mut self, ctx: &egui::Context) {
         self.refresh_native_menu(ctx);
-        let Some(menu) = &mut self.native_menu else {
+        let Some(menu) = &mut self.chrome.native_menu else {
             return;
         };
         let mut actions = Vec::new();
@@ -86,7 +86,7 @@ impl App {
             self.command_state(id, &params).checked
         };
         MenuState {
-            image: self.image.is_some(),
+            image: self.frame.image.is_some(),
             undo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_undo(),
             redo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_redo(),
             sidebar: checked(Action::Sidebar),

@@ -106,26 +106,26 @@ impl App {
                 pixels_per_point,
                 traffic_width_px: width,
                 traffic_height_px: height,
-                ground: self.renderer.displayed_ground(self.overlay_ground()),
+                ground: self.frame.renderer.displayed_ground(self.overlay_ground()),
             },
-            roads: self.roads.current.clone(),
+            roads: self.map_data.roads.current.clone(),
             vessels: self
                 .layer(globecraft_core::layers::MapLayer::Vessels)
-                .then(|| self.live_vessels.shared_snapshot())
+                .then(|| self.live.vessels.shared_snapshot())
                 .flatten(),
             satellites: self
                 .layer(globecraft_core::layers::MapLayer::Satellites)
-                .then(|| self.live_satellites.shared_snapshot())
+                .then(|| self.live.satellites.shared_snapshot())
                 .flatten(),
             traffic: self
                 .layer(globecraft_core::layers::MapLayer::Traffic)
-                .then(|| self.traffic.service.shared_tiles())
+                .then(|| self.live.traffic.service.shared_tiles())
                 .flatten(),
-            transport: self.transport_tiles.shared_snapshot(),
+            transport: self.map_data.transport.shared_snapshot(),
             transport_layers: self.transport_layers(),
-            poi: self.poi_tiles.shared_snapshot(),
+            poi: self.map_data.poi.shared_snapshot(),
             poi_layers: self.poi_layers(),
-            poi_shown: Some(self.poi_shapes.shown()),
+            poi_shown: Some(self.map_data.poi_shapes.shown()),
             unix_secs: now_unix(),
             satellite_heights: !self.settings.layers.flat_live_objects,
         }

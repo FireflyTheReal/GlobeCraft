@@ -10,6 +10,18 @@ pub(super) struct FileStatus {
     pub(super) message: String,
     pub(super) path: PathBuf,
 }
+/// Files and links from outside (roadmap 10.2: one of the feature states split out
+/// of `App`): the file service's jobs and results, and what the status bar says of
+/// the last file.
+pub(super) struct FilesState {
+    pub(super) jobs: globecraft_data::files::FileJobs,
+    pub(super) results: std::sync::mpsc::Receiver<FileCompletion>,
+    /// The last file's status, with its full path.
+    pub(super) status: Option<FileStatus>,
+    /// A `globecraft://view` link from the command line, opened on the first frame.
+    pub(super) pending_view_link: Option<String>,
+}
+
 impl App {
     pub(super) fn resolve_kml_path(&self, p: &str) -> PathBuf {
         let path = PathBuf::from(p.trim());
@@ -21,7 +33,7 @@ impl App {
     }
 
     pub(super) fn save_kml_to(&mut self, path: PathBuf) {
-        match self.file_jobs.save_kml(path, &self.places.items) {
+        match self.files.jobs.save_kml(path, &self.places.items) {
             Ok(()) => self.places.kml_session.submitted(),
             Err(error) => {
                 self.status =
@@ -31,7 +43,7 @@ impl App {
     }
 
     pub(super) fn load_kml_from(&mut self, path: &std::path::Path) {
-        match self.file_jobs.open_kml(path.to_path_buf(), self.lang) {
+        match self.files.jobs.open_kml(path.to_path_buf(), self.lang) {
             Ok(()) => self.places.kml_session.submitted(),
             Err(error) => {
                 self.status =
@@ -41,7 +53,7 @@ impl App {
     }
 
     pub(super) fn restore_kml_session(&mut self) {
-        match self.file_jobs.restore_kml(self.lang) {
+        match self.files.jobs.restore_kml(self.lang) {
             Ok(()) => self.places.kml_session.submitted(),
             Err(error) => self.status = format!("Unable to restore open KML files: {error}"),
         }
@@ -53,12 +65,11 @@ impl App {
         self.places.reveal_requested = false;
         self.places.kml_path = "placemarks.kml".into();
         self.places.kml_session.clear();
-        self.settings_writer
-            .kml_paths(&self.places.kml_session.paths);
+        self.saved.writer.kml_paths(&self.places.kml_session.paths);
     }
 
     pub(super) fn poll_files(&mut self, ctx: &egui::Context) {
-        while let Ok(FileCompletion { kind, result }) = self.file_results.try_recv() {
+        while let Ok(FileCompletion { kind, result }) = self.files.results.try_recv() {
             if matches!(
                 kind,
                 FileKind::OpenKml | FileKind::SaveKml | FileKind::RestoreKml
@@ -66,7 +77,7 @@ impl App {
             {
                 continue;
             }
-            self.update_restart.file_completed(kind, &result);
+            self.updates.restart.file_completed(kind, &result);
             match result {
                 Ok(FileOutcome::KmlRestored { files }) => {
                     for file in files {
@@ -82,8 +93,7 @@ impl App {
                             }
                         }
                     }
-                    self.settings_writer
-                        .kml_paths(&self.places.kml_session.paths);
+                    self.saved.writer.kml_paths(&self.places.kml_session.paths);
                 }
                 Ok(FileOutcome::ImageLoaded {
                     target: globecraft_data::files::ImageTarget::FlatEarth,
@@ -103,22 +113,20 @@ impl App {
                 Ok(FileOutcome::KmlSaved { path }) => {
                     // A save contains the whole tree, so reopen that snapshot only.
                     self.places.kml_session.paths = vec![path.clone()];
-                    self.settings_writer
-                        .kml_paths(&self.places.kml_session.paths);
+                    self.saved.writer.kml_paths(&self.places.kml_session.paths);
                     self.places.kml_path = path.to_string_lossy().into_owned();
                     self.status = self.lang.format(
                         "kml-save-success",
                         &[("path", path.display().to_string().into())],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path,
                     });
                 }
                 Ok(FileOutcome::KmlLoaded { path, placemarks }) => {
                     self.places.kml_session.remember(path.clone());
-                    self.settings_writer
-                        .kml_paths(&self.places.kml_session.paths);
+                    self.saved.writer.kml_paths(&self.places.kml_session.paths);
                     self.status = self.lang.format(
                         "kml-import-success",
                         &[
@@ -126,7 +134,7 @@ impl App {
                             ("path", path.display().to_string().into()),
                         ],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path: path.clone(),
                     });
@@ -148,7 +156,7 @@ impl App {
                             ("path", path.display().to_string().into()),
                         ],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path,
                     });
@@ -241,7 +249,7 @@ impl App {
             "screenshot-save-success",
             &[("path", path.display().to_string().into())],
         );
-        self.status_file = Some(FileStatus {
+        self.files.status = Some(FileStatus {
             message: self.status.clone(),
             path,
         });

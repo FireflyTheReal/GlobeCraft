@@ -106,17 +106,17 @@ impl AltitudeEditor {
 }
 impl App {
     pub(in crate::app) fn altitude_window(&mut self, ctx: &egui::Context) {
-        let Some(editor) = &mut self.altitude_editor else {
+        let Some(editor) = &mut self.windows.altitude_editor else {
             return;
         };
         match editor.show(ctx, self.lang) {
             Action::Pending => {}
-            Action::Cancel => self.altitude_editor = None,
+            Action::Cancel => self.windows.altitude_editor = None,
             Action::Apply { altitude_km } => {
-                self.fly = None;
+                self.motion.fly = None;
                 self.cam.alt = altitude_km;
                 self.touch();
-                self.altitude_editor = None;
+                self.windows.altitude_editor = None;
                 ctx.request_repaint();
             }
         }

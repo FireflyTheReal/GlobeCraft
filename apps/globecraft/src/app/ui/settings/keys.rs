@@ -9,9 +9,9 @@ impl App {
     /// The typed key of a service.
     pub(in crate::app) fn key_buffer(&mut self, id: &'static str) -> &mut String {
         if id == keys::TOMTOM {
-            &mut self.tomtom_key
+            &mut self.keys.tomtom
         } else {
-            self.service_keys.entry(id).or_default()
+            self.keys.others.entry(id).or_default()
         }
     }
 

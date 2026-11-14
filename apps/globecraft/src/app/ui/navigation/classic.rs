@@ -79,6 +79,7 @@ impl App {
         painter.circle_filled(c1, r_disc, fill);
         painter.circle_stroke(c1, r_disc, Stroke::new(1.0_f32, edge));
         let displayed_heading = self
+            .frame
             .renderer
             .displayed_view()
             .map_or(self.cam.heading, |(cam, _)| cam.heading);
@@ -128,7 +129,7 @@ impl App {
                 d += std::f32::consts::TAU;
             }
             self.cam.heading = wrap_lon(self.cam.heading - d.to_degrees() as f64);
-            self.fly = None;
+            self.motion.fly = None;
             active = true;
         }
         if ring.drag_stopped() {
@@ -144,7 +145,7 @@ impl App {
             .clicked()
         {
             self.cam.heading = 0.0;
-            self.fly = None;
+            self.motion.fly = None;
             active = true;
         }
         // arrows: left/right rotate the view, up = north up, down = flip 180°
@@ -178,12 +179,12 @@ impl App {
             match i {
                 0 if r.clicked() => {
                     self.cam.heading = 0.0;
-                    self.fly = None;
+                    self.motion.fly = None;
                     active = true;
                 }
                 1 if r.clicked() => {
                     self.cam.heading = wrap_lon(self.cam.heading + 180.0);
-                    self.fly = None;
+                    self.motion.fly = None;
                     active = true;
                 }
                 2 if held => {
@@ -222,7 +223,7 @@ impl App {
         );
         if center.dragged() {
             let d = ui.input(|i| i.pointer.delta());
-            self.fly = None;
+            self.motion.fly = None;
             self.pan(d.x as f64, d.y as f64, rect.height());
             active = true;
         }
@@ -260,7 +261,7 @@ impl App {
                     2 => (sp, 0.0),
                     _ => (-sp, 0.0),
                 };
-                self.fly = None;
+                self.motion.fly = None;
                 self.pan(dx, dy, rect.height());
                 active = true;
             }
@@ -311,7 +312,7 @@ impl App {
                 lg.text("navigation-zoom-out-tooltip")
             });
             if held {
-                self.fly = None;
+                self.motion.fly = None;
                 self.zoom((if plus { -1.6 * dt } else { 1.6 * dt }).exp());
                 active = true;
             }
@@ -329,7 +330,7 @@ impl App {
         {
             let tt = ((p.y - t_top) / track_len).clamp(0.0, 1.0) as f64;
             self.cam.set_zoom_fraction(tt);
-            self.fly = None;
+            self.motion.fly = None;
             active = true;
         }
         let hy = t_top + t * track_len;

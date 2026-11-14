@@ -138,7 +138,7 @@ impl App {
             && let Some(cur) = dial.interact_pointer_pos()
         {
             let delta = ui.input(|i| i.pointer.delta());
-            self.fly = None;
+            self.motion.fly = None;
             active = true;
             if self.nav.ring_drag {
                 let prev = cur - delta;
@@ -206,7 +206,7 @@ impl App {
             letter_hot[i] = response.hovered();
             if response.on_hover_text(lg.text(tooltip)).clicked() {
                 self.nav.snap_heading = Some(nearest_heading(self.cam.heading, target));
-                self.fly = None;
+                self.motion.fly = None;
                 active = true;
             }
         }
@@ -250,7 +250,7 @@ impl App {
                 "navigation-zoom-out-tooltip"
             }));
             if held {
-                self.fly = None;
+                self.motion.fly = None;
                 let rate = if plus {
                     -ZOOM_HOLD_RATE
                 } else {
@@ -273,7 +273,7 @@ impl App {
         {
             self.cam
                 .set_zoom_fraction(f64::from(((p.y - t_top) / track_len).clamp(0.0, 1.0)));
-            self.fly = None;
+            self.motion.fly = None;
             active = true;
         }
         let track_hot = track.hovered() || track.dragged();
@@ -289,7 +289,7 @@ impl App {
                     1.0
                 };
                 self.zoom((-scroll * WHEEL_ZOOM_PER_POINT * direction).exp());
-                self.fly = None;
+                self.motion.fly = None;
                 active = true;
             }
         }

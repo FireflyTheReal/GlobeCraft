@@ -605,7 +605,7 @@ impl super::App {
         };
         Ok(match id {
             "ui.addData" => {
-                self.add_data = Some(Default::default());
+                self.windows.add_data = Some(Default::default());
                 json!({})
             }
             "data.add" => {

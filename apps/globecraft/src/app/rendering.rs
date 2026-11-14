@@ -347,7 +347,7 @@ impl App {
         if compare.is_none() {
             self.wayback.compare_texture = None;
         }
-        self.renderer.worker.submit(RenderRequest {
+        self.frame.renderer.worker.submit(RenderRequest {
             width: size.width,
             height: size.height,
             cam: self.cam,
@@ -375,14 +375,14 @@ impl App {
                     dashes: globecraft_render::overlays::BorderDashes::of(&self.settings.map_style),
                     ground: self.overlay_ground(),
                 },
-                data: self.boundaries.clone(),
-                fading_out: self.layer_arrivals.fading_out(std::time::Instant::now()),
+                data: self.borders.shown.clone(),
+                fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
             }),
         });
     }
 
     pub(super) fn poll_render(&mut self, presentation: u64, ctx: &egui::Context) {
-        let Some(frame) = self.renderer.worker.take_completed(presentation) else {
+        let Some(frame) = self.frame.renderer.worker.take_completed(presentation) else {
             return;
         };
         #[cfg(feature = "profiling")]
@@ -408,7 +408,7 @@ impl App {
             live_layers,
         } = frame.prepared;
         if let Some(geometry) = live_layers {
-            self.live_geometry.accept(geometry);
+            self.live.geometry.accept(geometry);
         }
         // Planes projected for this frame are shown with it even when a newer list
         // arrived meanwhile (every few seconds now): rejecting them left the planes
@@ -417,12 +417,12 @@ impl App {
             && geometry.view.map_scale == self.settings.map_scale
             && geometry.view.pixels_per_point == ctx.pixels_per_point()
         {
-            self.aircraft_overlay.accept(geometry, now_unix());
+            self.live.aircraft_overlay.accept(geometry, now_unix());
         }
         if let Some(geometry) = overlays {
-            self.overlay_cache.accept(geometry);
+            self.borders.overlay_cache.accept(geometry);
         }
-        self.overlay_cache.accept_fading_out(fading_out);
+        self.borders.overlay_cache.accept_fading_out(fading_out);
         match compare {
             Some((image, rel)) => {
                 let size = image.size;
@@ -448,75 +448,80 @@ impl App {
         // rest) fades in over the picture it replaces instead of popping in (roadmap
         // 1.6). The two textures swap roles, so the old picture costs no upload.
         let same_view = same_view(
-            self.texture.is_some(),
-            self.renderer.displayed,
-            self.renderer.displayed_rect,
+            self.frame.texture.is_some(),
+            self.frame.renderer.displayed,
+            self.frame.renderer.displayed_rect,
             frame.request.cam,
             frame.request.overlays.as_ref().map(|input| input.view.rect),
         );
         if same_view {
-            std::mem::swap(&mut self.texture, &mut self.fade_from);
-            self.fade_started = Some(std::time::Instant::now());
+            std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
+            self.frame.fade_started = Some(std::time::Instant::now());
         } else {
-            self.fade_started = None;
+            self.frame.fade_started = None;
         }
-        match &mut self.texture {
+        match &mut self.frame.texture {
             Some(t) if t.size() == [w, h] => {
                 t.set_partial([0, 0], img, egui::TextureOptions::LINEAR)
             }
             Some(t) => t.set(img, egui::TextureOptions::LINEAR),
             None => {
-                self.texture = Some(ctx.load_texture("globe", img, egui::TextureOptions::LINEAR))
+                self.frame.texture =
+                    Some(ctx.load_texture("globe", img, egui::TextureOptions::LINEAR))
             }
         }
-        if let Some((_, _, previous)) = self.image.replace((w, h, Arc::new(buf)))
+        if let Some((_, _, previous)) = self.frame.image.replace((w, h, Arc::new(buf)))
             && let Ok(previous) = Arc::try_unwrap(previous)
         {
-            self.renderer.worker.recycle(previous);
+            self.frame.renderer.worker.recycle(previous);
         }
-        self.renderer.waiting = frame.waiting;
-        self.renderer.required = frame.required;
-        self.renderer.retry_at = None;
+        self.frame.renderer.waiting = frame.waiting;
+        self.frame.renderer.required = frame.required;
+        self.frame.renderer.retry_at = None;
         // Recheck dependencies even if a tile finished before frame publication.
         // Recheck dependencies even if a tile finished before frame publication.
-        self.wake.dependencies_may_have_changed();
-        self.renderer.displayed_rect = frame.request.overlays.as_ref().map(|input| input.view.rect);
-        self.renderer.displayed_ground = frame
+        self.frame.wake.dependencies_may_have_changed();
+        self.frame.renderer.displayed_rect =
+            frame.request.overlays.as_ref().map(|input| input.view.rect);
+        self.frame.renderer.displayed_ground = frame
             .request
             .overlays
             .as_ref()
             .map(|input| input.view.ground);
-        self.renderer.displayed_grid_step = frame
+        self.frame.renderer.displayed_grid_step = frame
             .request
             .cfg
             .grid
             .then_some(frame.request.cfg.grid_step);
-        self.renderer.displayed_sky = frame.request.cfg.sky.is_some();
-        self.renderer.displayed_credits = frame
+        self.frame.renderer.displayed_sky = frame.request.cfg.sky.is_some();
+        self.frame.renderer.displayed_credits = frame
             .request
             .cfg
             .provider
             .attribution(globecraft_core::language::Lang::En)
             .to_string();
         if let Some(edition) = frame.request.cfg.night_lights {
-            self.renderer.displayed_credits.push_str("; ");
-            self.renderer
+            self.frame.renderer.displayed_credits.push_str("; ");
+            self.frame
+                .renderer
                 .displayed_credits
                 .push_str(&night_lights_credit(
                     edition,
                     globecraft_core::language::Lang::En,
                 ));
         }
-        if self.renderer.displayed_sky {
-            self.renderer.displayed_credits.push_str("; ");
-            self.renderer
+        if self.frame.renderer.displayed_sky {
+            self.frame.renderer.displayed_credits.push_str("; ");
+            self.frame
+                .renderer
                 .displayed_credits
                 .push_str(globecraft_data::sky::CREDIT);
-            self.renderer
+            self.frame
+                .renderer
                 .displayed_credits
                 .push_str("; https://svs.gsfc.nasa.gov/4851/; GlobeCraft SDR derivative");
         }
-        self.renderer.displayed = Some((frame.request.cam, frame.request.basis));
+        self.frame.renderer.displayed = Some((frame.request.cam, frame.request.basis));
     }
 }
 

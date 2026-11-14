@@ -20,7 +20,7 @@ impl App {
             self.measure.drag = None;
             return false;
         }
-        let basis = self.renderer.picking_basis(self.view_basis(aspect));
+        let basis = self.frame.renderer.picking_basis(self.view_basis(aspect));
         let source = self.ground_source();
         let heights = source.heights();
         let ground = heights
@@ -63,7 +63,7 @@ impl App {
             self.measure.drag = pressed_handle(response, &basis, rect, &self.measure.paths, ground);
             if self.measure.drag.is_some() {
                 self.measure.paths.begin_move();
-                self.fly = None;
+                self.motion.fly = None;
             }
         }
         let captured = self.measure.drag.is_some();

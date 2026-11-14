@@ -75,7 +75,7 @@ impl App {
             hot |= response.hovered();
             if response.double_clicked() {
                 self.cam.set_tilt(0.0);
-                self.fly = None;
+                self.motion.fly = None;
                 self.nav.tilt_drag = false;
                 active = true;
             } else if (response.drag_started() || response.clicked())
@@ -83,7 +83,7 @@ impl App {
             {
                 self.nav.tilt_drag = response.drag_started();
                 self.cam.tilt_zooming_out(tilt_at(centre, p));
-                self.fly = None;
+                self.motion.fly = None;
                 active = true;
             }
             if response.hovered() && !tooltip_shown {
@@ -99,7 +99,7 @@ impl App {
             match ui.input(|i| i.pointer.primary_down().then(|| i.pointer.interact_pos())) {
                 Some(Some(p)) => {
                     self.cam.tilt_zooming_out(tilt_at(centre, p));
-                    self.fly = None;
+                    self.motion.fly = None;
                     active = true;
                 }
                 Some(None) => active = true,

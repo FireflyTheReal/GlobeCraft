@@ -183,7 +183,7 @@ impl App {
                 json!({"flying_to": {"lat": lat, "lon": lon, "altitude_km": alt}})
             }
             "camera.set" => {
-                self.fly = None;
+                self.motion.fly = None;
                 let lat = f64_param(p, "lat")?.unwrap_or(self.cam.lat);
                 let lon = f64_param(p, "lon")?.unwrap_or(self.cam.lon);
                 globecraft_core::coordinates::validate_coordinates(lat, lon)
@@ -236,13 +236,13 @@ impl App {
                 }
             },
             "camera.zoomIn" => {
-                self.fly = None;
+                self.motion.fly = None;
                 self.zoom(ZOOM_STEP_FACTOR);
                 self.touch();
                 self.camera_json()
             }
             "camera.zoomOut" => {
-                self.fly = None;
+                self.motion.fly = None;
                 self.zoom(1.0 / ZOOM_STEP_FACTOR);
                 self.touch();
                 self.camera_json()
@@ -253,7 +253,7 @@ impl App {
                 self.camera_json()
             }
             "camera.tilt" => {
-                self.fly = None;
+                self.motion.fly = None;
                 let tilt = match (f64_param(p, "tilt_deg")?, f64_param(p, "step")?) {
                     (Some(tilt), _) => tilt,
                     (None, Some(step)) => self.cam.tilt + step,
@@ -273,8 +273,8 @@ impl App {
                 self.camera_json()
             }
             "camera.autoRotate" => {
-                self.auto_rotate = toggled(p, self.auto_rotate);
-                json!({"auto_rotate": self.auto_rotate})
+                self.motion.auto_rotate = toggled(p, self.motion.auto_rotate);
+                json!({"auto_rotate": self.motion.auto_rotate})
             }
             // ── Places
             "places.addAtCenter" => {
@@ -436,7 +436,7 @@ impl App {
                 self.ruler_json()
             }
             "file.screenshot" => {
-                if self.image.is_none() {
+                if self.frame.image.is_none() {
                     return Err("The globe has not finished drawing yet.".into());
                 }
                 let quality = match str_param(p, "quality") {
@@ -546,7 +546,7 @@ impl App {
                     self.set_wayback(left);
                 }
                 self.wayback.compare = Some(compare);
-                self.last_state = 0;
+                self.frame.last_state = 0;
                 json!({
                     "compare": true,
                     "left": self.wayback.releases[self.wayback.index].date,
@@ -614,7 +614,7 @@ impl App {
                 if model != self.settings.earth_model {
                     self.settings.earth_model = model;
                     if earth {
-                        self.fly = None;
+                        self.motion.fly = None;
                         self.measure.paths.end_move();
                         self.measure.drag = None;
                     }
@@ -630,7 +630,7 @@ impl App {
                     _ => return Err("body must be earth, moon or custom".into()),
                 };
                 self.flat_earth.open = false;
-                self.explorer.choose(body, &self.file_jobs);
+                self.explorer.choose(body, &self.files.jobs);
                 if body == Body::Custom {
                     self.settings.workspace.open_right(RightPane::Explorer);
                 }
@@ -685,8 +685,8 @@ impl App {
                 json!({"shown": shown})
             }
             "ui.tileDiagnostics" => {
-                let shown = toggled(p, self.tile_diagnostics);
-                self.tile_diagnostics = shown;
+                let shown = toggled(p, self.frame.diagnostics);
+                self.frame.diagnostics = shown;
                 json!({"shown": shown})
             }
             "ui.navigatorStyle" => {
@@ -700,7 +700,7 @@ impl App {
             "ui.ribbon" => {
                 self.settings.workspace.ribbon_minimized =
                     !self.settings.workspace.ribbon_minimized;
-                self.ribbon_peek = false;
+                self.chrome.ribbon_peek = false;
                 json!({})
             }
             "ui.focusNext" | "ui.focusPrevious" => {
@@ -744,7 +744,7 @@ impl App {
             "ui.shortcut.edit" => {
                 let tool = str_param(p, "tool").ok_or("tool is required")?;
                 super::tools::parse_tool(tool).ok_or("tool is not a command")?;
-                self.ribbon_tools.capture = Some(tool.to_string());
+                self.chrome.ribbon_tools.capture = Some(tool.to_string());
                 json!({})
             }
             "ui.shortcut.set" => {
@@ -780,7 +780,7 @@ impl App {
                 json!({})
             }
             "ui.commandSearch" => {
-                self.command_search = Some(super::ui::palette::CommandSearch::default());
+                self.windows.command_search = Some(super::ui::palette::CommandSearch::default());
                 json!({})
             }
             "ui.settings" => {
@@ -906,7 +906,7 @@ impl App {
             "ui.here" => {
                 let (lat, lon) = position(p)?;
                 self.close_other_cards(super::here::Card::Here);
-                self.here_card = Some(super::here::HereCard { lat, lon });
+                self.pointer.here_card = Some(super::here::HereCard { lat, lon });
                 json!({"lat": lat, "lon": lon})
             }
             id if id.starts_with("data.") || id == "ui.addData" => self.run_user_data(id, p)?,
@@ -936,7 +936,7 @@ impl App {
         };
         let earth = self.explorer.active == Body::Earth;
         match id {
-            "camera.autoRotate" => on(self.auto_rotate),
+            "camera.autoRotate" => on(self.motion.auto_rotate),
             "ruler.enable" => on(self.measure.on),
             "ruler.closeShape" => on(self.measure.paths.closed()),
             "edit.undo" => CommandState {
@@ -948,11 +948,11 @@ impl App {
                 checked: false,
             },
             "file.screenshot" => CommandState {
-                enabled: self.image.is_some() && !self.screenshot_running(),
+                enabled: self.frame.image.is_some() && !self.screenshot_running(),
                 checked: false,
             },
             "satellite.clear" => CommandState {
-                enabled: self.satellite_selection.selected().is_some(),
+                enabled: self.picked.satellite.selected().is_some(),
                 checked: false,
             },
             "satellite.select" => CommandState {
@@ -960,7 +960,7 @@ impl App {
                 checked: false,
             },
             "flight.clear" => CommandState {
-                enabled: self.flight_selection.selected().is_some(),
+                enabled: self.picked.flight.selected().is_some(),
                 checked: false,
             },
             "flight.select" => CommandState {
@@ -1039,7 +1039,7 @@ impl App {
             "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
-            "ui.tileDiagnostics" => on(self.tile_diagnostics),
+            "ui.tileDiagnostics" => on(self.frame.diagnostics),
             "ui.timeline" => on(self.timeline.open),
             "ui.legend" => on(self.legend_open()),
             "time.play" => on(self.time.speed() != 0.0),
@@ -1075,7 +1075,7 @@ impl App {
                 .is_some_and(|f| f == self.settings.coordinate_display.format.code())),
             "settings.language" => {
                 on(str_param(params, "language")
-                    .is_some_and(|l| l == self.language_preference.code()))
+                    .is_some_and(|l| l == self.locale.preference.code()))
             }
             "ruler.unit" => {
                 on(str_param(params, "unit").is_some_and(|u| u == self.settings.ruler_unit.code()))
@@ -1266,7 +1266,7 @@ impl App {
         });
         for (key, keys) in bound {
             #[cfg(target_os = "macos")]
-            if self.native_menu.is_some() && super::menu::native_shortcut(&key) {
+            if self.chrome.native_menu.is_some() && super::menu::native_shortcut(&key) {
                 continue;
             }
             if ctx.input_mut(|input| input.consume_shortcut(&keys))

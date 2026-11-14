@@ -157,7 +157,7 @@ impl App {
             (LegendKind::Satellites, self.layer(MapLayer::Satellites)),
             (
                 LegendKind::FlightAltitude,
-                self.layer(MapLayer::Flights) && self.flight_selection.selected().is_some(),
+                self.layer(MapLayer::Flights) && self.picked.flight.selected().is_some(),
             ),
             (LegendKind::Radar, self.layer(MapLayer::Radar)),
             (LegendKind::Aurora, self.layer(MapLayer::Aurora)),
@@ -192,10 +192,13 @@ impl App {
     /// from another pane).
     pub(super) fn legend_watch(&mut self) {
         let kinds = self.legend_kinds();
-        if kinds.iter().any(|kind| !self.legend.seen.contains(kind)) {
+        if kinds
+            .iter()
+            .any(|kind| !self.panes.legend.seen.contains(kind))
+        {
             self.settings.workspace.add_right(RightPane::Legend);
         }
-        self.legend.seen = kinds;
+        self.panes.legend.seen = kinds;
     }
 
     /// The legend's pane: a key per layer on the globe that has one.

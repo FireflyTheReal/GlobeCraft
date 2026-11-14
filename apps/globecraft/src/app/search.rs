@@ -96,13 +96,14 @@ impl App {
                 merge_suggestions(
                     &self.search.query,
                     self.lang,
-                    &self.boundaries.labels,
+                    &self.borders.shown.labels,
                     &self.search.remote_suggestions,
                 )
             });
         // An airport code (FRA, EDDF) goes first.
         if let Some(airport) = self
-            .live_airports
+            .live
+            .airports
             .airports()
             .and_then(|airports| airports.by_code(&self.search.query).cloned())
         {
@@ -243,7 +244,8 @@ impl App {
             Ok(None) => {}
         }
         if let Some(airport) = self
-            .live_airports
+            .live
+            .airports
             .airports()
             .and_then(|airports| airports.by_code(&q).cloned())
         {
