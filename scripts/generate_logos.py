@@ -51,6 +51,7 @@ CENTRAL = -16.0     # central meridian: Africa and Europe face down, the America
 TIPS, BOUNDARY = 5, 15.0
 ICE_LAT = -60.0     # Antarctica is drawn as ice (paper) south of this
 DEPTH = 0.2         # ocean vignette
+RIM_ICE = 0.02      # Limit: radians of solid ice inside the rim (the south pole)
 SIZE = 1024
 # Generalisation in plane units (radians of polar distance). "regular" is used for
 # rasters of 32 px and below so small icons stay crisp.
@@ -181,6 +182,10 @@ def limit(geoms, d):
     # a first light smoothing pass, then the shared generalisation
     land, ice = (soften(drop_specks(g, 0.002), 0.01) for g in (land, ice))
     land, ice = generalise(land, d), generalise(ice, d)
+    # The rim is the south pole, so it is ice all round. Smoothing pulls the ice's outer
+    # edge in slightly; this band (about 1 degree of latitude) keeps a hairline of ocean
+    # from showing between the globe and the tile.
+    ice = unary_union([ice, disc.difference(disc.buffer(-RIM_ICE, 512))])
     return disc.difference(land).difference(ice), math.pi, 0.0
 
 
