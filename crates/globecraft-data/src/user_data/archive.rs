@@ -23,6 +23,15 @@ pub(super) enum TileArchive {
 }
 
 impl TileArchive {
+    /// Whether a template names an archive file on this computer, which means
+    /// nothing on another one.
+    pub(super) fn is_local(template: &str) -> bool {
+        match template.strip_prefix(PMTILES_PREFIX) {
+            Some(address) => !super::is_url(address),
+            None => template.starts_with(MBTILES_PREFIX),
+        }
+    }
+
     /// The archive a template names, if it names one.
     pub(super) fn from_template(template: &str) -> Option<Self> {
         if let Some(url) = template.strip_prefix(PMTILES_PREFIX) {
@@ -75,6 +84,13 @@ impl TileArchive {
     /// The zoom levels held and a tile that exists, for the Add Data form.
     pub(super) async fn describe(&self) -> Result<ArchiveInfo, crate::Error> {
         if let Some(archive) = self.archive().await? {
+            if archive.vector_tiles() {
+                return Err(
+                    "this archive holds vector tiles; an image layer draws only image tiles \
+                     (PNG, JPEG or WebP)"
+                        .into(),
+                );
+            }
             let (min_zoom, max_zoom) = archive.zooms();
             let (zoom, lon, lat) = archive.center();
             let zoom = zoom.clamp(min_zoom, max_zoom);
@@ -98,14 +114,16 @@ impl TileArchive {
             )
             .optional()?
             .ok_or("the MBTiles file holds no tiles")?;
+            // Rows count from the south; a row or level outside the pyramid is a
+            // damaged file, not an overflow.
+            let y = 1u32
+                .checked_shl(u32::from(min_zoom))
+                .and_then(|rows| (rows - 1).checked_sub(row))
+                .ok_or("the MBTiles file names a tile outside its zoom level")?;
             Ok(ArchiveInfo {
                 min_zoom,
                 max_zoom,
-                sample: TileKey {
-                    z: min_zoom,
-                    x,
-                    y: (1u32 << min_zoom) - 1 - row,
-                },
+                sample: TileKey { z: min_zoom, x, y },
             })
         })
         .await
@@ -192,5 +210,13 @@ mod tests {
         });
         assert!(TileArchive::from_template("https://example.org/{z}/{x}/{y}.png").is_none());
         let _ = std::fs::remove_file(path);
+        assert!(TileArchive::is_local("mbtiles:/maps/alps.mbtiles"));
+        assert!(TileArchive::is_local("pmtiles:/maps/alps.pmtiles"));
+        assert!(!TileArchive::is_local(
+            "pmtiles:https://example.org/alps.pmtiles"
+        ));
+        assert!(!TileArchive::is_local(
+            "https://example.org/{z}/{x}/{y}.png"
+        ));
     }
 }

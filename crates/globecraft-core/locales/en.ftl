@@ -6,7 +6,7 @@ kml-save-dialog-title = Save KML or KMZ as
 
 screenshot-empty-error = Nothing to save yet.
 
-kml-drop-type-error = Only KML, KMZ, GeoJSON, GPX or CSV files can be dropped here.
+kml-drop-type-error = Only KML, KMZ, GeoJSON, GPX, CSV, MBTiles or PMTiles files can be dropped here.
 
 globe-placemark-action = Add placemark here
 
@@ -677,6 +677,19 @@ data-pane-import-success = Added { $count } { $count ->
         [one] source
        *[other] sources
     } to your favorites from { $path }
+places-export-dialog-title = Export places as GeoJSON or GPX
+places-export-success = Exported { $places } { $places ->
+        [one] place
+       *[other] places
+    } and { $paths } { $paths ->
+        [one] ruler path
+       *[other] ruler paths
+    } to { $path }
+places-export-error = Error exporting: { $error }
+places-export-empty = Nothing to export: tick a place in Places or measure a path with the ruler first.
+places-export-path-name = Ruler path { $number }
+places-export-shape-name = Ruler shape { $number }
+menu-places-export = Export Places…
 sidebar-places-title = Places
 sidebar-pin-places-action = Pin
 sidebar-pin-places-tooltip = Keep Places visible when switching panels
@@ -904,6 +917,8 @@ cmd-places-save = Save
 cmd-places-save-help = Save My Places to the current KML file.
 cmd-places-save-as = Save As
 cmd-places-save-as-help = Save My Places to a new KML or KMZ file.
+cmd-places-export = Export Places
+cmd-places-export-help = Write the places shown (ticked) and the ruler's paths to a GeoJSON or GPX file, for hiking apps, GPS devices and other map programs. My Places stays in its KML file.
 cmd-places-clear = Clear All
 cmd-places-clear-help = Remove every place and forget the open KML files (the files are kept).
 cmd-ruler-enable = Ruler
@@ -1317,7 +1332,7 @@ add-data-web-wms = WMS
 add-data-web-archive = Tile archive (PMTiles, MBTiles)
 add-data-web-archive-label = Archive
 add-data-web-archive-test-ok = The archive holds zoom levels { $min } to { $max }; a tile arrived ({ $width } × { $height } pixels).
-add-data-web-archive-help = A PMTiles archive on the web (its address ending in .pmtiles) or an MBTiles file on this computer, holding PNG, JPEG or WebP images. Test reads its zoom levels; the layer is drawn over the imagery, under the borders.
+add-data-web-archive-help = A PMTiles archive on the web (its address ending in .pmtiles) or in a file on this computer, or an MBTiles file on this computer, holding PNG, JPEG or WebP images. Test reads its zoom levels; the layer is drawn over the imagery, under the borders.
 add-data-web-template-label = Tile address
 add-data-web-service-label = Service address
 add-data-web-tile-size-label = Tile size

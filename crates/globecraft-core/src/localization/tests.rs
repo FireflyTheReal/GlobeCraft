@@ -101,12 +101,13 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
                 ("kml-open-dialog-title", Lang::PtBr) => "Abrir KML ou KMZ",
                 ("kml-save-dialog-title", Lang::En) => "Save KML or KMZ as",
                 ("kml-save-dialog-title", Lang::PtBr) => "Salvar KML ou KMZ como",
-                // Dropped GeoJSON, GPX and CSV files become layers (roadmap 2.6).
+                // Dropped GeoJSON, GPX and CSV files become layers (roadmap 2.6), and
+                // so do MBTiles and PMTiles archives (roadmap 1.2).
                 ("kml-drop-type-error", Lang::En) => {
-                    "Only KML, KMZ, GeoJSON, GPX or CSV files can be dropped here."
+                    "Only KML, KMZ, GeoJSON, GPX, CSV, MBTiles or PMTiles files can be dropped here."
                 }
                 ("kml-drop-type-error", Lang::PtBr) => {
-                    "Só é possível soltar arquivos KML, KMZ, GeoJSON, GPX ou CSV aqui."
+                    "Só é possível soltar arquivos KML, KMZ, GeoJSON, GPX, CSV, MBTiles ou PMTiles aqui."
                 }
                 ("settings-kml-folder-label", Lang::En) => "KML/KMZ files:",
                 ("settings-kml-folder-label", Lang::PtBr) => "Arquivos KML/KMZ:",

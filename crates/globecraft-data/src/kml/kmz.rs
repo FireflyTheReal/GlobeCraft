@@ -24,8 +24,7 @@ pub(super) fn decode(path: &str) -> Result<String, crate::Error> {
             )
             .into());
         }
-        return String::from_utf8(xml)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error).into());
+        return Ok(super::text_of(xml));
     }
     Err("KMZ archive contains no KML document".into())
 }
@@ -171,12 +170,16 @@ mod tests {
         ));
         let path = fixture.archive(&[("doc.kml", b"<kml><Placemark><Point><coordinates>bad,2</coordinates></Point></Placemark></kml>")], zip::CompressionMethod::Deflated);
         assert!(load_kml(path.to_str().unwrap(), Lang::En).is_err());
+        // Not UTF-8: read as Latin-1, as older programs wrote it, instead of refused.
         let path = fixture.archive(
-            &[("doc.kml", b"<kml>\xff</kml>")],
+            &[(
+                "doc.kml",
+                b"<kml><Placemark><name>Z\xfcrich</name><Point><coordinates>8.54,47.37</coordinates></Point></Placemark></kml>",
+            )],
             zip::CompressionMethod::Stored,
         );
-        assert!(matches!(load_kml(path.to_str().unwrap(), Lang::En),
-            Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData));
+        let places = load_kml(path.to_str().unwrap(), Lang::En).unwrap();
+        assert_eq!(places.first().unwrap().name, "Z\u{fc}rich");
     }
 
     #[test]

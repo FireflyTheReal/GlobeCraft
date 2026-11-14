@@ -14,6 +14,11 @@ const FIRST_READ_BYTES: u64 = 16_384;
 const MAX_DIRECTORY_BYTES: u64 = 4_000_000;
 /// The largest tile read.
 const MAX_TILE_BYTES: u64 = 4_000_000;
+/// The most a directory or tile may unpack to: a few hundred KiB is usual, and a
+/// crafted gzip stream of 4 MB could otherwise ask for gigabytes.
+const MAX_UNPACKED_BYTES: u64 = 64 * 1024 * 1024;
+/// Zoom levels beyond this are not tile pyramids (and their ids would not fit).
+const MAX_ZOOM: u8 = 30;
 /// Leaf directories kept in memory.
 const MAX_CACHED_LEAVES: usize = 64;
 /// How long a redirect target (a signed download link) is reused before the
@@ -74,6 +79,8 @@ pub(crate) struct Header {
     longitudes: Option<(f64, f64)>,
     /// The archive's suggested view: zoom, longitude, latitude.
     center: (u8, f64, f64),
+    /// Whether the tiles are vector tiles (Mapbox Vector Tiles), not images.
+    vector_tiles: bool,
 }
 
 impl Header {
@@ -121,12 +128,20 @@ impl Header {
                 };
                 (bytes[118], degrees(119), degrees(123))
             },
+            vector_tiles: bytes[99] == 1,
         };
         if !matches!(
             header.internal_compression,
             Compression::None | Compression::Gzip
         ) {
             return Err("PMTiles directories must be uncompressed or gzip".into());
+        }
+        if header.min_zoom > header.max_zoom || header.max_zoom > MAX_ZOOM {
+            return Err(format!(
+                "PMTiles zoom levels {} to {} are not a tile pyramid",
+                header.min_zoom, header.max_zoom
+            )
+            .into());
         }
         Ok(header)
     }
@@ -197,7 +212,9 @@ pub(crate) fn parse_directory(bytes: &[u8]) -> Result<Vec<Entry>, crate::Error> 
     ];
     let mut last = 0u64;
     for entry in &mut entries {
-        last += varint(bytes, &mut at)?;
+        last = last
+            .checked_add(varint(bytes, &mut at)?)
+            .ok_or("corrupt PMTiles tile id")?;
         entry.tile_id = last;
     }
     for entry in &mut entries {
@@ -209,7 +226,10 @@ pub(crate) fn parse_directory(bytes: &[u8]) -> Result<Vec<Entry>, crate::Error> 
     for i in 0..count {
         let value = varint(bytes, &mut at)?;
         entries[i].offset = if value == 0 && i > 0 {
-            entries[i - 1].offset + u64::from(entries[i - 1].length)
+            entries[i - 1]
+                .offset
+                .checked_add(u64::from(entries[i - 1].length))
+                .ok_or("corrupt PMTiles offset")?
         } else {
             value.checked_sub(1).ok_or("corrupt PMTiles offset")?
         };
@@ -224,15 +244,26 @@ pub(crate) fn find(entries: &[Entry], id: u64) -> Option<Entry> {
         .partition_point(|entry| entry.tile_id <= id)
         .checked_sub(1)?;
     let entry = entries[index];
-    (entry.run_length == 0 || id < entry.tile_id + u64::from(entry.run_length)).then_some(entry)
+    // By the distance from the run's start: `tile_id + run_length` could overflow.
+    (entry.run_length == 0
+        || id
+            .checked_sub(entry.tile_id)
+            .is_some_and(|ahead| ahead < u64::from(entry.run_length)))
+    .then_some(entry)
 }
 
 fn decompress(bytes: Vec<u8>, compression: Compression) -> Result<Vec<u8>, crate::Error> {
     match compression {
         Compression::None => Ok(bytes),
         Compression::Gzip => {
+            use std::io::Read;
             let mut out = Vec::new();
-            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
+            flate2::read::GzDecoder::new(&bytes[..])
+                .take(MAX_UNPACKED_BYTES + 1)
+                .read_to_end(&mut out)?;
+            if out.len() as u64 > MAX_UNPACKED_BYTES {
+                return Err("a PMTiles entry unpacks to more than the reader accepts".into());
+            }
             Ok(out)
         }
         other => Err(format!("unsupported PMTiles compression {other:?}").into()),
@@ -281,6 +312,7 @@ impl Archive {
                 max_zoom: 0,
                 longitudes: None,
                 center: (0, 0.0, 0.0),
+                vector_tiles: false,
             },
             root: Vec::new(),
             leaves: Mutex::new(HashMap::new()),
@@ -288,8 +320,15 @@ impl Archive {
         };
         let first = archive.range(0, FIRST_READ_BYTES).await?;
         let header = Header::parse(&first)?;
+        // Before anything is asked for or set aside by the header's own numbers.
+        if header.root_length > MAX_DIRECTORY_BYTES {
+            return Err("PMTiles directory too large".into());
+        }
         let start = usize::try_from(header.root_offset).map_err(|_| "bad root offset")?;
-        let end = start + usize::try_from(header.root_length).map_err(|_| "bad root length")?;
+        let end = usize::try_from(header.root_length)
+            .ok()
+            .and_then(|length| start.checked_add(length))
+            .ok_or("bad root length")?;
         let root_bytes = match first.get(start..end) {
             Some(bytes) => bytes.to_vec(),
             None => {
@@ -311,6 +350,11 @@ impl Archive {
     /// The archive's suggested view: zoom, longitude, latitude.
     pub(crate) fn center(&self) -> (u8, f64, f64) {
         self.header.center
+    }
+
+    /// Whether the archive holds vector tiles, not images.
+    pub(crate) fn vector_tiles(&self) -> bool {
+        self.header.vector_tiles
     }
 
     /// Tile `z/x/y`'s bytes, unpacked, or `None` where the archive has no tile.
@@ -352,7 +396,11 @@ impl Archive {
                     return Err("PMTiles tile too large".into());
                 }
                 return Ok(Some(TileLocation {
-                    offset: self.header.tile_offset + entry.offset,
+                    offset: self
+                        .header
+                        .tile_offset
+                        .checked_add(entry.offset)
+                        .ok_or("corrupt PMTiles offset")?,
                     length: entry.length,
                 }));
             }
@@ -362,7 +410,11 @@ impl Archive {
     }
 
     async fn leaf(&self, entry: Entry) -> Result<std::sync::Arc<Vec<Entry>>, crate::Error> {
-        let offset = self.header.leaf_offset + entry.offset;
+        let offset = self
+            .header
+            .leaf_offset
+            .checked_add(entry.offset)
+            .ok_or("corrupt PMTiles offset")?;
         if let Some(cached) = self.leaves.lock().expect("leaf cache").get_mut(&offset) {
             cached.used = Instant::now();
             return Ok(cached.entries.clone());
@@ -400,6 +452,12 @@ impl Archive {
     /// Bytes `offset..offset + length` of the archive. A server that ignores the range
     /// is an error rather than a download of the whole file.
     pub(crate) async fn range(&self, offset: u64, length: u64) -> Result<Vec<u8>, crate::Error> {
+        if !is_web_address(&self.url) {
+            return file_range(self.url.clone(), offset, length).await;
+        }
+        let last = offset
+            .checked_add(length.max(1) - 1)
+            .ok_or("corrupt PMTiles offset")?;
         let _permit = match crate::http::range_limit(self.policy) {
             Some(limit) => Some(
                 limit
@@ -420,10 +478,7 @@ impl Archive {
         for url in reused.into_iter().chain(std::iter::once(self.url.clone())) {
             let response = client
                 .get(&url)
-                .header(
-                    reqwest::header::RANGE,
-                    format!("bytes={offset}-{}", offset + length.max(1) - 1),
-                )
+                .header(reqwest::header::RANGE, format!("bytes={offset}-{last}"))
                 .send()
                 .await?;
             REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -442,7 +497,7 @@ impl Archive {
                     Some((response.url().to_string(), Instant::now()));
             }
             let mut response = response;
-            let mut bytes = Vec::with_capacity(length as usize);
+            let mut bytes = Vec::with_capacity(length.min(MAX_TILE_BYTES) as usize);
             while let Some(chunk) = response.chunk().await? {
                 bytes.extend_from_slice(&chunk);
                 if bytes.len() as u64 > length {
@@ -463,6 +518,26 @@ impl Archive {
         }
         Err(format!("{} could not be read", self.url).into())
     }
+}
+
+/// Whether an archive's address is on the web; otherwise it is a file on this
+/// computer (roadmap 1.2).
+fn is_web_address(address: &str) -> bool {
+    let lower = address.trim_start().to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+/// Bytes `offset..offset + length` of a file on this computer (fewer at its end).
+async fn file_range(path: String, offset: u64, length: u64) -> Result<Vec<u8>, crate::Error> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<u8>, crate::Error> {
+        use std::io::{Read, Seek};
+        let mut file = std::fs::File::open(&path)?;
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        let mut bytes = Vec::with_capacity(length.min(MAX_TILE_BYTES) as usize);
+        file.take(length).read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+    .await?
 }
 
 #[cfg(test)]
@@ -591,6 +666,69 @@ mod tests {
         bytes[97] = 3;
         assert!(Header::parse(&bytes).is_err());
         assert!(Header::parse(b"MBTiles").is_err());
+        // Zoom levels the wrong way round, or beyond any pyramid.
+        bytes[97] = 2;
+        bytes[100] = 13;
+        assert!(Header::parse(&bytes).is_err());
+        bytes[100] = 0;
+        bytes[101] = 200;
+        assert!(Header::parse(&bytes).is_err());
+        bytes[101] = 12;
+        assert!(!Header::parse(&bytes).unwrap().vector_tiles);
+        bytes[99] = 1;
+        assert!(Header::parse(&bytes).unwrap().vector_tiles);
+    }
+
+    #[test]
+    fn damaged_archives_are_errors_not_crashes() {
+        // A gzip stream that unpacks to more than any directory or tile.
+        let bomb = gzip(&vec![0u8; MAX_UNPACKED_BYTES as usize + 1]);
+        assert!(bomb.len() < 200_000);
+        assert!(decompress(bomb, Compression::Gzip).is_err());
+        // Tile ids and offsets that run past 64 bits.
+        let mut directory = Vec::new();
+        put_varint(&mut directory, 2);
+        put_varint(&mut directory, u64::MAX);
+        put_varint(&mut directory, 5);
+        assert!(parse_directory(&directory).is_err());
+        // A root directory said to be a thousand million million bytes long is not
+        // asked for, nor is room set aside for it.
+        let mut bytes = archive_bytes();
+        bytes[16..24].copy_from_slice(&(1u64 << 50).to_le_bytes());
+        let runtime = crate::runtime::ServiceRuntime::new().unwrap();
+        let url = serve(bytes, true);
+        let opened = runtime
+            .handle()
+            .block_on(Archive::open(&url, crate::http::Policy::Boundary));
+        assert!(opened.is_err_and(|error| error.to_string().contains("too large")));
+    }
+
+    #[test]
+    fn an_archive_file_on_this_computer_is_read_like_one_on_the_web() {
+        let path =
+            std::env::temp_dir().join(format!("globecraft-archive-{}.pmtiles", std::process::id()));
+        std::fs::write(&path, archive_bytes()).unwrap();
+        let runtime = crate::runtime::ServiceRuntime::new().unwrap();
+        runtime.handle().block_on(async {
+            let archive = Archive::open(&path.to_string_lossy(), crate::http::Policy::UserData)
+                .await
+                .unwrap();
+            assert_eq!(archive.zooms(), (0, 2));
+            let tile = |z, x, y| archive.tile(z, x, y);
+            assert_eq!(tile(0, 0, 0).await.unwrap().as_deref(), Some(&b"world"[..]));
+            // Behind a leaf directory.
+            assert_eq!(
+                tile(2, 0, 0).await.unwrap().as_deref(),
+                Some(&b"sixteenth"[..])
+            );
+            assert_eq!(tile(1, 0, 0).await.unwrap(), None);
+        });
+        let _ = std::fs::remove_file(&path);
+        let missing = runtime.handle().block_on(Archive::open(
+            "/nowhere/globecraft-missing.pmtiles",
+            crate::http::Policy::UserData,
+        ));
+        assert!(matches!(missing, Err(crate::Error::Io(_))));
     }
 
     /// Serves `bytes` over HTTP on a local port, answering byte ranges with 206 (or

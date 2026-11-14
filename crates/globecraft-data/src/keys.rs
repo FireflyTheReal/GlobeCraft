@@ -99,6 +99,18 @@ pub fn fill(text: &str) -> Result<String, crate::Error> {
     Ok(out)
 }
 
+/// A request's error for showing to the user: when the address named a key
+/// (`{key:<service>}`), the error's own text would repeat the address with the key
+/// filled in, so it is left out.
+pub(crate) fn without_address(error: crate::Error, address: &str) -> crate::Error {
+    match error {
+        crate::Error::Http(error) if address.contains("{key:") => {
+            crate::Error::Http(error.without_url())
+        }
+        other => other,
+    }
+}
+
 /// A JSON map of strings from a file, empty when it is missing or unreadable.
 pub(crate) fn read_private(path: &Path) -> BTreeMap<String, String> {
     std::fs::read(path)

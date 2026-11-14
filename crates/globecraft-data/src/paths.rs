@@ -51,6 +51,30 @@ fn remove_retired_in(root: &Path, keep: &Path) -> u64 {
     freed
 }
 
+/// Writes a file so that it is either the old one or the new one, never a part of
+/// the new one: the bytes go to a file beside it, which then takes its name. A
+/// program or computer stopping mid-write cannot leave the user's file cut short.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut partial_name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no file name"))?
+        .to_os_string();
+    partial_name.push(format!(".{}.partial", std::process::id()));
+    let partial = path.with_file_name(partial_name);
+    let written = (|| {
+        let mut file = std::fs::File::create(&partial)?;
+        file.write_all(bytes)?;
+        // On the disk before the rename, or a crash could leave the name with no data.
+        file.sync_all()
+    })()
+    .and_then(|()| std::fs::rename(&partial, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    written
+}
+
 fn migrate_folder(legacy: &Path, target: &Path) -> std::io::Result<bool> {
     if target.exists() || !legacy.is_dir() {
         return Ok(false);

@@ -15,6 +15,9 @@ const BOUNDARY_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Concurrent PMTiles range reads across every archive. They all come from the same
 /// release host, so separate layers share one limit instead of multiplying it.
 const BOUNDARY_RANGE_CONCURRENCY: usize = 6;
+/// A place search (Nominatim) answers within a second or two.
+const SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const SEARCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub(crate) fn geo_cache_path(url: &str) -> PathBuf {
     let clean: String = url
@@ -96,7 +99,13 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
                 .connect_timeout(Duration::from_secs(15))
                 .timeout(Duration::from_secs(60))
         }
-        Policy::Search => {}
+        // A place search that never answers must end: without a limit its
+        // "searching" status stayed for good.
+        Policy::Search => {
+            builder = builder
+                .connect_timeout(SEARCH_CONNECT_TIMEOUT)
+                .timeout(SEARCH_TOTAL_TIMEOUT)
+        }
     }
     let client = builder.build()?;
     clients.insert(policy, client.clone());

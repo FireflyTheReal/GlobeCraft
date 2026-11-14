@@ -88,7 +88,12 @@ impl App {
         let presp = presp.on_hover_text(lang.text("ribbon-file-help"));
         egui::Popup::menu(&presp).show(|ui| {
             ui.set_min_width(220.0);
-            for id in ["places.open", "places.save", "places.saveAs"] {
+            for id in [
+                "places.open",
+                "places.save",
+                "places.saveAs",
+                "places.export",
+            ] {
                 menu_item(ui, self, id, Value::Null);
             }
             ui.separator();

@@ -162,7 +162,12 @@ pub fn parse_iso(text: &str) -> Option<f64> {
     }
     match rest {
         "" | "Z" | "z" => Some(secs),
-        zone if zone.len() == 6 && matches!(&zone[..1], "+" | "-") && &zone[3..4] == ":" => {
+        // ASCII only: the slices below cut at bytes.
+        zone if zone.len() == 6
+            && zone.is_ascii()
+            && matches!(&zone[..1], "+" | "-")
+            && &zone[3..4] == ":" =>
+        {
             let hours: f64 = zone[1..3].parse().ok()?;
             let minutes: f64 = zone[4..6].parse().ok()?;
             let offset = (hours * 60.0 + minutes) * 60.0;
@@ -223,6 +228,11 @@ mod tests {
         assert_eq!(parse_iso("2026-11-04T09:38:00.5"), Some(WALL + 0.5));
         assert_eq!(parse_iso("yesterday"), None);
         assert_eq!(parse_iso("2026-13-01"), None);
+        // Text after the time that is not a zone, in any script, is no date (a
+        // six-byte tail of two-byte letters used to be cut inside a letter).
+        assert_eq!(parse_iso("2026-11-04T09:38ééé"), None);
+        assert_eq!(parse_iso("2026-11-04T09:38:00€uro"), None);
+        assert_eq!(parse_iso("2026-11-04é09:38"), None);
         assert_eq!(format_utc(WALL), "2026-11-04 09:38 UTC");
         assert_eq!(format_utc(0.0), "1970-01-01 00:00 UTC");
         for days in [-1000_i64, 11_016, 47_482] {

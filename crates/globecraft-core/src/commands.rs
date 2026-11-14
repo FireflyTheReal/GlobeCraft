@@ -263,6 +263,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "places.export",
+        "places-export",
+        "export",
+        File,
+        Files,
+        r#"{"type":"object","properties":{"path":{"type":"string","description":"File to write, ending in .geojson or .gpx; a bare name goes into the places folder. Omit to let the user choose in a dialog"},"format":{"type":"string","enum":["geojson","gpx"],"description":"When the path has no such ending"}}}"#
+    ),
+    command!(
         "places.clear",
         "places-clear",
         "clear_all",

@@ -108,6 +108,7 @@ impl App {
                 self.pick_kml_save_as();
                 json!({})
             }
+            "places.export" => self.export_places(str_param(p, "path"), str_param(p, "format"))?,
             "places.clear" => {
                 self.clear_places();
                 json!({})
