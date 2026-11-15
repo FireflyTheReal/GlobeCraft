@@ -37,8 +37,10 @@ relief, the screen's level blending (not the sharper screenshot modes), at most
 4 million pixels, and a checked LOD bound of zoom 10 or lower. Close views and exact
 grid rendering use the double-precision CPU renderer. Within that range it draws both
 Earth models (a sphere is the ellipsoid whose axes are all one), every provider and
-historical release, sunlight, the atmosphere rim and night lights (their tiles share
-the atlas and the tile table, with their own block of tile needs). Camera operations,
+historical release, sunlight, the air in front of the ground (`atmosphere`: two small
+read-only tables, the transmittance table's ground row and the scattering table's top
+layer, and the same sums as the CPU) and night lights (their tiles share the atlas and
+the tile table, with their own block of tile needs). Camera operations,
 picking and overlay projection remain double precision. The sky, a narrow horizon
 strip, tile-seam strips and the polar caps (latitudes past 83° under satellite
 imagery, which have their own projection, tiles and colour matching) are left by the

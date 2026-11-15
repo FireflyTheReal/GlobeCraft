@@ -46,6 +46,9 @@ pub(super) struct Overview {
     table: wgpu::Buffer,
     output: wgpu::Buffer,
     needs: wgpu::Buffer,
+    /// The air's tables (`atmosphere`): written once.
+    air_transmittance: wgpu::Buffer,
+    air_scattering: wgpu::Buffer,
     staging: wgpu::Buffer,
     pixels: usize,
     dependency_count: usize,
@@ -62,6 +65,16 @@ fn buffer(
         size: size as u64,
         usage,
         mapped_at_creation: false,
+    })
+}
+/// A read-only table for the shader.
+fn table(device: &wgpu::Device, label: &str, entries: &[glam::Vec4]) -> wgpu::Buffer {
+    use wgpu::util::DeviceExt;
+    let entries: Vec<[f32; 4]> = entries.iter().map(|entry| entry.to_array()).collect();
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(&entries),
+        usage: wgpu::BufferUsages::STORAGE,
     })
 }
 impl Overview {
@@ -97,6 +110,16 @@ impl Overview {
             ),
             output: buffer(device, "GlobeCraft overview pixels", 4, storage),
             needs: buffer(device, "GlobeCraft overview dependencies", 8, storage),
+            air_transmittance: table(
+                device,
+                "GlobeCraft air transmittance",
+                crate::atmosphere::TABLES.ground_transmittance(),
+            ),
+            air_scattering: table(
+                device,
+                "GlobeCraft air scattering",
+                crate::atmosphere::TABLES.top_scattering(),
+            ),
             staging: buffer(
                 device,
                 "GlobeCraft overview readback",
@@ -242,6 +265,14 @@ impl Overview {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: binding(&self.needs, ((dependencies + 1) * 4) as u64),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.air_transmittance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.air_scattering.as_entire_binding(),
                 },
             ],
         });

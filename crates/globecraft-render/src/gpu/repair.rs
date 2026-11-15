@@ -10,6 +10,7 @@ pub(super) fn pixels(
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
 ) -> Vec<(TileKey, Option<f32>)> {
     let rays = crate::rays::RayCaster::new(request.width, request.height, &request.basis);
+    let air = crate::frame_air(&rays, &request.cfg);
     let batches: Vec<_> = pixels
         .par_chunks_mut(request.width * 4 * tuning::ROWS_PER_TILE_BATCH)
         .enumerate()
@@ -47,19 +48,14 @@ pub(super) fn pixels(
                                 crate::surface::<true>(x, y, w, h, &ray, &request.cfg, geometry)
                             };
                             crate::shade_surface(
-                                surface,
+                                crate::with_air(surface, &ray, air.as_ref()),
                                 &request.cfg,
                                 request.cfg.rel,
                                 &mut local,
                                 1.0,
                             )
                         } else {
-                            crate::sky(
-                                &ray,
-                                rays.camera_len_squared,
-                                rays.camera_up(),
-                                &request.cfg,
-                            )
+                            crate::sky(&ray, rays.camera_len_squared, air.as_ref(), &request.cfg)
                         };
                         let color = color.clamp(glam::Vec4::ZERO, glam::Vec4::ONE) * 255.0;
                         *pixel = [color.x as u8, color.y as u8, color.z as u8, 255];

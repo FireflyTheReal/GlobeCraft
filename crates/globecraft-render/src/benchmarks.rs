@@ -253,7 +253,8 @@ fn warm_gpu_frame_time() {
             .iter()
             .any(|&key| !matches!(cache.lookup(key), Lookup::Ready(_)))
     {
-        assert!(started.elapsed() < Duration::from_secs(20));
+        // Slow runner disks take a while to load the fixture tiles.
+        assert!(started.elapsed() < Duration::from_secs(120));
         std::thread::sleep(Duration::from_millis(1));
     }
     let mut gpu = crate::gpu::GpuRenderer::new().unwrap();

@@ -16,6 +16,10 @@ struct View {
 @group(0) @binding(2) var atlas: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read_write> needs: array<atomic<u32>>;
+// The air (the CPU's `atmosphere`): the light that crosses it from the ground by view
+// angle, and the sunlight scattered along rays entering from space.
+@group(0) @binding(5) var<storage, read> air_transmittance: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read> air_scattering: array<vec4<f32>>;
 const FOV_HALF_TAN: f32 = __FOV__;
 const EARTH_RADIUS_M: f32 = __RADIUS__;
 const MERCATOR_LIMIT_DEG: f32 = __MERCATOR__;
@@ -26,7 +30,6 @@ const HORIZON_PRECISION_MARGIN: f32 = 0.01;
 const POLAR_CAP_START: f32 = __POLAR_CAP_START__;
 const PI: f32 = 3.141592653589793;
 const MISSING: vec3<f32> = __MISSING__;
-const RIM: vec3<f32> = __RIM__;
 const LOD_BIAS: f32 = __LOD_BIAS__;
 const LOD_LAT_COS: f32 = __LOD_LAT_COS__;
 const LOD_INC_COS: f32 = __LOD_INC_COS__;
@@ -43,7 +46,27 @@ const TWILIGHT_WIDTH: f32 = __TWILIGHT_WIDTH__;
 const NIGHT_BRIGHTNESS: f32 = __NIGHT_BRIGHTNESS__;
 const DAY_RANGE: f32 = __DAY_RANGE__;
 const NIGHT_BLUE: f32 = __NIGHT_BLUE__;
-const RIM_BLEND: f32 = __RIM_BLEND__;
+const AIR_GROUND: f32 = __AIR_GROUND__;
+const AIR_TOP: f32 = __AIR_TOP__;
+const AIR_HEIGHT: f32 = __AIR_HEIGHT__;
+const AIR_HORIZON: f32 = __AIR_HORIZON__;
+const AIR_LOWEST_SUN: f32 = __AIR_LOWEST_SUN__;
+const AIR_NOON_GREEN: f32 = __AIR_NOON_GREEN__;
+const AIR_NOON_BLUE: f32 = __AIR_NOON_BLUE__;
+const AIR_ANGLES: u32 = __AIR_ANGLES__u;
+const AIR_VIEWS: u32 = __AIR_VIEWS__u;
+const AIR_SUNS: u32 = __AIR_SUNS__u;
+const AIR_PHASES: u32 = __AIR_PHASES__u;
+const AIR_PHASE: f32 = __AIR_PHASE__;
+const HAZE_PHASE: f32 = __HAZE_PHASE__;
+const HAZE_SPREAD: f32 = __HAZE_SPREAD__;
+const HAZE_FORWARD: f32 = __HAZE_FORWARD__;
+const HAZE_GREEN: f32 = __HAZE_GREEN__;
+const HAZE_BLUE: f32 = __HAZE_BLUE__;
+const AIR_EXPOSURE: f32 = __AIR_EXPOSURE__;
+const AIR_NADIR_SHARE: f32 = __AIR_NADIR_SHARE__;
+const AIR_UNLIT_SUN: f32 = __AIR_UNLIT_SUN__;
+const AIR_TINY: f32 = 1.1754944e-38;
 const MIN_LIGHTS_DARKNESS: f32 = __MIN_LIGHTS_DARKNESS__;
 // Marks the night lights' tiles in the tile table's level word.
 const LIGHTS_TAG: u32 = __LIGHTS_TAG__u;
@@ -139,6 +162,48 @@ fn chain(source: u32, zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: 
     }
     return vec4<f32>(MISSING,0.0);
 }
+// The air functions repeat `atmosphere::Tables::ground_from_space` sum for sum.
+// A table position: the cell below it (at most the last but one) and the way to the next.
+fn air_cell(position: f32, cells: u32) -> vec2<f32> {
+    let p = clamp(position,0.0,f32(cells-1u));
+    let below = min(floor(p),f32(cells-2u));
+    return vec2<f32>(below,p-below);
+}
+fn air_lerp(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> { return a + (b - a) * t; }
+// From the ground to the top of the air along a ray at this cosine to the vertical.
+fn air_up(cosine: f32) -> f32 {
+    return AIR_HORIZON*AIR_HORIZON / (AIR_GROUND*cosine + sqrt(AIR_GROUND*AIR_GROUND*cosine*cosine + AIR_HORIZON*AIR_HORIZON));
+}
+// The share of light that crosses the air along a ray of that length from the ground.
+fn air_crossed(up: f32) -> vec4<f32> {
+    let c = air_cell(clamp((up-AIR_HEIGHT)/(AIR_HORIZON-AIR_HEIGHT),0.0,1.0)*f32(AIR_ANGLES-1u),AIR_ANGLES);
+    let i = u32(c.x);
+    return air_lerp(air_transmittance[i],air_transmittance[i+1u],c.y);
+}
+fn air_entry(view: u32, sun: u32, phase: vec2<f32>) -> vec4<f32> {
+    let first = (view*AIR_SUNS+sun)*AIR_PHASES+u32(phase.x);
+    return air_lerp(air_scattering[first],air_scattering[first+1u],phase.y);
+}
+// Sunlight scattered toward the eye in front of ground seen from space.
+fn air_scattered(up: f32, mu_s: f32, nu: f32) -> vec3<f32> {
+    let way = clamp((up-AIR_HEIGHT)/(AIR_HORIZON-AIR_HEIGHT),0.0,1.0);
+    let views = AIR_VIEWS/2u;
+    let view = air_cell(f32(views-1u)*(1.0-way),views);
+    let to_top = max(-AIR_GROUND*mu_s + sqrt(max(AIR_GROUND*AIR_GROUND*(mu_s*mu_s-1.0) + AIR_TOP*AIR_TOP,0.0)),0.0);
+    let a = (to_top-AIR_HEIGHT)/(AIR_HORIZON-AIR_HEIGHT);
+    let sun = air_cell(max(1.0-a/AIR_LOWEST_SUN,0.0)/(1.0+a)*f32(AIR_SUNS-1u),AIR_SUNS);
+    let phase = air_cell((nu+1.0)*0.5*f32(AIR_PHASES-1u),AIR_PHASES);
+    let v = u32(view.x); let s = u32(sun.x);
+    let entry = air_lerp(
+        air_lerp(air_entry(v,s,phase),air_entry(v,s+1u,phase),sun.y),
+        air_lerp(air_entry(v+1u,s,phase),air_entry(v+1u,s+1u,phase),sun.y),
+        view.y);
+    let spread = HAZE_SPREAD - HAZE_FORWARD*nu;
+    let both = 1.0 + nu*nu;
+    var haze = vec3<f32>(0.0);
+    if entry.x > 0.0 { let ratio = entry.w/entry.x; haze = vec3<f32>(entry.w,entry.y*ratio*HAZE_GREEN,entry.z*ratio*HAZE_BLUE); }
+    return entry.xyz*(AIR_PHASE*both) + haze*(HAZE_PHASE*both/(spread*sqrt(spread)));
+}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -216,9 +281,37 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var lights = vec4<f32>(0.0);
     if view.lights.x != 0u && (!sunlit || darkness >= MIN_LIGHTS_DARKNESS) { lights = chain(1u,lights_zoom,uv,distance,z,fraction); }
     if lights.w > 0.0 && !sunlit { color = lights.rgb; }
-    color = color*shade + vec3<f32>(0.0,0.0,night);
+    // The air in front of the ground (`atmosphere::Tables::ground_from_space`,
+    // `finish_surface`): low sunlight is orange, the air dims and adds its glow.
+    let airy = view.effects.y != 0u;
+    var sunlight = vec3<f32>(1.0);
+    var glow = vec3<f32>(0.0);
+    var crossed = vec3<f32>(1.0);
+    if airy {
+        let up = air_up(incidence);
+        crossed = air_crossed(up).xyz;
+        var mu_s = AIR_UNLIT_SUN;
+        var nu = -incidence*AIR_UNLIT_SUN;
+        if sunlit {
+            let ground_sun = dot(normal,view.sun.xyz);
+            nu = dot(dir,view.sun.xyz);
+            mu_s = clamp((AIR_GROUND*ground_sun - up*nu)/AIR_TOP,-1.0,1.0);
+            let lit = air_crossed(air_up(max(ground_sun,0.0)));
+            let red = max(lit.x,AIR_TINY);
+            let tint = vec3<f32>(1.0,sqrt(min(lit.y/red*AIR_NOON_GREEN,1.0)),sqrt(min(lit.z/red*AIR_NOON_BLUE,1.0)));
+            sunlight = vec3<f32>(1.0) + (tint - vec3<f32>(1.0))*(1.0-darkness);
+        }
+        glow = air_scattered(up,mu_s,nu);
+    }
+    color = color*sunlight*shade + vec3<f32>(0.0,0.0,night);
     if lights.w > 0.0 && sunlit { color += lights.rgb*darkness; }
-    if view.effects.y != 0u { let rim_base = 1.0-incidence; let rim_squared = rim_base*rim_base; let rim = rim_squared*rim_squared*RIM_BLEND; color = blend(color,RIM,rim); }
+    if airy {
+        let grazing = (1.0-incidence)*(1.0-incidence);
+        let share = AIR_NADIR_SHARE + (1.0-AIR_NADIR_SHARE)*grazing*grazing;
+        let through = vec3<f32>(1.0) + (crossed - vec3<f32>(1.0))*share;
+        let light = glow*(AIR_EXPOSURE*share);
+        color = sqrt(color*color*through + light/(vec3<f32>(1.0)+light));
+    }
     let rgb = vec3<u32>(clamp(color,vec3<f32>(0.0),vec3<f32>(1.0))*255.0);
     output[i] = rgb.r | (rgb.g<<8u) | (rgb.b<<16u) | (255u<<24u);
 }

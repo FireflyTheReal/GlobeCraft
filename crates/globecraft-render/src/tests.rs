@@ -25,6 +25,17 @@ fn polar_cap_pixels(basis: &globecraft_core::camera::Basis, w: usize, h: usize) 
         .collect()
 }
 
+/// Where to write a fixture frame instead of comparing it: set
+/// `GLOBECRAFT_RECORD_FIXTURES` after an intended change to the picture, review the
+/// difference, and note the change in `tests/fixtures/README.md`.
+fn recorded(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("GLOBECRAFT_RECORD_FIXTURES").map(|_| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(format!("{name}.rgba"))
+    })
+}
+
 #[test]
 fn raster_matches_regression_fixtures() {
     let (w, h) = (64, 48);
@@ -96,6 +107,10 @@ fn raster_matches_regression_fixtures() {
         let (buf, misses) = render_pixels(w, h, &basis, &cfg, &lookup);
         assert!(!misses.is_empty(), "missing tiles must still be reported");
         assert_eq!(buf.len(), expected.len());
+        if let Some(path) = recorded(name).filter(|_| cfg.atmo) {
+            std::fs::write(path, &buf).unwrap();
+            continue;
+        }
         let caps = polar_cap_pixels(&basis, w, h);
         for (i, (actual, reference)) in buf.iter().zip(expected).enumerate() {
             if caps[i / 4] {
@@ -276,6 +291,14 @@ fn ray_batches_preserve_partial_rows_provider_pixels_and_missing_tile_priorities
             &lookup,
         );
         assert_eq!(buf.len(), expected.len(), "{}", case.name);
+        if let Some(path) = recorded(&format!("batches/{}", case.name)) {
+            std::fs::write(path, &buf).unwrap();
+        }
+        let expected = if recorded(case.name).is_some() {
+            &buf[..]
+        } else {
+            expected
+        };
         let caps = polar_cap_pixels(
             &case.cam.basis(case.width as f64 / case.height as f64),
             case.width,

@@ -48,13 +48,6 @@ pub(super) const NIGHT_BRIGHTNESS: f32 = 0.10;
 pub(super) const DAY_BRIGHTNESS_RANGE: f32 = 0.90;
 pub(super) const NIGHT_BLUE_TINT: f32 = 0.015;
 // Surface rim and atmospheric shell.
-pub(super) const RIM_FALLOFF_POWER: i32 = 4;
-pub(super) const RIM_BLEND: f32 = 0.75;
-pub(super) const RIM_COLOR: Vec4 = Vec4::new(0.35, 0.60, 1.0, 0.0);
-pub(super) const ATMOSPHERE_RADIUS_RATIO: f64 = 1.07;
-pub(super) const ATMOSPHERE_HEIGHT_RATIO: f64 = 0.07;
-pub(super) const ATMOSPHERE_COLOR: Vec4 = Vec4::new(0.30, 0.55, 1.0, 0.0);
-pub(super) const ATMOSPHERE_BLEND: f32 = 0.9;
 // Deterministic star field and 8-bit RGBA output.
 pub(super) const SPACE_COLOR: Vec4 = Vec4::new(0.0, 0.0, 0.015, 0.0);
 pub(super) const STAR_GRID_RESOLUTION: f64 = 900.0;
