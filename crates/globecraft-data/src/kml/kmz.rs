@@ -9,7 +9,12 @@ const MAX_DOCUMENT_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Return the first `.kml` entry in archive order, matching GeoRust's KMZ reader.
 pub(super) fn decode(path: &str) -> Result<String, crate::Error> {
-    let mut archive = ZipArchive::new(std::fs::File::open(path)?)?;
+    decode_from(std::fs::File::open(path)?)
+}
+
+/// [`decode`] for an archive from any seekable source.
+pub(super) fn decode_from(source: impl Read + std::io::Seek) -> Result<String, crate::Error> {
+    let mut archive = ZipArchive::new(source)?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
         if !entry.name().to_ascii_lowercase().ends_with(".kml") {

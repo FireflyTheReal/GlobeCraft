@@ -5,12 +5,13 @@
 //! of `chrono-tz`, so a date on the timeline gets that day's offset).
 use chrono::{Offset, TimeZone, Timelike};
 use chrono_tz::OffsetName;
-use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 /// The file is about 1 MB compressed.
 const MAX_BYTES: u64 = 40_000_000;
+/// The most the file may unpack to (it is about 10 MB of GeoJSON).
+const MAX_UNPACKED_BYTES: u64 = 200_000_000;
 const RETRY: Duration = Duration::from_secs(10 * 60);
 
 /// One zone: its IANA name and rules, its polygons (rings of latitude, longitude:
@@ -217,8 +218,7 @@ impl TimeZones {
 
     /// Reads the published file: gzip-compressed GeoJSON.
     pub fn from_gzip(bytes: &[u8]) -> Result<Self, crate::Error> {
-        let mut text = Vec::new();
-        flate2::read::GzDecoder::new(bytes).read_to_end(&mut text)?;
+        let text = crate::bounded::gunzip(bytes, MAX_UNPACKED_BYTES)?;
         Self::parse(&serde_json::from_slice(&text)?)
     }
 
@@ -393,11 +393,7 @@ mod tests {
     fn the_published_zones_read() {
         let path = std::env::var("GLOBECRAFT_TIMEZONES_FILE").expect("GLOBECRAFT_TIMEZONES_FILE");
         let bytes = std::fs::read(path).unwrap();
-        let mut text = Vec::new();
-        flate2::read::GzDecoder::new(bytes.as_slice())
-            .read_to_end(&mut text)
-            .unwrap();
-        let zones = TimeZones::parse(&serde_json::from_slice(&text).unwrap()).unwrap();
+        let zones = TimeZones::from_gzip(&bytes).unwrap();
         println!("ZONES {}", zones.zones.len());
         assert!(zones.zones.len() > 400);
         assert!(

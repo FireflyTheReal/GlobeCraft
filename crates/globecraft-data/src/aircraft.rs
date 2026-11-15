@@ -1,7 +1,7 @@
 //! Bounded live telemetry; the desktop only swaps immutable snapshots.
 #[cfg(test)]
 mod benchmarks;
-mod decode;
+pub(crate) mod decode;
 pub mod route;
 mod snapshot;
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! CelesTrak OMM element sets propagated with SGP4 (the model the elements are made
 //! for) into predicted positions, with their altitude. Element sets older than 14
 //! days are not shown; a set SGP4 rejects falls back to a two-body estimate.
-mod decode;
+pub(crate) mod decode;
 use decode::parse_omm;
 use globecraft_core::math::now_unix;
 use std::{

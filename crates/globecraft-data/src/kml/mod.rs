@@ -206,7 +206,7 @@ fn first_coordinate(geometry: &Geometry<f64>) -> Option<Coord<f64>> {
     }
 }
 
-fn parse_tree(txt: &str, lg: Lang) -> Result<Places, crate::Error> {
+pub(crate) fn parse_tree(txt: &str, lg: Lang) -> Result<Places, crate::Error> {
     let xml = guard::prepare(txt)?;
     let document = match KmlReader::<_, f64>::from_reader(xml.as_slice()).read() {
         Ok(document) => document,
@@ -214,6 +214,12 @@ fn parse_tree(txt: &str, lg: Lang) -> Result<Places, crate::Error> {
         Err(error) => return Err(error.into()),
     };
     places_from_document(document, lg)
+}
+
+/// A KMZ archive held in memory, read as [`load_kml`] reads one from a file.
+#[cfg(feature = "fuzzing")]
+pub(crate) fn parse_kmz(bytes: &[u8], lg: Lang) -> Result<Places, crate::Error> {
+    parse_tree(&kmz::decode_from(std::io::Cursor::new(bytes))?, lg)
 }
 
 fn places_from_document(document: Kml<f64>, lg: Lang) -> Result<Places, crate::Error> {

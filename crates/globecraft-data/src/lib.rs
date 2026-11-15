@@ -5,11 +5,14 @@ pub mod airports;
 pub mod antarctic_claims;
 pub mod aurora;
 pub mod boundaries;
+mod bounded;
 mod cpu;
 pub mod download_stats;
 mod error;
 mod features;
 pub mod files;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 mod http;
 mod json_fields;
 pub mod keys;

@@ -92,7 +92,7 @@ pub(super) async fn download_local(
     .await
 }
 
-fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
+pub(crate) fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
     json.get("states")
         .and_then(|v| v.as_array())
         .into_iter()
@@ -145,7 +145,7 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
         .collect()
 }
 /// The aircraft of an ADSB.lol answer (`ac`), in the air with a recent position.
-pub(super) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
+pub(crate) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
     json.get("ac")
         .and_then(|v| v.as_array())
         .into_iter()

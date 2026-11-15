@@ -32,7 +32,7 @@ pub(crate) fn wayback_tile_url(rel: u16, z: u8, x: u32, y: u32) -> String {
         None => String::new(),
     }
 }
-fn parse_wayback_config(v: &serde_json::Value) -> Vec<WaybackRelease> {
+pub(crate) fn parse_wayback_config(v: &serde_json::Value) -> Vec<WaybackRelease> {
     let mut out = Vec::new();
     let Some(obj) = v.as_object() else { return out };
     for (k, item) in obj {

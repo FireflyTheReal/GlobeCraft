@@ -23,7 +23,7 @@ pub(super) async fn download_clouds() -> Result<RgbaImage, crate::Error> {
     let bytes = crate::http::body(client.get(url), CLOUD_IMAGE_MAX_BYTES).await?;
     // Decode off the UI thread and keep only the working resolution in memory.
     tokio::task::spawn_blocking(move || {
-        let image = image::load_from_memory(&bytes)?;
+        let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?;
         Ok(image
             .resize_exact(2048, 1024, FilterType::Triangle)
             .to_rgba8())
@@ -73,7 +73,9 @@ pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {
                 let bytes = crate::http::body(client.get(url), RADAR_TILE_MAX_BYTES)
                     .await
                     .ok()?;
-                let image = image::load_from_memory(&bytes).ok()?.to_rgba8();
+                let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::TILE)
+                    .ok()?
+                    .into_rgba8();
                 Some((x, y, image))
             });
         }

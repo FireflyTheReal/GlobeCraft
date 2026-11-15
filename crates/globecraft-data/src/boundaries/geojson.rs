@@ -93,7 +93,7 @@ fn line_from_points(value: &serde_json::Value) -> Option<Line> {
 }
 
 // Recursively extracts GeoJSON coordinate sequences. GeoJSON order is [longitude, latitude].
-pub(super) fn collect_geojson_lines(value: &serde_json::Value, out: &mut Vec<Line>) {
+pub(crate) fn collect_geojson_lines(value: &serde_json::Value, out: &mut Vec<Line>) {
     let Some(items) = value.as_array() else {
         return;
     };

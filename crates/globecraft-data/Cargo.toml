@@ -12,6 +12,8 @@ workspace = true
 [features]
 default = ["updater"]
 profiling = []
+# Exposes `globecraft_data::fuzzing`, the entry points of the fuzz targets in `fuzz/`.
+fuzzing = []
 # The self-updater (GitHub releases). Off for packages updated by a package manager.
 updater = ["dep:self_update"]
 

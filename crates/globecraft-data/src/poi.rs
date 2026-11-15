@@ -157,7 +157,7 @@ impl PoiTiles {
     }
 }
 
-fn decode(key: TileKey, bytes: &[u8]) -> Option<PoiTile> {
+pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<PoiTile> {
     let layers = mvt::decode(bytes, |name| {
         matches!(
             name,

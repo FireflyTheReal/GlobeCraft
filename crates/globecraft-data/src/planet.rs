@@ -23,6 +23,11 @@ struct PlanetFile {
     sky_bytes: Vec<u8>,
 }
 
+/// A surface or sky picture, up to the largest size a planet may have.
+fn picture(bytes: &[u8]) -> Result<image::DynamicImage, crate::Error> {
+    crate::bounded::image(bytes, crate::bounded::ImageLimit::WORLD)
+}
+
 pub fn save_planet(
     path: &Path,
     name: &str,
@@ -45,9 +50,9 @@ pub fn encode_planet(
     texture_bytes: Vec<u8>,
     sky_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, crate::Error> {
-    image::load_from_memory(&texture_bytes)?;
+    picture(&texture_bytes)?;
     if !sky_bytes.is_empty() {
-        image::load_from_memory(&sky_bytes)?;
+        picture(&sky_bytes)?;
     }
     Ok(serde_json::to_vec(&PlanetFile {
         version: 2,
@@ -82,11 +87,11 @@ pub fn decode_planet(
     } else {
         return Err(crate::Error::Unsupported("Unsupported version".into()));
     };
-    let planet = image::load_from_memory(&data)?.to_rgba8();
+    let planet = picture(&data)?.into_rgba8();
     let sky = if doc.sky_bytes.is_empty() {
         None
     } else {
-        Some(image::load_from_memory(&doc.sky_bytes)?.to_rgba8())
+        Some(picture(&doc.sky_bytes)?.into_rgba8())
     };
     Ok(LoadedPlanet {
         name: doc.name,

@@ -44,7 +44,7 @@ fn parse_epoch(s: &str) -> Option<f64> {
     }
     Some(unix_day(y, m, d) as f64 * 86400.0 + hour * 3600.0 + minute * 60.0 + second)
 }
-pub(super) fn parse_omm(
+pub(crate) fn parse_omm(
     value: &serde_json::Value,
     now_unix_secs: f64,
     group: SatelliteGroup,

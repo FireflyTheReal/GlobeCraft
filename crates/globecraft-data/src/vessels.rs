@@ -219,7 +219,7 @@ fn ship_type(value: Option<&serde_json::Value>) -> Option<u16> {
 fn measurement(value: Option<&serde_json::Value>) -> Option<f64> {
     number(value).filter(|value| *value > 0.0)
 }
-fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
+pub(crate) fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
     json["vessels"]
         .as_array()
         .into_iter()
@@ -252,7 +252,7 @@ fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
         })
         .collect()
 }
-fn parse_ais_geojson(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
+pub(crate) fn parse_ais_geojson(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
     json["features"]
         .as_array()
         .into_iter()

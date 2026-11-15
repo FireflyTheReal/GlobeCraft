@@ -182,7 +182,7 @@ impl TransportTiles {
 }
 
 /// The lines and airports of a vector tile, in latitude/longitude.
-fn decode(key: TileKey, bytes: &[u8]) -> Option<TransportTile> {
+pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<TransportTile> {
     let layers = mvt::decode(bytes, |name| {
         matches!(name, "transportation" | "aeroway" | "aerodrome_label")
     })?;

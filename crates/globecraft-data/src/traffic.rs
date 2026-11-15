@@ -224,7 +224,10 @@ async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles
                 .await
                 .ok()?;
                 let tile = crate::cpu::run(crate::cpu::Service::Tiles, move || {
-                    Ok(image::load_from_memory(&bytes)?.to_rgba8())
+                    Ok(
+                        crate::bounded::image(&bytes, crate::bounded::ImageLimit::TILE)?
+                            .into_rgba8(),
+                    )
                 })
                 .await
                 .ok()?;

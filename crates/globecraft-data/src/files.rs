@@ -117,7 +117,8 @@ impl Job {
             }
             Self::Image(target, source) => {
                 let encoded = source.read()?;
-                let pixels = image::load_from_memory(&encoded)?.to_rgba8();
+                let pixels = crate::bounded::image(&encoded, crate::bounded::ImageLimit::WORLD)?
+                    .into_rgba8();
                 Ok(FileOutcome::ImageLoaded {
                     target,
                     image: LoadedImage { pixels, encoded },

@@ -160,7 +160,7 @@ type Points = Vec<(f64, f64)>;
 /// A road or name line of a tile, in tile units.
 type TileLine = (String, Points);
 
-fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
+pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<RoadTile> {
     let layers = mvt::decode(bytes, |name| {
         matches!(name, "transportation" | "transportation_name")
     })?;

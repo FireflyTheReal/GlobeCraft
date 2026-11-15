@@ -306,15 +306,17 @@ async fn archive(url: &str) -> Result<Arc<crate::pmtiles::Archive>, crate::Error
     .cloned()
 }
 
+/// The most one gzip-compressed vector tile may unpack to. The densest city tiles of
+/// the published sets are a few megabytes unpacked.
+const MAX_UNPACKED_TILE_BYTES: u64 = 32_000_000;
+
 /// Tiles are often stored gzip-compressed; servers that pass them on without a
 /// `Content-Encoding` header leave the decompression to the client.
 pub(crate) fn gunzip_if_needed(bytes: Vec<u8>) -> Result<Vec<u8>, crate::Error> {
     if !bytes.starts_with(&[0x1f, 0x8b]) {
         return Ok(bytes);
     }
-    let mut out = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
-    Ok(out)
+    crate::bounded::gunzip(&bytes, MAX_UNPACKED_TILE_BYTES)
 }
 
 #[cfg(test)]

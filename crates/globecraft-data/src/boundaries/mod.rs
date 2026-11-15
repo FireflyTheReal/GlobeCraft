@@ -6,10 +6,10 @@
 //! drawn until the first border tile is loaded (offline starts, a failed service).
 use globecraft_core::language::Lang;
 use std::sync::{Arc, Mutex};
-mod geojson;
+pub(crate) mod geojson;
 mod load;
 pub(crate) mod osm_tiles;
-mod place_names;
+pub(crate) mod place_names;
 pub use place_names::{PlaceNameSnapshot, PlaceNameTiles};
 mod sources;
 mod updates;

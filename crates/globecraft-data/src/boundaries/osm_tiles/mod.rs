@@ -12,7 +12,7 @@
 //!
 //! Tiles come from a small disk cache first (`store`, in the compact format of
 //! `compact`), and from the network only when missing or from an older tile set.
-mod compact;
+pub(crate) mod compact;
 pub(crate) mod content;
 mod join;
 mod loading;

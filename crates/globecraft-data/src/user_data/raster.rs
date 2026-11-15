@@ -334,7 +334,7 @@ async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
     crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes)).await
 }
 
-pub(super) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
     // A WMS answers an error as XML with status 200.
     if bytes.starts_with(b"<") || bytes.starts_with(b"\xef\xbb\xbf<") {
         let text = String::from_utf8_lossy(&bytes[..bytes.len().min(400)]);
@@ -343,7 +343,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
             text.trim()
         )));
     }
-    Ok(image::load_from_memory(bytes)?.to_rgba8())
+    Ok(crate::bounded::image(bytes, crate::bounded::ImageLimit::TILE)?.into_rgba8())
 }
 
 /// Fetches one tile of a template (the form's "Test"): its size in pixels.

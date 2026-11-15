@@ -14,6 +14,16 @@ const FIRST_READ_BYTES: u64 = 16_384;
 const MAX_DIRECTORY_BYTES: u64 = 4_000_000;
 /// The largest tile read.
 const MAX_TILE_BYTES: u64 = 4_000_000;
+/// The most a gzip-compressed directory or tile may unpack to: eight times the
+/// largest stored size, where real directories and vector tiles pack two to five
+/// times smaller.
+const MAX_UNPACKED_BYTES: u64 = 32_000_000;
+/// The longest range read in one request: a run of neighbouring tiles
+/// (`map_data` groups up to 8 MiB) with room to spare.
+const MAX_RANGE_BYTES: u64 = 16 * 1024 * 1024;
+/// The deepest zoom of a tile id: a level has 4^z tiles, and the ids of all levels
+/// up to 31 fit 64 bits. (Published archives stop near zoom 20.)
+pub(crate) const MAX_ZOOM: u8 = 31;
 /// Leaf directories kept in memory.
 const MAX_CACHED_LEAVES: usize = 64;
 /// How long a redirect target (a signed download link) is reused before the
@@ -77,12 +87,56 @@ pub(crate) struct Header {
 }
 
 impl Header {
+    /// The zoom levels the archive holds.
+    pub(crate) fn zooms(&self) -> (u8, u8) {
+        (self.min_zoom, self.max_zoom)
+    }
+    /// The archive's suggested view: zoom, longitude, latitude.
+    pub(crate) fn center(&self) -> (u8, f64, f64) {
+        self.center
+    }
+    /// The root directory's bytes when `first` (the archive's first bytes) holds all of
+    /// them; otherwise they have to be read.
+    pub(crate) fn root_in<'a>(&self, first: &'a [u8]) -> Result<Option<&'a [u8]>, crate::Error> {
+        if self.root_length > MAX_DIRECTORY_BYTES {
+            return Err(crate::Error::msg("PMTiles directory too large"));
+        }
+        let end = self
+            .root_offset
+            .checked_add(self.root_length)
+            .ok_or_else(|| crate::Error::msg("corrupt PMTiles header"))?;
+        // Offsets beyond `first` (or beyond what this computer can address) are not
+        // in it.
+        let (Ok(start), Ok(end)) = (usize::try_from(self.root_offset), usize::try_from(end)) else {
+            return Ok(None);
+        };
+        Ok(first.get(start..end))
+    }
+    /// Where the root directory is in the archive, for reading it.
+    fn root_location(&self) -> (u64, u64) {
+        (self.root_offset, self.root_length)
+    }
+    /// Where the tile of a directory entry (one with a run) is in the archive.
+    pub(crate) fn tile_location(&self, entry: Entry) -> Result<TileLocation, crate::Error> {
+        if u64::from(entry.length) > MAX_TILE_BYTES {
+            return Err(crate::Error::msg("PMTiles tile too large"));
+        }
+        TileLocation::new(self.tile_offset.checked_add(entry.offset), entry.length)
+    }
+    /// Where the leaf directory of an entry (one without a run) is in the archive.
+    pub(crate) fn leaf_location(&self, entry: Entry) -> Result<TileLocation, crate::Error> {
+        if u64::from(entry.length) > MAX_DIRECTORY_BYTES {
+            return Err(crate::Error::msg("PMTiles directory too large"));
+        }
+        TileLocation::new(self.leaf_offset.checked_add(entry.offset), entry.length)
+    }
     /// Whether the archive's bounds can hold tile `z/x` (any latitude).
-    fn may_hold(&self, z: u8, x: u32) -> bool {
+    pub(crate) fn may_hold(&self, z: u8, x: u32) -> bool {
         let Some((west, east)) = self.longitudes else {
             return true;
         };
-        let width = 360.0 / f64::from(1u32 << z);
+        // A power of two as a float: any zoom byte is safe here.
+        let width = 360.0 / 2f64.powi(i32::from(z));
         let tile_west = -180.0 + f64::from(x) * width;
         // Strictly overlapping: a tile only touching a band's edge belongs next door.
         tile_west < east && tile_west + width > west
@@ -125,6 +179,12 @@ impl Header {
                 (bytes[118], degrees(119), degrees(123))
             },
         };
+        if header.min_zoom > header.max_zoom || header.max_zoom > MAX_ZOOM {
+            return Err(crate::Error::msg(format!(
+                "corrupt PMTiles header: zoom levels {} to {}",
+                header.min_zoom, header.max_zoom
+            )));
+        }
         if !matches!(
             header.internal_compression,
             Compression::None | Compression::Gzip
@@ -148,8 +208,12 @@ pub(crate) struct Entry {
 }
 
 /// The Hilbert-curve tile id of `z/x/y`: tiles of lower zooms first, each zoom along
-/// the curve.
-pub(crate) fn tile_id(z: u8, x: u32, y: u32) -> u64 {
+/// the curve. `None` for a tile that does not exist: a zoom beyond [`MAX_ZOOM`], or a
+/// column or row outside the level.
+pub(crate) fn tile_id(z: u8, x: u32, y: u32) -> Option<u64> {
+    if z > MAX_ZOOM || u64::from(x.max(y)) >= 1u64 << z {
+        return None;
+    }
     let lower_zooms = ((1u64 << (2 * u32::from(z))) - 1) / 3;
     let (mut x, mut y) = (u64::from(x), u64::from(y));
     let mut d = 0u64;
@@ -167,7 +231,7 @@ pub(crate) fn tile_id(z: u8, x: u32, y: u32) -> u64 {
         }
         s /= 2;
     }
-    lower_zooms + d
+    Some(lower_zooms + d)
 }
 
 fn varint(bytes: &[u8], at: &mut usize) -> Result<u64, crate::Error> {
@@ -205,7 +269,9 @@ pub(crate) fn parse_directory(bytes: &[u8]) -> Result<Vec<Entry>, crate::Error> 
     ];
     let mut last = 0u64;
     for entry in &mut entries {
-        last += varint(bytes, &mut at)?;
+        last = last
+            .checked_add(varint(bytes, &mut at)?)
+            .ok_or_else(|| crate::Error::msg("corrupt PMTiles tile id"))?;
         entry.tile_id = last;
     }
     for entry in &mut entries {
@@ -219,7 +285,11 @@ pub(crate) fn parse_directory(bytes: &[u8]) -> Result<Vec<Entry>, crate::Error> 
     for i in 0..count {
         let value = varint(bytes, &mut at)?;
         entries[i].offset = if value == 0 && i > 0 {
-            entries[i - 1].offset + u64::from(entries[i - 1].length)
+            // Directly after the entry before.
+            entries[i - 1]
+                .offset
+                .checked_add(u64::from(entries[i - 1].length))
+                .ok_or_else(|| crate::Error::msg("corrupt PMTiles offset"))?
         } else {
             value
                 .checked_sub(1)
@@ -236,28 +306,40 @@ pub(crate) fn find(entries: &[Entry], id: u64) -> Option<Entry> {
         .partition_point(|entry| entry.tile_id <= id)
         .checked_sub(1)?;
     let entry = entries[index];
-    (entry.run_length == 0 || id < entry.tile_id + u64::from(entry.run_length)).then_some(entry)
+    let within_run = id
+        .checked_sub(entry.tile_id)
+        .is_some_and(|ahead| ahead < u64::from(entry.run_length));
+    (entry.run_length == 0 || within_run).then_some(entry)
 }
 
-fn decompress(bytes: Vec<u8>, compression: Compression) -> Result<Vec<u8>, crate::Error> {
+pub(crate) fn decompress(
+    bytes: Vec<u8>,
+    compression: Compression,
+) -> Result<Vec<u8>, crate::Error> {
     match compression {
         Compression::None => Ok(bytes),
-        Compression::Gzip => {
-            let mut out = Vec::new();
-            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)?;
-            Ok(out)
-        }
+        Compression::Gzip => crate::bounded::gunzip(&bytes, MAX_UNPACKED_BYTES),
         other => Err(crate::Error::Unsupported(format!(
             "unsupported PMTiles compression {other:?}"
         ))),
     }
 }
 
-/// The archive offset and stored length of one tile.
+/// The archive offset and stored length of one tile. Its end (`offset + length`) is
+/// a valid offset too: [`Header::tile_location`] refuses one that is not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TileLocation {
     pub(crate) offset: u64,
     pub(crate) length: u32,
+}
+
+impl TileLocation {
+    fn new(offset: Option<u64>, length: u32) -> Result<Self, crate::Error> {
+        offset
+            .filter(|offset| offset.checked_add(u64::from(length)).is_some())
+            .map(|offset| Self { offset, length })
+            .ok_or_else(|| crate::Error::msg("corrupt PMTiles offset"))
+    }
 }
 
 struct CachedLeaf {
@@ -302,17 +384,11 @@ impl Archive {
         };
         let first = archive.range(0, FIRST_READ_BYTES).await?;
         let header = Header::parse(&first)?;
-        let start = usize::try_from(header.root_offset)
-            .map_err(|_| crate::Error::msg("bad root offset"))?;
-        let end = start
-            + usize::try_from(header.root_length)
-                .map_err(|_| crate::Error::msg("bad root length"))?;
-        let root_bytes = match first.get(start..end) {
+        let root_bytes = match header.root_in(&first)? {
             Some(bytes) => bytes.to_vec(),
             None => {
-                archive
-                    .range(header.root_offset, header.root_length)
-                    .await?
+                let (offset, length) = header.root_location();
+                archive.range(offset, length).await?
             }
         };
         archive.root = parse_directory(&decompress(root_bytes, header.internal_compression)?)?;
@@ -322,12 +398,12 @@ impl Archive {
 
     /// The zoom levels the archive holds.
     pub(crate) fn zooms(&self) -> (u8, u8) {
-        (self.header.min_zoom, self.header.max_zoom)
+        self.header.zooms()
     }
 
     /// The archive's suggested view: zoom, longitude, latitude.
     pub(crate) fn center(&self) -> (u8, f64, f64) {
-        self.header.center
+        self.header.center()
     }
 
     /// Tile `z/x/y`'s bytes, unpacked, or `None` where the archive has no tile.
@@ -357,7 +433,9 @@ impl Archive {
         if z < self.header.min_zoom || z > self.header.max_zoom || !self.header.may_hold(z, x) {
             return Ok(None);
         }
-        let id = tile_id(z, x, y);
+        let Some(id) = tile_id(z, x, y) else {
+            return Ok(None);
+        };
         let mut directory = None;
         for _ in 0..MAX_DIRECTORY_DEPTH {
             let entries = directory.as_deref().unwrap_or(&self.root);
@@ -365,13 +443,7 @@ impl Archive {
                 return Ok(None);
             };
             if entry.run_length > 0 {
-                if u64::from(entry.length) > MAX_TILE_BYTES {
-                    return Err(crate::Error::msg("PMTiles tile too large"));
-                }
-                return Ok(Some(TileLocation {
-                    offset: self.header.tile_offset + entry.offset,
-                    length: entry.length,
-                }));
+                return self.header.tile_location(entry).map(Some);
             }
             directory = Some(self.leaf(entry).await?);
         }
@@ -379,7 +451,7 @@ impl Archive {
     }
 
     async fn leaf(&self, entry: Entry) -> Result<std::sync::Arc<Vec<Entry>>, crate::Error> {
-        let offset = self.header.leaf_offset + entry.offset;
+        let TileLocation { offset, length } = self.header.leaf_location(entry)?;
         if let Some(cached) = self
             .leaves
             .lock()
@@ -389,10 +461,7 @@ impl Archive {
             cached.used = Instant::now();
             return Ok(cached.entries.clone());
         }
-        if u64::from(entry.length) > MAX_DIRECTORY_BYTES {
-            return Err(crate::Error::msg("PMTiles directory too large"));
-        }
-        let bytes = self.range(offset, u64::from(entry.length)).await?;
+        let bytes = self.range(offset, u64::from(length)).await?;
         let compression = self.header.internal_compression;
         let leaf = std::sync::Arc::new(
             crate::cpu::run(crate::cpu::Service::Features, move || {
@@ -425,6 +494,11 @@ impl Archive {
     /// Bytes `offset..offset + length` of the archive. A server that ignores the range
     /// is an error rather than a download of the whole file.
     pub(crate) async fn range(&self, offset: u64, length: u64) -> Result<Vec<u8>, crate::Error> {
+        // Offsets and lengths come from the archive's own header and directories.
+        let last = offset
+            .checked_add(length.max(1) - 1)
+            .filter(|_| length <= MAX_RANGE_BYTES)
+            .ok_or_else(|| crate::Error::msg("corrupt PMTiles range"))?;
         let _permit = match crate::http::range_limit(self.policy) {
             Some(limit) => Some(
                 limit
@@ -445,10 +519,7 @@ impl Archive {
         for url in reused.into_iter().chain(std::iter::once(self.url.clone())) {
             let response = client
                 .get(&url)
-                .header(
-                    reqwest::header::RANGE,
-                    format!("bytes={offset}-{}", offset + length.max(1) - 1),
-                )
+                .header(reqwest::header::RANGE, format!("bytes={offset}-{last}"))
                 .send()
                 .await?;
             REQUESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -503,28 +574,126 @@ impl Archive {
 mod tests {
     use super::*;
 
+    /// The id of a tile that exists.
+    fn id(z: u8, x: u32, y: u32) -> u64 {
+        tile_id(z, x, y).expect("a tile that exists")
+    }
+
+    /// Found by the `pmtiles` fuzz target: every case here used to overflow (a panic
+    /// in a debug build, a wrong answer in a release build).
+    #[test]
+    fn tiles_and_offsets_that_cannot_exist_are_refused() {
+        // Zoom 32 and deeper have no 64-bit id; a column or row outside its level
+        // has none either.
+        assert_eq!(tile_id(32, 0, 0), None);
+        assert_eq!(tile_id(255, u32::MAX, u32::MAX), None);
+        assert_eq!(tile_id(1, 2, 0), None);
+        assert_eq!(tile_id(0, 0, 1), None);
+        // The deepest level's last tile still has one.
+        assert!(tile_id(MAX_ZOOM, u32::MAX >> 1, u32::MAX >> 1).is_some());
+
+        // Tile ids are written as differences: their sum must fit.
+        let mut directory = Vec::new();
+        put_varint(&mut directory, 2);
+        put_varint(&mut directory, u64::MAX);
+        put_varint(&mut directory, 1);
+        for _ in 0..6 {
+            put_varint(&mut directory, 1);
+        }
+        assert!(parse_directory(&directory).is_err());
+        // An offset "directly after the entry before" must fit as well.
+        let mut directory = Vec::new();
+        put_varint(&mut directory, 2);
+        for value in [0, 1, 1, 1, u64::from(u32::MAX), 1, u64::MAX, 0] {
+            put_varint(&mut directory, value);
+        }
+        assert!(parse_directory(&directory).is_err());
+
+        // A run at the very end of the id space.
+        let last = Entry {
+            tile_id: u64::MAX - 1,
+            offset: u64::MAX - 10,
+            length: 100,
+            run_length: 5,
+        };
+        assert_eq!(find(&[last], u64::MAX), Some(last));
+        assert_eq!(find(&[last], u64::MAX - 2), None);
+
+        // Offsets are added to the header's section starts.
+        let mut bytes = vec![0u8; HEADER_BYTES];
+        bytes[..7].copy_from_slice(b"PMTiles");
+        bytes[7] = 3;
+        bytes[8..16].copy_from_slice(&u64::MAX.to_le_bytes());
+        bytes[16..24].copy_from_slice(&40u64.to_le_bytes());
+        bytes[40..48].copy_from_slice(&100u64.to_le_bytes());
+        bytes[56..64].copy_from_slice(&100u64.to_le_bytes());
+        bytes[97] = 1;
+        let header = Header::parse(&bytes).unwrap();
+        assert!(header.root_in(&bytes).is_err());
+        assert!(header.tile_location(last).is_err());
+        assert!(header.leaf_location(last).is_err());
+        // A location whose end would pass the last offset is refused too.
+        let mut near = last;
+        near.offset = u64::MAX - 150;
+        assert!(header.tile_location(near).is_err());
+        near.offset = u64::MAX - 250;
+        assert!(header.tile_location(near).is_ok());
+        // A root directory beyond the first read is read on its own; one larger than
+        // any directory is refused before it is asked for.
+        bytes[8..16].copy_from_slice(&1_000_000u64.to_le_bytes());
+        assert_eq!(
+            Header::parse(&bytes).unwrap().root_in(&bytes).unwrap(),
+            None
+        );
+        bytes[16..24].copy_from_slice(&(MAX_DIRECTORY_BYTES + 1).to_le_bytes());
+        assert!(Header::parse(&bytes).unwrap().root_in(&bytes).is_err());
+        bytes[16..24].copy_from_slice(&40u64.to_le_bytes());
+
+        // Zoom levels: any byte is a safe question for a band, but a header whose
+        // levels are reversed or beyond the id space is corrupt.
+        bytes[102..106].copy_from_slice(&(-1_800_000_000i32).to_le_bytes());
+        let west = Header::parse(&bytes).unwrap();
+        assert!(!west.may_hold(255, u32::MAX) && !west.may_hold(32, u32::MAX));
+        assert!(west.may_hold(31, 0));
+        bytes[100] = 3;
+        bytes[101] = 2;
+        assert!(Header::parse(&bytes).is_err());
+        bytes[100] = 0;
+        bytes[101] = MAX_ZOOM + 1;
+        assert!(Header::parse(&bytes).is_err());
+        bytes[101] = MAX_ZOOM;
+        assert!(Header::parse(&bytes).is_ok());
+    }
+
+    #[test]
+    fn compressed_directories_and_tiles_unpack_to_a_limit() {
+        let packed = gzip(&vec![0u8; MAX_UNPACKED_BYTES as usize + 1]);
+        assert!(packed.len() < 100_000);
+        assert!(decompress(packed, Compression::Gzip).is_err());
+        assert_eq!(
+            decompress(gzip(b"tile"), Compression::Gzip).unwrap(),
+            b"tile"
+        );
+    }
+
     #[test]
     fn tile_ids_follow_the_specification() {
         // The specification's examples.
-        assert_eq!(tile_id(0, 0, 0), 0);
-        assert_eq!(tile_id(1, 0, 0), 1);
-        assert_eq!(tile_id(1, 0, 1), 2);
-        assert_eq!(tile_id(1, 1, 1), 3);
-        assert_eq!(tile_id(1, 1, 0), 4);
-        assert_eq!(tile_id(2, 0, 0), 5);
-        assert_eq!(tile_id(12, 3423, 1763), 19_078_479);
+        assert_eq!(id(0, 0, 0), 0);
+        assert_eq!(id(1, 0, 0), 1);
+        assert_eq!(id(1, 0, 1), 2);
+        assert_eq!(id(1, 1, 1), 3);
+        assert_eq!(id(1, 1, 0), 4);
+        assert_eq!(id(2, 0, 0), 5);
+        assert_eq!(id(12, 3423, 1763), 19_078_479);
         // Against the reference implementation (`pmtiles` 3.4.1 for Python, seed 7).
         for line in include_str!("pmtiles/tile_ids.txt").lines() {
             let v: Vec<u64> = line.split(' ').map(|n| n.parse().unwrap()).collect();
-            assert_eq!(
-                tile_id(v[0] as u8, v[1] as u32, v[2] as u32),
-                v[3],
-                "{line}"
-            );
+            assert_eq!(id(v[0] as u8, v[1] as u32, v[2] as u32), v[3], "{line}");
         }
         // Every tile of a zoom gets its own id, in that zoom's block.
         let mut ids: Vec<u64> = (0..8)
-            .flat_map(|x| (0..8).map(move |y| tile_id(3, x, y)))
+            .flat_map(|x| (0..8).map(move |y| id(3, x, y)))
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -686,7 +855,7 @@ mod tests {
     fn archive_bytes() -> Vec<u8> {
         let tiles: [&[u8]; 3] = [b"world", b"quarter", b"sixteenth"];
         let leaf = gzip(&encode(&[Entry {
-            tile_id: tile_id(2, 0, 0),
+            tile_id: id(2, 0, 0),
             offset: 12,
             length: 9,
             run_length: 1,
@@ -699,13 +868,13 @@ mod tests {
                 run_length: 1,
             },
             Entry {
-                tile_id: tile_id(1, 1, 0),
+                tile_id: id(1, 1, 0),
                 offset: 5,
                 length: 7,
                 run_length: 1,
             },
             Entry {
-                tile_id: tile_id(2, 0, 0),
+                tile_id: id(2, 0, 0),
                 offset: 0,
                 length: leaf.len() as u32,
                 run_length: 0,

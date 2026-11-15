@@ -3,11 +3,12 @@
 //! the IHO-IOC GEBCO Gazetteer of Undersea Feature Names for the seafloor, published
 //! into the `map-data` release by `.github/workflows/marine-names.yml`: one point per
 //! place with its size, largest first.
-use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 const MAX_BYTES: u64 = 40_000_000;
+/// The most the file may unpack to.
+const MAX_UNPACKED_BYTES: u64 = 40_000_000;
 const RETRY: Duration = Duration::from_secs(10 * 60);
 
 /// What a named place is.
@@ -74,10 +75,7 @@ impl MarineNames {
     }
 
     pub fn from_gzip(bytes: &[u8]) -> Result<Self, crate::Error> {
-        let mut text = Vec::new();
-        flate2::read::GzDecoder::new(bytes)
-            .take(MAX_BYTES)
-            .read_to_end(&mut text)?;
+        let text = crate::bounded::gunzip(bytes, MAX_UNPACKED_BYTES)?;
         Self::parse(&serde_json::from_slice(&text)?)
     }
 }

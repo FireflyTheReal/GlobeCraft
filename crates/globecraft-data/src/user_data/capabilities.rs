@@ -23,7 +23,7 @@ pub async fn wms_layers(base: String) -> Result<Vec<WmsLayer>, crate::Error> {
 }
 
 /// The `Layer` elements that have a `Name`, with their `Title`, in document order.
-fn parse(bytes: &[u8]) -> Result<Vec<WmsLayer>, crate::Error> {
+pub(crate) fn parse(bytes: &[u8]) -> Result<Vec<WmsLayer>, crate::Error> {
     let mut reader = quick_xml::Reader::from_reader(bytes);
     reader.config_mut().trim_text(true);
     let mut buffer = Vec::new();

@@ -50,7 +50,7 @@ fn size_bytes(tile: &PlaceTile) -> usize {
             .sum::<usize>()
 }
 
-fn decode(key: TileKey, bytes: &[u8]) -> Option<PlaceTile> {
+pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<PlaceTile> {
     Some(PlaceTile {
         bounds: key.bounds(),
         labels: super::osm_tiles::place_labels(key, bytes)?,
