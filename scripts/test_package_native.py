@@ -227,13 +227,16 @@ class NativePackagingTests(unittest.TestCase):
         self.assertEqual(flatpak["app-id"], tools.APP_ID)
         self.assertIn("--env=GLOBECRAFT_UPDATE_MODE=manual", flatpak["finish-args"])
         command = flatpak["modules"][0]["build-commands"][0]
-        for argument in ("--locked", "--offline", "--no-default-features"):
+        # Everything but the GPU renderer: a bare --no-default-features would also
+        # leave out the updater, the assistant and the live feeds.
+        for argument in ("--locked", "--offline", "--no-default-features --features standard"):
             self.assertIn(argument, command)
         snap = json.loads((release.ROOT / "packaging/snapcraft.json").read_text())
         part = snap["parts"]["globecraft"]
         self.assertEqual(part["plugin"], "rust")
         self.assertEqual(part["rust-channel"], "1.95.0")
         self.assertTrue(part["rust-no-default-features"])
+        self.assertEqual(part["rust-features"], ["standard"])
         # Snapcraft's Rust plugin already adds --locked to cargo install.
         self.assertNotIn("--locked", part.get("rust-cargo-parameters", []))
         self.assertEqual(snap["apps"]["globecraft"]["environment"]["GLOBECRAFT_UPDATE_MODE"], "manual")

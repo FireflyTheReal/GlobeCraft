@@ -5,8 +5,9 @@ binaries with Rust 1.95 (Flatpak builds use its Rust SDK extension). Portable ar
 native installers and Linux bundles also contain their desktop integration and
 runtime/package metadata. macOS keeps its Apple Silicon DMG and a ZIP of that
 same signed app bundle for in-app updates.
-These artifacts use `--no-default-features`: experimental GPU globe rendering is excluded
-from release downloads on every platform. CPU rendering remains the default.
+These artifacts use `--no-default-features --features standard`: experimental GPU globe
+rendering is excluded from release downloads on every platform, and everything else (the
+self-updater, the assistant, the live feeds) is in. CPU rendering remains the default.
 
 Each native build restores Cargo dependency caches through `Swatinem/rust-cache@v2`
 after installing Rust. Release cache keys include the target architecture and stay
@@ -288,7 +289,7 @@ Python 3.12+ is required for the packaging helper. For a native Linux x86-64 bui
 
 ```sh
 python3 scripts/package_release.py validate --tag v0.3.0
-cargo build -p globecraft --release --no-default-features --locked
+cargo build -p globecraft --release --no-default-features --features standard --locked
 python3 scripts/package_release.py package --version 0.3.0 --target x86_64-unknown-linux-gnu --binary target/release/globecraft --output /tmp/globecraft-release
 ```
 
@@ -312,7 +313,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 python3 -m venv /tmp/globecraft-packaging
 /tmp/globecraft-packaging/bin/python -m pip install dmgbuild==1.6.7
 rustup target add aarch64-apple-darwin
-MACOSX_DEPLOYMENT_TARGET=11.0 cargo build -p globecraft --release --no-default-features --locked --target aarch64-apple-darwin
+MACOSX_DEPLOYMENT_TARGET=11.0 cargo build -p globecraft --release --no-default-features --features standard --locked --target aarch64-apple-darwin
 /tmp/globecraft-packaging/bin/python scripts/package_release.py package --version 0.3.0 --target aarch64-apple-darwin --binary target/aarch64-apple-darwin/release/globecraft --output /tmp/globecraft-release
 ```
 

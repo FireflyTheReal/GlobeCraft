@@ -40,7 +40,7 @@ jobs:
             libwayland-dev libx11-dev libxkbcommon-x11-0 xvfb openbox xdotool wmctrl x11-utils imagemagick \
             weston bc mesa-vulkan-drivers kwin-wayland kwin-wayland-backend-virtual dbus-x11
       - name: Build
-        run: cargo build -p globecraft --release --no-default-features --locked
+        run: cargo build -p globecraft --release --no-default-features --features standard --locked
       - name: Drive the window (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

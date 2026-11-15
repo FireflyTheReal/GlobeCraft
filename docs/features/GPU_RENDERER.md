@@ -56,7 +56,7 @@ uses CPU rendering for that view, preserving the general sampler.
 For a desktop build without experimental GPU globe rendering:
 
 ```sh
-cargo build -p globecraft --no-default-features --locked
+cargo build -p globecraft --no-default-features --features standard --locked
 ```
 
 CPU globe rendering still uses wgpu presentation and requires a working graphics
