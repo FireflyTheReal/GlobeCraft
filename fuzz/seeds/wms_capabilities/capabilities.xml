@@ -1,0 +1,8 @@
+<?xml version="1.0"?><WMS_Capabilities version="1.3.0"><Service><Title>Seed</Title>
+</Service><Capability><Layer><Title>Root</Title><CRS>EPSG:3857</CRS>
+<Layer queryable="1"><Name>depth</Name><Title>Depth</Title><Abstract>Sea depth</Abstract>
+<Dimension name="time" default="2026-11-01">2020-01-01/2026-11-01/P1D</Dimension>
+<Style><Name>default</Name><LegendURL><OnlineResource
+xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://example.org/legend.png"/>
+</LegendURL></Style><Layer><Name>depth:contours</Name><Title>Contours</Title></Layer></Layer>
+</Layer></Capability></WMS_Capabilities>

@@ -1,0 +1,8 @@
+/target/
+/corpus/
+/artifacts/
+/coverage/
+/crash-*
+/oom-*
+/timeout-*
+/slow-unit-*

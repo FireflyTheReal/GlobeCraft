@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"tzid": "Europe/Berlin", "utc_offset": 60, "name": "CET", "zone": 1.0, "label_lat": 51, "label_lon": 10}, "geometry": {"type": "Polygon", "coordinates": [[[5, 47], [15, 47], [15, 55], [5, 47]]]}}]}

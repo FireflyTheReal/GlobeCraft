@@ -1,0 +1,1 @@
+[{"name": "Depth", "kind": "wms", "url": "https://example.org/wms", "layers": "depth", "visible": true, "opacity": 0.8, "max_zoom": 12, "attribution": "Seed"}, {"name": "Quakes", "kind": "features", "format": "geojson", "refresh_minutes": 5, "url": "https://example.org/q.geojson", "size_by": "mag", "color": "#ff8800"}]

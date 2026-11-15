@@ -1,0 +1,53 @@
+name: fuzz
+
+# Fuzzes the decoders of untrusted data (see fuzz/README.md): weekly for five minutes
+# per target, briefly when the targets or their entry points change, and by hand. A
+# finding fails the run and its input is kept as an artifact.
+on:
+  schedule:
+    - cron: '43 3 * * 6'
+  push:
+    paths:
+      - 'fuzz/**'
+      - 'crates/globecraft-data/src/fuzzing.rs'
+      - '.github/workflows/fuzz.yml'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds per target'
+        default: '300'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz the decoders
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run every target
+        env:
+          # A push only checks that the targets build and their seeds pass.
+          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'push' && '30') || '300' }}
+        run: fuzz/run.sh "$SECONDS_PER_TARGET"
+      - name: Keep the findings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-findings
+          path: |
+            fuzz/artifacts/
+            fuzz/target/*.log
+          if-no-files-found: ignore

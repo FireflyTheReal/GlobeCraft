@@ -288,6 +288,30 @@ the full message; a message that fits without abbreviation must have no tooltip.
 Resize the window and change UI scale: verify filename endings remain visible
 and status text does not push toolbar buttons out of view.
 
+## Fuzzing the decoders
+
+Everything that reads a file or a server's answer (KML/KMZ, GeoJSON, GPX, CSV,
+PMTiles, MBTiles, vector and image tiles, JSON feeds, gzip, settings) has a fuzz
+target in `fuzz/`; see [fuzz/README.md](fuzz/README.md). The `fuzz` workflow runs
+them weekly, and for 30 seconds each when `fuzz/` or the entry points change.
+After changing a decoder, run its target for a few minutes:
+
+```sh
+fuzz/run.sh 300 kml
+```
+
+Two rules come from what the fuzzers found:
+
+- Arithmetic on numbers read from a file is checked (`checked_add`, `try_from`):
+  a zoom level, an offset or a row number can be anything.
+- Compressed bytes and images are decoded through `globecraft_data`'s `bounded`
+  module, which names the largest output it accepts. Do not call
+  `image::load_from_memory` or read a `GzDecoder` to its end directly.
+
+A new decoder gets an entry point in `crates/globecraft-data/src/fuzzing.rs` and
+a target; a finding gets a unit test beside the decoder, and its input is kept in
+`fuzz/seeds/`.
+
 ## Resource-constrained builds
 
 For a small disk or a quick local check, reduce generated debug information and

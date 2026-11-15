@@ -7,6 +7,8 @@ members = [
     "crates/globecraft-assistant",
 ]
 default-members = ["apps/globecraft"]
+# The fuzz targets are their own workspace (nightly-only dependencies); see fuzz/README.md.
+exclude = ["fuzz"]
 resolver = "3"
 
 [workspace.package]

@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"name": "Baltic Sea", "name_en": "Baltic Sea", "featurecla": "sea", "scalerank": 2, "size_km": 900}, "geometry": {"type": "Point", "coordinates": [19, 58]}}]}

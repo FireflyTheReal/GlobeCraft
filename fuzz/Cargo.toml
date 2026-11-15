@@ -1,0 +1,132 @@
+# Fuzz targets for every decoder of data GlobeCraft does not control (roadmap 10.5).
+# Its own workspace, so the nightly-only fuzzing dependencies stay out of the
+# application's lock file. See README.md.
+[package]
+name = "globecraft-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+globecraft-assistant = { path = "../crates/globecraft-assistant" }
+globecraft-core = { path = "../crates/globecraft-core" }
+globecraft-data = { path = "../crates/globecraft-data", default-features = false, features = ["fuzzing"] }
+libfuzzer-sys = "0.4"
+
+[profile.release]
+debug = 1
+# Arithmetic overflow is a finding: the application's debug builds and tests panic on it.
+overflow-checks = true
+debug-assertions = true
+
+[[bin]]
+name = "assistant_reply"
+path = "fuzz_targets/assistant_reply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compact_tile"
+path = "fuzz_targets/compact_tile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compressed"
+path = "fuzz_targets/compressed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "features"
+path = "fuzz_targets/features.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "image_tile"
+path = "fuzz_targets/image_tile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_feeds"
+path = "fuzz_targets/json_feeds.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kml"
+path = "fuzz_targets/kml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kmz"
+path = "fuzz_targets/kmz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mbtiles_rows"
+path = "fuzz_targets/mbtiles_rows.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "planet"
+path = "fuzz_targets/planet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pmtiles"
+path = "fuzz_targets/pmtiles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settings"
+path = "fuzz_targets/settings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_inputs"
+path = "fuzz_targets/text_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vector_tile"
+path = "fuzz_targets/vector_tile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wms_capabilities"
+path = "fuzz_targets/wms_capabilities.rs"
+test = false
+doc = false
+bench = false
