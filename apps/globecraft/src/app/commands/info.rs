@@ -3,6 +3,7 @@ use super::position;
 use crate::app::App;
 use globecraft_core::{
     body::Body,
+    commands::InfoCommand,
     language::Lang,
     layers::MapLayer,
     placemark::{PlaceItem, PlaceNode},
@@ -11,28 +12,27 @@ use serde_json::{Value, json};
 
 impl App {
     /// Runs an `info.*` command, or `ui.here`.
-    pub(super) fn run_info(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        Ok(match id {
-            "info.view" => self.view_json(),
-            "info.places" => {
+    pub(super) fn run_info(&mut self, command: InfoCommand) -> Result<Value, String> {
+        Ok(match command {
+            InfoCommand::View => self.view_json(),
+            InfoCommand::Places => {
                 let mut places = Vec::new();
                 self.places
                     .items
                     .walk(|depth, node| places.push(place_json(depth, node)));
                 json!({"count": self.places.items.len(), "items": places})
             }
-            "info.ruler" => self.ruler_json(),
-            "info.here" => {
-                let (lat, lon) = position(p)?;
+            InfoCommand::Ruler => self.ruler_json(),
+            InfoCommand::Here(p) => {
+                let (lat, lon) = position(p.lat, p.lon)?;
                 self.here_json(lat, lon)
             }
-            "ui.here" => {
-                let (lat, lon) = position(p)?;
+            InfoCommand::ShowHere(p) => {
+                let (lat, lon) = position(p.lat, p.lon)?;
                 self.close_other_cards(crate::app::here::Card::Here);
                 self.pointer.here_card = Some(crate::app::here::HereCard { lat, lon });
                 json!({"lat": lat, "lon": lon})
             }
-            _ => return Err(format!("unknown command '{id}'")),
         })
     }
 

@@ -1,5 +1,6 @@
 //! The app's time (roadmap 4.H): `time.*` commands and what the scene reads.
 use super::App;
+use globecraft_core::commands::{TimeCommand, params::TimeValue};
 use globecraft_core::math::now_unix;
 use globecraft_core::time::{HOUR_SECS, parse_iso};
 use globecraft_data::tiles::Provider;
@@ -84,63 +85,41 @@ impl App {
     }
 
     /// Runs a `time.*` command.
-    pub(super) fn run_time(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+    pub(super) fn run_time(&mut self, command: TimeCommand) -> Result<Value, String> {
         let wall = now_unix();
-        match id {
-            "time.set" => match p.get("time") {
-                Some(Value::String(text)) if text.trim().eq_ignore_ascii_case("now") => {
+        match command {
+            TimeCommand::Set(p) => match p.time {
+                TimeValue::Text(text) if text.eq_ignore_ascii_case("now") => {
                     self.time.go_live();
                 }
-                Some(Value::String(text)) => {
-                    let unix = parse_iso(text)
+                TimeValue::Text(text) => {
+                    let unix = parse_iso(&text)
                         .ok_or("time must be now, an ISO 8601 date or seconds since 1970")?;
                     self.time.set(unix, wall);
                 }
-                Some(Value::Number(n)) => {
-                    self.time
-                        .set(n.as_f64().ok_or("time must be a number")?, wall);
-                }
-                _ => return Err("give a time: now, an ISO 8601 date or seconds since 1970".into()),
+                TimeValue::Number(unix) => self.time.set(unix, wall),
             },
-            "time.step" => {
-                let hours = p
-                    .get("hours")
-                    .and_then(Value::as_f64)
-                    .filter(|h| h.is_finite())
-                    .ok_or("hours must be a number")?;
-                self.time.step(hours * HOUR_SECS, wall);
-            }
-            "time.play" => {
+            TimeCommand::Step(p) => self.time.step(p.hours * HOUR_SECS, wall),
+            TimeCommand::Play(p) => {
                 let speed = p
-                    .get("hours_per_second")
-                    .and_then(Value::as_f64)
-                    .filter(|s| s.is_finite())
+                    .hours_per_second
                     .map_or(self.timeline.speed, |hours| hours * HOUR_SECS);
                 if speed != 0.0 {
                     self.timeline.speed = speed;
                 }
                 self.time.play(speed, wall);
             }
-            "time.pause" => self.time.play(0.0, wall),
-            "time.speed" => {
-                let hours = p
-                    .get("hours_per_second")
-                    .and_then(Value::as_f64)
-                    .filter(|h| h.is_finite() && *h != 0.0)
+            TimeCommand::Pause => self.time.play(0.0, wall),
+            TimeCommand::Speed(p) => {
+                let hours = Some(p.hours_per_second)
+                    .filter(|h| *h != 0.0)
                     .ok_or("hours_per_second must be a number other than 0")?;
                 self.timeline.speed = hours * HOUR_SECS;
                 if self.time.speed() != 0.0 {
                     self.time.play(self.timeline.speed, wall);
                 }
             }
-            "time.window" => {
-                let hours = p
-                    .get("hours")
-                    .and_then(Value::as_f64)
-                    .ok_or("hours must be a number (0: everything)")?;
-                self.time.set_window(Some(hours * HOUR_SECS));
-            }
-            _ => return Err(format!("unknown time command {id}")),
+            TimeCommand::Window(p) => self.time.set_window(Some(p.hours * HOUR_SECS)),
         }
         Ok(self.time_json())
     }

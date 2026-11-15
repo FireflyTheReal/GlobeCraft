@@ -1,11 +1,16 @@
 //! Whether each command can run now and whether it is on, for buttons and menus.
-use super::{CommandState, str_param};
+use super::CommandState;
 use crate::app::App;
 use globecraft_core::{body::Body, layers::MapLayer};
 use globecraft_data::settings::{
     UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
 };
 use serde_json::Value;
+
+/// A choice's text parameter, as the buttons and menus pass it.
+fn str_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+    params.get(key).and_then(Value::as_str).map(str::trim)
+}
 
 impl App {
     /// Whether a command is available and checked, for buttons and menus.

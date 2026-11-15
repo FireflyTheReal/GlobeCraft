@@ -534,8 +534,10 @@ remain available with the panes hidden.
 
 Every action is a command (`globecraft_core::commands`) implemented once in
 `App::run`; add new actions there rather than in a widget, with `cmd-…` label and
-help keys in both Fluent catalogs. The catalog test checks that ids are unique,
-parameters are JSON Schema objects and every label is translated.
+help keys in both Fluent catalogs, a variant and a parameter struct (see "Commands and
+the interface" in `docs/ARCHITECTURE.md`). The catalog tests check that ids are unique,
+parameters are JSON Schema objects, every label is translated, and each parameter
+struct has exactly its schema's parameters.
 
 macOS uses muda 0.21 (compatible with Rust 1.95) in `apps/globecraft/src/app/menu`.
 Menu objects and handlers stay on the window thread. Callbacks enqueue actions

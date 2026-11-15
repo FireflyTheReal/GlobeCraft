@@ -1,6 +1,14 @@
 //! The command catalog. Every user action in GlobeCraft is a command with a stable id and JSON
 //! parameters: ribbon buttons, menus, keyboard shortcuts, the command palette and the AI
 //! assistant all run the same commands. This module only describes them; frontends execute.
+//!
+//! A frontend runs a command by id: [`Command::parse`] reads the id and its parameters
+//! into a typed [`Command`] (see `command` and `params`).
+
+mod command;
+pub mod params;
+
+pub use command::*;
 
 /// What a command touches beyond the globe view, which decides whether the assistant must ask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

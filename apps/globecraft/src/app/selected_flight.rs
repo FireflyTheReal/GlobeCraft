@@ -5,7 +5,7 @@ use super::App;
 use super::ui::surface::Surface;
 mod card;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape, Stroke};
-use globecraft_core::{camera::Basis, layers::MapLayer, math::now_unix};
+use globecraft_core::{camera::Basis, commands::FlightCommand, layers::MapLayer, math::now_unix};
 use globecraft_data::aircraft::{
     Aircraft, AircraftSnapshot,
     route::{RouteAirport, TrackPoint},
@@ -198,13 +198,10 @@ impl App {
         }
     }
 
-    pub(super) fn run_flight(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        match id {
-            "flight.select" => {
-                let hex = p
-                    .get("hex")
-                    .and_then(Value::as_str)
-                    .map(|hex| hex.trim().to_ascii_lowercase())
+    pub(super) fn run_flight(&mut self, command: FlightCommand) -> Result<Value, String> {
+        match command {
+            FlightCommand::Select(p) => {
+                let hex = Some(p.hex.to_ascii_lowercase())
                     .filter(|hex| {
                         let digits = hex.strip_prefix('~').unwrap_or(hex);
                         digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit())
@@ -217,11 +214,8 @@ impl App {
                     .find(|aircraft| *aircraft.hex == *hex)
                     .cloned();
                 let callsign = p
-                    .get("callsign")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
+                    .callsign
                     .filter(|callsign| !callsign.is_empty())
-                    .map(str::to_owned)
                     .or_else(|| {
                         listed
                             .as_ref()
@@ -235,11 +229,10 @@ impl App {
                 self.picked.flight.select(&hex, &callsign, listed);
                 self.picked.snapshot = None;
             }
-            "flight.clear" => {
+            FlightCommand::Clear => {
                 self.picked.flight.clear();
                 self.picked.snapshot = None;
             }
-            _ => return Err(format!("unknown flight command {id}")),
         }
         Ok(self.flight_json())
     }

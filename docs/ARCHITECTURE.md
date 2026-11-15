@@ -124,13 +124,18 @@ Rules for new state:
 
 `globecraft_core::commands` lists every action as a command: id, Fluent label/help keys,
 icon, ribbon tab, JSON-Schema parameters and reach (view, files, destructive, interface).
-`App::run(id, params)` (`apps/globecraft/src/app/commands.rs`) hands each command to the
-feature that runs it: `commands::Feature::of(id)` picks the feature from the id's first
-part, and one handler per feature implements its commands (`commands/camera.rs`,
-`places.rs`, `ruler.rs`, `files.rs`, `layers.rs`, `interface.rs`, `settings.rs`,
-`info.rs`; `run_time`, `run_flight`, `run_satellite`, `run_user_data` and `run_legend`
-beside their states). A test checks that every command of the catalogue reaches a handler
-that names it. `commands/state.rs` reports enabled/checked state (`App::command_state`)
+`App::run(id, params)` (`apps/globecraft/src/app/commands.rs`) reads the command once with
+`commands::Command::parse`: the id becomes a typed `Command`, grouped by feature
+(`Command::Camera(CameraCommand::FlyTo(FlyTo { lat, lon, .. }))`), and the JSON
+parameters become the command's own struct (`commands/params.rs`, read leniently: numbers
+also as text, text trimmed). One handler per feature matches its group
+(`commands/camera.rs`, `places.rs`, `ruler.rs`, `files.rs`, `layers.rs`, `interface.rs`,
+`settings.rs`, `info.rs`; `run_time`, `run_flight`, `run_satellite`, `run_user_data` and
+`run_legend` beside their states); a `match` must name every command of its group, so a
+command without a handler does not compile. The table in `commands/command.rs` is the only
+place that pairs an id with its variant; core tests check that it holds every catalogue
+command once and that each parameter struct has exactly the parameters of its JSON Schema
+(which stays hand-written: it is what the assistant reads). `commands/state.rs` reports enabled/checked state (`App::command_state`)
 and `commands/shortcuts.rs` owns the keyboard shortcuts. The ribbon, File menu, macOS
 native menu, shortcuts, context menu, controllers, Command Search and the assistant all
 dispatch through `App::run`. `globecraft_core::layers::MapLayer` names every toggleable layer; data's `Settings`
