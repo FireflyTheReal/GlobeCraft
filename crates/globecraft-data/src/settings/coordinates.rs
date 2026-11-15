@@ -1,6 +1,6 @@
 //! Tolerant persistence for display preferences, separate from stored geography.
 use globecraft_core::coordinates::{CoordinateDisplay, CoordinateFormat};
-use serde::{Serializer, ser::SerializeStruct};
+use serde::{Deserializer, Serializer, ser::SerializeStruct};
 pub(super) fn serialize<S: Serializer>(
     display: &CoordinateDisplay,
     serializer: S,
@@ -9,6 +9,12 @@ pub(super) fn serialize<S: Serializer>(
     state.serialize_field("format", display.format.code())?;
     state.serialize_field("precision", &display.precision)?;
     state.end()
+}
+/// What [`serialize`] wrote, read back.
+pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<CoordinateDisplay, D::Error> {
+    super::lenient::applied(deserializer, apply)
 }
 pub(super) fn apply(display: &mut CoordinateDisplay, value: &serde_json::Value) {
     if let Some(format) = value

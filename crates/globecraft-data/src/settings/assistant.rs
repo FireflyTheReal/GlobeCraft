@@ -1,10 +1,11 @@
 //! The AI assistant's provider choice. API keys are not part of `settings.json`: they come from
 //! the environment, the session, or (when the user opts in) `assistant-keys.json`, which only
 //! the current user may read.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AssistantPreferences {
     /// A provider preset id; empty until chosen.
     pub provider: String,
@@ -18,9 +19,8 @@ pub struct AssistantPreferences {
 
 impl AssistantPreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
-        if let Some(provider) = value.get("provider").and_then(|v| v.as_str()) {
-            self.provider = provider.to_string();
-        }
+        super::lenient::apply(self, value, &[]);
+        // The tables keep their text entries and drop the rest.
         for (field, target) in [
             ("models", &mut self.models),
             ("base_urls", &mut self.base_urls),
@@ -31,9 +31,6 @@ impl AssistantPreferences {
                     .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
                     .collect();
             }
-        }
-        if let Some(remember) = value.get("remember_keys").and_then(|v| v.as_bool()) {
-            self.remember_keys = remember;
         }
     }
 }

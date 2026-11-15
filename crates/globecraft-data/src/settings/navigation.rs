@@ -2,12 +2,12 @@
 use globecraft_core::{
     MAX_CAMERA_ALTITUDE_KM, MIN_CAMERA_ALTITUDE_KM, camera::Cam, coordinates::validate_coordinates,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 pub const MIN_SENSITIVITY: f64 = 0.1;
 pub const MAX_SENSITIVITY: f64 = 4.0;
 
 /// Which on-globe navigator is drawn.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NavigatorStyle {
     /// A mini globe in the rotation ring, and the zoom slider.
@@ -28,7 +28,8 @@ impl NavigatorStyle {
         Self::ALL.into_iter().find(|style| style.code() == code)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StartupView {
     pub latitude: f64,
     pub longitude: f64,
@@ -63,6 +64,8 @@ impl StartupView {
             heading_deg: camera.heading,
         }
     }
+    /// Read here and not by `lenient::apply`: a latitude and longitude are valid only
+    /// together, and the height and heading are brought into range.
     fn apply(&mut self, value: &serde_json::Value) {
         let lat = value
             .get("latitude")
@@ -95,7 +98,8 @@ impl StartupView {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NavigationPreferences {
     pub pan_sensitivity: f64,
     pub zoom_sensitivity: f64,
@@ -118,28 +122,13 @@ impl Default for NavigationPreferences {
 }
 impl NavigationPreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
-        for (key, target) in [
-            ("pan_sensitivity", &mut self.pan_sensitivity),
-            ("zoom_sensitivity", &mut self.zoom_sensitivity),
-            ("rotation_sensitivity", &mut self.rotation_sensitivity),
+        super::lenient::apply(self, value, &[]);
+        for sensitivity in [
+            &mut self.pan_sensitivity,
+            &mut self.zoom_sensitivity,
+            &mut self.rotation_sensitivity,
         ] {
-            if let Some(number) = value
-                .get(key)
-                .and_then(|v| v.as_f64())
-                .filter(|v| v.is_finite())
-            {
-                *target = number.clamp(MIN_SENSITIVITY, MAX_SENSITIVITY);
-            }
-        }
-        if let Some(invert) = value.get("invert_scroll").and_then(|v| v.as_bool()) {
-            self.invert_scroll = invert;
-        }
-        if let Some(style) = value
-            .get("navigator")
-            .and_then(|v| v.as_str())
-            .and_then(NavigatorStyle::from_code)
-        {
-            self.navigator = style;
+            *sensitivity = sensitivity.clamp(MIN_SENSITIVITY, MAX_SENSITIVITY);
         }
         if let Some(startup) = value.get("startup") {
             self.startup.apply(startup);

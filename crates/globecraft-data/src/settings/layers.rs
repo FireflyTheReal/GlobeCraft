@@ -1,24 +1,34 @@
 //! Visible map layers, the basemap and terrain exaggeration, kept across launches.
 use crate::tiles::Provider;
 use globecraft_core::layers::{LayerSet, MapLayer};
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub const MIN_TERRAIN_EXAGGERATION: f32 = 0.5;
 pub const MAX_TERRAIN_EXAGGERATION: f32 = 3.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LayerPreferences {
     /// Layers other than those stored elsewhere for compatibility (stars, the Milky Way and
     /// grid labels live in `sky` and `grid_numbers`; see `Settings::layer_visible`).
-    #[serde(serialize_with = "serialize_layers")]
+    #[serde(
+        serialize_with = "serialize_layers",
+        deserialize_with = "deserialize_layers"
+    )]
     pub visible: LayerSet,
-    #[serde(serialize_with = "serialize_basemap")]
+    #[serde(
+        serialize_with = "serialize_basemap",
+        deserialize_with = "deserialize_basemap"
+    )]
     pub basemap: Provider,
     pub terrain_exaggeration: f32,
     /// Aircraft and satellites drawn on the ground below them, not at their height.
     pub flat_live_objects: bool,
     /// The opacity of the layers that have one (`MapLayer::WITH_OPACITY`).
-    #[serde(serialize_with = "serialize_opacity")]
+    #[serde(
+        serialize_with = "serialize_opacity",
+        deserialize_with = "deserialize_opacity"
+    )]
     pub opacity: LayerOpacity,
 }
 
@@ -45,6 +55,15 @@ impl LayerOpacity {
                 true
             }
             _ => false,
+        }
+    }
+    /// A saved table of layer code to opacity: entries that name a layer and hold a
+    /// number are taken.
+    fn apply(&mut self, value: &serde_json::Value) {
+        for (code, value) in value.as_object().into_iter().flatten() {
+            if let (Some(layer), Some(value)) = (MapLayer::from_code(code), value.as_f64()) {
+                self.set(layer, value as f32);
+            }
         }
     }
     fn index(layer: MapLayer) -> Option<usize> {
@@ -81,42 +100,40 @@ fn serialize_layers<S: Serializer>(layers: &LayerSet, serializer: S) -> Result<S
     serializer.collect_seq(layers.codes())
 }
 
+fn deserialize_layers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<LayerSet, D::Error> {
+    let codes = Vec::<String>::deserialize(deserializer)?;
+    Ok(LayerSet::from_codes(codes.iter().map(String::as_str)))
+}
+
+fn deserialize_basemap<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Provider, D::Error> {
+    super::lenient::coded(deserializer, Provider::from_code)
+}
+
+fn deserialize_opacity<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<LayerOpacity, D::Error> {
+    super::lenient::applied(deserializer, LayerOpacity::apply)
+}
+
 fn serialize_basemap<S: Serializer>(basemap: &Provider, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(basemap.code())
 }
 
 impl LayerPreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
+        super::lenient::apply(self, value, &["visible"]);
+        self.terrain_exaggeration = self
+            .terrain_exaggeration
+            .clamp(MIN_TERRAIN_EXAGGERATION, MAX_TERRAIN_EXAGGERATION);
+        // Unknown layer names are passed over, and the live layers start hidden.
         if let Some(codes) = value.get("visible").and_then(|v| v.as_array()) {
             self.visible = LayerSet::from_codes(codes.iter().filter_map(|c| c.as_str()))
                 .iter()
                 .filter(|layer| !layer.starts_hidden())
                 .collect();
         }
-        if let Some(basemap) = value
-            .get("basemap")
-            .and_then(|v| v.as_str())
-            .and_then(Provider::from_code)
-        {
-            self.basemap = basemap;
-        }
-        if let Some(opacity) = value.get("opacity").and_then(|v| v.as_object()) {
-            for (code, value) in opacity {
-                if let (Some(layer), Some(value)) = (MapLayer::from_code(code), value.as_f64()) {
-                    self.opacity.set(layer, value as f32);
-                }
-            }
-        }
-        if let Some(flat) = value.get("flat_live_objects").and_then(|v| v.as_bool()) {
-            self.flat_live_objects = flat;
-        }
-        if let Some(value) = value
-            .get("terrain_exaggeration")
-            .and_then(|v| v.as_f64())
-            .filter(|v| v.is_finite())
-        {
-            self.terrain_exaggeration =
-                (value as f32).clamp(MIN_TERRAIN_EXAGGERATION, MAX_TERRAIN_EXAGGERATION);
+        if let Some(opacity) = value.get("opacity") {
+            self.opacity.apply(opacity);
         }
     }
 }

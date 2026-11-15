@@ -1,8 +1,8 @@
 //! How much detail a screenshot gets.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Screenshot quality (the capture button's drop-down).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScreenshotQuality {
     /// Screen size, as on screen once every tile has loaded.

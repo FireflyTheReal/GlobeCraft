@@ -1,9 +1,9 @@
 //! How much of the interface shows (roadmap 2.7). Basic keeps a first start calm:
 //! it hides the Earth model and Worlds ribbon groups and the Add Data forms for web
 //! services and feature URLs (the source library, KML and dropped files stay).
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExperienceLevel {
     /// New installations start here.

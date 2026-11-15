@@ -1,10 +1,11 @@
 //! Local per-model profiles; device identifiers never leave this settings file.
 use globecraft_core::controller::ControllerProfile;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 const MAX_PROFILES: usize = 64;
 const MAX_DEVICE_KEY_BYTES: usize = 256;
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ControllerPreferences {
     pub enabled: bool,
     pub selected: String,
@@ -24,9 +25,7 @@ impl ControllerPreferences {
         self.profiles.get(device).cloned().unwrap_or_default()
     }
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
-        if let Some(enabled) = value.get("enabled").and_then(|v| v.as_bool()) {
-            self.enabled = enabled;
-        }
+        super::lenient::apply(self, value, &["selected"]);
         if let Some(selected) = value
             .get("selected")
             .and_then(|v| v.as_str())

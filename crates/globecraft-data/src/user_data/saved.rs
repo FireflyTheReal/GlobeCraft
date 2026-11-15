@@ -3,14 +3,15 @@
 //! saved in the settings. A source is identified by where its data comes from, not by
 //! its name.
 use super::{UserLayer, UserSource};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Recently added sources kept.
 pub const MAX_RECENT: usize = 12;
 /// Starred sources kept.
 pub const MAX_FAVORITES: usize = 100;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SavedSources {
     /// Starred, in the order they were starred.
     pub favorites: Vec<UserLayer>,
