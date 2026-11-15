@@ -38,15 +38,14 @@ pub(super) fn pixels(
                             continue;
                         }
                         let color = if ray.discriminant >= 0.0 && ray.camera_dot < 0.0 {
-                            let surface = crate::surface::<false>(
-                                pack * crate::rays::RAY_LANES + lane,
-                                y,
-                                request.width,
-                                request.height,
-                                &ray,
-                                &request.cfg,
-                                request.basis.model.geometry(),
-                            );
+                            let (x, geometry) =
+                                (pack * crate::rays::RAY_LANES + lane, rays.model_geometry());
+                            let (w, h) = (request.width, request.height);
+                            let surface = if rays.uses_unit_sphere() {
+                                crate::surface::<false>(x, y, w, h, &ray, &request.cfg, geometry)
+                            } else {
+                                crate::surface::<true>(x, y, w, h, &ray, &request.cfg, geometry)
+                            };
                             crate::shade_surface(
                                 surface,
                                 &request.cfg,

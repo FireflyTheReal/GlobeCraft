@@ -62,20 +62,16 @@ impl GpuRenderer {
             .expect("poll destroyed device");
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
-        // The overview shader samples one release; a swipe compare renders on the CPU.
-        // Nor do the polar caps (their tiles are in another projection).
-        if request.cfg.terrain.is_some()
-            || request.cfg.night_lights.is_some()
-            || !request.cfg.level_blend
-            || (crate::polar::under(request.cfg.provider)
-                && crate::polar::shows_polar_cap(&request.basis, request.width, request.height))
-        {
+        // Relief and the unblended screenshot levels are the CPU's. So is a surface the
+        // shader has no kernel for (it has the unit sphere and ellipsoids).
+        if request.cfg.terrain.is_some() || !request.cfg.level_blend {
             return false;
         }
         use globecraft_core::{EARTH_RADIUS_KM, earth_model::SurfaceGeometry};
         match request.basis.model.geometry() {
             SurfaceGeometry::Sphere { radius_km } if radius_km == EARTH_RADIUS_KM => {}
-            SurfaceGeometry::Sphere { .. } | SurfaceGeometry::Ellipsoid { .. } => return false,
+            SurfaceGeometry::Ellipsoid { .. } => {}
+            SurfaceGeometry::Sphere { .. } => return false,
         }
 
         overview::supported_zoom(request).is_some()
@@ -276,9 +272,13 @@ impl GpuRenderer {
         let Some(max_zoom) = overview::supported_zoom(request) else {
             return Err(("View requires precise CPU rendering".into(), buffer, false));
         };
+        let lights = request.cfg.night_lights.map_or_else(Vec::new, |edition| {
+            cache.ready_tiles(globecraft_data::tiles::Provider::NightLights, edition)
+        });
         let tiles: Vec<_> = cache
             .ready_tiles(request.cfg.provider, request.cfg.rel)
             .into_iter()
+            .chain(lights)
             .filter(|(key, _)| globecraft_data::tiles::unkey(*key).1 <= max_zoom)
             .collect();
         let ready: HashMap<_, _> = tiles.iter().map(|(key, _)| (*key, ())).collect();

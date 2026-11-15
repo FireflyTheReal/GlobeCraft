@@ -269,7 +269,8 @@ fn warm_gpu_frame_time() {
             width: w,
             height: h,
             cam,
-            basis: cam.basis(w as f64 / h as f64),
+            // The app's default Earth model (WGS 84).
+            basis: cam.basis_for_model(w as f64 / h as f64, Default::default()),
             cfg: RenderCfg {
                 sky: None,
                 provider: Provider::Satellite,
@@ -349,8 +350,8 @@ fn warm_gpu_frame_time() {
                         }
                         shown += 1;
                         let (x, y) = (i / 4 % w, i / 4 / w);
-                        let ray = rays.cast_model::<false>(x, y)[0];
-                        let surface = crate::pixel::surface::<false>(
+                        let ray = rays.cast(x, y)[0];
+                        let surface = crate::pixel::surface::<true>(
                             x,
                             y,
                             w,
@@ -482,7 +483,7 @@ fn warm_gpu_frame_time() {
             width: 2000,
             height: 1488,
             cam,
-            basis: cam.basis(2000.0 / 1488.0),
+            basis: cam.basis_for_model(2000.0 / 1488.0, Default::default()),
             cfg: RenderCfg {
                 sky: None,
                 provider: Provider::Satellite,
