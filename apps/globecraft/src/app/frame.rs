@@ -12,8 +12,8 @@ pub(super) struct FrameState {
     /// it (a new frame of the same view: tiles arrived, or the view came to rest).
     pub(super) fade_from: Option<egui::TextureHandle>,
     pub(super) fade_started: Option<Instant>,
-    /// The frame on screen as pixels: width, height, RGBA.
-    pub(super) image: Option<(usize, usize, Arc<Vec<u8>>)>,
+    /// The frame on screen as pixels.
+    pub(super) image: Option<Frame>,
     /// The state key of the view the last frame was asked for; 0 asks for a new one.
     pub(super) last_state: u64,
     pub(super) wake: render_wake::RenderWakeup,
@@ -25,8 +25,20 @@ pub(super) struct FrameState {
     /// The streaming diagnostics overlay shows (`ui.tileDiagnostics`; not saved).
     pub(super) diagnostics: bool,
     pub(super) download_meter: ui::tile_diagnostics::DownloadMeter,
-    /// When the download totals were last written to the run log, and what they were.
-    pub(super) download_log: (Instant, u64),
+    pub(super) download_log: DownloadLog,
+}
+
+/// A drawn frame: RGBA pixels, row by row.
+pub(super) struct Frame {
+    pub(super) width: usize,
+    pub(super) height: usize,
+    pub(super) pixels: Arc<Vec<u8>>,
+}
+
+/// When the download totals were last written to the run log, and what they were.
+pub(super) struct DownloadLog {
+    pub(super) at: Instant,
+    pub(super) bytes: u64,
 }
 
 impl FrameState {
@@ -45,7 +57,10 @@ impl FrameState {
             still_shot: None,
             diagnostics: false,
             download_meter: Default::default(),
-            download_log: (Instant::now(), 0),
+            download_log: DownloadLog {
+                at: Instant::now(),
+                bytes: 0,
+            },
         }
     }
 }

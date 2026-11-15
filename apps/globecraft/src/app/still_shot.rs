@@ -44,11 +44,11 @@ impl App {
         if self.frame.still_shot.is_some() {
             return Err("A screenshot is still being made.".into());
         }
-        let Some((width, height, _)) = self.frame.image.as_ref() else {
+        let Some(frame) = self.frame.image.as_ref() else {
             return Err("The globe has not finished drawing yet.".into());
         };
         let scale = quality.render_scale();
-        let (width, height) = (width * scale, height * scale);
+        let (width, height) = (frame.width * scale, frame.height * scale);
         let aspect = width as f64 / height.max(1) as f64;
         let basis = self.view_basis(aspect);
         let mut cfg = globecraft_render::RenderCfg {

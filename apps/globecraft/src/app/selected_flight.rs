@@ -156,15 +156,20 @@ impl App {
 
     /// The flights with the selected one's newest position, when it is newer than
     /// the list's (it is asked for every few seconds) or missing from it.
-    fn merged_snapshot(&self) -> Option<(usize, f64, Arc<AircraftSnapshot>)> {
+    fn merged_snapshot(&self) -> Option<super::picked::MergedFlights> {
         let position = self.picked.flight.selected()?.position.clone()?;
         let snapshot = self.live.aircraft.snapshot();
-        let key = (Arc::as_ptr(&snapshot) as usize, position.observed_unix);
-        if let Some((pointer, observed, merged)) = &self.picked.snapshot
-            && (*pointer, *observed) == key
+        if let Some(shown) = &self.picked.snapshot
+            && Arc::ptr_eq(&shown.from, &snapshot)
+            && shown.observed_unix == position.observed_unix
         {
-            return Some((key.0, key.1, merged.clone()));
+            return Some(super::picked::MergedFlights {
+                from: shown.from.clone(),
+                observed_unix: shown.observed_unix,
+                flights: shown.flights.clone(),
+            });
         }
+        let observed_unix = position.observed_unix;
         let listed = snapshot.aircraft.iter().position(|a| a.hex == position.hex);
         if listed.is_some_and(|i| snapshot.aircraft[i].observed_unix >= position.observed_unix) {
             return None;
@@ -174,26 +179,25 @@ impl App {
             Some(i) => aircraft[i] = position,
             None => aircraft.push(position),
         }
-        Some((
-            key.0,
-            key.1,
-            Arc::new(AircraftSnapshot {
-                aircraft: aircraft.into(),
-                global: snapshot.global.clone(),
-                local: snapshot.local.clone(),
-                error: snapshot.error.clone(),
-                valid_until: snapshot.valid_until,
-            }),
-        ))
+        let flights = Arc::new(AircraftSnapshot {
+            aircraft: aircraft.into(),
+            global: snapshot.global.clone(),
+            local: snapshot.local.clone(),
+            error: snapshot.error.clone(),
+            valid_until: snapshot.valid_until,
+        });
+        Some(super::picked::MergedFlights {
+            from: snapshot,
+            observed_unix,
+            flights,
+        })
     }
 
     /// The flights to draw: with the selected one's newest position.
     pub(super) fn aircraft_snapshot(&self) -> Arc<AircraftSnapshot> {
         let snapshot = self.live.aircraft.snapshot();
         match &self.picked.snapshot {
-            Some((pointer, _, merged)) if *pointer == Arc::as_ptr(&snapshot) as usize => {
-                merged.clone()
-            }
+            Some(shown) if Arc::ptr_eq(&shown.from, &snapshot) => shown.flights.clone(),
             _ => snapshot,
         }
     }

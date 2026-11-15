@@ -23,7 +23,7 @@ impl App {
             enabled: true,
             checked,
         };
-        let earth = self.explorer.active == Body::Earth;
+        let earth = self.explorer.on_earth();
         match id {
             "camera.autoRotate" => on(self.motion.auto_rotate),
             "ruler.enable" => on(self.measure.on),
@@ -112,7 +112,7 @@ impl App {
                     .is_some_and(|m| m == self.settings.earth_model.code()))
             }
             "world.body" => on(match str_param(params, "body") {
-                Some("earth") => self.explorer.active == Body::Earth,
+                Some("earth") => self.explorer.on_earth(),
                 Some("moon") => self.explorer.active == Body::Moon,
                 Some("custom") => self.explorer.active == Body::Custom,
                 _ => false,

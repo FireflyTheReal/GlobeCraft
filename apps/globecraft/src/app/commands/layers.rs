@@ -154,7 +154,7 @@ impl App {
 impl App {
     /// Runs a `world.*` command, or `ui.explorer`.
     pub(super) fn run_world(&mut self, command: WorldCommand) -> Result<Value, String> {
-        let earth = self.explorer.active == Body::Earth;
+        let earth = self.explorer.on_earth();
         Ok(match command {
             WorldCommand::EarthModel(p) => {
                 let model = EarthModel::from_code(&p.model).ok_or("unknown Earth model")?;

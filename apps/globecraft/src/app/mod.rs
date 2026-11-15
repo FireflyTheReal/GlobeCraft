@@ -85,6 +85,9 @@ pub(crate) use update_restart::RestartRequest;
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
 const PAN_SPEED_POINTS_PER_SECOND: f64 = 350.0;
 const BOUNDARY_POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// While a refreshing layer is on, the interface wakes at least this often, so its
+/// services refresh without the user moving.
+const LIVE_SERVICE_HEARTBEAT: Duration = Duration::from_secs(30);
 /// How often the whole settings tree is compared with the saved copy. Settings change
 /// by hand, so a few checks a second save promptly without a deep compare every frame.
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(250);
@@ -534,7 +537,7 @@ impl eframe::App for App {
                 // Airports by code: for the search box and a selected flight's route.
                 airports: self.picked.flight.selected().is_some()
                     || !self.search.query.trim().is_empty(),
-                tomtom_key: &self.keys.tomtom,
+                tomtom_key: self.keys.get(globecraft_data::keys::TOMTOM),
             },
         );
         self.update_time_zones(ctx, earth);
@@ -583,7 +586,7 @@ impl eframe::App for App {
                 || self.layer(MapLayer::Aurora)
                 || self.user_layers_refresh())
         {
-            ctx.request_repaint_after(Duration::from_secs(30));
+            ctx.request_repaint_after(LIVE_SERVICE_HEARTBEAT);
         }
         self.poll_files(ctx);
         #[cfg(feature = "assistant")]
