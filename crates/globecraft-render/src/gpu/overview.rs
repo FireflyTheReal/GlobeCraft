@@ -7,6 +7,9 @@ const MIN_GPU_ALTITUDE_KM: f64 = 1000.0;
 const MAX_TRACKED_ZOOM: u8 = 10;
 const TILE_TABLE_SIZE: usize = 2048;
 const MAX_RASTER_PIXELS: usize = 2000 * 2000;
+/// How long a frame may take on the GPU before the device counts as failed. Frames
+/// take milliseconds; the slowest software adapter measured took 0.15 s.
+const FRAME_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Marks the night lights' tiles in the tile table's level word (levels are below 32).
 pub(super) const LIGHTS_TAG: u32 = 0x100;
 
@@ -270,8 +273,19 @@ impl Overview {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        if let Err(error) = device.poll(wgpu::PollType::wait_indefinitely()) {
-            return Err((error.to_string(), pixels, true));
+        // Never wait on the driver without a limit: a device that stops answering
+        // must not stop the globe (the frame is then drawn on the CPU).
+        // shortcut: bounds the wait for the frame only, not a driver call that never
+        // returns; move GPU work to its own watched thread if such hangs are reported.
+        if let Err(error) = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(FRAME_WAIT_LIMIT),
+        }) {
+            return Err((
+                format!("GPU frame not finished within {FRAME_WAIT_LIMIT:?}: {error}"),
+                pixels,
+                true,
+            ));
         }
         if let Err(error) = rx
             .recv()

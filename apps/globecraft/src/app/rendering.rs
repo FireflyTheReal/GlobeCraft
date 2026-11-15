@@ -53,8 +53,9 @@ impl Renderer {
         allow_gpu: bool,
     ) -> Self {
         let admission_cache = cache.clone();
-        let mut backend = globecraft_render::backend::FrameRenderer::new(
-            globecraft_render::backend::BackendPreference::from_environment(allow_gpu),
+        let mut backend = globecraft_render::backend::FrameRenderer::from_environment(
+            allow_gpu,
+            globecraft_data::gpu_start_marker(),
         );
         let mut overlay_preparer =
             globecraft_render::overlays::OverlayPreparer::with_elevation(cache.clone());

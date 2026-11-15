@@ -111,6 +111,8 @@ impl Category {
                 "settings-category-graphics",
                 "settings-uncap-fps-toggle",
                 "settings-frame-sync-help",
+                "settings-gpu-globe-toggle",
+                "settings-gpu-globe-help",
             ],
             Self::Data => &[
                 "settings-cache-section-title",

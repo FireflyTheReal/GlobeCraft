@@ -67,8 +67,8 @@ The CPU chooses specialized sphere/ellipsoid row kernels before entering pixel
 loops. Kernel selection matches surface geometry exhaustively, so adding a surface
 family requires an explicit decision. Ellipsoid ray coefficients are prepared once
 per frame. There is no per-pixel virtual model dispatch. The original sphere raster
-arithmetic and raster fixtures remain intact. The experimental GPU shader supports the sphere
-only; WGS 84 explicitly selects the CPU path, including when GPU was requested.
+arithmetic and raster fixtures remain intact. The GPU shader draws both models with one
+kernel: a sphere is the ellipsoid whose axes are all one.
 Eframe's UI backend is independent of this choice.
 Ellipsoid sampling reuses the unit normal's sine/cosine for curvature, texture
 coordinates and grid widths instead of repeating angle/trigonometric conversions.

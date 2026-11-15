@@ -1,13 +1,19 @@
 name: GPU parity
 
-# Runs the experimental GPU globe renderer against the CPU renderer (every provider,
-# poles, dateline, sunlight, atmosphere, loaded/pending/missing imagery) and its warm
-# frame benchmark on each platform's runner adapter: Metal on macOS, Direct3D 12 on
-# Windows, Vulkan (lavapipe, a software rasterizer) on Linux. Software adapters are
-# accepted here with GLOBECRAFT_GPU_ALLOW_SOFTWARE and checked by error statistics.
-# Manual only; roadmap 8.2.
+# Runs the GPU globe renderer against the CPU renderer (every provider, both Earth
+# models, poles, dateline, sunlight, atmosphere, night lights, loaded/pending/missing
+# imagery), its device-loss recovery and its warm frame benchmark on each platform's
+# runner adapter: Metal on macOS, Direct3D 12 on Windows, Vulkan (lavapipe, a software
+# rasterizer) on Linux. Software adapters are accepted here with
+# GLOBECRAFT_GPU_ALLOW_SOFTWARE and checked by error statistics. Runs when the
+# renderer changes (the tests are ignored elsewhere, and the GPU path once fell
+# behind the CPU's for ten days unseen) and by hand; roadmap 8.2.
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - crates/globecraft-render/**
+      - .github/workflows/gpu-parity.yml
 
 permissions:
   contents: read
@@ -41,6 +47,8 @@ jobs:
           set -o pipefail
           cargo test -p globecraft-render --release --locked gpu_overview_matches_cpu \
             -- --ignored --nocapture --test-threads=1 2>&1 | tee parity.txt
+          cargo test -p globecraft-render --release --locked gpu_device_loss_publishes_a_cpu_frame \
+            -- --ignored --nocapture --test-threads=1 2>&1 | tee -a parity.txt
           cargo test -p globecraft-render --release --locked warm_gpu_frame_time \
             -- --ignored --nocapture --test-threads=1 2>&1 | tee -a parity.txt
       - name: Summary

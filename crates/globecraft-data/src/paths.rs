@@ -104,6 +104,12 @@ pub(crate) fn config_dir() -> PathBuf {
     base.map_or_else(cache_dir, |base| base.join(folder))
 }
 
+/// The file that guards the GPU renderer's start (`globecraft_render::backend`): left
+/// behind by a start that crashed, so the next one keeps to the CPU.
+pub fn gpu_start_marker() -> PathBuf {
+    config_dir().join("gpu-start")
+}
+
 /// Moves settings and keys written by versions that kept them with the caches into
 /// [`config_dir`]. A file already there wins. Returns how many moved. Call once at
 /// startup, after [`migrate_legacy_data`] and before anything reads settings.

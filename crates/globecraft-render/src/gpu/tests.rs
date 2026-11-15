@@ -321,3 +321,20 @@ fn motion_and_idle_frames_choose_the_same_level() {
     assert!(idle.is_some());
     assert_eq!(idle, motion);
 }
+
+#[test]
+fn the_self_check_accepts_rounding_and_refuses_wrong_pictures() {
+    let cpu = vec![100u8; 4000];
+    let mut gpu = cpu.clone();
+    gpu[..2000].fill(101);
+    assert_eq!(parity(&gpu, &cpu), Ok(()), "one level is rounding");
+    // A few channels two levels off are imagery contours; many are a wrong picture.
+    gpu[..39].fill(102);
+    assert_eq!(parity(&gpu, &cpu), Ok(()));
+    gpu[..40].fill(102);
+    assert_eq!(parity(&gpu, &cpu), Err((40, 2)));
+    let mut gpu = cpu.clone();
+    gpu[7] = 100 + IMAGERY_MAX_DIFFERENCE + 1;
+    assert_eq!(parity(&gpu, &cpu), Err((1, IMAGERY_MAX_DIFFERENCE + 1)));
+    assert!(parity(&cpu[..8], &cpu).is_err(), "a short picture");
+}
