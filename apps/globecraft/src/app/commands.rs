@@ -155,7 +155,8 @@ mod tests {
                 if leading.matches(',').count() > 2
                     || !leading
                         .chars()
-                        .all(|c| c.is_ascii_lowercase() || "_&, \n".contains(c))
+                        // `\r`: a Windows checkout ends lines with CR LF.
+                        .all(|c| c.is_ascii_lowercase() || "_&, \r\n".contains(c))
                 {
                     continue;
                 }
