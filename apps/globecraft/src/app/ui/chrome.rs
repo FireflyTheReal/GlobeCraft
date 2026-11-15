@@ -220,7 +220,7 @@ impl App {
                 });
                 self.header_drag(ui, &drag);
             });
-        self.tab_strip_rect = Some(header.response.rect);
+        self.chrome.tab_strip_rect = Some(header.response.rect);
         self.suggestion_popup(ui, field_rect);
     }
 
@@ -281,7 +281,7 @@ impl App {
                     let start = ui.next_widget_position().x;
                     super::cursor::cursor_readout(
                         ui,
-                        self.cursor,
+                        self.pointer.cursor,
                         start + CURSOR_READOUT_WIDTH,
                         self.settings.coordinate_display,
                         lang,
@@ -293,15 +293,17 @@ impl App {
                     // level 10, so moving the pointer loads few). Padded so the readouts
                     // after it hold still.
                     if self.explorer.on_earth() {
-                        let metres = self.cursor.and_then(|(lat, lon)| {
+                        let metres = self.pointer.cursor.and_then(|(lat, lon)| {
                             if self.terrain_active() {
-                                self.cache.loaded_elevation_m(
+                                self.tiles.cache.loaded_elevation_m(
                                     lat,
                                     lon,
                                     globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
                                 )
                             } else {
-                                self.cache.elevation_m(lat, lon, CURSOR_ELEVATION_ZOOM)
+                                self.tiles
+                                    .cache
+                                    .elevation_m(lat, lon, CURSOR_ELEVATION_ZOOM)
                             }
                         });
                         let value = metres.map_or_else(
@@ -383,7 +385,7 @@ impl App {
                         ));
                     self.units_menu(&altitude_response);
                     if altitude_response.clicked() {
-                        self.altitude_editor = Some(super::altitude::AltitudeEditor::new(
+                        self.windows.altitude_editor = Some(super::altitude::AltitudeEditor::new(
                             self.cam.alt,
                             self.distance_units(),
                             altitude_response.rect.left_top(),
@@ -391,18 +393,18 @@ impl App {
                     }
                     separator(ui, &t);
                     let heading = self
-                        .imagery
+                        .frame
                         .renderer
                         .displayed_view()
                         .map_or(self.cam.heading, |(cam, _)| cam.heading);
                     if super::compass::heading_readout(ui, heading, lang) {
                         self.cam.heading = 0.0;
-                        self.fly = None;
+                        self.motion.fly = None;
                         self.touch();
                         ui.request_repaint();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let n = self.cache.inflight();
+                        let n = self.tiles.cache.inflight();
                         let (text, color) = if n > 0 {
                             (
                                 lang.format(
@@ -443,13 +445,15 @@ impl App {
                         }
                         let action = super::updater::indicator(
                             ui,
-                            self.updater.state(),
+                            self.updates.service.state(),
                             lang,
-                            self.update_restart.error.as_deref(),
-                            self.update_restart.is_saving(),
+                            self.updates.restart.error.as_deref(),
+                            self.updates.restart.is_saving(),
                         );
                         match action {
-                            super::updater::Action::InstallOrRetry => self.updater.activate(),
+                            super::updater::Action::InstallOrRetry => {
+                                self.updates.service.activate()
+                            }
                             super::updater::Action::Restart => self.request_update_restart(ui),
                             super::updater::Action::OpenReleases => {
                                 ui.open_url(egui::OpenUrl::new_tab(
@@ -460,7 +464,7 @@ impl App {
                         }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
-                            status::show(ui, &self.status, self.status_file.as_ref());
+                            status::show(ui, &self.status, self.files.status.as_ref());
                         });
                     });
                 });

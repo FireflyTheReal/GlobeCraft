@@ -19,12 +19,11 @@ impl App {
             .filter_map(|layer| match (&layer.preset, &layer.source) {
                 // A library source by its name, so it opens with its own settings.
                 (Some(preset), _) => Some(format!("{PRESET_PREFIX}{preset}")),
+                // Files on this computer (feature files, MBTiles and PMTiles archives)
+                // mean nothing elsewhere, and their paths are nobody else's business.
+                (None, _) if layer.is_local() => None,
                 (None, UserSource::Tiles { template, .. }) => Some(template.clone()),
-                // Files on this computer mean nothing elsewhere.
-                (None, UserSource::Features { location, .. }) if location.starts_with("http") => {
-                    Some(location.clone())
-                }
-                _ => None,
+                (None, UserSource::Features { location, .. }) => Some(location.clone()),
             })
             .collect();
         ViewLink {

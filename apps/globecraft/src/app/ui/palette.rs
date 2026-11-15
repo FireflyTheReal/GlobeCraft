@@ -115,7 +115,7 @@ fn hits(app: &App, query: &str) -> Vec<Hit> {
 
 impl App {
     pub(in crate::app) fn command_search_window(&mut self, ctx: &egui::Context) {
-        let Some(mut state) = self.command_search.take() else {
+        let Some(mut state) = self.windows.command_search.take() else {
             return;
         };
         let t = Tokens::get(ctx);
@@ -254,7 +254,7 @@ impl App {
             self.run_reporting("ui.pane.assistant", json!({"ask": question}));
         }
         if keep {
-            self.command_search = Some(state);
+            self.windows.command_search = Some(state);
         }
     }
 }

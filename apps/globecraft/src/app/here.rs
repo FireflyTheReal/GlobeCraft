@@ -114,14 +114,14 @@ impl App {
     /// Closes the cards other than `keep`, which is opening: the globe shows one card.
     pub(super) fn close_other_cards(&mut self, keep: Card) {
         if keep != Card::Flight {
-            self.selection.flight.clear();
-            self.selection.flights_shown = None;
+            self.picked.flight.clear();
+            self.picked.snapshot = None;
         }
         if keep != Card::Satellite {
-            self.selection.satellite.clear();
+            self.picked.satellite.clear();
         }
         if keep != Card::Here {
-            self.selection.here = None;
+            self.pointer.here_card = None;
         }
     }
 }
@@ -139,14 +139,14 @@ impl App {
             })
             .collect();
         // The finest ground height; asking for it loads the elevation tile.
-        let elevation_m = self.cache.elevation_m(
+        let elevation_m = self.tiles.cache.elevation_m(
             lat,
             lon,
             globecraft_data::tiles::Provider::TerrainDem.max_zoom(),
         );
         let nearest = self
             .borders
-            .drawn
+            .shown
             .labels
             .iter()
             .filter(|label| label.kind == globecraft_data::boundaries::LabelKind::City)
@@ -168,7 +168,7 @@ impl App {
             elevation_m,
             country: self
                 .borders
-                .drawn
+                .shown
                 .country_name_at(lat, lon, self.lang)
                 .map(str::to_owned),
             admin,
@@ -233,25 +233,19 @@ impl App {
     /// border tiles in memory change.
     fn here_admin(&mut self, card: HereCard) -> AdminAreas {
         let revision = self.borders.loader.border_tiles_revision();
-        match &self.selection.here_admin {
-            Some(known) if known.card == card && known.border_revision == revision => {
-                known.areas.clone()
-            }
+        match &self.pointer.here_admin {
+            Some((at, seen, admin)) if *at == card && *seen == revision => admin.clone(),
             _ => {
-                let areas = self.borders.loader.admin_areas_at(card.lat, card.lon);
-                self.selection.here_admin = Some(super::selection::HereAdmin {
-                    card,
-                    border_revision: revision,
-                    areas: areas.clone(),
-                });
-                areas
+                let admin = self.borders.loader.admin_areas_at(card.lat, card.lon);
+                self.pointer.here_admin = Some((card, revision, admin.clone()));
+                admin
             }
         }
     }
 
     /// The card, while one is open.
     pub(super) fn here_window(&mut self, ctx: &egui::Context, rect: egui::Rect) {
-        let Some(card) = self.selection.here else {
+        let Some(card) = self.pointer.here_card else {
             return;
         };
         let lang = self.lang;
@@ -371,7 +365,7 @@ impl App {
             self.run_reporting(id, params);
         }
         if !open {
-            self.selection.here = None;
+            self.pointer.here_card = None;
         }
     }
 }

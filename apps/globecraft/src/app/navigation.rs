@@ -26,16 +26,16 @@ impl App {
         }
     }
     pub(super) fn set_language_preference(&mut self, preference: LanguagePreference) {
-        self.language_preference = preference;
-        self.system_locale = sys_locale::get_locale().unwrap_or_default();
-        self.lang = preference.resolve(&self.system_locale);
-        self.settings_writer.language(preference);
+        self.locale.preference = preference;
+        self.locale.system = sys_locale::get_locale().unwrap_or_default();
+        self.lang = preference.resolve(&self.locale.system);
+        self.saved.writer.language(preference);
         self.status = self.lang.text("app-ready-status").into();
         // No private Explorer field access: keep user state intact on language changes.
     }
 
     pub(super) fn touch(&mut self) {
-        self.last_interact = Instant::now();
+        self.frame.last_interact = Instant::now();
     }
 
     pub(super) fn fly_to(&mut self, lat: f64, lon: f64, alt: f64) {
@@ -51,18 +51,18 @@ impl App {
         heading_deg: Option<f64>,
         tilt_deg: Option<f64>,
     ) {
-        self.fly = Some(
+        self.motion.fly = Some(
             Flight::new_for_model(self.cam, lat, lon, alt, self.active_earth_model())
                 .with_orientation(heading_deg, tilt_deg),
         );
     }
 
     pub(super) fn step_fly(&mut self, dt: f64) {
-        if let Some(mut flight) = self.fly.take() {
+        if let Some(mut flight) = self.motion.fly.take() {
             self.cam = flight.advance(dt);
             self.touch();
             if !flight.is_finished() {
-                self.fly = Some(flight);
+                self.motion.fly = Some(flight);
             }
         }
     }
@@ -81,14 +81,14 @@ impl App {
             rect,
             aspect,
             self.active_earth_model(),
-            self.ground_km,
+            self.motion.ground_km,
         );
     }
 
     /// The view as drawn: the camera around the ground point raised to the terrain.
     pub(super) fn view_basis(&self, aspect: f64) -> globecraft_core::camera::Basis {
         self.cam
-            .basis_over_ground(aspect, self.active_earth_model(), self.ground_km)
+            .basis_over_ground(aspect, self.active_earth_model(), self.motion.ground_km)
     }
 
     /// Relief under the overlays, when terrain is drawn.
@@ -96,7 +96,7 @@ impl App {
         self.terrain_active()
             .then(|| globecraft_render::overlays::OverlayGround {
                 exaggeration: self.settings.layers.terrain_exaggeration,
-                generation: self.cache.elevation_generation(),
+                generation: self.tiles.cache.elevation_generation(),
             })
     }
 
@@ -105,11 +105,8 @@ impl App {
     /// setting while relief is off. Owned, so callers can still change the app.
     pub(super) fn ground_source(&self) -> GroundSource {
         GroundSource {
-            cache: self.cache.clone(),
-            ground: self
-                .imagery
-                .renderer
-                .displayed_ground(self.overlay_ground()),
+            cache: self.tiles.cache.clone(),
+            ground: self.frame.renderer.displayed_ground(self.overlay_ground()),
             altitude_km: self.cam.alt,
         }
     }
@@ -130,7 +127,8 @@ impl App {
             globecraft_render::MAX_EXAGGERATION,
         ));
         let ground_km = |app: &Self, lat: f64, lon: f64, zoom: u8| {
-            app.cache
+            app.tiles
+                .cache
                 .elevation_m(lat, lon, zoom)
                 .map(|metres| f64::from(metres) / METERS_PER_KM * exaggeration)
         };
@@ -140,18 +138,18 @@ impl App {
             .log2()
             .clamp(0.0, 15.0) as u8;
         let wanted = if self.terrain_active() {
-            ground_km(self, self.cam.lat, self.cam.lon, zoom).unwrap_or(self.ground_km)
+            ground_km(self, self.cam.lat, self.cam.lon, zoom).unwrap_or(self.motion.ground_km)
         } else {
             0.0
         };
         let dt = super::frame_timing::animation_delta_secs(ctx);
         let ease = 1.0 - (-dt / GROUND_EASE_SECS).exp();
-        let gap = wanted - self.ground_km;
+        let gap = wanted - self.motion.ground_km;
         if gap.abs() > GROUND_SETTLED_KM {
-            self.ground_km += gap * ease;
+            self.motion.ground_km += gap * ease;
             ctx.request_repaint();
         } else {
-            self.ground_km = wanted;
+            self.motion.ground_km = wanted;
         }
         if !self.terrain_active() || self.cam.tilt <= 0.0 {
             return;

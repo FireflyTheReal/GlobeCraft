@@ -544,7 +544,10 @@ fn ribbon_menus_screenshot() {
         });
         settle(&mut h, 0.2);
         let app = h.state_mut();
-        assert!(app.ribbon_tools.capture.is_none(), "the dialog closed");
+        assert!(
+            app.chrome.ribbon_tools.capture.is_none(),
+            "the dialog closed"
+        );
         assert_eq!(
             app.settings.workspace.shortcuts["ui.legend"],
             "command+alt+L"

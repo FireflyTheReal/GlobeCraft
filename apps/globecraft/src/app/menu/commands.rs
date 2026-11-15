@@ -45,6 +45,7 @@ pub(in crate::app) enum Action {
     AddData,
     Save,
     SaveAs,
+    Export,
     Screenshot,
     Quit,
     Undo,
@@ -69,13 +70,14 @@ pub(in crate::app) enum Action {
     ReportIssue,
 }
 impl Action {
-    pub(super) const ALL: [Self; 28] = [
+    pub(super) const ALL: [Self; 29] = [
         Self::About,
         Self::Settings,
         Self::Open,
         Self::AddData,
         Self::Save,
         Self::SaveAs,
+        Self::Export,
         Self::Screenshot,
         Self::Quit,
         Self::Undo,
@@ -102,9 +104,12 @@ impl Action {
     pub(super) fn section(self) -> Section {
         match self {
             Self::About | Self::Settings | Self::Quit => Section::Application,
-            Self::Open | Self::AddData | Self::Save | Self::SaveAs | Self::Screenshot => {
-                Section::File
-            }
+            Self::Open
+            | Self::AddData
+            | Self::Save
+            | Self::SaveAs
+            | Self::Export
+            | Self::Screenshot => Section::File,
             Self::Undo | Self::Redo => Section::Edit,
             Self::Sidebar
             | Self::ShowLayers
@@ -127,6 +132,7 @@ impl Action {
             Self::AddData => "menu-add-data",
             Self::Save => "menu-kml-save",
             Self::SaveAs => "menu-kml-save-as",
+            Self::Export => "menu-places-export",
             Self::Screenshot => "menu-screenshot-save",
             Self::Quit => "menu-quit-action",
             Self::Undo => "edit-undo-action",
@@ -163,6 +169,7 @@ impl Action {
             Self::AddData => ("ui.addData", Value::Null),
             Self::Save => ("places.save", Value::Null),
             Self::SaveAs => ("places.saveAs", Value::Null),
+            Self::Export => ("places.export", Value::Null),
             Self::Screenshot => ("file.screenshot", Value::Null),
             Self::Quit => ("app.quit", Value::Null),
             Self::Undo => ("edit.undo", Value::Null),

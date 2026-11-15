@@ -129,7 +129,10 @@ impl UserLayers {
             if !layer.visible || !earth {
                 continue;
             }
-            let repaint = super::live_services::repainter(ctx);
+            let repaint = {
+                let ctx = ctx.clone();
+                move || ctx.request_repaint()
+            };
             match &mut loaded.stream {
                 Stream::Raster { tiles, snapshot } => {
                     tiles.set_date(date.clone());
@@ -604,7 +607,7 @@ impl super::App {
         };
         Ok(match id {
             "ui.addData" => {
-                self.add_data = Some(Default::default());
+                self.windows.add_data = Some(Default::default());
                 json!({})
             }
             "data.add" => {

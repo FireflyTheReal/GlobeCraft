@@ -1,8 +1,16 @@
-//! The camera and place search. Handlers for the `camera.*`, `search.*` commands.
-use super::*;
+//! Camera and place search commands (`camera.*`, `search.*`).
+use super::{bool_param, f64_param, position, str_param, toggled};
+use crate::app::App;
+use serde_json::{Value, json};
+
+/// Camera altitude of the Global View.
+const GLOBAL_VIEW_ALTITUDE_KM: f64 = 14_000.0;
+/// Zoom In/Out buttons move the camera by this factor.
+const ZOOM_STEP_FACTOR: f64 = 0.5;
 
 impl App {
-    pub(in crate::app) fn run_camera(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+    /// Runs a `camera.*` or `search.*` command.
+    pub(super) fn run_camera(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         let ctx = self.ctx.clone();
         Ok(match id {
             "camera.flyTo" => {
@@ -17,7 +25,7 @@ impl App {
                 json!({"flying_to": {"lat": lat, "lon": lon, "altitude_km": alt}})
             }
             "camera.set" => {
-                self.fly = None;
+                self.motion.fly = None;
                 let lat = f64_param(p, "lat")?.unwrap_or(self.cam.lat);
                 let lon = f64_param(p, "lon")?.unwrap_or(self.cam.lon);
                 globecraft_core::coordinates::validate_coordinates(lat, lon)
@@ -70,13 +78,13 @@ impl App {
                 }
             },
             "camera.zoomIn" => {
-                self.fly = None;
+                self.motion.fly = None;
                 self.zoom(ZOOM_STEP_FACTOR);
                 self.touch();
                 self.camera_json()
             }
             "camera.zoomOut" => {
-                self.fly = None;
+                self.motion.fly = None;
                 self.zoom(1.0 / ZOOM_STEP_FACTOR);
                 self.touch();
                 self.camera_json()
@@ -87,7 +95,7 @@ impl App {
                 self.camera_json()
             }
             "camera.tilt" => {
-                self.fly = None;
+                self.motion.fly = None;
                 let tilt = match (f64_param(p, "tilt_deg")?, f64_param(p, "step")?) {
                     (Some(tilt), _) => tilt,
                     (None, Some(step)) => self.cam.tilt + step,
@@ -107,10 +115,16 @@ impl App {
                 self.camera_json()
             }
             "camera.autoRotate" => {
-                self.auto_rotate = toggled(p, self.auto_rotate);
-                json!({"auto_rotate": self.auto_rotate})
+                self.motion.auto_rotate = toggled(p, self.motion.auto_rotate);
+                json!({"auto_rotate": self.motion.auto_rotate})
             }
             _ => return Err(format!("unknown command '{id}'")),
         })
+    }
+
+    pub(super) fn camera_json(&self) -> Value {
+        json!({"lat": self.cam.lat, "lon": self.cam.lon, "altitude_km": self.cam.alt,
+            "heading_deg": self.cam.heading, "tilt_deg": self.cam.tilt,
+            "max_tilt_deg": self.cam.max_tilt()})
     }
 }

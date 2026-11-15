@@ -46,7 +46,7 @@ fn add_data_screenshots() {
     let _ = app.run("ui.addData", Value::Null);
     settle(&mut h, 4.0);
     save(&mut h, &dir, "08-add-data-library");
-    h.state_mut().add_data = None;
+    h.state_mut().windows.add_data = None;
     settle(&mut h, 1.0);
     save(&mut h, &dir, "09-user-layer");
     // The Data pane, with the sample starred and the earthquakes in the history.
@@ -408,7 +408,7 @@ fn legend_screenshot() {
         app.run("layer.show", json!({"layer": layer, "visible": true}))
             .expect("layer");
     }
-    app.selection
+    app.picked
         .flight
         .set(globecraft_data::aircraft::route::SelectedFlight {
             hex: "3c6a9a".into(),

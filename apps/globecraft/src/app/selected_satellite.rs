@@ -121,11 +121,11 @@ impl App {
                 };
                 let name = satellite.name.clone();
                 self.close_other_cards(super::here::Card::Satellite);
-                self.selection.satellite.norad = Some(norad.clone());
+                self.picked.satellite.norad = Some(norad.clone());
                 Ok(json!({"norad": norad, "name": name}))
             }
             "satellite.clear" => {
-                self.selection.satellite.norad = None;
+                self.picked.satellite.norad = None;
                 Ok(json!({"cleared": true}))
             }
             _ => Err(format!("unknown command {id}")),
@@ -133,7 +133,7 @@ impl App {
     }
 
     fn selected_satellite(&self) -> Option<&Satellite> {
-        let norad = self.selection.satellite.selected()?;
+        let norad = self.picked.satellite.selected()?;
         self.live
             .satellites
             .snapshot()

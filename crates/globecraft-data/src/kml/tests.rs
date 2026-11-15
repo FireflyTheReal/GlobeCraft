@@ -261,3 +261,78 @@ fn damaged_documents_are_refused_without_panicking() {
         let _ = parse_tree(&String::from_utf8_lossy(&damaged), Lang::En);
     }
 }
+
+#[test]
+fn files_in_older_encodings_or_with_a_byte_order_mark_are_read() {
+    const BODY: &str = "<kml><Placemark><name>S\u{e3}o Paulo</name><Point><coordinates>-46.6,-23.5</coordinates></Point></Placemark></kml>";
+    let latin1: Vec<u8> = BODY.chars().map(|c| c as u8).collect();
+    let mut utf8_marked = vec![0xef, 0xbb, 0xbf];
+    utf8_marked.extend_from_slice(BODY.as_bytes());
+    let utf16 = |big_endian: bool| -> Vec<u8> {
+        std::iter::once(0xfeff)
+            .chain(BODY.encode_utf16())
+            .flat_map(|unit| {
+                if big_endian {
+                    unit.to_be_bytes()
+                } else {
+                    unit.to_le_bytes()
+                }
+            })
+            .collect()
+    };
+    for (label, bytes) in [
+        ("UTF-8", BODY.as_bytes().to_vec()),
+        ("UTF-8 with a mark", utf8_marked),
+        ("Latin-1", latin1),
+        ("UTF-16 little-endian", utf16(false)),
+        ("UTF-16 big-endian", utf16(true)),
+    ] {
+        let path = std::env::temp_dir().join(format!(
+            "globecraft-encoding-{}-{}.kml",
+            std::process::id(),
+            label.len()
+        ));
+        std::fs::write(&path, bytes).unwrap();
+        let loaded = load_kml(path.to_str().unwrap(), Lang::En);
+        std::fs::remove_file(&path).unwrap();
+        let places = loaded.unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(places.first().unwrap().name, "S\u{e3}o Paulo", "{label}");
+    }
+}
+
+#[test]
+fn a_save_replaces_the_file_whole_and_leaves_nothing_beside_it() {
+    let dir = std::env::temp_dir().join(format!("globecraft-kml-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("places.kml");
+    let mark = |name: &str| Placemark {
+        name: name.into(),
+        desc: String::new(),
+        lat: 1.0,
+        lon: 2.0,
+    };
+    save_kml(path.to_str().unwrap(), &places(&[mark("First")])).unwrap();
+    save_kml(path.to_str().unwrap(), &places(&[mark("Second")])).unwrap();
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["places.kml"]);
+    let loaded = load_kml(path.to_str().unwrap(), Lang::En).unwrap();
+    assert_eq!(loaded.first().unwrap().name, "Second");
+    // A place that cannot be written leaves the file as it was.
+    let bad = Placemark {
+        lat: 95.0,
+        ..mark("Bad")
+    };
+    assert!(save_kml(path.to_str().unwrap(), &places(&[bad])).is_err());
+    assert_eq!(
+        load_kml(path.to_str().unwrap(), Lang::En)
+            .unwrap()
+            .first()
+            .unwrap()
+            .name,
+        "Second"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

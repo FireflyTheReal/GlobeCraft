@@ -108,13 +108,7 @@ impl App {
         {
             credits.push(lg.text("satellites-credit").to_owned());
         }
-        if earth
-            && self.layer(MapLayer::Traffic)
-            && !self
-                .service_key(globecraft_data::keys::TOMTOM)
-                .trim()
-                .is_empty()
-        {
+        if earth && self.layer(MapLayer::Traffic) && !self.keys.tomtom.trim().is_empty() {
             credits.push(lg.text("traffic-credit").to_owned());
         }
         // Credits of the layers the user added, as their licences ask.
@@ -127,7 +121,7 @@ impl App {
                     .map(|layer| layer.attribution.clone()),
             );
         }
-        if self.imagery.renderer.displayed_sky {
+        if self.frame.renderer.displayed_sky {
             credits.push(lg.text("sky-short-credit").to_owned());
         }
         credits.dedup();

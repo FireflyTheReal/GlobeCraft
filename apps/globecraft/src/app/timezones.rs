@@ -259,10 +259,11 @@ fn borders(
 
 impl App {
     pub(super) fn update_time_zones(&mut self, ctx: &egui::Context, earth: bool) {
+        let wake = ctx.clone();
         self.live.time_zones.update(
             &self.runtime,
             earth && self.layer(MapLayer::TimeZones),
-            super::live_services::repainter(ctx),
+            move || wake.request_repaint(),
         );
     }
 
@@ -281,14 +282,15 @@ impl App {
             scale: self.settings.map_scale,
         };
         let view = (self.cam.lat, self.cam.lon, self.cam.alt);
-        self.time_zone_shapes
+        self.live
+            .time_zone_shapes
             .paint(painter, basis, rect, &zones, (look, view));
     }
 
     /// The local time under the cursor at the app's time, as the status bar shows it:
     /// `15:15 CET (UTC+1)`.
     pub(super) fn cursor_local_time(&self) -> Option<String> {
-        let (lat, lon) = self.cursor?;
+        let (lat, lon) = self.pointer.cursor?;
         let zones = self.live.time_zones.zones()?;
         let local = zones.zone_at(lat, lon)?.local_time(self.scene_unix())?;
         Some(match local.abbreviation {

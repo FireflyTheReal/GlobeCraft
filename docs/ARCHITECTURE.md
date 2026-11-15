@@ -82,14 +82,58 @@ RGBA buffers are reused when uniquely owned; screenshots retain immutable `Arc`
 snapshots, so an export never reads a recycled frame. PNG encoding runs on the
 bounded file worker.
 
+## Application state
+
+`App` (`apps/globecraft/src/app/mod.rs`) holds what every feature reads and one state
+per feature (roadmap 10.2). Shared, as fields of `App` itself: `ctx`, `runtime`, `lang`,
+`settings`, `cam`, `status` and `time`. Everything else belongs to a feature state, a
+plain struct in the feature's module:
+
+| Field | State | Holds |
+| --- | --- | --- |
+| `chrome` | `chrome::ChromeState` | Header and ribbon: style scale, ribbon tools and peek, native menu (macOS) |
+| `windows`, `panes` | `windows::WindowsState`, `panes::PanesState` | Open windows and dialogs; what the Settings pages, Layers pane and colour keys show |
+| `locale`, `saved`, `keys` | `locale::LocaleState`, `saved::SavedSettings`, `keys::KeysState` | Language choice and system region; the settings on disk and their writer; service keys as typed |
+| `motion`, `nav` | `motion::MotionState`, `navigation::NavState` | A flight, the idle rotation, the followed ground; the navigator's drags |
+| `tiles` | `cache::TilesState` | The imagery cache, its Settings controls, tiles loaded ahead |
+| `frame` | `frame::FrameState` | Renderer, displayed frame and fade, render wake-up, screenshot in progress, diagnostics |
+| `borders` | `borders::BordersState` | Boundary data and loader, close-up place names, overlay geometry cache |
+| `live` | `live::LiveState` | Aircraft, vessels, satellites, aurora, airports, time zones, sea names, weather maps, traffic, and their drawn shapes |
+| `map_data` | `map_data::MapDataState` | Roads, transport and places of interest: tiles and shapes |
+| `picked`, `pointer` | `picked::PickedState`, `pointer::PointerState` | The picked flight and satellite; the pointer on the globe and the "What's here?" card |
+| `files`, `updates` | `files::FilesState`, `update_restart::UpdatesState` | File jobs and their status; the update service and restart |
+| `search`, `places`, `measure`, `wayback`, `timeline`, `assistant`, `explorer`, `flat_earth`, `user_layers` | in the modules of the same name | The features split out first |
+
+Rules for new state:
+
+- A new field goes into the state of its feature; a new feature gets its own state
+  struct in its own module. `App` gains a field only for a new state or for a value that
+  most features read.
+- A state's fields are `pub(super)`: the app's modules read them directly, as
+  `self.frame.texture`. Borrows of different states (and of different fields of one
+  state) stay disjoint that way, so a draw function can hold `&mut self.live.geometry`
+  and `&self.tiles.cache` together; an accessor method on `App` would borrow all of it.
+- Logic that needs one state and a few plain inputs is a method of that state, taking
+  the inputs as a query struct (`LiveState::update_feeds(runtime, ctx, LiveQuery)`,
+  `MapDataState::update`). Logic that reads several states stays an `impl App` method in
+  the feature's module.
+- States are declared in the order their parts were before the split, which is the
+  order they are dropped in at exit.
+
 ## Commands and the interface
 
 `globecraft_core::commands` lists every action as a command: id, Fluent label/help keys,
 icon, ribbon tab, JSON-Schema parameters and reach (view, files, destructive, interface).
-`apps/globecraft/src/app/commands.rs` implements them in `App::run(id, params)` and reports
-enabled/checked state in `App::command_state`. The ribbon, File menu, macOS native menu,
-shortcuts, context menu, controllers, Command Search and the assistant all dispatch through
-it. `globecraft_core::layers::MapLayer` names every toggleable layer; data's `Settings`
+`App::run(id, params)` (`apps/globecraft/src/app/commands.rs`) hands each command to the
+feature that runs it: `commands::Feature::of(id)` picks the feature from the id's first
+part, and one handler per feature implements its commands (`commands/camera.rs`,
+`places.rs`, `ruler.rs`, `files.rs`, `layers.rs`, `interface.rs`, `settings.rs`,
+`info.rs`; `run_time`, `run_flight`, `run_satellite`, `run_user_data` and `run_legend`
+beside their states). A test checks that every command of the catalogue reaches a handler
+that names it. `commands/state.rs` reports enabled/checked state (`App::command_state`)
+and `commands/shortcuts.rs` owns the keyboard shortcuts. The ribbon, File menu, macOS
+native menu, shortcuts, context menu, controllers, Command Search and the assistant all
+dispatch through `App::run`. `globecraft_core::layers::MapLayer` names every toggleable layer; data's `Settings`
 stores their visibility (`layers`, plus the earlier `sky` and `grid_numbers` fields).
 
 The window is laid out like RustGIS (Apache-2.0, see CREDITS.md): header,

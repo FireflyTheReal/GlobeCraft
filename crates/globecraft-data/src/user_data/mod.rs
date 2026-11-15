@@ -133,10 +133,21 @@ impl UserLayer {
         crate::settings::map_style::Rgba::parse_hex(&self.color)
             .map_or([255, 176, 0], |c| [c.0[0], c.0[1], c.0[2]])
     }
+    /// Whether its data is a file on this computer: such a layer means nothing in a
+    /// link opened elsewhere.
+    pub fn is_local(&self) -> bool {
+        match &self.source {
+            UserSource::Tiles { template, .. } => archive::TileArchive::is_local(template),
+            UserSource::Features { location, .. } => !is_url(location),
+        }
+    }
     /// The host its data comes from; `None` for a file on this computer.
     pub fn network_host(&self) -> Option<&str> {
         let location = match &self.source {
-            UserSource::Tiles { template, .. } => template,
+            // An archive on the web is named after its kind: `pmtiles:https://…`.
+            UserSource::Tiles { template, .. } => {
+                template.strip_prefix(PMTILES_PREFIX).unwrap_or(template)
+            }
             UserSource::Features { location, .. } => location,
         };
         crate::network::host_of_url(location)
@@ -321,6 +332,22 @@ mod tests {
             preset: None,
         };
         assert_eq!(layer.network_host(), Some("tiles.example.org"));
+        assert!(!layer.is_local());
+        // A tile archive on the web is contacted too; one in a file is not.
+        let archive = |template: &str| UserSource::Tiles {
+            template: template.into(),
+            min_zoom: 0,
+            max_zoom: 10,
+            tile_px: 256,
+        };
+        layer.source = archive("pmtiles:https://maps.example.org/alps.pmtiles");
+        assert_eq!(layer.network_host(), Some("maps.example.org"));
+        assert!(!layer.is_local());
+        layer.source = archive("pmtiles:/home/me/alps.pmtiles");
+        assert_eq!(layer.network_host(), None);
+        assert!(layer.is_local());
+        layer.source = archive("mbtiles:/home/me/alps.mbtiles");
+        assert!(layer.is_local());
         layer.source = UserSource::Features {
             location: "https://user:pass@data.example.org:8443/feed.json".into(),
             format: FeatureFormat::GeoJson,

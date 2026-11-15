@@ -1,8 +1,13 @@
-//! The ruler, undo and redo. Handlers for the `ruler.*`, `edit.*` commands.
-use super::*;
+//! Ruler commands (`ruler.*`) and its undo history (`edit.*`).
+use super::{bool_param, position, str_param, toggled};
+use crate::app::App;
+use globecraft_core::units::RulerUnit;
+use globecraft_data::settings::workspace::RightPane;
+use serde_json::{Value, json};
 
 impl App {
-    pub(in crate::app) fn run_ruler(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+    /// Runs a `ruler.*` or `edit.*` command.
+    pub(super) fn run_ruler(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         let ctx = self.ctx.clone();
         Ok(match id {
             "ruler.enable" => {
@@ -44,7 +49,7 @@ impl App {
             "ruler.editPoints" => {
                 self.measure.paths.end_move();
                 self.measure.drag = None;
-                self.measure.point_editor = Some(super::super::ui::ruler::PointEditor::new((
+                self.measure.point_editor = Some(crate::app::ui::ruler::PointEditor::new((
                     self.cam.lat,
                     self.cam.lon,
                 )));
@@ -54,9 +59,9 @@ impl App {
             }
             "edit.undo" | "edit.redo" => {
                 let command = if id == "edit.undo" {
-                    super::super::ruler_history::HistoryCommand::Undo
+                    crate::app::ruler_history::HistoryCommand::Undo
                 } else {
-                    super::super::ruler_history::HistoryCommand::Redo
+                    crate::app::ruler_history::HistoryCommand::Redo
                 };
                 self.apply_ruler_history(command, &ctx);
                 self.ruler_json()

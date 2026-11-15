@@ -114,7 +114,7 @@ fn poi_zoom_stability() {
     for step in 0..30 {
         at(&mut h, 6.0 * 0.96f64.powi(step + 1));
         settle(&mut h, 0.4);
-        let drawn: Vec<_> = h.state().poi_shapes.drawn().to_vec();
+        let drawn: Vec<_> = h.state().map_data.poi_shapes.drawn().to_vec();
         let now: HashMap<String, (Option<usize>, egui::Pos2)> = drawn
             .iter()
             .filter(|(_, side, _)| side.is_some())
@@ -133,6 +133,7 @@ fn poi_zoom_stability() {
                         Some(_) => "name blocked",
                         None if h
                             .state()
+                            .map_data
                             .poi_shapes
                             .blocked()
                             .iter()
@@ -394,7 +395,7 @@ fn time_zones_screenshot() {
             "28-time-zones"
         },
     );
-    let cursor = h.state().cursor.expect("pointer over the globe");
+    let cursor = h.state().pointer.cursor.expect("pointer over the globe");
     assert!((2.5..17.5).contains(&cursor.1), "{cursor:?}");
     let local = h.state().cursor_local_time().expect("local time");
     assert_eq!(local, "14:00 CEST (UTC+2)");

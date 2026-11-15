@@ -21,6 +21,13 @@ pub(crate) struct RestartRequest {
     pub(crate) load_problem: Mutex<Option<String>>,
 }
 
+/// Updates (roadmap 10.2: one of the feature states split out of `App`): the service
+/// that finds and installs them, and the restart that finishes one.
+pub(super) struct UpdatesState {
+    pub(super) service: globecraft_data::updater::UpdateService,
+    pub(super) restart: UpdateRestart,
+}
+
 pub(super) struct UpdateRestart {
     pub(super) request: Arc<RestartRequest>,
     saving: bool,
@@ -72,14 +79,14 @@ impl UpdateRestart {
 impl App {
     pub(super) fn request_update_restart(&mut self, ctx: &egui::Context) {
         if !matches!(
-            self.updater.state(),
+            self.updates.service.state(),
             globecraft_data::updater::UpdateState::ReadyToRestart { .. }
-        ) || self.update_restart.saving
+        ) || self.updates.restart.saving
         {
             return;
         }
-        if self.file_jobs.is_busy() {
-            self.update_restart.error = Some(
+        if self.files.jobs.is_busy() {
+            self.updates.restart.error = Some(
                 "Wait for file operations to finish, then click Restart to update again.".into(),
             );
             return;
@@ -94,7 +101,7 @@ impl App {
             match std::path::absolute(path) {
                 Ok(path) => Some(path),
                 Err(error) => {
-                    self.update_restart.error =
+                    self.updates.restart.error =
                         Some(format!("Unable to resolve save path: {error}"));
                     return;
                 }
@@ -116,55 +123,60 @@ impl App {
         };
         let result = (|| -> Result<(), globecraft_data::Error> {
             if let Some(path) = &kml {
-                self.file_jobs.save_kml(path.clone(), &self.places.items)?;
+                self.files.jobs.save_kml(path.clone(), &self.places.items)?;
                 self.places.kml_session.submitted();
             }
             if let Some(path) = &planet {
-                self.file_jobs
+                self.files
+                    .jobs
                     .save_planet(self.explorer.save_snapshot(path.clone()))?;
             }
             Ok(())
         })();
         if let Err(error) = result {
-            self.update_restart.error = Some(format!("Save before restart failed: {error}"));
+            self.updates.restart.error = Some(format!("Save before restart failed: {error}"));
             return;
         }
         *self
-            .update_restart
+            .updates
+            .restart
             .request
             .planet
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = planet.clone();
-        self.update_restart.kml = kml;
-        self.update_restart.planet = planet;
-        self.update_restart.saving = true;
-        self.update_restart.error = None;
+        self.updates.restart.kml = kml;
+        self.updates.restart.planet = planet;
+        self.updates.restart.saving = true;
+        self.updates.restart.error = None;
         ctx.request_repaint();
     }
     pub(super) fn poll_update_restart(&mut self, ctx: &egui::Context) {
-        if self.update_restart.saving
-            && self.update_restart.kml.is_none()
-            && self.update_restart.planet.is_none()
-            && !self.file_jobs.is_busy()
+        if self.updates.restart.saving
+            && self.updates.restart.kml.is_none()
+            && self.updates.restart.planet.is_none()
+            && !self.files.jobs.is_busy()
         {
-            self.settings_writer.settings(&self.settings);
+            self.saved.writer.settings(&self.settings);
             *self
-                .update_restart
+                .updates
+                .restart
                 .request
                 .settings
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self.settings.clone());
             if let globecraft_data::updater::UpdateState::ReadyToRestart { version } =
-                self.updater.state()
+                self.updates.service.state()
             {
                 *self
-                    .update_restart
+                    .updates
+                    .restart
                     .request
                     .installed_version
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(version.clone());
             }
-            self.update_restart
+            self.updates
+                .restart
                 .request
                 .requested
                 .store(true, Ordering::Release);

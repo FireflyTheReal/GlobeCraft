@@ -242,9 +242,41 @@ pub fn load_kml(path: &str, lg: Lang) -> Result<Places, crate::Error> {
     let txt = if is_kmz(path) {
         kmz::decode(path)?
     } else {
-        std::fs::read_to_string(path)?
+        text_of(std::fs::read(path)?)
     };
     parse_tree(&txt, lg)
+}
+
+/// A KML file's text. KML is UTF-8, but files written by older programs come as
+/// UTF-16 (with its byte-order mark) or in a one-byte Western encoding; reading
+/// those as Latin-1 keeps their accented names instead of refusing the file.
+fn text_of(bytes: Vec<u8>) -> String {
+    let utf16 = |big_endian: bool| {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| {
+                if big_endian {
+                    u16::from_be_bytes(*pair)
+                } else {
+                    u16::from_le_bytes(*pair)
+                }
+            })
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    match bytes.as_slice() {
+        [0xff, 0xfe, ..] => utf16(false),
+        [0xfe, 0xff, ..] => utf16(true),
+        _ => match String::from_utf8(bytes) {
+            Ok(text) => text
+                .strip_prefix('\u{feff}')
+                .map(str::to_owned)
+                .unwrap_or(text),
+            Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
+        },
+    }
 }
 
 #[cfg(test)]

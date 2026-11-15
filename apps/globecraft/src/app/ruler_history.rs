@@ -58,7 +58,7 @@ impl App {
     pub(super) fn ruler_shortcuts(&mut self, ctx: &egui::Context) {
         // AppKit dispatches native accelerators through the menu event queue.
         #[cfg(target_os = "macos")]
-        if self.native_menu.is_some() {
+        if self.chrome.native_menu.is_some() {
             return;
         }
         // The shortcut is taken only while no text edit has the focus (which keeps its own

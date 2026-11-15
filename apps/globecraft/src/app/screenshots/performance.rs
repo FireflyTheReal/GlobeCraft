@@ -231,7 +231,7 @@ fn boundary_streaming_descent() {
         let t = std::time::Instant::now();
         h.step();
         slowest.push((t.elapsed().as_secs_f64() * 1000.0, altitude));
-        let data = &h.state().borders.drawn;
+        let data = &h.state().borders.shown;
         if first_states.is_none() && !data.osm_borders.state.is_empty() {
             first_states = Some(altitude);
         }
@@ -316,7 +316,7 @@ fn a_screenshot_in_progress_does_not_freeze_the_view() {
         pass(&mut h);
         let shown = h
             .state()
-            .imagery
+            .frame
             .renderer
             .displayed_view()
             .map(|(cam, _)| cam.alt);

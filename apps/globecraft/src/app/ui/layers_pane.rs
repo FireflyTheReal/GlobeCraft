@@ -289,31 +289,31 @@ impl App {
     pub(in crate::app) fn layers_search(&mut self, ui: &mut Ui) {
         let lang = self.lang;
         ui.horizontal(|ui| {
-            let clear_width = if self.layers_ui.query.is_empty() {
+            let clear_width = if self.panes.layers.query.is_empty() {
                 0.0
             } else {
                 ui.spacing().interact_size.y + ui.spacing().item_spacing.x
             };
             let width = (ui.available_width() - clear_width).max(80.0);
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.layers_ui.query)
+                egui::TextEdit::singleline(&mut self.panes.layers.query)
                     .id(egui::Id::new("layers-search"))
                     .hint_text(lang.text("layers-search-placeholder"))
                     .desired_width(width),
             );
-            if !self.layers_ui.query.is_empty()
+            if !self.panes.layers.query.is_empty()
                 && icons::icon_button(ui, "close", lang.text("layers-search-clear")).clicked()
             {
-                self.layers_ui.query.clear();
+                self.panes.layers.query.clear();
             }
             if response.has_focus()
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
-                self.layers_ui.query.clear();
+                self.panes.layers.query.clear();
             }
         });
         ui.checkbox(
-            &mut self.layers_ui.active_only,
+            &mut self.panes.layers.active_only,
             lang.text("layers-search-active-only"),
         )
         .on_hover_text(lang.text("layers-search-active-help"));
@@ -322,17 +322,17 @@ impl App {
     /// Sets the Layers pane search from a test harness.
     #[cfg(test)]
     pub(in crate::app) fn set_layers_search(&mut self, query: &str, active_only: bool) {
-        self.layers_ui.query = query.to_owned();
-        self.layers_ui.active_only = active_only;
+        self.panes.layers.query = query.to_owned();
+        self.panes.layers.active_only = active_only;
     }
 
     pub(in crate::app) fn layers_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
         let earth = self.explorer.on_earth();
-        let raw_query = self.layers_ui.query.clone();
+        let raw_query = self.panes.layers.query.clone();
         let query = fold_name(&raw_query);
-        let active_only = self.layers_ui.active_only;
+        let active_only = self.panes.layers.active_only;
         let filtering = !query.is_empty() || active_only;
         let mut shown_any = false;
         if let Some(layer) = self.soloed_layer() {
@@ -775,9 +775,9 @@ impl App {
                             )],
                         ),
                     )
-                } else if let Some(error) = self.live.poi.error() {
+                } else if let Some(error) = self.map_data.poi.error() {
                     Some(lang.format("transport-error-status", &[("error", error.into())]))
-                } else if self.live.poi.loading() {
+                } else if self.map_data.poi.loading() {
                     Some(lang.text("transport-loading-status").into())
                 } else {
                     None
@@ -804,9 +804,9 @@ impl App {
                             )],
                         ),
                     )
-                } else if let Some(error) = self.live.transport.error() {
+                } else if let Some(error) = self.map_data.transport.error() {
                     Some(lang.format("transport-error-status", &[("error", error.into())]))
-                } else if self.live.transport.loading() {
+                } else if self.map_data.transport.loading() {
                     Some(lang.text("transport-loading-status").into())
                 } else {
                     None
@@ -831,9 +831,9 @@ impl App {
                                 .into(),
                         )],
                     )
-                } else if let Some(error) = self.roads.tiles.error() {
+                } else if let Some(error) = self.map_data.roads.tiles.error() {
                     lang.format("transport-error-status", &[("error", error.into())])
-                } else if self.roads.tiles.loading() {
+                } else if self.map_data.roads.tiles.loading() {
                     lang.text("transport-loading-status").into()
                 } else {
                     lang.text("roads-legend").into()
@@ -852,11 +852,9 @@ impl App {
                     ui.add_space(INDENT + 46.0);
                     if ui
                         .add(
-                            egui::TextEdit::singleline(
-                                self.key_buffer(globecraft_data::keys::TOMTOM),
-                            )
-                            .password(true)
-                            .hint_text(lang.text("layers-traffic-key")),
+                            egui::TextEdit::singleline(&mut self.keys.tomtom)
+                                .password(true)
+                                .hint_text(lang.text("layers-traffic-key")),
                         )
                         .changed()
                     {
@@ -866,11 +864,11 @@ impl App {
                 note(
                     ui,
                     t,
-                    &self.traffic.service.status(
-                        self.service_key(globecraft_data::keys::TOMTOM),
-                        self.cam.alt,
-                        lang,
-                    ),
+                    &self
+                        .live
+                        .traffic
+                        .service
+                        .status(&self.keys.tomtom, self.cam.alt, lang),
                 );
                 credit(ui, "TomTom Traffic", "https://developer.tomtom.com/");
             }

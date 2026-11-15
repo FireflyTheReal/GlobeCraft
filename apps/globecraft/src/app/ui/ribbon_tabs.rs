@@ -363,7 +363,7 @@ impl App {
                     let params = json!({"unit": unit.code()});
                     let on = self.command_state("ruler.unit", &params).checked;
                     if ui
-                        .radio(on, unit.selector_label(lang, self.us_locale))
+                        .radio(on, unit.selector_label(lang, self.locale.us))
                         .clicked()
                     {
                         picked = Some(params);

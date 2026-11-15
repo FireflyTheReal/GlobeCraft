@@ -23,6 +23,15 @@ pub(super) enum TileArchive {
 }
 
 impl TileArchive {
+    /// Whether a template names an archive file on this computer, which means
+    /// nothing on another one.
+    pub(super) fn is_local(template: &str) -> bool {
+        match template.strip_prefix(PMTILES_PREFIX) {
+            Some(address) => !super::is_url(address),
+            None => template.starts_with(MBTILES_PREFIX),
+        }
+    }
+
     /// The archive a template names, if it names one.
     pub(super) fn from_template(template: &str) -> Option<Self> {
         if let Some(url) = template.strip_prefix(PMTILES_PREFIX) {
@@ -64,6 +73,12 @@ impl TileArchive {
     /// The zoom levels held and a tile that exists, for the Add Data form.
     pub(super) async fn describe(&self) -> Result<ArchiveInfo, crate::Error> {
         if let Some(archive) = self.archive().await? {
+            if archive.vector_tiles() {
+                return Err(crate::Error::msg(
+                    "this archive holds vector tiles; an image layer draws only image tiles \
+                     (PNG, JPEG or WebP)",
+                ));
+            }
             return pmtiles_info(archive.zooms(), archive.center());
         }
         let Self::Mbtiles(path) = self else {
@@ -241,6 +256,14 @@ mod tests {
         });
         assert!(TileArchive::from_template("https://example.org/{z}/{x}/{y}.png").is_none());
         let _ = std::fs::remove_file(path);
+        assert!(TileArchive::is_local("mbtiles:/maps/alps.mbtiles"));
+        assert!(TileArchive::is_local("pmtiles:/maps/alps.pmtiles"));
+        assert!(!TileArchive::is_local(
+            "pmtiles:https://example.org/alps.pmtiles"
+        ));
+        assert!(!TileArchive::is_local(
+            "https://example.org/{z}/{x}/{y}.png"
+        ));
     }
 
     /// An in-memory MBTiles database with these `(zoom, column, row)` rows; the

@@ -41,10 +41,10 @@ fn quality_label(lang: Lang, quality: ScreenshotQuality) -> &'static str {
 impl App {
     /// Starts a screenshot at `quality` in the background.
     pub(super) fn take_screenshot(&mut self, quality: ScreenshotQuality) -> Result<(), String> {
-        if self.still_shot.is_some() {
+        if self.frame.still_shot.is_some() {
             return Err("A screenshot is still being made.".into());
         }
-        let Some(super::imagery::Frame { width, height, .. }) = self.imagery.image.as_ref() else {
+        let Some((width, height, _)) = self.frame.image.as_ref() else {
             return Err("The globe has not finished drawing yet.".into());
         };
         let scale = quality.render_scale();
@@ -65,11 +65,11 @@ impl App {
             now_unix() as u64,
             quality.code()
         ));
-        let credits = self.imagery.renderer.displayed_credits.clone();
+        let credits = self.frame.renderer.displayed_credits.clone();
         let (sender, receiver) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
-        let cache = self.cache.clone();
+        let cache = self.tiles.cache.clone();
         let ctx = self.ctx.clone();
         std::thread::Builder::new()
             .name("globecraft-still".into())
@@ -112,7 +112,7 @@ impl App {
                 ctx.request_repaint();
             })
             .map_err(|error| format!("Could not start the screenshot: {error}"))?;
-        self.still_shot = Some(StillShot {
+        self.frame.still_shot = Some(StillShot {
             quality,
             receiver,
             cancel,
@@ -129,12 +129,13 @@ impl App {
 
     /// Whether a screenshot is being made.
     pub(super) fn screenshot_running(&self) -> bool {
-        self.still_shot.is_some()
+        self.frame.still_shot.is_some()
     }
 
     /// Stops the screenshot being made; its partial file is deleted.
     pub(super) fn cancel_screenshot(&mut self) -> Result<(), String> {
         let shot = self
+            .frame
             .still_shot
             .as_ref()
             .ok_or_else(|| self.lang.text("screenshot-none-running-error").to_string())?;
@@ -158,7 +159,7 @@ impl App {
 
     /// Follows a background screenshot and reports how it ended.
     pub(super) fn poll_still_shot(&mut self) {
-        let Some(shot) = &self.still_shot else {
+        let Some(shot) = &self.frame.still_shot else {
             return;
         };
         let quality = shot.quality;
@@ -176,7 +177,7 @@ impl App {
         let Some(end) = end else {
             return;
         };
-        self.still_shot = None;
+        self.frame.still_shot = None;
         match end {
             StillMessage::Saved { path, missing } => {
                 if missing > 0 {

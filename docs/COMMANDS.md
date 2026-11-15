@@ -127,6 +127,7 @@ Parameters are a JSON object; none is required unless marked.
 | `places.open` | Open KML | Open a KML or KMZ file into My Places. | — | asks first: it reads or writes files on this computer |
 | `places.save` | Save | Save My Places to the current KML file. | — | asks first: it reads or writes files on this computer |
 | `places.saveAs` | Save As | Save My Places to a new KML or KMZ file. | — | asks first: it reads or writes files on this computer |
+| `places.export` | Export Places | Write the places shown (ticked) and the ruler's paths to a GeoJSON or GPX file, for hiking apps, GPS devices and other map programs. My Places stays in its KML file. | `format` (string): one of `geojson`, `gpx`: When the path has no such ending<br>`path` (string): File to write, ending in .geojson or .gpx; a bare name goes into the places folder. Omit to let the user choose in a dialog | asks first: it reads or writes files on this computer |
 | `ui.addData` | Add Data | Add a web map, points and lines from a file or URL, or a source from the library. | — | no |
 | `ui.settings` | Settings | Open the settings window. | — | no |
 | `file.exportSettings` | Export Settings… | Save every setting, added layers and saved sources included, to a file you can keep or bring to another computer. Service and assistant keys are not included. | — | no |

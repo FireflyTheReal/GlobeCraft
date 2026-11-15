@@ -134,7 +134,7 @@ impl App {
             .set_file_name("globecraft-sources.json")
             .set_title(self.lang.text("data-pane-export-help"));
         if let Some(path) = dialog.save_file()
-            && let Err(error) = self.file_jobs.save_sources(path, sources)
+            && let Err(error) = self.files.jobs.save_sources(path, sources)
         {
             self.status = format!("Unable to export sources: {error}");
         }
@@ -145,7 +145,7 @@ impl App {
             .add_filter(SOURCES_FILTER.0, SOURCES_FILTER.1)
             .set_title(self.lang.text("data-pane-import-help"));
         if let Some(path) = dialog.pick_file()
-            && let Err(error) = self.file_jobs.open_sources(path)
+            && let Err(error) = self.files.jobs.open_sources(path)
         {
             self.status = format!("Unable to import sources: {error}");
         }

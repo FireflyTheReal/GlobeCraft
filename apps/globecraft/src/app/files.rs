@@ -2,7 +2,9 @@ mod session;
 use super::App;
 use eframe::egui;
 use globecraft_core::language::Lang;
-use globecraft_data::files::{FileCompletion, FileKind, FileOutcome};
+use globecraft_data::files::{
+    ExportContent, ExportFormat, ExportPath, FileCompletion, FileKind, FileOutcome,
+};
 pub(super) use session::KmlSession;
 use std::path::PathBuf;
 /// The file type offered by Export and Import Settings.
@@ -12,6 +14,18 @@ pub(super) struct FileStatus {
     pub(super) message: String,
     pub(super) path: PathBuf,
 }
+/// Files and links from outside (roadmap 10.2: one of the feature states split out
+/// of `App`): the file service's jobs and results, and what the status bar says of
+/// the last file.
+pub(super) struct FilesState {
+    pub(super) jobs: globecraft_data::files::FileJobs,
+    pub(super) results: std::sync::mpsc::Receiver<FileCompletion>,
+    /// The last file's status, with its full path.
+    pub(super) status: Option<FileStatus>,
+    /// A `globecraft://view` link from the command line, opened on the first frame.
+    pub(super) pending_view_link: Option<String>,
+}
+
 impl App {
     pub(super) fn resolve_kml_path(&self, p: &str) -> PathBuf {
         let path = PathBuf::from(p.trim());
@@ -23,7 +37,7 @@ impl App {
     }
 
     pub(super) fn save_kml_to(&mut self, path: PathBuf) {
-        match self.file_jobs.save_kml(path, &self.places.items) {
+        match self.files.jobs.save_kml(path, &self.places.items) {
             Ok(()) => self.places.kml_session.submitted(),
             Err(error) => {
                 self.status =
@@ -33,7 +47,7 @@ impl App {
     }
 
     pub(super) fn load_kml_from(&mut self, path: &std::path::Path) {
-        match self.file_jobs.open_kml(path.to_path_buf(), self.lang) {
+        match self.files.jobs.open_kml(path.to_path_buf(), self.lang) {
             Ok(()) => self.places.kml_session.submitted(),
             Err(error) => {
                 self.status =
@@ -42,8 +56,114 @@ impl App {
         }
     }
 
+    /// What an export holds now: the places tree (the writer leaves out what is not
+    /// shown) and the ruler's paths, named in the interface's language.
+    pub(super) fn export_content(&self) -> ExportContent {
+        let closed = self.measure.paths.closed();
+        let paths = self
+            .measure
+            .paths
+            .paths()
+            .filter(|points| points.len() >= 2)
+            .enumerate()
+            .map(|(index, points)| {
+                let shape = closed && points.len() >= 3;
+                ExportPath {
+                    name: self.lang.format(
+                        if shape {
+                            "places-export-shape-name"
+                        } else {
+                            "places-export-path-name"
+                        },
+                        &[("number", (index + 1).into())],
+                    ),
+                    points: points.to_vec(),
+                    closed: shape,
+                }
+            })
+            .collect();
+        ExportContent {
+            places: self.places.items.clone(),
+            paths,
+        }
+    }
+
+    /// `places.export`: writes the places shown and the ruler's paths as GeoJSON or
+    /// GPX, to `path` or to a file the user picks. The open KML file stays as it is.
+    pub(super) fn export_places(
+        &mut self,
+        path: Option<&str>,
+        format: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        let content = self.export_content();
+        if content.is_empty() {
+            return Err(Lang::En.text("places-export-empty").into());
+        }
+        let named = match format.filter(|code| !code.is_empty()) {
+            Some(code) => Some(
+                ExportFormat::from_code(code)
+                    .ok_or_else(|| format!("format must be geojson or gpx, not '{code}'"))?,
+            ),
+            None => None,
+        };
+        let chosen = match path.filter(|path| !path.is_empty()) {
+            Some(path) => Some(self.resolve_kml_path(path)),
+            None => self.choose_export_path(named),
+        };
+        let Some(mut path) = chosen else {
+            return Ok(serde_json::json!({"exporting": false, "cancelled": true}));
+        };
+        // The file's ending decides; a name without one gets the format's.
+        let format = match (ExportFormat::from_path(&path), named) {
+            (Some(by_name), _) => by_name,
+            (None, format) => {
+                let format = format.unwrap_or(ExportFormat::GeoJson);
+                let mut name = path.file_name().unwrap_or_default().to_os_string();
+                name.push(format!(".{}", format.extension()));
+                path.set_file_name(name);
+                format
+            }
+        };
+        let (places, paths) = content.counts();
+        self.files
+            .jobs
+            .export(path.clone(), format, content)
+            .map_err(|error| error.to_string())?;
+        Ok(serde_json::json!({
+            "exporting": path,
+            "format": format.code(),
+            "places": places,
+            "ruler_paths": paths,
+        }))
+    }
+
+    /// The save dialog of an export: GeoJSON and GPX, `preferred` listed first.
+    fn choose_export_path(&self, preferred: Option<ExportFormat>) -> Option<PathBuf> {
+        let dir = PathBuf::from(&self.settings.kml_dir);
+        let first = preferred.unwrap_or(ExportFormat::GeoJson);
+        let stem = std::path::Path::new(&self.places.kml_path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("placemarks")
+            .to_string();
+        let mut dialog = rfd::FileDialog::new()
+            .set_file_name(format!("{stem}.{}", first.extension()))
+            .set_title(self.lang.text("places-export-dialog-title"));
+        for format in std::iter::once(first).chain(
+            ExportFormat::ALL
+                .into_iter()
+                .filter(|format| *format != first),
+        ) {
+            dialog = dialog.add_filter(format.title(), &[format.extension()]);
+        }
+        if dir.is_dir() {
+            dialog = dialog.set_directory(&dir);
+        }
+        dialog.save_file()
+    }
+
     pub(super) fn restore_kml_session(&mut self) {
-        match self.file_jobs.restore_kml(self.lang) {
+        match self.files.jobs.restore_kml(self.lang) {
             Ok(()) => self.places.kml_session.submitted(),
             Err(error) => self.status = format!("Unable to restore open KML files: {error}"),
         }
@@ -55,12 +175,11 @@ impl App {
         self.places.reveal_requested = false;
         self.places.kml_path = "placemarks.kml".into();
         self.places.kml_session.clear();
-        self.settings_writer
-            .kml_paths(&self.places.kml_session.paths);
+        self.saved.writer.kml_paths(&self.places.kml_session.paths);
     }
 
     pub(super) fn poll_files(&mut self, ctx: &egui::Context) {
-        while let Ok(FileCompletion { kind, result }) = self.file_results.try_recv() {
+        while let Ok(FileCompletion { kind, result }) = self.files.results.try_recv() {
             if matches!(
                 kind,
                 FileKind::OpenKml | FileKind::SaveKml | FileKind::RestoreKml
@@ -68,7 +187,7 @@ impl App {
             {
                 continue;
             }
-            self.update_restart.file_completed(kind, &result);
+            self.updates.restart.file_completed(kind, &result);
             match result {
                 Ok(FileOutcome::KmlRestored { files }) => {
                     for file in files {
@@ -84,8 +203,7 @@ impl App {
                             }
                         }
                     }
-                    self.settings_writer
-                        .kml_paths(&self.places.kml_session.paths);
+                    self.saved.writer.kml_paths(&self.places.kml_session.paths);
                 }
                 Ok(FileOutcome::ImageLoaded {
                     target: globecraft_data::files::ImageTarget::FlatEarth,
@@ -105,22 +223,20 @@ impl App {
                 Ok(FileOutcome::KmlSaved { path }) => {
                     // A save contains the whole tree, so reopen that snapshot only.
                     self.places.kml_session.paths = vec![path.clone()];
-                    self.settings_writer
-                        .kml_paths(&self.places.kml_session.paths);
+                    self.saved.writer.kml_paths(&self.places.kml_session.paths);
                     self.places.kml_path = path.to_string_lossy().into_owned();
                     self.status = self.lang.format(
                         "kml-save-success",
                         &[("path", path.display().to_string().into())],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path,
                     });
                 }
                 Ok(FileOutcome::KmlLoaded { path, placemarks }) => {
                     self.places.kml_session.remember(path.clone());
-                    self.settings_writer
-                        .kml_paths(&self.places.kml_session.paths);
+                    self.saved.writer.kml_paths(&self.places.kml_session.paths);
                     self.status = self.lang.format(
                         "kml-import-success",
                         &[
@@ -128,7 +244,7 @@ impl App {
                             ("path", path.display().to_string().into()),
                         ],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path: path.clone(),
                     });
@@ -150,7 +266,25 @@ impl App {
                             ("path", path.display().to_string().into()),
                         ],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
+                        message: self.status.clone(),
+                        path,
+                    });
+                }
+                Ok(FileOutcome::Exported {
+                    path,
+                    places,
+                    paths,
+                }) => {
+                    self.status = self.lang.format(
+                        "places-export-success",
+                        &[
+                            ("places", places.into()),
+                            ("paths", paths.into()),
+                            ("path", path.display().to_string().into()),
+                        ],
+                    );
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path,
                     });
@@ -176,7 +310,7 @@ impl App {
                         "settings-export-success",
                         &[("path", path.display().to_string().into())],
                     );
-                    self.status_file = Some(FileStatus {
+                    self.files.status = Some(FileStatus {
                         message: self.status.clone(),
                         path,
                     });
@@ -197,6 +331,7 @@ impl App {
                         FileKind::SaveSources => "kml-save-error",
                         FileKind::OpenSettings => "settings-import-error",
                         FileKind::SaveSettings => "settings-export-error",
+                        FileKind::Export => "places-export-error",
                         FileKind::Image(globecraft_data::files::ImageTarget::FlatEarth) => {
                             self.flat_earth.image_failed = true;
                             self.status = format!("Flat Earth artwork failed: {error}");
@@ -219,7 +354,7 @@ impl App {
             .set_file_name("globecraft-settings.json")
             .set_title(self.lang.text("settings-export-dialog-title"));
         if let Some(path) = dialog.save_file()
-            && let Err(error) = self.file_jobs.save_settings(path, &self.settings)
+            && let Err(error) = self.files.jobs.save_settings(path, &self.settings)
         {
             self.status = self.lang.format(
                 "settings-export-error",
@@ -233,7 +368,7 @@ impl App {
             .add_filter(SETTINGS_FILTER.0, SETTINGS_FILTER.1)
             .set_title(self.lang.text("settings-import-dialog-title"));
         if let Some(path) = dialog.pick_file()
-            && let Err(error) = self.file_jobs.open_settings(path)
+            && let Err(error) = self.files.jobs.open_settings(path)
         {
             self.status = self.lang.format(
                 "settings-import-error",
@@ -292,7 +427,7 @@ impl App {
             "screenshot-save-success",
             &[("path", path.display().to_string().into())],
         );
-        self.status_file = Some(FileStatus {
+        self.files.status = Some(FileStatus {
             message: self.status.clone(),
             path,
         });
@@ -309,14 +444,14 @@ impl App {
             let format = path
                 .to_str()
                 .and_then(globecraft_data::user_data::FeatureFormat::guess);
-            let is_mbtiles = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("mbtiles"));
+            // An MBTiles or PMTiles file of map images.
+            let archive = path
+                .to_str()
+                .and_then(super::ui::add_data::archive_template);
             if is_kml {
                 self.load_kml_from(path);
-            } else if is_mbtiles && let Some(location) = path.to_str() {
-                // An MBTiles map becomes an image layer, as from Add Data → Web map.
+            } else if let (Some(template), Some(location)) = (archive, path.to_str()) {
+                // A tile archive becomes an image layer, as from Add Data → Web map.
                 let name = path
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -326,10 +461,7 @@ impl App {
                     id: 0,
                     name: name.clone(),
                     source: globecraft_data::user_data::UserSource::Tiles {
-                        template: format!(
-                            "{}{location}",
-                            globecraft_data::user_data::MBTILES_PREFIX
-                        ),
+                        template,
                         min_zoom: 0,
                         max_zoom: 22,
                         tile_px: 256,

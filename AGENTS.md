@@ -22,11 +22,15 @@ User instructions and the requested scope take precedence over these defaults.
   definitions as plain data. It depends on core only (for the command catalog); network I/O
   stays in data (`model_http`) and command execution in the app (`App::run`).
 - Every user action is a command in `globecraft_core::commands`. Add a command there (with
-  Fluent `cmd-…` label and help keys in both catalogs) and implement it in
-  `apps/globecraft/src/app/commands.rs`; widgets, menus and the assistant run it by id.
+  Fluent `cmd-…` label and help keys in both catalogs) and implement it in its feature's
+  handler under `apps/globecraft/src/app/commands/` (`commands::Feature::of` picks the
+  handler from the id's first part); widgets, menus and the assistant run it by id.
   Then regenerate `docs/COMMANDS.md` with
   `UPDATE_COMMAND_REFERENCE=1 cargo test -p globecraft-core --test command_reference`;
   the test fails while the reference is out of date.
+- `App` holds the values every feature reads and one state struct per feature. Put a new
+  field into its feature's state, not into `App`; see "Application state" in
+  `docs/ARCHITECTURE.md`.
 - `crates/globecraft-render` owns rasterization, frame coordination, geographic
   overlay projection/visibility/occupancy and tile request prioritization.
   It depends on core and data, never on the desktop application.

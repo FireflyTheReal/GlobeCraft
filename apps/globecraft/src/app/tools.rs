@@ -29,9 +29,12 @@ pub(in crate::app) fn parse_tool(key: &str) -> Option<(String, Value)> {
 pub(in crate::app) fn keys_text(shortcut: &KeyboardShortcut) -> String {
     let m = shortcut.modifiers;
     let mut parts: Vec<&str> = Vec::new();
-    if m.command || m.mac_cmd {
+    let command = m.command || m.mac_cmd;
+    if command {
         parts.push("command");
-    } else if m.ctrl {
+    }
+    // Control is its own key on macOS (⌃⌘E); elsewhere it is `command`.
+    if m.ctrl && (!command || cfg!(target_os = "macos")) {
         parts.push("ctrl");
     }
     if m.alt {
@@ -163,6 +166,7 @@ pub(in crate::app) const EXTRAS: &[(&str, &str)] = &[
     ("explore.navigate", "ui.explorer"),
     ("explore.places", "places.save"),
     ("explore.places", "places.saveAs"),
+    ("explore.places", "places.export"),
     ("explore.places", "places.clear"),
     ("explore.places", "ui.pane.places"),
     ("explore.measure", "ruler.closeShape"),

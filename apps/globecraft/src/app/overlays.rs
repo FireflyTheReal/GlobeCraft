@@ -102,11 +102,11 @@ impl LayerArrivals {
 impl App {
     pub(super) fn invalidate_font_layout(&mut self) {
         self.borders.overlay_cache.invalidate();
-        self.aircraft_overlay.invalidate_text();
-        self.world_shapes = super::live_layers::WorldShapes::default();
-        self.roads.invalidate_text();
-        self.transport_shapes.invalidate();
-        self.poi_shapes.invalidate();
+        self.live.aircraft_overlay.invalidate_text();
+        self.live.world_shapes = super::live_layers::WorldShapes::default();
+        self.map_data.roads.invalidate_text();
+        self.map_data.transport_shapes.invalidate();
+        self.map_data.poi_shapes.invalidate();
     }
     pub(super) fn overlay_layers(&self) -> globecraft_render::overlays::OverlayLayers {
         OverlayLayers {
@@ -123,10 +123,11 @@ impl App {
     }
 
     pub(super) fn merge_snapshot(&mut self, snapshot: BoundarySnapshot) {
-        self.layer_arrivals
+        self.borders
+            .arrivals
             .observe(&self.borders.source, &snapshot.data, Instant::now());
         self.borders.source = snapshot.data;
-        self.borders.drawn = self.with_place_names();
+        self.borders.shown = self.with_place_names();
         if let Err(error) = self.search.local.update_shared(snapshot.names) {
             self.status = format!("Local prefix index failed: {error}");
         }
@@ -154,7 +155,7 @@ impl App {
             _ => false,
         };
         if !unchanged {
-            self.borders.drawn = self.with_place_names();
+            self.borders.shown = self.with_place_names();
             self.borders.overlay_cache.merge_boundaries();
         }
     }
@@ -168,7 +169,7 @@ impl App {
         rect: Rect,
         altitude_km: f64,
     ) -> OverlayFrame {
-        let arrival = self.layer_arrivals.fade(Instant::now());
+        let arrival = self.borders.arrivals.fade(Instant::now());
         OverlayFrame {
             view: OverlayView {
                 basis: *basis,
@@ -176,15 +177,12 @@ impl App {
                 altitude_km,
                 state_max_km: self.settings.state_max_altitude_km,
                 grid_step_deg: if self.layer(MapLayer::GridLabels) {
-                    self.imagery.renderer.displayed_grid_step()
+                    self.frame.renderer.displayed_grid_step()
                 } else {
                     None
                 },
                 pixels_per_point: painter.ctx().pixels_per_point(),
-                ground: self
-                    .imagery
-                    .renderer
-                    .displayed_ground(self.overlay_ground()),
+                ground: self.frame.renderer.displayed_ground(self.overlay_ground()),
             },
             style: OverlayStyle {
                 layers: self.overlay_layers(),
@@ -231,7 +229,7 @@ impl App {
         self.borders.overlay_cache.prepare(
             painter,
             frame.view,
-            &self.borders.drawn,
+            &self.borders.shown,
             frame.style,
             taken,
         );

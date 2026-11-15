@@ -19,6 +19,8 @@ const MAX_WANTED: usize = 64;
 const RETRY: Duration = Duration::from_secs(60);
 /// The largest tile accepted.
 const MAX_TILE_BYTES: u64 = 8 * 1024 * 1024;
+/// The deepest level a web map is asked for.
+const MAX_ZOOM: u8 = 22;
 /// Web Mercator ends here.
 const MAX_MERCATOR_LAT: f64 = 85.051_128_78;
 
@@ -110,8 +112,10 @@ impl RasterTiles {
         Self {
             template: template.to_owned(),
             archive: super::archive::TileArchive::from_template(template),
-            min_zoom,
-            max_zoom: max_zoom.clamp(min_zoom, 22),
+            // A saved or imported layer may say anything: `clamp` panics when the
+            // lowest level is above the highest.
+            min_zoom: min_zoom.min(MAX_ZOOM),
+            max_zoom: max_zoom.clamp(min_zoom.min(MAX_ZOOM), MAX_ZOOM),
             tile_px: tile_px.max(64),
             date: super::day_before(globecraft_core::math::now_unix()),
             shared: Arc::default(),
@@ -405,6 +409,17 @@ mod tests {
         assert!(shared.tiles.is_empty());
         assert_eq!(shared.day, day + 1);
         assert!(shared.previous.contains_key(&key));
+    }
+
+    #[test]
+    fn zoom_levels_out_of_range_are_brought_into_it() {
+        // From a hand-edited settings file or an imported source list.
+        let layer = RasterTiles::new("https://t.example/{z}/{x}/{y}.png", 40, 3, 256);
+        assert_eq!((layer.min_zoom, layer.max_zoom), (22, 22));
+        let layer = RasterTiles::new("https://t.example/{z}/{x}/{y}.png", 5, 200, 256);
+        assert_eq!((layer.min_zoom, layer.max_zoom), (5, 22));
+        let layer = RasterTiles::new("https://t.example/{z}/{x}/{y}.png", 9, 2, 256);
+        assert_eq!((layer.min_zoom, layer.max_zoom), (9, 9));
     }
 
     #[test]

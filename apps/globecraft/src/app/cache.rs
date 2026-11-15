@@ -18,6 +18,33 @@ struct CacheClearNotice {
     expires_at: Instant,
 }
 
+/// The imagery tiles (roadmap 10.2: one of the feature states split out of `App`):
+/// the cache every renderer and overlay reads, its controls in Settings, and the
+/// tiles loaded ahead of the view.
+pub(super) struct TilesState {
+    pub(super) cache: std::sync::Arc<globecraft_data::tiles::TileCache>,
+    pub(super) controls: CacheControls,
+    /// The overview loaded at startup.
+    pub(super) warmup: globecraft_data::tiles::TileWarmup,
+    /// Imagery loaded ahead of a zoom out, for the view (state key) it was made for.
+    pub(super) zoom_out_warmup: Option<(u64, globecraft_data::tiles::TileWarmup)>,
+    /// The imagery a running flight lands on, loaded while it flies (roadmap 1.4),
+    /// with the destination it was listed for.
+    pub(super) arrival_warmup: Option<([u64; 5], globecraft_data::tiles::TileWarmup)>,
+}
+
+impl TilesState {
+    pub(super) fn new(cache: std::sync::Arc<globecraft_data::tiles::TileCache>) -> Self {
+        Self {
+            cache,
+            controls: CacheControls::default(),
+            warmup: globecraft_data::tiles::TileWarmup::startup_satellite(),
+            zoom_out_warmup: None,
+            arrival_warmup: None,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct CacheControls {
     clear_rx: Option<mpsc::Receiver<CacheResult>>,
@@ -65,24 +92,24 @@ pub(super) fn cache_size_text(bytes: u64) -> String {
 
 impl App {
     pub(super) fn clear_disk_cache(&mut self, ctx: &egui::Context) {
-        if self.cache_controls.clearing() {
+        if self.tiles.controls.clearing() {
             return;
         }
-        self.imagery.warmup.cancel();
-        self.imagery.zoom_out_warmup = None;
-        self.imagery.arrival_warmup = None;
+        self.tiles.warmup.cancel();
+        self.tiles.zoom_out_warmup = None;
+        self.tiles.arrival_warmup = None;
         let (tx, rx) = mpsc::channel();
-        self.cache_controls.clear_rx = Some(rx);
-        self.cache_controls.usage_rx = None;
+        self.tiles.controls.clear_rx = Some(rx);
+        self.tiles.controls.usage_rx = None;
         ctx.request_repaint();
-        let (cache, ctx) = (self.cache.clone(), ctx.clone());
+        let (cache, ctx) = (self.tiles.cache.clone(), ctx.clone());
         self.runtime.spawn(async move {
             let _ = tx.send(cache.clear_disk_cache().await);
             ctx.request_repaint();
         });
     }
     pub(super) fn poll_cache_clear(&mut self, ctx: &egui::Context) {
-        if let Some(remaining) = self.cache_controls.poll_clear_notice(
+        if let Some(remaining) = self.tiles.controls.poll_clear_notice(
             &mut self.status,
             self.lang.text("app-ready-status"),
             Instant::now(),
@@ -90,26 +117,26 @@ impl App {
             ctx.request_repaint_after(remaining);
         }
         self.poll_disk_usage();
-        let Some(rx) = self.cache_controls.clear_rx.take() else {
+        let Some(rx) = self.tiles.controls.clear_rx.take() else {
             return;
         };
         let result = match rx.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => {
-                self.cache_controls.clear_rx = Some(rx);
+                self.tiles.controls.clear_rx = Some(rx);
                 return;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 Err(globecraft_data::Error::msg("cache clearing task stopped"))
             }
         };
-        self.cache_controls.last_usage_scan = None;
-        self.cache_controls.usage = None;
-        self.cache_controls.clear_notice = None;
+        self.tiles.controls.last_usage_scan = None;
+        self.tiles.controls.usage = None;
+        self.tiles.controls.clear_notice = None;
         match result {
             Ok(()) => {
                 self.status = self.lang.text("settings-cache-cleared-status").into();
-                self.cache_controls.clear_notice = Some(CacheClearNotice {
+                self.tiles.controls.clear_notice = Some(CacheClearNotice {
                     message: self.status.clone(),
                     expires_at: Instant::now() + CACHE_CLEAR_NOTICE_DURATION,
                 });
@@ -126,11 +153,12 @@ impl App {
 
     // Invoked by Settings only; scans are asynchronous and throttled, never per frame.
     pub(super) fn refresh_disk_usage(&mut self, ctx: &egui::Context) {
-        if self.cache_controls.clearing() || self.cache_controls.usage_rx.is_some() {
+        if self.tiles.controls.clearing() || self.tiles.controls.usage_rx.is_some() {
             return;
         }
         if self
-            .cache_controls
+            .tiles
+            .controls
             .last_usage_scan
             .is_some_and(|last| last.elapsed() < DISK_USAGE_REFRESH_INTERVAL)
         {
@@ -138,9 +166,9 @@ impl App {
             return;
         }
         let (tx, rx) = mpsc::channel();
-        self.cache_controls.usage_rx = Some(rx);
-        self.cache_controls.last_usage_scan = Some(Instant::now());
-        let (cache, ctx) = (self.cache.clone(), ctx.clone());
+        self.tiles.controls.usage_rx = Some(rx);
+        self.tiles.controls.last_usage_scan = Some(Instant::now());
+        let (cache, ctx) = (self.tiles.cache.clone(), ctx.clone());
         self.runtime.spawn(async move {
             let _ = tx.send(cache.disk_usage_bytes().await);
             ctx.request_repaint();
@@ -148,39 +176,33 @@ impl App {
     }
 
     fn poll_disk_usage(&mut self) {
-        let Some(rx) = self.cache_controls.usage_rx.take() else {
+        let Some(rx) = self.tiles.controls.usage_rx.take() else {
             return;
         };
         let result = match rx.try_recv() {
             Ok(result) => result.map_err(|error| error.to_string()),
             Err(mpsc::TryRecvError::Empty) => {
-                self.cache_controls.usage_rx = Some(rx);
+                self.tiles.controls.usage_rx = Some(rx);
                 return;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 Err("cache measurement task stopped".to_owned())
             }
         };
-        self.cache_controls.usage = Some(result);
+        self.tiles.controls.usage = Some(result);
     }
 }
 
 /// How often the session's download totals go to the run log (stderr), when they changed.
 const DOWNLOAD_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
-/// When the download totals were last written to the run log, and what they were.
-pub(super) struct DownloadLog {
-    pub(super) at: Instant,
-    pub(super) bytes: u64,
-}
-
 impl App {
     /// Writes where the bandwidth went to the run log, at most once a minute and only
     /// after new downloads: a bounded diagnostic, not a timing log.
     pub(super) fn log_downloads(&mut self) {
         use globecraft_data::download_stats::{DownloadKind, totals};
-        let logged_bytes = self.download_log.bytes;
-        if self.download_log.at.elapsed() < DOWNLOAD_LOG_INTERVAL {
+        let (last, logged_bytes) = self.frame.download_log;
+        if last.elapsed() < DOWNLOAD_LOG_INTERVAL {
             return;
         }
         let imagery = totals(DownloadKind::Imagery);
@@ -188,10 +210,7 @@ impl App {
         let borders = totals(DownloadKind::BorderTiles);
         let disk = totals(DownloadKind::ImageryFromDisk);
         let bytes = imagery.bytes + ahead.bytes + borders.bytes + disk.bytes;
-        self.download_log = DownloadLog {
-            at: Instant::now(),
-            bytes,
-        };
+        self.frame.download_log = (Instant::now(), bytes);
         if bytes != logged_bytes {
             globecraft_data::log_line!(
                 "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles ({} confirmed unchanged by the server); {} downloads stopped (tile left the view)",

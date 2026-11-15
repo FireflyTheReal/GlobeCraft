@@ -96,7 +96,7 @@ impl App {
                 merge_suggestions(
                     &self.search.query,
                     self.lang,
-                    &self.borders.drawn.labels,
+                    &self.borders.shown.labels,
                     &self.search.remote_suggestions,
                 )
             });

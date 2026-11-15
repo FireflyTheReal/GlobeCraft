@@ -1,6 +1,8 @@
 //! Ordered, bounded file jobs; native dialogs and applying results stay in app.
+mod export;
 mod images;
 mod screenshot;
+pub use export::{ExportContent, ExportFormat, ExportPath};
 pub use screenshot::PngStrips;
 mod session;
 use globecraft_core::{language::Lang, placemark::Places};
@@ -54,6 +56,12 @@ pub enum FileOutcome {
         path: PathBuf,
         settings: Box<crate::settings::Settings>,
     },
+    /// Places and ruler paths written as GeoJSON or GPX.
+    Exported {
+        path: PathBuf,
+        places: usize,
+        paths: usize,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -67,6 +75,7 @@ pub enum FileKind {
     SaveSources,
     OpenSettings,
     SaveSettings,
+    Export,
 }
 pub struct FileCompletion {
     pub kind: FileKind,
@@ -83,6 +92,7 @@ enum Job {
     SaveSources(PathBuf, Vec<crate::user_data::UserLayer>),
     OpenSettings(PathBuf),
     SaveSettings(PathBuf, Box<crate::settings::Settings>),
+    Export(PathBuf, ExportFormat, ExportContent),
 }
 impl Job {
     fn kind(&self) -> FileKind {
@@ -97,6 +107,7 @@ impl Job {
             Self::SaveSources(..) => FileKind::SaveSources,
             Self::OpenSettings(..) => FileKind::OpenSettings,
             Self::SaveSettings(..) => FileKind::SaveSettings,
+            Self::Export(..) => FileKind::Export,
         }
     }
     fn run(self) -> Result<FileOutcome, crate::Error> {
@@ -162,6 +173,21 @@ impl Job {
             Self::SaveSettings(path, settings) => {
                 crate::paths::write_atomic(&path, &settings.export()?, false)?;
                 Ok(FileOutcome::SettingsSaved { path })
+            }
+            Self::Export(path, format, content) => {
+                let path = std::path::absolute(path)?;
+                // Encoded whole before the destination is touched.
+                let bytes = content.encode(format)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                crate::paths::write_atomic(&path, &bytes, false)?;
+                let (places, paths) = content.counts();
+                Ok(FileOutcome::Exported {
+                    path,
+                    places,
+                    paths,
+                })
             }
         }
     }
@@ -263,6 +289,15 @@ impl FileJobs {
         sources: Vec<crate::user_data::UserLayer>,
     ) -> Result<(), crate::Error> {
         self.submit(Job::SaveSources(path, sources))
+    }
+    /// Writes places and ruler paths for other programs, in `format`.
+    pub fn export(
+        &self,
+        path: PathBuf,
+        format: ExportFormat,
+        content: ExportContent,
+    ) -> Result<(), crate::Error> {
+        self.submit(Job::Export(path, format, content))
     }
 }
 

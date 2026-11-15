@@ -4,26 +4,20 @@ use globecraft_core::layers::MapLayer;
 /// The window title. The titlebar text stays hidden in the merged header, but the
 /// system still uses this value for Mission Control, the taskbar and window lists.
 pub(crate) const WINDOW_TITLE: &str = "GlobeCraft";
-/// Used when macOS cannot report the native traffic-light bounds. AppKit points.
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_WIDTH_FALLBACK_POINTS: f32 = 78.0;
 #[cfg(test)]
 mod screenshots;
 #[cfg(test)]
 mod test_ui;
-use eframe::egui::{self, Rect};
-use globecraft_core::{
-    camera::Cam,
-    language::{Lang, LanguagePreference},
-};
+use eframe::egui;
+use globecraft_core::{camera::Cam, language::Lang};
 use globecraft_data::{
-    boundaries::{BoundaryData, BoundaryUpdates, StatusLog, load_boundaries_async},
+    boundaries::{BoundaryUpdates, StatusLog, load_boundaries_async},
     search::Suggestion,
-    settings::{Settings, load_language_preference},
+    settings::Settings,
     tiles::TileCache,
 };
 use std::{
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 mod antarctica;
@@ -31,6 +25,7 @@ mod antarctica;
 mod assistant;
 mod borders;
 mod cache;
+mod chrome;
 mod commands;
 mod controllers;
 mod credits;
@@ -39,34 +34,41 @@ mod explorer;
 mod files;
 mod flat_earth;
 mod fonts;
+mod frame;
 mod frame_timing;
 mod globe;
 mod here;
-mod imagery;
+mod keys;
 mod layer_solo;
 mod legend;
+mod live;
 mod live_geometry;
 mod live_layers;
 mod live_maps;
-mod live_services;
+mod locale;
 mod long_press;
+mod map_data;
 mod marine_names;
 mod measure;
 #[cfg(any(target_os = "macos", test))]
 mod menu;
+mod motion;
 mod navigation;
 mod overlays;
+mod panes;
+mod picked;
 mod places;
+mod pointer;
 mod render_wake;
 mod rendering;
 mod road_names;
 mod roads;
 mod ruler_history;
 mod ruler_profile;
+mod saved;
 mod search;
 mod selected_flight;
 mod selected_satellite;
-mod selection;
 mod still_shot;
 mod time;
 mod timezones;
@@ -118,111 +120,61 @@ type SuggestionResponse = (String, Result<Vec<Suggestion>, globecraft_data::Erro
 pub(crate) struct App {
     /// egui's context, for commands that talk to the window (full screen, URLs, repaint).
     ctx: egui::Context,
-    /// The UI scale the style was last built for.
-    styled_scale: Option<f32>,
+    /// The header and the ribbon.
+    chrome: chrome::ChromeState,
     #[cfg(feature = "assistant")]
     assistant: assistant::AssistantState,
-    command_search: Option<ui::palette::CommandSearch>,
-    /// egui's font atlas fill at the start of the last frame (see `ui`).
-    font_atlas_fill: f32,
-    /// The ribbon group being drawn, and the shortcut dialog.
-    ribbon_tools: ui::ribbon_tools::RibbonTools,
-    /// The ribbon shown over the globe while collapsed (a tab was clicked).
-    ribbon_peek: bool,
-    tab_strip_rect: Option<Rect>,
-    /// The native macOS traffic-light width, in AppKit points. Divide by egui's
-    /// zoom factor to reserve the same room in egui points.
-    #[cfg(target_os = "macos")]
-    traffic_lights_width_native: f32,
-    #[cfg(target_os = "macos")]
-    native_menu: Option<menu::NativeMenu>,
     runtime: globecraft_data::runtime::ServiceRuntime,
-    updater: globecraft_data::updater::UpdateService,
-    update_restart: update_restart::UpdateRestart,
+    updates: update_restart::UpdatesState,
     explorer: explorer::Explorer,
     flat_earth: flat_earth::FlatEarth,
+    /// Borders and place names: their data, loading and overlay geometry.
+    borders: borders::BordersState,
+    /// The language in use; the choice behind it is in `locale`.
     lang: Lang,
     fonts: fonts::FontService,
     controllers: controllers::Controllers,
     sky: globecraft_data::sky::SkyService,
-    settings_ui: ui::settings::SettingsUi,
-    layers_ui: ui::layers_pane::LayersUi,
-    language_preference: LanguagePreference,
-    system_locale: String,
+    /// What the Settings pages, the Layers pane and the colour keys show.
+    panes: panes::PanesState,
+    locale: locale::LocaleState,
+    /// Where the camera is; how it is moving is in `motion`.
     cam: Cam,
-    fly: Option<globecraft_core::flight::Flight>,
-    cache: Arc<TileCache>,
-    cache_controls: cache::CacheControls,
-    auto_rotate: bool,
-    /// Keys of the keyed services as typed in Settings -> Keys (the TomTom key is also
-    /// typed in the Layers pane).
-    service_keys: std::collections::BTreeMap<&'static str, String>,
-    /// The borders and names: loading, the drawn set and its painted overlay.
-    borders: borders::Borders,
-    /// What is picked: a flight, a satellite, the What's here? card.
-    selection: selection::Selection,
-    /// The live data services that follow the view (see `live_services`).
-    live: live_services::LiveFeeds,
-    transport_shapes: live_layers::TransportShapes,
-    poi_shapes: live_layers::PoiShapes,
+    motion: motion::MotionState,
+    /// The imagery cache, its controls and the tiles loaded ahead.
+    tiles: cache::TilesState,
+    keys: keys::KeysState,
+    /// The realtime layers: aircraft, vessels, satellites, aurora, weather, traffic.
+    live: live::LiveState,
+    /// Roads, transport and places of interest.
+    map_data: map_data::MapDataState,
     /// The layers the user added: their loading and drawing.
     user_layers: user_layers::UserLayers,
-    /// The Add Data window, while open.
-    add_data: Option<ui::add_data::AddDataDialog>,
-    /// Press and hold on the globe opens the card (touch screens and trackpads).
-    long_press: long_press::LongPress,
-    /// Where the sea and undersea names went this frame.
-    marine_placed: globecraft_render::overlays::PlacedLabels,
-    time_zone_shapes: timezones::TimeZoneShapes,
-    aurora_shapes: live_layers::AuroraShapes,
-    traffic: traffic::TrafficOverlay,
-    roads: roads::RoadOverlay,
-    live_maps: live_maps::LiveMaps,
-    aircraft_overlay: live_layers::AircraftOverlay,
-    /// The colour keys window.
-    legend: legend::Legend,
-    live_geometry: live_geometry::LiveOverlay,
-    world_shapes: live_layers::WorldShapes,
-
-    /// The globe picture: the renderer, the frame shown and fading, the warmups.
-    imagery: imagery::Imagery,
-    scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache,
-    /// The streaming diagnostics overlay shows (`ui.tileDiagnostics`; not saved).
-    tile_diagnostics: bool,
-    download_meter: ui::tile_diagnostics::DownloadMeter,
-    layer_arrivals: overlays::LayerArrivals,
-    last_interact: Instant,
+    /// The pointer on the globe, and the "What's here?" card.
+    pointer: pointer::PointerState,
+    /// The flight and the satellite picked on the globe.
+    picked: picked::PickedState,
+    /// The globe's picture: renderer, displayed frame, screenshots.
+    frame: frame::FrameState,
 
     status: String,
-    status_file: Option<files::FileStatus>,
-    system_units: globecraft_core::units::DistanceUnits,
-    us_locale: bool,
-    altitude_editor: Option<ui::altitude::AltitudeEditor>,
-
-    file_jobs: globecraft_data::files::FileJobs,
-    file_results: mpsc::Receiver<globecraft_data::files::FileCompletion>,
+    files: files::FilesState,
     /// The places and their KML file.
     places: places::PlacesState,
     /// The timeline bar.
     timeline: time::TimelineState,
-    /// Which of the Settings, About and Shortcuts windows are open.
+    /// Which windows and dialogs are open.
     windows: windows::WindowsState,
     /// The navigator's drags and eased turns.
     nav: navigation::NavState,
-    /// A `globecraft://view` link from the command line, opened on the first frame.
-    pending_view_link: Option<String>,
     /// The layer shown alone (`layer.solo`), and what was visible before.
     solo: Option<layer_solo::Solo>,
 
-    cursor: Option<(f64, f64)>,
-
     /// The place search box: query, results and suggestions.
     search: search::SearchState,
+    /// The settings in use; what is on disk is in `saved`.
     settings: Settings,
-    saved_settings: Settings,
-    /// When `settings` was last compared with `saved_settings` (see `persist_settings`).
-    settings_checked: Instant,
-    settings_writer: globecraft_data::settings::SettingsWriter,
+    saved: saved::SavedSettings,
     /// The ruler.
     measure: measure::MeasureState,
     /// Esri Wayback: the releases, the one shown and the swipe compare.
@@ -230,14 +182,6 @@ pub(crate) struct App {
 
     /// The app's time: live, a moment, or playing (roadmap 4.H).
     pub(super) time: globecraft_core::time::AppTime,
-
-    /// A high-quality screenshot rendering in the background.
-    still_shot: Option<still_shot::StillShot>,
-    /// The terrain height (km, exaggerated) the camera looks at, eased toward the
-    /// elevation tiles so a finer tile arriving does not jolt the view.
-    ground_km: f64,
-    /// When the download totals were last written to the run log, and what they were.
-    download_log: cache::DownloadLog,
 }
 
 impl App {
@@ -273,7 +217,9 @@ impl App {
                 .is_none_or(|parent| self.settings.layer_visible(parent))
     }
     fn distance_units(&self) -> globecraft_core::units::DistanceUnits {
-        self.settings.distance_units.resolve(self.system_units)
+        self.settings
+            .distance_units
+            .resolve(self.locale.system_units)
     }
 
     pub(crate) fn new(
@@ -290,22 +236,20 @@ impl App {
         // Every font family the interface names exists from the first frame; installed system
         // faces replace these once the font worker has loaded them.
         cc.egui_ctx.set_fonts(fonts::base_definitions());
+        // Wakes the interface when background work lands.
+        let repaint = || {
+            let ctx = cc.egui_ctx.clone();
+            move || ctx.request_repaint()
+        };
         let runtime =
             globecraft_data::runtime::ServiceRuntime::new().expect("start network runtime");
-        let language_preference = load_language_preference();
-        let system_locale = sys_locale::get_locale().unwrap_or_default();
-        let lang = language_preference.resolve(&system_locale);
+        let locale = locale::LocaleState::detect();
+        let lang = locale.language();
         let boundary_log: StatusLog = Arc::new(Mutex::new(Vec::new()));
         let (boundaries_rx, boundary_loader) =
-            load_boundaries_async(boundary_log.clone(), runtime.handle(), {
-                let ctx = cc.egui_ctx.clone();
-                move || ctx.request_repaint()
-            });
+            load_boundaries_async(boundary_log.clone(), runtime.handle(), repaint());
         let cache = TileCache::with_budgets(
-            {
-                let ctx = cc.egui_ctx.clone();
-                move || ctx.request_repaint()
-            },
+            repaint(),
             runtime.handle(),
             globecraft_data::tiles::CacheBudgets {
                 decoded_bytes: settings.cache.decoded_bytes(),
@@ -315,143 +259,69 @@ impl App {
         let renderer =
             rendering::Renderer::new(cache.clone(), cc.egui_ctx.clone(), settings.gpu_globe);
         let overlay_cache = overlays::OverlayCache::new(cc.egui_ctx.clone(), Some(cache.clone()));
-        let (file_jobs, file_results) = globecraft_data::files::FileJobs::new(runtime.handle(), {
-            let ctx = cc.egui_ctx.clone();
-            move || ctx.request_repaint()
-        });
-        let local_search = globecraft_data::search::LocalSearch::new(runtime.handle(), {
-            let ctx = cc.egui_ctx.clone();
-            move || ctx.request_repaint()
-        });
+        let (file_jobs, file_results) =
+            globecraft_data::files::FileJobs::new(runtime.handle(), repaint());
+        let local_search = globecraft_data::search::LocalSearch::new(runtime.handle(), repaint());
         let mut app = App {
             ctx: cc.egui_ctx.clone(),
-            styled_scale: None,
+            chrome: chrome::ChromeState::new(cc),
             #[cfg(feature = "assistant")]
             assistant: assistant::AssistantState::default(),
-            command_search: None,
-            ribbon_tools: Default::default(),
-            font_atlas_fill: 0.0,
-            ribbon_peek: false,
-            tab_strip_rect: None,
-            #[cfg(target_os = "macos")]
-            traffic_lights_width_native: {
-                use raw_window_handle::HasWindowHandle as _;
-                cc.window_handle()
-                    .ok()
-                    .and_then(|handle| {
-                        eframe::WindowChromeMetrics::from_window_handle(&handle.as_raw())
-                    })
-                    .map(|metrics| metrics.traffic_lights_size.x)
-                    .filter(|width| *width > 0.0)
-                    .unwrap_or(TRAFFIC_LIGHTS_WIDTH_FALLBACK_POINTS)
+            updates: update_restart::UpdatesState {
+                service: globecraft_data::updater::UpdateService::new(runtime.handle(), repaint()),
+                restart: update_restart::UpdateRestart::new(restart.clone()),
             },
-            updater: globecraft_data::updater::UpdateService::new(runtime.handle(), {
-                let ctx = cc.egui_ctx.clone();
-                move || ctx.request_repaint()
-            }),
-            update_restart: update_restart::UpdateRestart::new(restart.clone()),
-            #[cfg(target_os = "macos")]
-            native_menu: None,
             explorer: explorer::Explorer::default(),
             flat_earth: flat_earth::FlatEarth::default(),
+            borders: borders::BordersState::new(
+                boundary_loader,
+                BoundaryUpdates::new(boundaries_rx, repaint()).expect("start boundary preparation"),
+                boundary_log,
+                overlay_cache,
+            ),
             lang,
             fonts: fonts::FontService::new(cc.egui_ctx.clone()),
             controllers: controllers::Controllers::new(),
             sky: globecraft_data::sky::SkyService::default(),
-            settings_ui: ui::settings::SettingsUi::default(),
-            layers_ui: ui::layers_pane::LayersUi::default(),
-            language_preference,
+            panes: panes::PanesState::default(),
+            locale,
             cam: settings.navigation.startup.camera(),
-            fly: None,
-            cache: cache.clone(),
-            imagery: imagery::Imagery::new(renderer),
-            scale_bar_cache: globecraft_render::scale_bar::ScaleBarCache::default(),
-            cache_controls: cache::CacheControls::default(),
-            borders: borders::Borders {
-                drawn: Arc::new(BoundaryData::default()),
-                source: Arc::new(BoundaryData::default()),
-                place_names: Default::default(),
-                place_names_shown: None,
-                overlay_cache,
-                updates: BoundaryUpdates::new(boundaries_rx, {
-                    let ctx = cc.egui_ctx.clone();
-                    move || ctx.request_repaint()
-                })
-                .expect("start boundary preparation"),
-                loader: boundary_loader,
-                log: boundary_log,
-            },
-            auto_rotate: false,
-            service_keys: globecraft_data::keys::SERVICES
-                .iter()
-                .map(|service| {
-                    (
-                        service.id,
-                        globecraft_data::keys::get(service.id).unwrap_or_default(),
-                    )
-                })
-                .collect(),
-            live: live_services::LiveFeeds::new(&runtime, &cc.egui_ctx),
-            selection: selection::Selection::default(),
-            transport_shapes: live_layers::TransportShapes::default(),
-            poi_shapes: live_layers::PoiShapes::default(),
+            motion: motion::MotionState::default(),
+            keys: keys::KeysState::load(),
+            live: live::LiveState::new(&runtime, &cc.egui_ctx, &cache),
+            map_data: map_data::MapDataState::default(),
             user_layers: Default::default(),
-            add_data: None,
-            long_press: long_press::LongPress::default(),
-            marine_placed: Default::default(),
-            time_zone_shapes: timezones::TimeZoneShapes::default(),
-            aurora_shapes: live_layers::AuroraShapes::default(),
-            traffic: traffic::TrafficOverlay::default(),
-            roads: roads::RoadOverlay::default(),
-            live_maps: live_maps::LiveMaps::default(),
-            aircraft_overlay: live_layers::AircraftOverlay::new(cc.egui_ctx.clone()),
-            legend: Default::default(),
-            live_geometry: live_geometry::LiveOverlay::new(
-                cc.egui_ctx.clone(),
-                Some(cache.clone()),
-            ),
-            world_shapes: live_layers::WorldShapes::default(),
-            tile_diagnostics: false,
-            download_meter: Default::default(),
-            layer_arrivals: overlays::LayerArrivals::default(),
-            last_interact: Instant::now(),
+            pointer: pointer::PointerState::default(),
+            picked: picked::PickedState::default(),
+            tiles: cache::TilesState::new(cache),
+            frame: frame::FrameState::new(renderer),
             search: search::SearchState::new(local_search),
             status: lang.text("app-ready-status").into(),
-            status_file: None,
-            system_units: globecraft_core::units::DistanceUnits::for_locale(&system_locale),
-            us_locale: globecraft_core::units::is_us_locale(&system_locale),
-            system_locale,
-            altitude_editor: None,
-            file_jobs,
-            file_results,
+            files: files::FilesState {
+                jobs: file_jobs,
+                results: file_results,
+                status: None,
+                pending_view_link: view_links::link_from_args(),
+            },
             places: places::PlacesState::default(),
             timeline: time::TimelineState::default(),
             windows: windows::WindowsState::new(settings.ui_scale),
             nav: navigation::NavState::default(),
-            pending_view_link: view_links::link_from_args(),
             solo: None,
-            cursor: None,
             settings: settings.clone(),
-            saved_settings: settings,
-            settings_checked: Instant::now(),
-            settings_writer: globecraft_data::settings::SettingsWriter::new({
-                let ctx = cc.egui_ctx.clone();
-                move || ctx.request_repaint()
-            })
-            .expect("start settings writer"),
+            saved: saved::SavedSettings {
+                settings,
+                checked: Instant::now(),
+                writer: globecraft_data::settings::SettingsWriter::new(repaint())
+                    .expect("start settings writer"),
+            },
             measure: measure::MeasureState::default(),
             wayback: wayback::WaybackState::default(),
             time: globecraft_core::time::AppTime::default(),
-            still_shot: None,
-            ground_km: 0.0,
-            download_log: cache::DownloadLog {
-                at: Instant::now(),
-                bytes: 0,
-            },
             runtime,
         };
         app.restore_kml_session();
-        if let Some(error) = &app.update_restart.error {
+        if let Some(error) = &app.updates.restart.error {
             app.status = error.clone();
         }
         if let Some(problem) = restart
@@ -468,7 +338,7 @@ impl App {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_deref()
         {
-            app.updater.resume_installed(version);
+            app.updates.service.resume_installed(version);
         }
         if let Some(path) = restart
             .planet
@@ -476,7 +346,7 @@ impl App {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
         {
-            app.explorer.request_open(path, &app.file_jobs);
+            app.explorer.request_open(path, &app.files.jobs);
         }
         #[cfg(target_os = "macos")]
         {
@@ -510,10 +380,10 @@ impl App {
             std::thread::sleep(Duration::from_millis(50));
         }
         let started = Instant::now();
-        while self.file_jobs.is_busy() && started.elapsed() < QUIT_FILE_WAIT {
+        while self.files.jobs.is_busy() && started.elapsed() < QUIT_FILE_WAIT {
             std::thread::sleep(Duration::from_millis(20));
         }
-        if !self.cache.wait_for_disk_writes(QUIT_DISK_WAIT) {
+        if !self.tiles.cache.wait_for_disk_writes(QUIT_DISK_WAIT) {
             globecraft_data::log_line!("Quit before every tile reached the disk cache");
         }
     }
@@ -522,12 +392,12 @@ impl App {
 impl App {
     /// Queues the settings for writing when they differ from what was last queued.
     fn persist_settings(&mut self) {
-        self.settings_checked = Instant::now();
-        if self.settings != self.saved_settings {
+        self.saved.checked = Instant::now();
+        if self.settings != self.saved.settings {
             // However the setting changed (a command, Settings, an import), requests follow.
             globecraft_data::network::set_offline(self.settings.offline);
-            self.settings_writer.settings(&self.settings);
-            self.saved_settings = self.settings.clone();
+            self.saved.writer.settings(&self.settings);
+            self.saved.settings = self.settings.clone();
         }
     }
 }
@@ -535,16 +405,18 @@ impl App {
 impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let restarting = self
-            .update_restart
+            .updates
+            .restart
             .request
             .requested
             .load(std::sync::atomic::Ordering::Acquire);
         self.persist_settings();
-        match self.settings_writer.finish() {
+        match self.saved.writer.finish() {
             Ok(()) => {}
             Err(error) if restarting => {
                 *self
-                    .update_restart
+                    .updates
+                    .restart
                     .request
                     .error
                     .lock()
@@ -572,7 +444,8 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         if restarting {
             if let Some(error) = self
-                .update_restart
+                .updates
+                .restart
                 .request
                 .error
                 .lock()
@@ -621,19 +494,90 @@ impl eframe::App for App {
             && (self.layer(MapLayer::Sunlight)
                 || self.sky_ready()
                 || self.timeline.open
-                || (self.layer(MapLayer::TimeZones) && self.cursor.is_some()));
+                || (self.layer(MapLayer::TimeZones) && self.pointer.cursor.is_some()));
         if let Some(after) = clock_wake(globecraft_core::math::now_unix(), shows_clock) {
             ctx.request_repaint_after(after);
         }
         // A view link from the command line opens once the window is up.
-        if let Some(link) = self.pending_view_link.take()
+        if let Some(link) = self.files.pending_view_link.take()
             && let Err(error) = self.run("view.openLink", serde_json::json!({"link": link}))
         {
             self.status = error;
         }
-        self.updater.start_once();
-        self.updater.poll();
-        self.update_live_services(ctx);
+        self.updates.service.start_once();
+        self.updates.service.poll();
+        let aircraft_enabled = self.layer(MapLayer::Flights)
+            && self.explorer.active == globecraft_core::body::Body::Earth
+            && !self.flat_earth.open;
+        self.live.update_aircraft(ctx, aircraft_enabled, &self.cam);
+        self.update_selected_flight(ctx, aircraft_enabled);
+        // Independent realtime layers, loaded only for the globe while enabled.
+        let earth =
+            self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
+        self.live.update_feeds(
+            &self.runtime,
+            ctx,
+            live::LiveQuery {
+                earth,
+                cam: &self.cam,
+                vessels: self.layer(MapLayer::Vessels),
+                satellites: self.layer(MapLayer::Satellites),
+                aurora: self.layer(MapLayer::Aurora),
+                traffic: self.layer(MapLayer::Traffic),
+                // Airports by code: for the search box and a selected flight's route.
+                airports: self.picked.flight.selected().is_some()
+                    || !self.search.query.trim().is_empty(),
+                tomtom_key: &self.keys.tomtom,
+            },
+        );
+        self.update_time_zones(ctx, earth);
+        self.update_marine_names(ctx, earth);
+        let view = globecraft_data::ViewQuery::from(self.cam);
+        self.map_data.update(
+            &self.runtime,
+            ctx,
+            map_data::MapDataQuery {
+                earth,
+                view,
+                transport: self.transport_shown(),
+                rail_or_airports: self.layer(MapLayer::Railways) || self.layer(MapLayer::Airports),
+                poi: self.poi_layers().any(),
+                roads: self.layer(MapLayer::Roads),
+            },
+        );
+        let scene = self.imagery_time();
+        self.user_layers.update(
+            ctx,
+            &self.runtime,
+            &self.settings.user_layers,
+            view,
+            earth,
+            scene,
+        );
+        if self.time.speed() != 0.0 {
+            // A playing time moves the sun and the timed points every frame.
+            ctx.request_repaint();
+        }
+        let place_wake = ctx.clone();
+        self.borders.place_names.update(
+            &self.runtime,
+            earth && self.layer(MapLayer::PlaceLabels),
+            view,
+            move || place_wake.request_repaint(),
+        );
+        self.refresh_place_names();
+        // The services below refresh only when the interface runs: a heartbeat
+        // while one is on, so they do not wait for the user to move.
+        if earth
+            && (self.layer(MapLayer::Vessels)
+                || self.layer(MapLayer::Satellites)
+                || self.layer(MapLayer::Roads)
+                || self.layer(MapLayer::Traffic)
+                || self.layer(MapLayer::Aurora)
+                || self.user_layers_refresh())
+        {
+            ctx.request_repaint_after(Duration::from_secs(30));
+        }
         self.poll_files(ctx);
         #[cfg(feature = "assistant")]
         self.poll_assistant();
@@ -664,32 +608,31 @@ impl eframe::App for App {
         // then emptier than at the last frame's start. Label shapes kept across frames
         // must be laid out again, or they show other glyphs.
         let atlas_fill = ui.ctx().fonts(|fonts| fonts.font_atlas_fill_ratio());
-        if atlas_fill < self.font_atlas_fill {
+        if atlas_fill < self.chrome.font_atlas_fill {
             self.borders.overlay_cache.font_atlas_reset();
         }
-        self.font_atlas_fill = atlas_fill;
+        self.chrome.font_atlas_fill = atlas_fill;
         ui.set_theme(egui_theme(self.settings.appearance.theme));
         let dt = frame_timing::animation_delta_secs(ui);
         if self
+            .chrome
             .styled_scale
             .is_none_or(|scale| (self.settings.ui_scale - scale).abs() > 1e-4)
         {
             ui::theme::apply(ui, self.settings.ui_scale);
-            self.styled_scale = Some(self.settings.ui_scale);
+            self.chrome.styled_scale = Some(self.settings.ui_scale);
         }
         // persist settings once a slider is released; frames with no input (animation)
         // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more
         let (pointer_down, had_input) = ui.input(|i| (i.pointer.any_down(), !i.events.is_empty()));
-        if !pointer_down
-            && (had_input || self.settings_checked.elapsed() >= SETTINGS_CHECK_INTERVAL)
-        {
+        if !pointer_down && (had_input || self.saved.checked.elapsed() >= SETTINGS_CHECK_INTERVAL) {
             self.persist_settings();
         }
-        if let Some(error) = self.settings_writer.take_error() {
+        if let Some(error) = self.saved.writer.take_error() {
             self.status = format!("Settings persistence failed: {error}");
         }
         profile_checkpoint!(watchdog, "ui.slow.input");
-        if self.update_restart.is_saving() {
+        if self.updates.restart.is_saving() {
             ui.disable();
         } else {
             #[cfg(target_os = "macos")]
@@ -700,7 +643,7 @@ impl eframe::App for App {
             self.handle_dropped_files(ui);
         }
         self.step_fly(dt);
-        if self.fly.is_some() {
+        if self.motion.fly.is_some() {
             ui.request_repaint();
         }
         profile_checkpoint!(watchdog, "ui.slow.header");
@@ -721,7 +664,7 @@ impl eframe::App for App {
         self.shortcut_dialog(ui);
         ui::focus::paint_focus_ring(ui.ctx());
         profile_checkpoint!(watchdog, "ui.slow.live_maps");
-        self.live_maps.update(
+        self.live.maps.update(
             ui,
             &self.runtime,
             self.layer(MapLayer::Clouds),
@@ -743,8 +686,7 @@ impl eframe::App for App {
                 altitude_km: self.cam.alt,
                 tilt_deg: self.cam.tilt,
                 cache_limit_bytes: self.settings.cache.border_bytes(),
-                load_ahead: self.imagery.renderer.is_idle()
-                    && !self.imagery.renderer.waits_for_tiles(),
+                load_ahead: self.frame.renderer.is_idle() && !self.frame.renderer.waits_for_tiles(),
                 // From where the state lines' fade-in is past its first few percent.
                 states_visible: self.layer(MapLayer::StateBorders)
                     && self.cam.alt
@@ -780,8 +722,8 @@ impl eframe::App for App {
             profile.values.width = (viewport.width() * pixels_per_point).round().max(0.0) as usize;
             profile.values.height =
                 (viewport.height() * pixels_per_point).round().max(0.0) as usize;
-            profile.values.inflight = self.cache.inflight();
-            profile.values.resident_bytes = self.cache.resident_bytes();
+            profile.values.inflight = self.tiles.cache.inflight();
+            profile.values.resident_bytes = self.tiles.cache.resident_bytes();
             watchdog.finish(profile.values);
         }
     }

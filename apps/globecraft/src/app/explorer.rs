@@ -193,7 +193,7 @@ impl App {
         self.layer_checkbox(ui, MapLayer::Clouds, lg.text("layers-clouds-toggle"));
         let (clouds, radar) = (self.layer(MapLayer::Clouds), self.layer(MapLayer::Radar));
         if clouds || radar {
-            ui.small(self.live_maps.status(clouds, radar, lg));
+            ui.small(self.live.maps.status(clouds, radar, lg));
         }
         if clouds {
             ui.label(lg.text("explorer-cloud-credit"));
@@ -230,7 +230,7 @@ impl App {
             ] {
                 if super::ui::icons::button(ui, icon, lg.text(label)).clicked() {
                     self.flat_earth.open = false;
-                    self.explorer.choose(body, &self.file_jobs);
+                    self.explorer.choose(body, &self.files.jobs);
                 }
             }
         });
@@ -276,7 +276,7 @@ impl App {
         });
         if ui.button(lg.text("explorer-display-planet")).clicked() {
             self.explorer
-                .request_image(ImageTarget::Planet, &self.file_jobs);
+                .request_image(ImageTarget::Planet, &self.files.jobs);
         }
         if let Some(texture) = &self.explorer.viewer {
             ui.image((texture.id(), egui::vec2(260.0, 150.0)));
@@ -287,12 +287,12 @@ impl App {
                     .set_file_name("my-planet.globeplanet")
                     .save_file()
             {
-                self.explorer.request_save(path, &self.file_jobs);
+                self.explorer.request_save(path, &self.files.jobs);
             }
             if ui.button(lg.text("explorer-load-planet")).clicked()
                 && let Some(path) = planet_dialog().pick_file()
             {
-                self.explorer.request_open(path, &self.file_jobs);
+                self.explorer.request_open(path, &self.files.jobs);
             }
         });
     }
@@ -321,7 +321,7 @@ impl App {
         });
         if ui.button(lg.text("explorer-display-galaxy")).clicked() {
             self.explorer
-                .request_image(ImageTarget::Sky, &self.file_jobs);
+                .request_image(ImageTarget::Sky, &self.files.jobs);
         }
         if let Some(texture) = &self.explorer.sky {
             ui.image((texture.id(), egui::vec2(260.0, 120.0)));

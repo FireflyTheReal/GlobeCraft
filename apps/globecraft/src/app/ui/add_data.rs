@@ -41,17 +41,18 @@ enum WebKind {
     Archive,
 }
 
-/// The template an archive's address or path names: a web address of a `.pmtiles`
-/// file, or the path of an `.mbtiles` file on this computer.
-fn archive_template(location: &str) -> Option<String> {
+/// The template an archive's address or path names: a `.pmtiles` file on the web or
+/// on this computer, or an `.mbtiles` file on this computer.
+pub(in crate::app) fn archive_template(location: &str) -> Option<String> {
     let location = location.trim();
-    let extension = |name: &str| {
+    // A web address may carry a query; a file's name is taken whole.
+    let path = if is_url(location) {
+        location.split(['?', '#']).next().unwrap_or(location)
+    } else {
         location
-            .split(['?', '#'])
-            .next()
-            .is_some_and(|path| path.to_ascii_lowercase().ends_with(name))
     };
-    if is_url(location) && extension(".pmtiles") {
+    let extension = |name: &str| path.to_ascii_lowercase().ends_with(name);
+    if extension(".pmtiles") {
         Some(format!("{PMTILES_PREFIX}{location}"))
     } else if !is_url(location) && extension(".mbtiles") {
         Some(format!("{MBTILES_PREFIX}{location}"))
@@ -553,7 +554,7 @@ impl AddDataDialog {
                     if self.web_kind == WebKind::Archive
                         && ui.button(lang.text("add-data-browse-action")).clicked()
                         && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("MBTiles", &["mbtiles"])
+                            .add_filter("MBTiles, PMTiles", &["mbtiles", "pmtiles"])
                             .pick_file()
                     {
                         self.url = path.to_string_lossy().into_owned();
@@ -837,7 +838,7 @@ impl AddDataDialog {
 
 impl App {
     pub(in crate::app) fn add_data_window(&mut self, ctx: &egui::Context) {
-        let Some(dialog) = &mut self.add_data else {
+        let Some(dialog) = &mut self.windows.add_data else {
             return;
         };
         let added: Vec<String> = self
@@ -849,7 +850,7 @@ impl App {
         let advanced = self.settings.experience.is_advanced();
         match dialog.show(ctx, self.lang, &self.runtime, &added, advanced) {
             Action::None => {}
-            Action::Close => self.add_data = None,
+            Action::Close => self.windows.add_data = None,
             Action::Add(layer) => {
                 let name = layer.name.clone();
                 self.add_user_layer(layer);
@@ -858,18 +859,19 @@ impl App {
                     .format("add-data-added-status", &[("name", name.into())]);
                 // The library stays open for more; a form is done.
                 if self
+                    .windows
                     .add_data
                     .as_ref()
                     .is_some_and(|d| d.tab != Tab::Library)
                 {
-                    self.add_data = None;
+                    self.windows.add_data = None;
                 }
                 self.settings.sidebar.open = true;
                 self.settings.sidebar.panel =
                     globecraft_data::settings::sidebar::SidebarPanel::Layers;
             }
             Action::OpenKml => {
-                self.add_data = None;
+                self.windows.add_data = None;
                 self.run_reporting("places.open", serde_json::Value::Null);
             }
         }
@@ -891,8 +893,12 @@ mod archive_tests {
             Some("mbtiles:/Users/me/Maps/Alps.MBTiles")
         );
         // A local PMTiles file and a web MBTiles file cannot be read.
-        assert!(archive_template("/Users/me/map.pmtiles").is_none());
+        assert_eq!(
+            archive_template("/Users/me/map.pmtiles").as_deref(),
+            Some("pmtiles:/Users/me/map.pmtiles")
+        );
         assert!(archive_template("https://example.org/map.mbtiles").is_none());
+        assert!(archive_template("/Users/me/notes.txt").is_none());
         assert!(archive_template("https://example.org/{z}/{x}/{y}.png").is_none());
     }
 }

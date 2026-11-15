@@ -208,12 +208,13 @@ impl App {
             let step = input.view.motion_step();
             // A selected flight's track, route and plane go above the other planes,
             // which are dimmed so they stand out; the hover card goes above all.
-            let selected = self.selection.flight.selected().is_some();
+            let selected = self.picked.flight.selected().is_some();
             let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 };
-            self.aircraft_overlay
+            self.live
+                .aircraft_overlay
                 .draw(painter, input, self.lang, opacity);
             self.paint_selected_flight(painter, basis, rect);
-            self.aircraft_overlay.hover(painter, self.lang);
+            self.live.aircraft_overlay.hover(painter, self.lang);
             // The selected flight's card counts on.
             let step = if selected {
                 step.min(motion::SELECTED_MAX_STEP_SECS)
@@ -238,7 +239,7 @@ impl App {
             self.draw_satellite_overlay(painter, geometry);
             // Orbit predictions need to move even without another network fetch.
             let mut step = geometry.input.view.satellite_step();
-            if self.selection.satellite.selected().is_some() {
+            if self.picked.satellite.selected().is_some() {
                 step = step.min(motion::SELECTED_MAX_STEP_SECS);
             }
             painter
@@ -376,7 +377,13 @@ impl App {
         let hover = painter.ctx().pointer_hover_pos();
         let mut nearest: Option<(&globecraft_data::vessels::Vessel, egui::Pos2)> = None;
         let mut distance = (14.0 * ms).powi(2);
-        painter.extend(self.world_shapes.vessels(painter, geometry).iter().cloned());
+        painter.extend(
+            self.live
+                .world_shapes
+                .vessels(painter, geometry)
+                .iter()
+                .cloned(),
+        );
         for projected in geometry.vessels.iter() {
             let ship = &vessels[projected.source_index];
             let at = projected.position;
@@ -412,12 +419,13 @@ impl App {
         )> = None;
         let mut distance = (13.0 * ms).powi(2);
         painter.extend(
-            self.world_shapes
+            self.live
+                .world_shapes
                 .satellites(painter, geometry)
                 .iter()
                 .cloned(),
         );
-        self.selection
+        self.picked
             .satellite
             .set_drawn(
                 geometry
@@ -501,7 +509,8 @@ impl App {
             return;
         }
         let sunlight = self.layer(MapLayer::Sunlight);
-        self.aurora_shapes
+        self.live
+            .aurora_shapes
             .paint(painter, basis, rect, &grid, scene, sunlight);
     }
 }

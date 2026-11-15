@@ -53,7 +53,7 @@ fn selected_flight_screenshot() {
     let app = h.state_mut();
     app.run("layer.show", json!({"layer": "flights", "visible": true}))
         .expect("layer");
-    app.selection.flight.set(SelectedFlight {
+    app.picked.flight.set(SelectedFlight {
         hex: "3c6a9a".into(),
         callsign: "DLH400".into(),
         track: track.into(),

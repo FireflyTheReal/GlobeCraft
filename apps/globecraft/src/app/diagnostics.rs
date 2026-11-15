@@ -51,8 +51,8 @@ impl App {
             format!("Added data layers: {}", settings.user_layers.len()),
             format!(
                 "Tile cache: {} MiB decoded, {} downloads in flight",
-                self.cache.resident_bytes() / (1024 * 1024),
-                self.cache.inflight()
+                self.tiles.cache.resident_bytes() / (1024 * 1024),
+                self.tiles.cache.inflight()
             ),
             format!("Run log: {}", log_path.display()),
             String::new(),

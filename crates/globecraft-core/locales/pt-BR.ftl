@@ -6,7 +6,7 @@ kml-save-dialog-title = Salvar KML ou KMZ como
 
 screenshot-empty-error = Nada para salvar ainda.
 
-kml-drop-type-error = Só é possível soltar arquivos KML, KMZ, GeoJSON, GPX ou CSV aqui.
+kml-drop-type-error = Só é possível soltar arquivos KML, KMZ, GeoJSON, GPX, CSV, MBTiles ou PMTiles aqui.
 
 globe-placemark-action = Adicionar local aqui
 
@@ -677,6 +677,19 @@ data-pane-import-success = { $count } { $count ->
         [one] fonte adicionada
        *[other] fontes adicionadas
     } aos seus favoritos a partir de { $path }
+places-export-dialog-title = Exportar lugares como GeoJSON ou GPX
+places-export-success = { $places } { $places ->
+        [one] lugar
+       *[other] lugares
+    } e { $paths } { $paths ->
+        [one] caminho da régua exportados
+       *[other] caminhos da régua exportados
+    } para { $path }
+places-export-error = Erro ao exportar: { $error }
+places-export-empty = Nada para exportar: marque um lugar em Lugares ou meça um caminho com a régua primeiro.
+places-export-path-name = Caminho da régua { $number }
+places-export-shape-name = Forma da régua { $number }
+menu-places-export = Exportar lugares…
 sidebar-places-title = Lugares
 sidebar-pin-places-action = Fixar
 sidebar-pin-places-tooltip = Manter Lugares visível ao alternar painéis
@@ -905,6 +918,8 @@ cmd-places-save = Salvar
 cmd-places-save-help = Salva Meus lugares no arquivo KML atual.
 cmd-places-save-as = Salvar como
 cmd-places-save-as-help = Salva Meus lugares em um novo arquivo KML ou KMZ.
+cmd-places-export = Exportar lugares
+cmd-places-export-help = Grava os lugares exibidos (marcados) e os caminhos da régua em um arquivo GeoJSON ou GPX, para aplicativos de trilha, aparelhos de GPS e outros programas de mapas. Meus lugares continua no seu arquivo KML.
 cmd-places-clear = Limpar tudo
 cmd-places-clear-help = Remove todos os lugares e esquece os arquivos KML abertos (os arquivos são mantidos).
 cmd-ruler-enable = Régua
@@ -1336,7 +1351,7 @@ add-data-web-wms = WMS
 add-data-web-archive = Arquivo de blocos (PMTiles, MBTiles)
 add-data-web-archive-label = Arquivo
 add-data-web-archive-test-ok = O arquivo tem os níveis de zoom { $min } a { $max }; chegou um bloco ({ $width } × { $height } pixels).
-add-data-web-archive-help = Um arquivo PMTiles na web (endereço terminando em .pmtiles) ou um arquivo MBTiles neste computador, com imagens PNG, JPEG ou WebP. Testar lê os níveis de zoom; a camada é desenhada sobre as imagens, abaixo das fronteiras.
+add-data-web-archive-help = Um arquivo PMTiles na web (endereço terminando em .pmtiles) ou neste computador, ou um arquivo MBTiles neste computador, com imagens PNG, JPEG ou WebP. Testar lê os níveis de zoom; a camada é desenhada sobre as imagens, abaixo das fronteiras.
 add-data-web-template-label = Endereço dos blocos
 add-data-web-service-label = Endereço do serviço
 add-data-web-tile-size-label = Tamanho do bloco

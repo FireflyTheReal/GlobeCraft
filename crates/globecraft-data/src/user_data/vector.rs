@@ -12,6 +12,8 @@ const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_VERTICES: usize = 2_000_000;
 /// A failed load of a URL is tried again after this long.
 const RETRY: Duration = Duration::from_secs(60);
+/// The byte-order mark some programs write at the start of a UTF-8 file.
+const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NamedPoint {
@@ -39,14 +41,14 @@ pub struct FeatureSet {
     /// The property the points' values come from, and the smallest and largest value.
     pub value_field: Option<String>,
     pub value_range: Option<(f64, f64)>,
+    /// Points and line vertices kept so far, counted as they are added: summing the
+    /// lines for every new feature made reading a file of many lines quadratic.
+    vertices: usize,
 }
 
 impl FeatureSet {
-    fn vertices(&self) -> usize {
-        self.points.len() + self.lines.iter().map(Vec::len).sum::<usize>()
-    }
     fn room(&self) -> bool {
-        self.vertices() < MAX_VERTICES
+        self.vertices < MAX_VERTICES
     }
     fn point(&mut self, lat: f64, lon: f64, name: String, properties: PointProperties) {
         if !valid(lat, lon) {
@@ -69,6 +71,7 @@ impl FeatureSet {
             time_ms,
             details,
         });
+        self.vertices += 1;
     }
     fn line(&mut self, line: Vec<(f64, f64)>) {
         let line: Vec<(f64, f64)> = line
@@ -82,6 +85,7 @@ impl FeatureSet {
             self.truncated = true;
             return;
         }
+        self.vertices += line.len();
         self.lines.push(line);
     }
     fn finish(mut self) -> Self {
@@ -121,6 +125,9 @@ pub fn parse_features(
     bytes: &[u8],
     value_field: Option<&str>,
 ) -> Result<FeatureSet, crate::Error> {
+    // Spreadsheets and some servers start a file with a byte-order mark: it is not
+    // part of the first column's name, and JSON does not allow it.
+    let bytes = bytes.strip_prefix(UTF8_BOM).unwrap_or(bytes);
     let mut reader = PropertyReader::new(value_field);
     let mut set = match format {
         FeatureFormat::GeoJson => geojson(bytes, &mut reader)?,
@@ -277,8 +284,9 @@ fn positions(value: &serde_json::Value) -> Vec<(f64, f64)> {
 
 fn gpx(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
     use quick_xml::events::Event;
+    // Text is not trimmed by the reader: a name with `&amp;` or CDATA arrives in
+    // pieces, and trimming each would join its words.
     let mut reader = quick_xml::Reader::from_reader(bytes);
-    reader.config_mut().trim_text(true);
     let mut set = FeatureSet::default();
     let mut buffer = Vec::new();
     // The point being read (waypoint, or a track or route point), its name, and the
@@ -312,16 +320,22 @@ fn gpx(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
             Event::Text(text) if in_name => {
                 name.push_str(&text.xml10_content());
             }
+            Event::CData(text) if in_name => {
+                name.push_str(&text.xml10_content());
+            }
+            // `&amp;`, `&#233;`: the reader hands references over on their own.
+            Event::GeneralRef(reference) if in_name => {
+                if let Some(text) = super::capabilities::reference_text(&reference) {
+                    name.push_str(&text);
+                }
+            }
             Event::End(element) => match element.local_name().as_ref() {
                 "name" => in_name = false,
                 "wpt" => {
                     if let Some((lat, lon, _)) = point.take() {
-                        set.point(
-                            lat,
-                            lon,
-                            std::mem::take(&mut name),
-                            PointProperties::default(),
-                        );
+                        let label = name.trim().to_owned();
+                        name.clear();
+                        set.point(lat, lon, label, PointProperties::default());
                     }
                 }
                 "trkseg" | "rte" => set.line(std::mem::take(&mut line)),
@@ -334,7 +348,7 @@ fn gpx(bytes: &[u8]) -> Result<FeatureSet, crate::Error> {
     }
     // A self-closing waypoint without a name element.
     if let Some((lat, lon, _)) = point.take() {
-        set.point(lat, lon, name, PointProperties::default());
+        set.point(lat, lon, name.trim().to_owned(), PointProperties::default());
     }
     set.line(line);
     Ok(set)
@@ -369,14 +383,8 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
         .unwrap_or(',');
     // The column names as written (for the hover card) and in lower case (to find
     // the coordinates).
-    let headers: Vec<String> = split(header, delimiter)
-        .into_iter()
-        .map(|c| c.trim().trim_matches('"').to_owned())
-        .collect();
-    let columns: Vec<String> = split(header, delimiter)
-        .into_iter()
-        .map(|c| c.trim().trim_matches('"').to_ascii_lowercase())
-        .collect();
+    let headers: Vec<String> = split(header, delimiter);
+    let columns: Vec<String> = headers.iter().map(|c| c.to_ascii_lowercase()).collect();
     let find = |names: &[&str]| columns.iter().position(|c| names.contains(&c.as_str()));
     let lat = find(&["lat", "latitude", "y", "lat_dd", "decimallatitude"])
         .ok_or_else(|| crate::Error::msg("no latitude column (lat, latitude or y)"))?;
@@ -395,23 +403,18 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
     for line in lines {
         let fields = split(line, delimiter);
         let number = |i: usize| {
-            fields.get(i).and_then(|f| {
-                f.trim()
-                    .trim_matches('"')
-                    .replace(',', ".")
-                    .parse::<f64>()
-                    .ok()
-            })
+            fields
+                .get(i)
+                .and_then(|f| f.replace(',', ".").parse::<f64>().ok())
         };
         if let (Some(la), Some(lo)) = (number(lat), number(lon)) {
             let label = name
                 .and_then(|i| fields.get(i))
-                .map(|f| f.trim().trim_matches('"').to_owned())
+                .cloned()
                 .unwrap_or_default();
-            let cells: Vec<&str> = fields.iter().map(|f| f.trim().trim_matches('"')).collect();
             let others = headers
                 .iter()
-                .zip(cells)
+                .zip(&fields)
                 .enumerate()
                 .filter(|(i, _)| *i != lat && *i != lon && Some(*i) != name)
                 .map(|(_, (key, cell))| (key.as_str(), Scalar::Text(cell)));
@@ -421,22 +424,28 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
     Ok(set)
 }
 
-/// A CSV line's fields, honouring double quotes.
+/// A CSV line's fields, trimmed, honouring double quotes: a quoted field may hold
+/// the delimiter, and `""` inside it is one quote.
 fn split(line: &str, delimiter: char) -> Vec<String> {
     let mut fields = Vec::new();
     let mut field = String::new();
     let mut quoted = false;
-    for c in line.chars() {
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
         match c {
-            '"' => {
-                quoted = !quoted;
-                field.push(c);
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
             }
-            c if c == delimiter && !quoted => fields.push(std::mem::take(&mut field)),
+            '"' => quoted = !quoted,
+            c if c == delimiter && !quoted => {
+                fields.push(field.trim().to_owned());
+                field.clear();
+            }
             c => field.push(c),
         }
     }
-    fields.push(field);
+    fields.push(field.trim().to_owned());
     fields
 }
 
@@ -547,10 +556,12 @@ pub async fn load(
     format: FeatureFormat,
     value_field: Option<String>,
 ) -> Result<FeatureSet, crate::Error> {
+    // One byte over the limit is read, to tell a file that is too large from one
+    // that just fits: a file cut off at the limit used to fail as broken JSON.
     let bytes = if super::is_url(&location) {
         let client = crate::http::client(crate::http::Policy::UserData)?;
         let address = crate::keys::fill(&location)?;
-        crate::http::body(client.get(&address), MAX_BYTES)
+        crate::http::body(client.get(&address), MAX_BYTES + 1)
             .await
             .map_err(crate::keys::redact_error)?
     } else {
@@ -558,12 +569,18 @@ pub async fn load(
             use std::io::Read;
             let mut bytes = Vec::new();
             std::fs::File::open(&location)?
-                .take(MAX_BYTES)
+                .take(MAX_BYTES + 1)
                 .read_to_end(&mut bytes)?;
             Ok(bytes)
         })
         .await?
     };
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(crate::Error::msg(format!(
+            "the file is larger than {} MiB, the most a layer reads",
+            MAX_BYTES / (1024 * 1024)
+        )));
+    }
     crate::cpu::run(crate::cpu::Service::Features, move || {
         parse_features(format, &bytes, value_field.as_deref())
     })
@@ -641,6 +658,57 @@ mod tests {
         );
         let error = parse_features(FeatureFormat::Csv, b"a,b\n1,2\n", None).unwrap_err();
         assert!(error.to_string().contains("latitude"), "{error}");
+    }
+
+    #[test]
+    fn files_with_a_byte_order_mark_read_like_any_other() {
+        // "CSV UTF-8" from a spreadsheet: the mark is not part of the first column.
+        let csv = "\u{feff}lat,lon,name\n38.72,-9.14,Lisbon\n";
+        let set = parse_features(FeatureFormat::Csv, csv.as_bytes(), None).unwrap();
+        assert_eq!(set.points[0].name, "Lisbon");
+        let json = "\u{feff}{\"type\":\"Point\",\"coordinates\":[1,2]}";
+        let set = parse_features(FeatureFormat::GeoJson, json.as_bytes(), None).unwrap();
+        assert_eq!((set.points[0].lat, set.points[0].lon), (2.0, 1.0));
+        let gpx = "\u{feff}<gpx><wpt lat=\"1\" lon=\"2\"/></gpx>";
+        assert!(parse_features(FeatureFormat::Gpx, gpx.as_bytes(), None).is_ok());
+    }
+
+    #[test]
+    fn gpx_names_keep_entities_character_data_and_inner_spaces() {
+        let gpx = br#"<gpx>
+              <wpt lat="48.1" lon="11.5"><name> Tom &amp; Jerry&apos;s caf&#233; </name></wpt>
+              <wpt lat="48.2" lon="11.6"><name><![CDATA[Hut <2,000 m>]]></name></wpt>
+            </gpx>"#;
+        let set = parse_features(FeatureFormat::Gpx, gpx, None).unwrap();
+        let names: Vec<&str> = set.points.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Tom & Jerry's caf\u{e9}", "Hut <2,000 m>"]);
+    }
+
+    #[test]
+    fn csv_quotes_hold_delimiters_and_doubled_quotes() {
+        let csv = "name,lat,lon,note\n\"Porto, \"\"the\"\" city\",41.15,-8.61,\"a, b\"\n";
+        let set = parse_features(FeatureFormat::Csv, csv.as_bytes(), None).unwrap();
+        assert_eq!(set.points[0].name, "Porto, \"the\" city");
+        assert_eq!(set.points[0].details, "note: a, b");
+        assert_eq!(split(" a ;\"b;c\"; ", ';'), ["a", "b;c", ""]);
+    }
+
+    #[test]
+    fn many_lines_are_counted_once_and_stop_at_the_vertex_limit() {
+        // 150,000 short lines: counting every earlier line for each new one took
+        // over ten thousand million steps.
+        let mut set = FeatureSet::default();
+        let started = Instant::now();
+        for i in 0..150_000 {
+            let lat = f64::from(i % 80);
+            set.line(vec![(lat, 0.0), (lat, 1.0), (lat, 2.0)]);
+        }
+        assert_eq!(set.vertices, 450_000);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        set.vertices = MAX_VERTICES - 1;
+        set.point(0.0, 0.0, String::new(), PointProperties::default());
+        set.point(0.0, 0.0, String::new(), PointProperties::default());
+        assert!(set.truncated && set.vertices == MAX_VERTICES);
     }
 
     #[test]

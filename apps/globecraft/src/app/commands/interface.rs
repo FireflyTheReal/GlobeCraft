@@ -1,38 +1,20 @@
-//! Panes, windows, settings, files and help. Handlers for the `ui.*`, `assistant.*`,
-//! `settings.*`, `file.*`, `help.*`, `app.*` commands.
-use super::*;
+//! Interface commands: panes, windows, the ribbon and the application (`ui.*`, `help.*`, `app.*`).
+use super::{bool_param, str_param, toggled};
+use crate::app::App;
+use eframe::egui;
+use globecraft_data::settings::{
+    appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
+};
+use serde_json::{Value, json};
+
+const DOCUMENTATION_URL: &str = "https://github.com/FireflyTheReal/GlobeCraft#readme";
+const ISSUES_URL: &str = "https://github.com/FireflyTheReal/GlobeCraft/issues/new/choose";
 
 impl App {
-    pub(in crate::app) fn run_interface(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+    /// Runs a `ui.*`, `assistant.*`, `help.*` or `app.*` command.
+    pub(super) fn run_interface(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         let ctx = self.ctx.clone();
         Ok(match id {
-            "file.screenshot" => {
-                if self.imagery.image.is_none() {
-                    return Err("The globe has not finished drawing yet.".into());
-                }
-                let quality = match str_param(p, "quality") {
-                    Some(code) => ScreenshotQuality::from_code(code)
-                        .ok_or("quality must be normal, plus, pro or pro_max")?,
-                    None => self.settings.screenshot_quality,
-                };
-                self.take_screenshot(quality)?;
-                json!({"folder": self.settings.screenshot_dir, "quality": quality.code()})
-            }
-            "file.cancelScreenshot" => {
-                self.cancel_screenshot()?;
-                json!({"cancelling": true})
-            }
-            "file.screenshotQuality" => {
-                let quality = str_param(p, "quality")
-                    .and_then(ScreenshotQuality::from_code)
-                    .ok_or("quality must be normal, plus, pro or pro_max")?;
-                self.settings.screenshot_quality = quality;
-                json!({"quality": quality.code()})
-            }
-            "ui.explorer" => {
-                self.settings.workspace.toggle_right(RightPane::Explorer);
-                json!({})
-            }
             "ui.pane.layers" | "ui.pane.places" => {
                 let panel = match id {
                     "ui.pane.layers" => SidebarPanel::Layers,
@@ -82,8 +64,8 @@ impl App {
                 json!({"shown": shown})
             }
             "ui.tileDiagnostics" => {
-                let shown = toggled(p, self.tile_diagnostics);
-                self.tile_diagnostics = shown;
+                let shown = toggled(p, self.frame.diagnostics);
+                self.frame.diagnostics = shown;
                 json!({"shown": shown})
             }
             "ui.navigatorStyle" => {
@@ -97,7 +79,7 @@ impl App {
             "ui.ribbon" => {
                 self.settings.workspace.ribbon_minimized =
                     !self.settings.workspace.ribbon_minimized;
-                self.ribbon_peek = false;
+                self.chrome.ribbon_peek = false;
                 json!({})
             }
             "ui.focusNext" | "ui.focusPrevious" => {
@@ -108,14 +90,14 @@ impl App {
                 let group = str_param(p, "group").ok_or("group is required")?;
                 let tool = str_param(p, "tool").ok_or("tool is required")?;
                 let on = bool_param(p, "on").unwrap_or(!self.tool_pinned(group, tool));
-                let entry = super::super::tools::group_entry(group, tool);
-                let toggled = on != super::super::tools::pinned_by_default(group, tool);
+                let entry = crate::app::tools::group_entry(group, tool);
+                let toggled = on != crate::app::tools::pinned_by_default(group, tool);
                 self.settings.workspace.set_ribbon_toggled(&entry, toggled);
                 json!({"pinned": on})
             }
             "ui.quickTools.pin" => {
                 let tool = str_param(p, "tool").ok_or("tool is required")?;
-                super::super::tools::parse_tool(tool).ok_or("tool is not a command")?;
+                crate::app::tools::parse_tool(tool).ok_or("tool is not a command")?;
                 let present = self
                     .settings
                     .workspace
@@ -140,13 +122,13 @@ impl App {
             }
             "ui.shortcut.edit" => {
                 let tool = str_param(p, "tool").ok_or("tool is required")?;
-                super::super::tools::parse_tool(tool).ok_or("tool is not a command")?;
-                self.ribbon_tools.capture = Some(tool.to_string());
+                crate::app::tools::parse_tool(tool).ok_or("tool is not a command")?;
+                self.chrome.ribbon_tools.capture = Some(tool.to_string());
                 json!({})
             }
             "ui.shortcut.set" => {
                 let tool = str_param(p, "tool").ok_or("tool is required")?.to_string();
-                super::super::tools::parse_tool(&tool).ok_or("tool is not a command")?;
+                crate::app::tools::parse_tool(&tool).ok_or("tool is not a command")?;
                 self.set_shortcut(&tool, str_param(p, "keys"))?
             }
             "ui.ribbon.resetTools" => {
@@ -155,7 +137,7 @@ impl App {
                 w.ribbon_toggled = defaults.ribbon_toggled;
                 w.quick_tools = defaults.quick_tools;
                 w.shortcuts = defaults.shortcuts;
-                super::super::tools::sync_shortcuts(&w.shortcuts);
+                crate::app::tools::sync_shortcuts(&w.shortcuts);
                 json!({})
             }
             "ui.theme" => {
@@ -177,41 +159,13 @@ impl App {
                 json!({})
             }
             "ui.commandSearch" => {
-                self.command_search = Some(super::super::ui::palette::CommandSearch::default());
+                self.windows.command_search =
+                    Some(crate::app::ui::palette::CommandSearch::default());
                 json!({})
             }
             "ui.settings" => {
                 self.windows.settings = !self.windows.settings;
                 json!({})
-            }
-            "settings.units" => {
-                self.settings.distance_units = match str_param(p, "units") {
-                    Some("system") => UnitPreference::System,
-                    Some("metric") => UnitPreference::Metric,
-                    Some("imperial") => UnitPreference::Imperial,
-                    _ => return Err("units must be system, metric or imperial".into()),
-                };
-                json!({})
-            }
-            "settings.experience" => {
-                self.settings.experience = str_param(p, "level")
-                    .and_then(ExperienceLevel::from_code)
-                    .ok_or("level must be basic or advanced")?;
-                json!({})
-            }
-            "settings.coordinateFormat" => {
-                let format = str_param(p, "format")
-                    .and_then(CoordinateFormat::from_code)
-                    .ok_or("unknown coordinate format")?;
-                self.settings.coordinate_display.select_format(format);
-                json!({})
-            }
-            "settings.language" => {
-                let preference = str_param(p, "language")
-                    .and_then(LanguagePreference::from_code)
-                    .ok_or("language must be system, en or pt-BR")?;
-                self.set_language_preference(preference);
-                json!({"language": self.lang.code()})
             }
             "ui.shortcuts" => {
                 self.windows.shortcuts = !self.windows.shortcuts;
@@ -234,14 +188,6 @@ impl App {
                 self.status = self.lang.text("diagnostics-copied-status").to_owned();
                 json!({"copied": true})
             }
-            "file.exportSettings" => {
-                self.pick_settings_export();
-                json!({})
-            }
-            "file.importSettings" => {
-                self.pick_settings_import();
-                json!({})
-            }
             "app.workOffline" => {
                 let offline = toggled(p, self.settings.offline);
                 self.settings.offline = offline;
@@ -252,13 +198,6 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 json!({})
             }
-            "ui.here" => {
-                let (lat, lon) = position(p)?;
-                self.close_other_cards(super::super::here::Card::Here);
-                self.selection.here = Some(super::super::here::HereCard { lat, lon });
-                json!({"lat": lat, "lon": lon})
-            }
-            "ui.legend" => self.run_legend(p),
             "ui.timeline" => {
                 self.timeline.open = bool_param(p, "visible").unwrap_or(!self.timeline.open);
                 json!({"visible": self.timeline.open})

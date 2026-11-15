@@ -103,11 +103,18 @@ pub fn parse_coordinate_query(query: &str) -> Result<Option<(f64, f64)>, Coordin
         let point = grid.to_latlon();
         return Ok(Some(validate_coordinates(point.lat(), point.lon())?));
     }
-    let ascii_angle = query.contains(['\'', '"'])
+    // Angles hold a number: "Essen", "New" or "S'" are names being typed, not
+    // hemisphere letters.
+    let has_digit = query.chars().any(|c| c.is_ascii_digit());
+    let ascii_angle = has_digit
+        && query.contains(['\'', '"'])
         && upper
             .chars()
             .all(|c| c.is_ascii_digit() || c.is_whitespace() || ".,+-;NSEW'\"".contains(c));
-    if query.contains(['°', '′', '″']) || ascii_angle || looks_like_hemisphere_pair(&upper) {
+    if query.contains(['°', '′', '″'])
+        || ascii_angle
+        || (has_digit && looks_like_hemisphere_pair(&upper))
+    {
         let (latitude, longitude) = if let Some(pair) = query.split_once([',', ';']) {
             pair
         } else {
@@ -238,6 +245,14 @@ mod tests {
             "12 O'Connor St",
             "São Paulo",
             "東京",
+            // Names spelled with only the hemisphere letters, whole or half typed.
+            "Essen",
+            "Enns",
+            "Sens",
+            "New",
+            "NE",
+            "news",
+            "S'",
         ] {
             assert!(parse_coordinate_query(input).unwrap().is_none(), "{input}");
         }

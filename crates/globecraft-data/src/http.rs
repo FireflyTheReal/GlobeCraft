@@ -91,6 +91,8 @@ pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
                 .connect_timeout(Duration::from_secs(15))
                 .timeout(Duration::from_secs(60))
         }
+        // A place search that never answers must end: without a limit its
+        // "searching" status stayed for good.
         Policy::Search => {
             builder = builder
                 .connect_timeout(SEARCH_CONNECT_TIMEOUT)

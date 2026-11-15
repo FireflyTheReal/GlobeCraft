@@ -84,6 +84,8 @@ pub(crate) struct Header {
     longitudes: Option<(f64, f64)>,
     /// The archive's suggested view: zoom, longitude, latitude.
     center: (u8, f64, f64),
+    /// Whether the tiles are vector tiles (Mapbox Vector Tiles), not images.
+    vector_tiles: bool,
 }
 
 impl Header {
@@ -178,6 +180,7 @@ impl Header {
                 };
                 (bytes[118], degrees(119), degrees(123))
             },
+            vector_tiles: bytes[99] == 1,
         };
         if header.min_zoom > header.max_zoom || header.max_zoom > MAX_ZOOM {
             return Err(crate::Error::msg(format!(
@@ -377,6 +380,7 @@ impl Archive {
                 max_zoom: 0,
                 longitudes: None,
                 center: (0, 0.0, 0.0),
+                vector_tiles: false,
             },
             root: Vec::new(),
             leaves: Mutex::new(HashMap::new()),
@@ -404,6 +408,11 @@ impl Archive {
     /// The archive's suggested view: zoom, longitude, latitude.
     pub(crate) fn center(&self) -> (u8, f64, f64) {
         self.header.center()
+    }
+
+    /// Whether the archive holds vector tiles, not images.
+    pub(crate) fn vector_tiles(&self) -> bool {
+        self.header.vector_tiles
     }
 
     /// Tile `z/x/y`'s bytes, unpacked, or `None` where the archive has no tile.
@@ -499,6 +508,9 @@ impl Archive {
             .checked_add(length.max(1) - 1)
             .filter(|_| length <= MAX_RANGE_BYTES)
             .ok_or_else(|| crate::Error::msg("corrupt PMTiles range"))?;
+        if !is_web_address(&self.url) {
+            return file_range(self.url.clone(), offset, length).await;
+        }
         let _permit = match crate::http::range_limit(self.policy) {
             Some(limit) => Some(
                 limit
@@ -547,7 +559,7 @@ impl Archive {
                     Some((response.url().to_string(), Instant::now()));
             }
             let mut response = response;
-            let mut bytes = Vec::with_capacity(length as usize);
+            let mut bytes = Vec::with_capacity(length.min(MAX_TILE_BYTES) as usize);
             while let Some(chunk) = response.chunk().await? {
                 bytes.extend_from_slice(&chunk);
                 if bytes.len() as u64 > length {
@@ -568,6 +580,26 @@ impl Archive {
         }
         Err(crate::Error::msg(format!("{} could not be read", self.url)))
     }
+}
+
+/// Whether an archive's address is on the web; otherwise it is a file on this
+/// computer (roadmap 1.2).
+fn is_web_address(address: &str) -> bool {
+    let lower = address.trim_start().to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+/// Bytes `offset..offset + length` of a file on this computer (fewer at its end).
+async fn file_range(path: String, offset: u64, length: u64) -> Result<Vec<u8>, crate::Error> {
+    tokio::task::spawn_blocking(move || -> Result<Vec<u8>, crate::Error> {
+        use std::io::{Read, Seek};
+        let mut file = std::fs::File::open(&path)?;
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        let mut bytes = Vec::with_capacity(length.min(MAX_TILE_BYTES) as usize);
+        file.take(length).read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+    .await?
 }
 
 #[cfg(test)]
@@ -794,6 +826,69 @@ mod tests {
         bytes[97] = 3;
         assert!(Header::parse(&bytes).is_err());
         assert!(Header::parse(b"MBTiles").is_err());
+        // Zoom levels the wrong way round, or beyond any pyramid.
+        bytes[97] = 2;
+        bytes[100] = 13;
+        assert!(Header::parse(&bytes).is_err());
+        bytes[100] = 0;
+        bytes[101] = 200;
+        assert!(Header::parse(&bytes).is_err());
+        bytes[101] = 12;
+        assert!(!Header::parse(&bytes).unwrap().vector_tiles);
+        bytes[99] = 1;
+        assert!(Header::parse(&bytes).unwrap().vector_tiles);
+    }
+
+    #[test]
+    fn damaged_archives_are_errors_not_crashes() {
+        // A gzip stream that unpacks to more than any directory or tile.
+        let bomb = gzip(&vec![0u8; MAX_UNPACKED_BYTES as usize + 1]);
+        assert!(bomb.len() < 200_000);
+        assert!(decompress(bomb, Compression::Gzip).is_err());
+        // Tile ids and offsets that run past 64 bits.
+        let mut directory = Vec::new();
+        put_varint(&mut directory, 2);
+        put_varint(&mut directory, u64::MAX);
+        put_varint(&mut directory, 5);
+        assert!(parse_directory(&directory).is_err());
+        // A root directory said to be a thousand million million bytes long is not
+        // asked for, nor is room set aside for it.
+        let mut bytes = archive_bytes();
+        bytes[16..24].copy_from_slice(&(1u64 << 50).to_le_bytes());
+        let runtime = crate::runtime::ServiceRuntime::new().unwrap();
+        let url = serve(bytes, true);
+        let opened = runtime
+            .handle()
+            .block_on(Archive::open(&url, crate::http::Policy::Boundary));
+        assert!(opened.is_err_and(|error| error.to_string().contains("too large")));
+    }
+
+    #[test]
+    fn an_archive_file_on_this_computer_is_read_like_one_on_the_web() {
+        let path =
+            std::env::temp_dir().join(format!("globecraft-archive-{}.pmtiles", std::process::id()));
+        std::fs::write(&path, archive_bytes()).unwrap();
+        let runtime = crate::runtime::ServiceRuntime::new().unwrap();
+        runtime.handle().block_on(async {
+            let archive = Archive::open(&path.to_string_lossy(), crate::http::Policy::UserData)
+                .await
+                .unwrap();
+            assert_eq!(archive.zooms(), (0, 2));
+            let tile = |z, x, y| archive.tile(z, x, y);
+            assert_eq!(tile(0, 0, 0).await.unwrap().as_deref(), Some(&b"world"[..]));
+            // Behind a leaf directory.
+            assert_eq!(
+                tile(2, 0, 0).await.unwrap().as_deref(),
+                Some(&b"sixteenth"[..])
+            );
+            assert_eq!(tile(1, 0, 0).await.unwrap(), None);
+        });
+        let _ = std::fs::remove_file(&path);
+        let missing = runtime.handle().block_on(Archive::open(
+            "/nowhere/globecraft-missing.pmtiles",
+            crate::http::Policy::UserData,
+        ));
+        assert!(matches!(missing, Err(crate::Error::Io(_))));
     }
 
     /// Serves `bytes` over HTTP on a local port, answering byte ranges with 206 (or

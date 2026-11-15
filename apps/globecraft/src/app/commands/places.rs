@@ -1,8 +1,15 @@
-//! Placemarks. Handlers for the `places.*` commands.
-use super::*;
+//! Places commands (`places.*`).
+use super::{position, str_param};
+use crate::app::App;
+use globecraft_core::placemark::{PlaceItem, PlaceNode, Placemark};
+use serde_json::{Value, json};
+
+/// Altitude a placemark is shown from, as in the Places tree.
+const PLACE_FLY_ALTITUDE_KM: f64 = 3.0;
 
 impl App {
-    pub(in crate::app) fn run_places(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+    /// Runs a `places.*` command.
+    pub(super) fn run_places(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         Ok(match id {
             "places.addAtCenter" => {
                 if let Some(name) = str_param(p, "name") {
@@ -101,6 +108,7 @@ impl App {
                 self.pick_kml_save_as();
                 json!({})
             }
+            "places.export" => self.export_places(str_param(p, "path"), str_param(p, "format"))?,
             "places.clear" => {
                 self.clear_places();
                 json!({})

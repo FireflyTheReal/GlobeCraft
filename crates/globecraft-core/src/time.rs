@@ -242,6 +242,11 @@ mod tests {
         ] {
             assert_eq!(parse_iso(odd), None, "{odd}");
         }
+        // Text after the time that is not a zone, in any script, is no date (a
+        // six-byte tail of two-byte letters used to be cut inside a letter).
+        assert_eq!(parse_iso("2026-11-04T09:38ééé"), None);
+        assert_eq!(parse_iso("2026-11-04T09:38:00€uro"), None);
+        assert_eq!(parse_iso("2026-11-04é09:38"), None);
         assert_eq!(format_utc(WALL), "2026-11-04 09:38 UTC");
         assert_eq!(format_utc(0.0), "1970-01-01 00:00 UTC");
         for days in [-1000_i64, 11_016, 47_482] {

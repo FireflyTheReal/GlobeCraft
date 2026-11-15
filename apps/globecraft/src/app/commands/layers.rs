@@ -1,11 +1,13 @@
-//! Layers, imagery dates, view links and worlds. Handlers for the `layer.*`, `view.*`,
-//! `world.*`, `style.*` commands.
-use super::*;
+//! Layer commands (`layer.*`) and the worlds (`world.*`).
+use super::{bool_param, required_f64, str_param};
+use crate::app::App;
+use globecraft_core::{body::Body, earth_model::EarthModel, layers::MapLayer};
+use globecraft_data::settings::workspace::RightPane;
+use serde_json::{Value, json};
 
 impl App {
-    pub(in crate::app) fn run_layers(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        let ctx = self.ctx.clone();
-        let earth = self.explorer.on_earth();
+    /// Runs a `layer.*` command.
+    pub(super) fn run_layer(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         Ok(match id {
             "layer.basemap" => {
                 let basemap = str_param(p, "basemap")
@@ -75,8 +77,8 @@ impl App {
                 }
                 if let Some(split) = p.get("split").and_then(Value::as_f64) {
                     compare.split = (split as f32).clamp(
-                        super::super::wayback::MIN_SPLIT,
-                        1.0 - super::super::wayback::MIN_SPLIT,
+                        crate::app::wayback::MIN_SPLIT,
+                        1.0 - crate::app::wayback::MIN_SPLIT,
                     );
                 }
                 // The left side is the shown release.
@@ -96,7 +98,7 @@ impl App {
                     self.set_wayback(left);
                 }
                 self.wayback.compare = Some(compare);
-                self.imagery.last_state = 0;
+                self.frame.last_state = 0;
                 json!({
                     "compare": true,
                     "left": self.wayback.releases[self.wayback.index].date,
@@ -115,11 +117,6 @@ impl App {
                     self.settings.set_layer_visible(parent, true);
                 }
                 json!({"layer": layer.code(), "visible": visible})
-            }
-            "view.copyLink" => self.copy_view_link(&ctx),
-            "view.openLink" => {
-                let link = str_param(p, "link").ok_or("link is required")?.to_owned();
-                self.open_view_link(&link)?
             }
             "layer.opacity" => {
                 let layer = str_param(p, "layer")
@@ -157,6 +154,16 @@ impl App {
                     km.clamp(0.0, globecraft_data::settings::STATE_MAX_ALTITUDE_MAX_KM);
                 json!({"km": self.settings.state_max_altitude_km})
             }
+            _ => return Err(format!("unknown command '{id}'")),
+        })
+    }
+}
+
+impl App {
+    /// Runs a `world.*` command, or `ui.explorer`.
+    pub(super) fn run_world(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+        let earth = self.explorer.active == Body::Earth;
+        Ok(match id {
             "world.earthModel" => {
                 let model = str_param(p, "model")
                     .and_then(EarthModel::from_code)
@@ -164,7 +171,7 @@ impl App {
                 if model != self.settings.earth_model {
                     self.settings.earth_model = model;
                     if earth {
-                        self.fly = None;
+                        self.motion.fly = None;
                         self.measure.paths.end_move();
                         self.measure.drag = None;
                     }
@@ -179,64 +186,15 @@ impl App {
                     _ => return Err("body must be earth, moon or custom".into()),
                 };
                 self.flat_earth.open = false;
-                self.explorer.choose(body, &self.file_jobs);
+                self.explorer.choose(body, &self.files.jobs);
                 if body == Body::Custom {
                     self.settings.workspace.open_right(RightPane::Explorer);
                 }
                 self.touch();
                 json!({"body": str_param(p, "body")})
             }
-            "style.line" => {
-                use globecraft_data::settings::map_style::{
-                    DashStyle, LineType, Rgba, clamp_width,
-                };
-                let line = str_param(p, "line")
-                    .and_then(LineType::from_code)
-                    .ok_or_else(|| {
-                        let codes: Vec<&str> =
-                            LineType::ALL.iter().map(|kind| kind.code()).collect();
-                        format!("line must be one of {}", codes.join(", "))
-                    })?;
-                let color = match str_param(p, "color") {
-                    Some(text) => {
-                        Some(Rgba::parse_hex(text).ok_or("color must be #rrggbb or #rrggbbaa")?)
-                    }
-                    None => None,
-                };
-                let dash = match str_param(p, "dash") {
-                    Some(code) => Some(
-                        DashStyle::from_code(code).ok_or("dash must be solid, dashed or dotted")?,
-                    ),
-                    None => None,
-                };
-                let style = self.settings.map_style.line_mut(line);
-                if let Some(color) = color {
-                    style.color = color;
-                }
-                if let Some(width) = p.get("width").and_then(Value::as_f64) {
-                    style.width_points = clamp_width(width);
-                }
-                if let Some(dash) = dash {
-                    style.dash = dash;
-                }
-                json!({
-                    "line": line.code(),
-                    "color": style.color.hex(),
-                    "width": style.width_points,
-                    "dash": style.dash.code(),
-                })
-            }
-            "style.labelSize" => {
-                use globecraft_data::settings::map_style::{LabelType, clamp_label_size};
-                let label = str_param(p, "label")
-                    .and_then(LabelType::from_code)
-                    .ok_or("label must be country, state, city or road")?;
-                let size = clamp_label_size(required_f64(p, "size")?);
-                self.settings.map_style.labels.set(label, size);
-                json!({"label": label.code(), "size": size})
-            }
-            "style.reset" => {
-                self.settings.map_style = Default::default();
+            "ui.explorer" => {
+                self.settings.workspace.toggle_right(RightPane::Explorer);
                 json!({})
             }
             _ => return Err(format!("unknown command '{id}'")),

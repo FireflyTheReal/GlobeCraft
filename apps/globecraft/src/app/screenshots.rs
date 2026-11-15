@@ -53,10 +53,10 @@ const SETTLE_QUIET_POLLS: usize = 5;
 /// Whether the application is still working: drawing, loading tiles or borders, or
 /// flying the camera.
 fn busy(app: &App) -> bool {
-    !app.imagery.renderer.is_idle()
-        || app.cache.inflight() > 0
+    !app.frame.renderer.is_idle()
+        || app.tiles.cache.inflight() > 0
         || app.borders.loader.is_loading()
-        || app.fly.is_some()
+        || app.motion.fly.is_some()
 }
 
 /// Steps the interface every 100 ms until the application has been idle for half a

@@ -111,10 +111,10 @@ impl App {
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, Color32::from_rgb(2, 4, 18));
-        self.cursor = None;
+        self.pointer.cursor = None;
 
         if !self.flat_earth.image_requested {
-            match self.file_jobs.load_image(
+            match self.files.jobs.load_image(
                 globecraft_data::files::ImageTarget::FlatEarth,
                 globecraft_data::files::ImageSource::Embedded(ART),
             ) {

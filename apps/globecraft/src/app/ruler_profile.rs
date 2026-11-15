@@ -78,7 +78,7 @@ impl App {
         let zoom = profile_zoom(total);
         let heights = points
             .iter()
-            .map(|point| self.cache.elevation_m(point.lat, point.lon, zoom))
+            .map(|point| self.tiles.cache.elevation_m(point.lat, point.lon, zoom))
             .collect();
         Some(Profile { points, heights })
     }

@@ -50,7 +50,7 @@ impl App {
             index: if self.wayback.index == 0 { 1 } else { 0 },
             split: self.wayback.compare.map_or(0.5, |old| old.split),
         });
-        self.imagery.last_state = 0;
+        self.frame.last_state = 0;
     }
 
     pub(super) fn ensure_wayback(&mut self, ctx: &egui::Context) {
@@ -80,8 +80,8 @@ impl App {
                 self.wayback.index = list.iter().position(|r| r.date <= limit).unwrap_or(0);
                 self.wayback.releases = list;
                 self.wayback.time_date = None;
-                self.imagery.last_state = 0;
-                self.imagery.wake.dependencies_may_have_changed();
+                self.frame.last_state = 0;
+                self.frame.wake.dependencies_may_have_changed();
             }
             Ok(Err(e)) => {
                 self.wayback.rx = None;
@@ -115,7 +115,7 @@ impl App {
     pub(super) fn set_wayback(&mut self, idx: usize) {
         if idx < self.wayback.releases.len() && idx != self.wayback.index {
             self.wayback.index = idx;
-            self.imagery.last_state = 0;
+            self.frame.last_state = 0;
         }
     }
 
