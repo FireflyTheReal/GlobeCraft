@@ -272,6 +272,22 @@ impl MapLayer {
         )
     }
 
+    /// Whether the layer is a live feed: data that changes by the minute, from a
+    /// tracking, weather or traffic service. A build without the feeds does not offer
+    /// these layers.
+    pub fn is_feed(self) -> bool {
+        matches!(
+            self,
+            Self::Radar
+                | Self::Clouds
+                | Self::Aurora
+                | Self::Flights
+                | Self::Vessels
+                | Self::Satellites
+                | Self::Traffic
+        )
+    }
+
     /// Live feeds from tracking and traffic services start hidden on every launch, as they always
     /// did: opening GlobeCraft never contacts them until the user asks. Terrain is a view
     /// preference and is remembered.
@@ -388,6 +404,20 @@ impl FromIterator<MapLayer> for LayerSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The feeds are the layers a build without the `live` feature leaves out: each
+    /// asks a third-party service and starts hidden, and none is on by default.
+    #[test]
+    fn feeds_are_live_layers_that_start_hidden() {
+        let feeds: Vec<_> = MapLayer::ALL.into_iter().filter(|l| l.is_feed()).collect();
+        assert_eq!(feeds.len(), 7);
+        for layer in feeds {
+            assert!(layer.is_live() && layer.starts_hidden(), "{layer:?}");
+            assert!(!layer.default_visible(), "{layer:?}");
+        }
+        // Map tiles are live data but not feeds.
+        assert!(!MapLayer::Roads.is_feed() && !MapLayer::Terrain.is_feed());
+    }
 
     #[test]
     fn codes_are_unique_and_roundtrip() {

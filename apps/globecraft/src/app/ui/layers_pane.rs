@@ -430,7 +430,7 @@ impl App {
             let group_title = lang.text(group.label_key());
             let layers: Vec<_> = MapLayer::ALL
                 .into_iter()
-                .filter(|layer| layer.group() == group)
+                .filter(|layer| layer.group() == group && Self::offers(*layer))
                 .filter(|layer| {
                     matches_filter(
                         &query,

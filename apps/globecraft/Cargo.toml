@@ -11,10 +11,13 @@ authors = ["Julien Foss (@FireflyTheReal)"]
 workspace = true
 
 [features]
-default = ["gpu", "updater", "assistant"]
+default = ["gpu", "updater", "assistant", "live"]
 gpu = ["globecraft-render/gpu"]
 # The self-updater; packagers that update through a package manager build without it.
 updater = ["globecraft-data/updater"]
+# The live feeds: aircraft, vessels, satellites, aurora, traffic, clouds and radar.
+# Without it their layers are not offered and their services are never asked.
+live = ["globecraft-data/live"]
 # The AI assistant pane and its model connections.
 assistant = ["dep:globecraft-assistant"]
 profiling = ["globecraft-data/profiling", "globecraft-render/profiling"]

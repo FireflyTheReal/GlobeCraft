@@ -119,7 +119,8 @@ impl LiveTraffic {
         let key = key.trim();
         self.set_key(key);
         self.poll(key);
-        if !enabled
+        if !crate::live::ENABLED
+            || !enabled
             || key.is_empty()
             || alt > MAX_TRAFFIC_ALTITUDE_KM
             || lat.abs() >= MAX_TRAFFIC_LATITUDE_DEG

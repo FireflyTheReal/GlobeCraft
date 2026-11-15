@@ -270,7 +270,8 @@ impl LiveSatellites {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if enabled
+        if crate::live::ENABLED
+            && enabled
             && self.rx.is_none()
             && self
                 .attempted

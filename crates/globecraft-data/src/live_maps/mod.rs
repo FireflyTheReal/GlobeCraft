@@ -88,7 +88,8 @@ impl LiveMaps {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if clouds
+        if crate::live::ENABLED
+            && clouds
             && self.cloud_rx.is_none()
             && refresh_due(
                 self.cloud_attempt,
@@ -106,7 +107,8 @@ impl LiveMaps {
                 repaint();
             });
         }
-        if radar
+        if crate::live::ENABLED
+            && radar
             && self.radar_rx.is_none()
             && refresh_due(
                 self.radar_attempt,

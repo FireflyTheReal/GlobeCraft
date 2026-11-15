@@ -110,6 +110,9 @@ impl App {
                 let layer = str_param(p, "layer")
                     .and_then(MapLayer::from_code)
                     .ok_or("unknown layer; see the layer.show parameters")?;
+                if !Self::offers(layer) {
+                    return Err("this build of GlobeCraft has no live feeds".into());
+                }
                 let visible = bool_param(p, "visible").unwrap_or(!self.layer(layer));
                 self.settings.set_layer_visible(layer, visible);
                 // A refinement is useless without its parent.

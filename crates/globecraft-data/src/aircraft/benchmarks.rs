@@ -45,6 +45,7 @@ fn aircraft_snapshot_cost() {
         updates,
         latest: prepared.snapshot,
         stopped: false,
+        _unused_publisher: None,
     };
     let mut samples = Vec::new();
     for _ in 0..ROUNDS {

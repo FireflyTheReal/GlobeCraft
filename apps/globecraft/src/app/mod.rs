@@ -208,10 +208,17 @@ impl App {
                 )
         })
     }
+    /// Whether this build offers a layer: all of them, except the live feeds in a build
+    /// without the `live` feature.
+    pub(crate) fn offers(layer: MapLayer) -> bool {
+        cfg!(feature = "live") || !layer.is_feed()
+    }
     /// Whether a map layer is shown: its own switch and, for a refinement (grid labels),
-    /// its parent's too.
+    /// its parent's too. A layer this build does not offer is never shown, whatever a
+    /// settings file or a view link says.
     pub(crate) fn layer(&self, layer: MapLayer) -> bool {
-        self.settings.layer_visible(layer)
+        Self::offers(layer)
+            && self.settings.layer_visible(layer)
             && layer
                 .parent()
                 .is_none_or(|parent| self.settings.layer_visible(parent))

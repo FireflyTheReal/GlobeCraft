@@ -346,7 +346,7 @@ impl FlightSelection {
         listed: Option<&Aircraft>,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
-        if self.fixed {
+        if self.fixed || !crate::live::ENABLED {
             return;
         }
         let (Some(flight), Some(rx), Some(tx)) = (&mut self.flight, &self.rx, &self.tx) else {

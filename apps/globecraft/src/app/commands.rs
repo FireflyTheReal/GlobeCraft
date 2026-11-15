@@ -202,6 +202,9 @@ impl App {
         layer: MapLayer,
         label: &str,
     ) {
+        if !Self::offers(layer) {
+            return;
+        }
         let mut on = self.layer(layer);
         if ui.checkbox(&mut on, label).changed() {
             self.run_reporting("layer.show", json!({"layer": layer.code(), "visible": on}));

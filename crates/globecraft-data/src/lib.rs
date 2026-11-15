@@ -18,6 +18,7 @@ mod json_fields;
 pub mod keys;
 pub mod kml;
 pub mod links;
+pub mod live;
 pub mod live_maps;
 mod map_data;
 pub mod marine_names;

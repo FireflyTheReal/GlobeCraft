@@ -71,6 +71,7 @@ impl App {
                 let layer = str_param(params, "layer").and_then(MapLayer::from_code);
                 CommandState {
                     enabled: earth
+                        && layer.is_none_or(Self::offers)
                         && layer
                             .and_then(MapLayer::parent)
                             .is_none_or(|parent| self.layer(parent)),

@@ -10,10 +10,13 @@ publish = false
 workspace = true
 
 [features]
-default = ["updater"]
+default = ["updater", "live"]
+# The live feeds: aircraft, vessels, satellites, the aurora forecast, traffic, clouds and
+# radar. Off, their services never ask for anything (see `src/live.rs`).
+live = []
 profiling = []
 # Exposes `globecraft_data::fuzzing`, the entry points of the fuzz targets in `fuzz/`.
-fuzzing = []
+fuzzing = ["live"]
 # The self-updater (GitHub releases). Off for packages updated by a package manager.
 updater = ["dep:self_update"]
 
