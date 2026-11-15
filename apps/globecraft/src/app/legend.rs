@@ -8,7 +8,7 @@ use super::live_layers::{
     PoiGroup, VesselClass, aurora_colour, class_symbol, satellite_symbol, vessel_symbol,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
-use globecraft_core::layers::MapLayer;
+use globecraft_core::{commands::LegendCommand, layers::MapLayer};
 use globecraft_data::settings::workspace::RightPane;
 use globecraft_data::{
     aircraft::AircraftClass, live_maps::RADAR_BANDS, satellites::SatelliteGroup,
@@ -170,11 +170,9 @@ impl App {
         .collect()
     }
 
-    pub(super) fn run_legend(&mut self, p: &Value) -> Value {
-        let on = p
-            .get("on")
-            .and_then(Value::as_bool)
-            .unwrap_or(!self.legend_open());
+    pub(super) fn run_legend(&mut self, command: LegendCommand) -> Value {
+        let LegendCommand::Show(p) = command;
+        let on = p.toggled(self.legend_open());
         if on {
             self.settings.workspace.open_right(RightPane::Legend);
         } else {

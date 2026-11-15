@@ -1,36 +1,35 @@
 //! Layer commands (`layer.*`) and the worlds (`world.*`).
-use super::{bool_param, required_f64, str_param};
 use crate::app::App;
+use globecraft_core::commands::{LayerCommand, WorldCommand};
 use globecraft_core::{body::Body, earth_model::EarthModel, layers::MapLayer};
 use globecraft_data::settings::workspace::RightPane;
 use serde_json::{Value, json};
 
 impl App {
     /// Runs a `layer.*` command.
-    pub(super) fn run_layer(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        Ok(match id {
-            "layer.basemap" => {
-                let basemap = str_param(p, "basemap")
-                    .and_then(globecraft_data::tiles::Provider::from_code)
+    pub(super) fn run_layer(&mut self, command: LayerCommand) -> Result<Value, String> {
+        Ok(match command {
+            LayerCommand::Basemap(p) => {
+                let basemap = globecraft_data::tiles::Provider::from_code(&p.basemap)
                     .ok_or("unknown basemap; use satellite, wayback, streets or topo")?;
                 self.settings.layers.basemap = basemap;
                 json!({"basemap": basemap.code()})
             }
-            "layer.waybackRelease" => {
+            LayerCommand::WaybackRelease(p) => {
                 if self.wayback.releases.is_empty() {
                     return Err(
                         "Wayback releases are still loading; show the wayback basemap first."
                             .into(),
                     );
                 }
-                let index = if let Some(date) = str_param(p, "date") {
+                let index = if let Some(date) = p.date {
                     self.wayback
                         .releases
                         .iter()
-                        .position(|r| r.date.starts_with(date))
+                        .position(|r| r.date.starts_with(&date))
                         .ok_or_else(|| format!("no release dated {date}"))?
                 } else {
-                    let step = p.get("step").and_then(Value::as_i64).unwrap_or(1);
+                    let step = p.step.unwrap_or(1);
                     (self.wayback.index as i64 + step)
                         .clamp(0, self.wayback.releases.len() as i64 - 1)
                         as usize
@@ -39,20 +38,20 @@ impl App {
                 self.set_wayback(index);
                 json!({"release": self.wayback.releases[index].date})
             }
-            "layer.waybackCompare" => {
+            LayerCommand::WaybackCompare(p) => {
                 if self.wayback.releases.len() < 2 {
                     return Err(
                         "Wayback releases are still loading; show the wayback basemap first."
                             .into(),
                     );
                 }
-                let enabled = bool_param(p, "enabled").unwrap_or(
+                let enabled = p.enabled.unwrap_or(
                     self.wayback.compare.is_none()
-                        || p.get("date").is_some()
-                        || p.get("left_date").is_some()
-                        || p.get("swap").is_some()
-                        || p.get("step").is_some()
-                        || p.get("split").is_some(),
+                        || p.date.is_some()
+                        || p.left_date.is_some()
+                        || p.swap.is_some()
+                        || p.step.is_some()
+                        || p.split.is_some(),
                 );
                 self.settings.layers.basemap = globecraft_data::tiles::Provider::Wayback;
                 if !enabled {
@@ -63,19 +62,19 @@ impl App {
                     self.set_wayback_compare(true);
                 }
                 let mut compare = self.wayback.compare.ok_or("nothing to compare")?;
-                if let Some(date) = str_param(p, "date") {
+                if let Some(date) = &p.date {
                     compare.index = self
                         .wayback
                         .releases
                         .iter()
-                        .position(|r| r.date.starts_with(date))
+                        .position(|r| r.date.starts_with(date.as_str()))
                         .ok_or_else(|| format!("no release dated {date}"))?;
-                } else if let Some(step) = p.get("step").and_then(Value::as_i64) {
+                } else if let Some(step) = p.step {
                     compare.index = (compare.index as i64 + step)
                         .clamp(0, self.wayback.releases.len() as i64 - 1)
                         as usize;
                 }
-                if let Some(split) = p.get("split").and_then(Value::as_f64) {
+                if let Some(split) = p.split {
                     compare.split = (split as f32).clamp(
                         crate::app::wayback::MIN_SPLIT,
                         1.0 - crate::app::wayback::MIN_SPLIT,
@@ -83,15 +82,15 @@ impl App {
                 }
                 // The left side is the shown release.
                 let mut left = self.wayback.index;
-                if let Some(date) = str_param(p, "left_date") {
+                if let Some(date) = &p.left_date {
                     left = self
                         .wayback
                         .releases
                         .iter()
-                        .position(|r| r.date.starts_with(date))
+                        .position(|r| r.date.starts_with(date.as_str()))
                         .ok_or_else(|| format!("no release dated {date}"))?;
                 }
-                if bool_param(p, "swap") == Some(true) {
+                if p.swap == Some(true) {
                     (left, compare.index) = (compare.index, left);
                 }
                 if left != self.wayback.index {
@@ -106,14 +105,13 @@ impl App {
                     "split": compare.split,
                 })
             }
-            "layer.show" => {
-                let layer = str_param(p, "layer")
-                    .and_then(MapLayer::from_code)
+            LayerCommand::Show(p) => {
+                let layer = MapLayer::from_code(&p.layer)
                     .ok_or("unknown layer; see the layer.show parameters")?;
                 if !Self::offers(layer) {
                     return Err("this build of GlobeCraft has no live feeds".into());
                 }
-                let visible = bool_param(p, "visible").unwrap_or(!self.layer(layer));
+                let visible = p.visible.unwrap_or(!self.layer(layer));
                 self.settings.set_layer_visible(layer, visible);
                 // A refinement is useless without its parent.
                 if visible && let Some(parent) = layer.parent() {
@@ -121,56 +119,45 @@ impl App {
                 }
                 json!({"layer": layer.code(), "visible": visible})
             }
-            "layer.opacity" => {
-                let layer = str_param(p, "layer")
-                    .and_then(MapLayer::from_code)
+            LayerCommand::Opacity(p) => {
+                let layer = MapLayer::from_code(&p.layer)
                     .ok_or("unknown layer; see the layer.opacity parameters")?;
-                let opacity = p
-                    .get("opacity")
-                    .and_then(Value::as_f64)
-                    .ok_or("opacity (0 to 1) is required")?;
-                if !self.settings.layers.opacity.set(layer, opacity as f32) {
+                if !self.settings.layers.opacity.set(layer, p.opacity as f32) {
                     return Err(format!("{} has no opacity", layer.code()));
                 }
                 json!({"layer": layer.code(), "opacity": self.settings.layers.opacity.get(layer)})
             }
-            "layer.solo" => self.solo_layer(str_param(p, "layer").map(str::to_owned))?,
-            "layer.terrainExaggeration" => {
-                let value = required_f64(p, "value")? as f32;
+            LayerCommand::Solo(p) => self.solo_layer(p.layer)?,
+            LayerCommand::TerrainExaggeration(p) => {
+                let value = p.value as f32;
                 self.settings.layers.terrain_exaggeration = value.clamp(
                     globecraft_data::settings::layers::MIN_TERRAIN_EXAGGERATION,
                     globecraft_data::settings::layers::MAX_TERRAIN_EXAGGERATION,
                 );
                 json!({"terrain_exaggeration": self.settings.layers.terrain_exaggeration})
             }
-            "layer.flatLiveObjects" => {
+            LayerCommand::FlatLiveObjects(p) => {
                 let layers = &mut self.settings.layers;
-                layers.flat_live_objects = bool_param(p, "on").unwrap_or(!layers.flat_live_objects);
+                layers.flat_live_objects = p.toggled(layers.flat_live_objects);
                 json!({"flat": layers.flat_live_objects})
             }
-            "layer.stateAltitude" => {
-                let km = required_f64(p, "km")?;
-                if !km.is_finite() {
-                    return Err("km must be a number".into());
-                }
+            LayerCommand::StateAltitude(p) => {
+                // Finite: the parameter reader refuses anything else.
                 self.settings.state_max_altitude_km =
-                    km.clamp(0.0, globecraft_data::settings::STATE_MAX_ALTITUDE_MAX_KM);
+                    p.km.clamp(0.0, globecraft_data::settings::STATE_MAX_ALTITUDE_MAX_KM);
                 json!({"km": self.settings.state_max_altitude_km})
             }
-            _ => return Err(format!("unknown command '{id}'")),
         })
     }
 }
 
 impl App {
     /// Runs a `world.*` command, or `ui.explorer`.
-    pub(super) fn run_world(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        let earth = self.explorer.active == Body::Earth;
-        Ok(match id {
-            "world.earthModel" => {
-                let model = str_param(p, "model")
-                    .and_then(EarthModel::from_code)
-                    .ok_or("unknown Earth model")?;
+    pub(super) fn run_world(&mut self, command: WorldCommand) -> Result<Value, String> {
+        let earth = self.explorer.on_earth();
+        Ok(match command {
+            WorldCommand::EarthModel(p) => {
+                let model = EarthModel::from_code(&p.model).ok_or("unknown Earth model")?;
                 if model != self.settings.earth_model {
                     self.settings.earth_model = model;
                     if earth {
@@ -181,11 +168,11 @@ impl App {
                 }
                 json!({"model": model.code()})
             }
-            "world.body" => {
-                let body = match str_param(p, "body") {
-                    Some("earth") => Body::Earth,
-                    Some("moon") => Body::Moon,
-                    Some("custom") => Body::Custom,
+            WorldCommand::Body(p) => {
+                let body = match p.body.as_str() {
+                    "earth" => Body::Earth,
+                    "moon" => Body::Moon,
+                    "custom" => Body::Custom,
                     _ => return Err("body must be earth, moon or custom".into()),
                 };
                 self.flat_earth.open = false;
@@ -194,13 +181,12 @@ impl App {
                     self.settings.workspace.open_right(RightPane::Explorer);
                 }
                 self.touch();
-                json!({"body": str_param(p, "body")})
+                json!({"body": p.body})
             }
-            "ui.explorer" => {
+            WorldCommand::Explorer => {
                 self.settings.workspace.toggle_right(RightPane::Explorer);
                 json!({})
             }
-            _ => return Err(format!("unknown command '{id}'")),
         })
     }
 }

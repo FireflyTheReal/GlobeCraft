@@ -5,7 +5,7 @@ use super::App;
 use super::ui::surface::Surface;
 mod card;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape, Stroke};
-use globecraft_core::{camera::Basis, layers::MapLayer, math::now_unix};
+use globecraft_core::{camera::Basis, commands::FlightCommand, layers::MapLayer, math::now_unix};
 use globecraft_data::aircraft::{
     Aircraft, AircraftSnapshot,
     route::{RouteAirport, TrackPoint},
@@ -156,15 +156,20 @@ impl App {
 
     /// The flights with the selected one's newest position, when it is newer than
     /// the list's (it is asked for every few seconds) or missing from it.
-    fn merged_snapshot(&self) -> Option<(usize, f64, Arc<AircraftSnapshot>)> {
+    fn merged_snapshot(&self) -> Option<super::picked::MergedFlights> {
         let position = self.picked.flight.selected()?.position.clone()?;
         let snapshot = self.live.aircraft.snapshot();
-        let key = (Arc::as_ptr(&snapshot) as usize, position.observed_unix);
-        if let Some((pointer, observed, merged)) = &self.picked.snapshot
-            && (*pointer, *observed) == key
+        if let Some(shown) = &self.picked.snapshot
+            && Arc::ptr_eq(&shown.from, &snapshot)
+            && shown.observed_unix == position.observed_unix
         {
-            return Some((key.0, key.1, merged.clone()));
+            return Some(super::picked::MergedFlights {
+                from: shown.from.clone(),
+                observed_unix: shown.observed_unix,
+                flights: shown.flights.clone(),
+            });
         }
+        let observed_unix = position.observed_unix;
         let listed = snapshot.aircraft.iter().position(|a| a.hex == position.hex);
         if listed.is_some_and(|i| snapshot.aircraft[i].observed_unix >= position.observed_unix) {
             return None;
@@ -174,37 +179,33 @@ impl App {
             Some(i) => aircraft[i] = position,
             None => aircraft.push(position),
         }
-        Some((
-            key.0,
-            key.1,
-            Arc::new(AircraftSnapshot {
-                aircraft: aircraft.into(),
-                global: snapshot.global.clone(),
-                local: snapshot.local.clone(),
-                error: snapshot.error.clone(),
-                valid_until: snapshot.valid_until,
-            }),
-        ))
+        let flights = Arc::new(AircraftSnapshot {
+            aircraft: aircraft.into(),
+            global: snapshot.global.clone(),
+            local: snapshot.local.clone(),
+            error: snapshot.error.clone(),
+            valid_until: snapshot.valid_until,
+        });
+        Some(super::picked::MergedFlights {
+            from: snapshot,
+            observed_unix,
+            flights,
+        })
     }
 
     /// The flights to draw: with the selected one's newest position.
     pub(super) fn aircraft_snapshot(&self) -> Arc<AircraftSnapshot> {
         let snapshot = self.live.aircraft.snapshot();
         match &self.picked.snapshot {
-            Some((pointer, _, merged)) if *pointer == Arc::as_ptr(&snapshot) as usize => {
-                merged.clone()
-            }
+            Some(shown) if Arc::ptr_eq(&shown.from, &snapshot) => shown.flights.clone(),
             _ => snapshot,
         }
     }
 
-    pub(super) fn run_flight(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        match id {
-            "flight.select" => {
-                let hex = p
-                    .get("hex")
-                    .and_then(Value::as_str)
-                    .map(|hex| hex.trim().to_ascii_lowercase())
+    pub(super) fn run_flight(&mut self, command: FlightCommand) -> Result<Value, String> {
+        match command {
+            FlightCommand::Select(p) => {
+                let hex = Some(p.hex.to_ascii_lowercase())
                     .filter(|hex| {
                         let digits = hex.strip_prefix('~').unwrap_or(hex);
                         digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit())
@@ -217,11 +218,8 @@ impl App {
                     .find(|aircraft| *aircraft.hex == *hex)
                     .cloned();
                 let callsign = p
-                    .get("callsign")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
+                    .callsign
                     .filter(|callsign| !callsign.is_empty())
-                    .map(str::to_owned)
                     .or_else(|| {
                         listed
                             .as_ref()
@@ -235,11 +233,10 @@ impl App {
                 self.picked.flight.select(&hex, &callsign, listed);
                 self.picked.snapshot = None;
             }
-            "flight.clear" => {
+            FlightCommand::Clear => {
                 self.picked.flight.clear();
                 self.picked.snapshot = None;
             }
-            _ => return Err(format!("unknown flight command {id}")),
         }
         Ok(self.flight_json())
     }

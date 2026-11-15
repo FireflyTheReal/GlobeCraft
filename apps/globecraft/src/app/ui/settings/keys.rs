@@ -8,11 +8,7 @@ use globecraft_data::keys::{self, SERVICES};
 impl App {
     /// The typed key of a service.
     pub(in crate::app) fn key_buffer(&mut self, id: &'static str) -> &mut String {
-        if id == keys::TOMTOM {
-            &mut self.keys.tomtom
-        } else {
-            self.keys.others.entry(id).or_default()
-        }
+        self.keys.edit(id)
     }
 
     /// Takes a typed key into use and saves the keys in the background.

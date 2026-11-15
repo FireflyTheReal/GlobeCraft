@@ -201,8 +201,8 @@ impl App {
     /// after new downloads: a bounded diagnostic, not a timing log.
     pub(super) fn log_downloads(&mut self) {
         use globecraft_data::download_stats::{DownloadKind, totals};
-        let (last, logged_bytes) = self.frame.download_log;
-        if last.elapsed() < DOWNLOAD_LOG_INTERVAL {
+        let logged_bytes = self.frame.download_log.bytes;
+        if self.frame.download_log.at.elapsed() < DOWNLOAD_LOG_INTERVAL {
             return;
         }
         let imagery = totals(DownloadKind::Imagery);
@@ -210,7 +210,10 @@ impl App {
         let borders = totals(DownloadKind::BorderTiles);
         let disk = totals(DownloadKind::ImageryFromDisk);
         let bytes = imagery.bytes + ahead.bytes + borders.bytes + disk.bytes;
-        self.frame.download_log = (Instant::now(), bytes);
+        self.frame.download_log = super::frame::DownloadLog {
+            at: Instant::now(),
+            bytes,
+        };
         if bytes != logged_bytes {
             globecraft_data::log_line!(
                 "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles ({} confirmed unchanged by the server); {} downloads stopped (tile left the view)",

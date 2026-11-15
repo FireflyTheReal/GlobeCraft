@@ -22,9 +22,11 @@ User instructions and the requested scope take precedence over these defaults.
   definitions as plain data. It depends on core only (for the command catalog); network I/O
   stays in data (`model_http`) and command execution in the app (`App::run`).
 - Every user action is a command in `globecraft_core::commands`. Add a command there (with
-  Fluent `cmd-…` label and help keys in both catalogs) and implement it in its feature's
-  handler under `apps/globecraft/src/app/commands/` (`commands::Feature::of` picks the
-  handler from the id's first part); widgets, menus and the assistant run it by id.
+  Fluent `cmd-…` label and help keys in both catalogs), give it a variant in its group in
+  `commands/command.rs` (with a parameter struct in `commands/params.rs` matching its
+  schema, and a line in the table there), and implement it in its feature's handler under
+  `apps/globecraft/src/app/commands/`, which will not compile until it does; widgets,
+  menus and the assistant run it by id.
   Then regenerate `docs/COMMANDS.md` with
   `UPDATE_COMMAND_REFERENCE=1 cargo test -p globecraft-core --test command_reference`;
   the test fails while the reference is out of date.

@@ -1,11 +1,16 @@
 //! Whether each command can run now and whether it is on, for buttons and menus.
-use super::{CommandState, str_param};
+use super::CommandState;
 use crate::app::App;
 use globecraft_core::{body::Body, layers::MapLayer};
 use globecraft_data::settings::{
     UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
 };
 use serde_json::Value;
+
+/// A choice's text parameter, as the buttons and menus pass it.
+fn str_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+    params.get(key).and_then(Value::as_str).map(str::trim)
+}
 
 impl App {
     /// Whether a command is available and checked, for buttons and menus.
@@ -18,7 +23,7 @@ impl App {
             enabled: true,
             checked,
         };
-        let earth = self.explorer.active == Body::Earth;
+        let earth = self.explorer.on_earth();
         match id {
             "camera.autoRotate" => on(self.motion.auto_rotate),
             "ruler.enable" => on(self.measure.on),
@@ -107,7 +112,7 @@ impl App {
                     .is_some_and(|m| m == self.settings.earth_model.code()))
             }
             "world.body" => on(match str_param(params, "body") {
-                Some("earth") => self.explorer.active == Body::Earth,
+                Some("earth") => self.explorer.on_earth(),
                 Some("moon") => self.explorer.active == Body::Moon,
                 Some("custom") => self.explorer.active == Body::Custom,
                 _ => false,
