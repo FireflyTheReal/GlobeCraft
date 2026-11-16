@@ -4,9 +4,11 @@
 //! to near so nearer blocks cover farther ones (there is no depth buffer: the
 //! overlays are drawn over the globe's picture).
 //!
-//! shortcut: faces are ordered by their middles, so where two blocks overlap on
-//! screen a long wall can be drawn over a nearer roof; split long faces or draw on
-//! the GPU path if that shows in dense cities.
+//! Faces are ordered by their middles, walls cut into pieces of at most
+//! `WALL_PIECE_M` and roofs drawn triangle by triangle, so a long wall no longer
+//! covers a nearer block beside it.
+//! shortcut: roofs triangulate into long slivers on big buildings, and a sliver's
+//! middle can still sort wrongly; a depth buffer (the GPU path) is the real fix.
 use super::{LiveInput, altitude_fade};
 use crate::overlays::{Ground, TerrainVisibility};
 use emath::{Pos2, Rect};
@@ -61,6 +63,10 @@ const VIEW_MARGIN_POINTS: f32 = 32.0;
 /// several hundred thousand.
 const MAX_FACES: usize = 300_000;
 const METRES_PER_RADIUS: f64 = globecraft_core::EARTH_RADIUS_M;
+/// Walls are cut into pieces at most this long (metres), each ordered by its own
+/// middle: a 100 m wall ordered as one face was drawn over the nearer blocks along
+/// it (screenshots, 2026-11-16).
+const WALL_PIECE_M: f64 = 15.0;
 /// Blocks projected per parallel job: enough to outweigh a job's cost.
 const BLOCKS_PER_JOB: usize = 2_048;
 
@@ -203,14 +209,14 @@ fn block(
     scratch.top_on_screen.clear();
     let mut box_min = Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut box_max = Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let on_screen = |point: DVec3| {
+        basis
+            .project_precise(point, rect)
+            .map(|at| Pos2::new(at.x as f32, at.y as f32))
+    };
     for &(lat, lon) in building.rings.iter().flatten() {
         let surface = basis.surface_position(lat, lon);
         let (base, top) = (surface + up * base_lift, surface + up * top_lift);
-        let on_screen = |point: DVec3| {
-            basis
-                .project_precise(point, rect)
-                .map(|at| Pos2::new(at.x as f32, at.y as f32))
-        };
         let (base_at, top_at) = (on_screen(base), on_screen(top));
         for at in [base_at, top_at].into_iter().flatten() {
             box_min = box_min.min(at);
@@ -286,22 +292,48 @@ fn block(
             if normal.dot(camera - middle) <= 0.0 {
                 continue;
             }
-            let corners = [
-                scratch.base_on_screen[a],
-                scratch.base_on_screen[b],
-                scratch.top_on_screen[b],
-                scratch.top_on_screen[a],
-            ];
-            let Some(corners) = corners.into_iter().collect::<Option<Vec<Pos2>>>() else {
-                continue;
+            let shade = colour(wall, light.on(normal), alpha);
+            let length_m = (scratch.base[b] - scratch.base[a]).length() * METRES_PER_RADIUS;
+            let pieces = (length_m / WALL_PIECE_M).ceil().max(1.0) as usize;
+            // Each piece's corners: its ends at the base and the top, on screen.
+            let end = |piece: usize| {
+                if piece == 0 {
+                    return (
+                        scratch.base[a],
+                        scratch.top[a],
+                        scratch.base_on_screen[a],
+                        scratch.top_on_screen[a],
+                    );
+                }
+                if piece == pieces {
+                    return (
+                        scratch.base[b],
+                        scratch.top[b],
+                        scratch.base_on_screen[b],
+                        scratch.top_on_screen[b],
+                    );
+                }
+                let share = piece as f64 / pieces as f64;
+                let base = scratch.base[a].lerp(scratch.base[b], share);
+                let top = scratch.top[a].lerp(scratch.top[b], share);
+                (base, top, on_screen(base), on_screen(top))
             };
-            push(
-                out,
-                (middle - camera).length_squared(),
-                &corners,
-                &[0, 1, 2, 0, 2, 3],
-                colour(wall, light.on(normal), alpha),
-            );
+            let mut start = end(0);
+            for piece in 1..=pieces {
+                let stop = end(piece);
+                let corners = [start.2, stop.2, stop.3, start.3];
+                if let Some(corners) = corners.into_iter().collect::<Option<Vec<Pos2>>>() {
+                    let middle = (start.0 + start.1 + stop.0 + stop.1) / 4.0;
+                    push(
+                        out,
+                        (middle - camera).length_squared(),
+                        &corners,
+                        &[0, 1, 2, 0, 2, 3],
+                        shade,
+                    );
+                }
+                start = stop;
+            }
         }
         first += n;
     }
@@ -314,13 +346,18 @@ fn block(
             .copied()
             .collect::<Option<Vec<Pos2>>>()
     {
-        push(
-            out,
-            (roof_middle - camera).length_squared(),
-            &corners,
-            &building.roof,
-            colour(roof, roof_light, alpha),
-        );
+        let shade = colour(roof, roof_light, alpha);
+        for triangle in building.roof.chunks_exact(3) {
+            let at = |corner: usize| triangle[corner] as usize;
+            let middle = (scratch.top[at(0)] + scratch.top[at(1)] + scratch.top[at(2)]) / 3.0;
+            push(
+                out,
+                (middle - camera).length_squared(),
+                &[corners[at(0)], corners[at(1)], corners[at(2)]],
+                &[0, 1, 2],
+                shade,
+            );
+        }
     }
 }
 
@@ -455,9 +492,10 @@ mod tests {
     #[test]
     fn straight_down_the_block_below_shows_only_its_roof() {
         let mesh = project(&view(0.0, 0.0), None, None);
-        // Two roofs, and the south wall of the block north of the view's centre (seen
-        // in perspective); the block below shows no wall.
-        assert_eq!(mesh.indices.len(), 3 * 2 * 3, "{mesh:?}");
+        // Two roofs (two triangles each), and the south wall of the block north of the
+        // view's centre (seen in perspective; 22 m long, so two pieces of two
+        // triangles); the block below shows no wall.
+        assert_eq!(mesh.indices.len(), 3 * (2 * 2 + 2 * 2), "{mesh:?}");
     }
 
     #[test]
@@ -465,12 +503,62 @@ mod tests {
         // Looking north from the south: each block shows its south wall and roof,
         // perhaps an east or west wall edge-on; never the north wall.
         let mesh = project(&view(60.0, 0.0), None, None);
-        let faces = mesh.indices.len() / 6;
-        assert!((4..=6).contains(&faces), "{faces} faces");
+        let triangles = mesh.indices.len() / 3;
+        assert!((8..=16).contains(&triangles), "{triangles} triangles");
         // The farther block (north, higher on screen) is drawn first.
         let first = mesh.vertices[mesh.indices[0] as usize].0;
         let last = mesh.vertices[*mesh.indices.last().unwrap() as usize].0;
         assert!(first.y < last.y, "{first:?} {last:?}");
+    }
+
+    #[test]
+    fn a_long_wall_behind_a_small_block_is_drawn_before_it() {
+        // Looking north: a 600 m slab ahead, and a small red block in front of its
+        // east end. Ordered as one face, the slab's wall (its middle straight ahead)
+        // was nearer than the small block and was drawn over it.
+        let mut input = view(60.0, 0.0);
+        let mut slab = block_at(48.002, 11.0);
+        slab.rings = vec![vec![
+            (48.0019, 10.996),
+            (48.0019, 11.004),
+            (48.0021, 11.004),
+            (48.0021, 10.996),
+        ]];
+        let mut small = block_at(48.0017, 11.0033);
+        small.top_m = 6.0;
+        small.wall_colour = Some([255, 0, 0]);
+        small.roof_colour = Some([255, 0, 0]);
+        input.buildings = Some(Arc::from(vec![slab, small]));
+        let mesh = project(&input, None, None);
+        let red = |index: u32| {
+            let [r, g, ..] = mesh.vertices[index as usize].1;
+            r > g + 20
+        };
+        let triangles: Vec<&[u32]> = mesh.indices.chunks_exact(3).collect();
+        let first_red = triangles
+            .iter()
+            .position(|t| red(t[0]))
+            .expect("small block drawn");
+        let red_box = triangles
+            .iter()
+            .filter(|t| red(t[0]))
+            .flat_map(|t| t.iter().map(|&index| mesh.vertices[index as usize].0))
+            .fold(Rect::NOTHING, |rect, at| {
+                rect.union(Rect::from_min_max(at, at))
+            });
+        for triangle in &triangles[first_red..] {
+            let points = triangle
+                .iter()
+                .map(|&index| mesh.vertices[index as usize].0);
+            let bounds = points.fold(Rect::NOTHING, |rect, at| {
+                rect.union(Rect::from_min_max(at, at))
+            });
+            assert!(
+                red(triangle[0]) || !bounds.intersects(red_box.shrink(1.0)),
+                "slab drawn over the small block in front of it: {bounds:?} {:?} over {red_box:?}",
+                mesh.vertices[triangle[0] as usize].1
+            );
+        }
     }
 
     #[test]
