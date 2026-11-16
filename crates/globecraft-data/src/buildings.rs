@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 /// Above this the buildings are hidden: a zoom-14 tile is 1–2.4 km wide, and higher
 /// views would need more of them (each 140–880 KiB) than they show.
-pub const MAX_ALTITUDE_KM: f64 = 4.0;
+pub const MAX_ALTITUDE_KM: f64 = 6.0;
 /// The level read: the only one with heights.
 const ZOOM: u8 = 14;
 /// A storey, for a building whose height is given only as a number of floors.
@@ -69,10 +69,10 @@ static SPEC: Spec<BuildingTile> = Spec {
     max_zoom: ZOOM,
     skip_zoom: None,
     tiles_across_view: 3.0,
-    // The view's tiles nearest first; at 4 km a straight-down view needs about 9,
-    // a tilted one more, and city tiles are large.
-    max_tiles: 25,
-    max_floor_tiles: 25,
+    // The view's tiles nearest first; at 6 km a straight-down view needs about 36
+    // in mid-latitudes, and city tiles are large.
+    max_tiles: 36,
+    max_floor_tiles: 36,
     max_cached_tiles: 60,
     max_cached_bytes: 2 * crate::vector_tiles::MAX_VECTOR_CACHE_BYTES,
     size_bytes,

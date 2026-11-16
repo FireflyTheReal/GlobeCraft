@@ -353,17 +353,16 @@ fn block(
             let mut start = end(0);
             for piece in 1..=pieces {
                 let stop = end(piece);
-                let corners = [start.2, stop.2, stop.3, start.3];
-                if let Some(corners) = corners.into_iter().collect::<Option<Vec<Corner>>>() {
-                    let middle = (start.0 + start.1 + stop.0 + stop.1) / 4.0;
-                    push(
-                        out,
-                        (middle - camera).length_squared(),
-                        &corners,
-                        &[0, 1, 2, 0, 2, 3],
-                        shade,
-                    );
-                }
+                let middle = (start.0 + start.1 + stop.0 + stop.1) / 4.0;
+                face(
+                    out,
+                    basis,
+                    rect,
+                    (middle - camera).length_squared(),
+                    &[start.0, stop.0, stop.1, start.1],
+                    &[start.2, stop.2, stop.3, start.3],
+                    shade,
+                );
                 start = stop;
             }
         }
@@ -371,25 +370,76 @@ fn block(
     }
     // The roof, when the camera is above it.
     let roof_middle = scratch.top.iter().sum::<DVec3>() / scratch.top.len() as f64;
-    if (camera - roof_middle).dot(up) > 0.0
-        && let Some(corners) = scratch
-            .top_on_screen
-            .iter()
-            .copied()
-            .collect::<Option<Vec<Corner>>>()
-    {
+    if (camera - roof_middle).dot(up) > 0.0 {
         let shade = colour(roof, roof_light, alpha);
         for triangle in building.roof.chunks_exact(3) {
             let at = |corner: usize| triangle[corner] as usize;
-            let middle = (scratch.top[at(0)] + scratch.top[at(1)] + scratch.top[at(2)]) / 3.0;
-            push(
+            let world = [scratch.top[at(0)], scratch.top[at(1)], scratch.top[at(2)]];
+            face(
                 out,
-                (middle - camera).length_squared(),
-                &[corners[at(0)], corners[at(1)], corners[at(2)]],
-                &[0, 1, 2],
+                basis,
+                rect,
+                ((world[0] + world[1] + world[2]) / 3.0 - camera).length_squared(),
+                &world,
+                &[0, 1, 2].map(|corner| scratch.top_on_screen[at(corner)]),
                 shade,
             );
         }
+    }
+}
+
+/// Adds the flat, convex face with corners `world` (seen on screen at `seen`, where
+/// they project). A face reaching behind the camera is cut at `NEAR_RADII` in
+/// front of it: left out whole, the walls and roofs beside the camera went
+/// missing at street level and the blocks behind showed through (user's
+/// recording, 2026-11-16).
+fn face(
+    out: &mut Faces,
+    basis: &globecraft_core::camera::Basis,
+    rect: Rect,
+    depth: f64,
+    world: &[DVec3],
+    seen: &[Option<Corner>],
+    colour: [u8; 4],
+) {
+    /// Two metres in front of the camera.
+    const NEAR_RADII: f64 = 2.0 / METRES_PER_RADIUS;
+    /// A quadrilateral cut by a plane has at most five corners.
+    const FAN: [u32; 9] = [0, 1, 2, 0, 2, 3, 0, 3, 4];
+    let mut corners: Vec<Corner> = Vec::with_capacity(5);
+    if seen.iter().all(Option::is_some) {
+        corners.extend(seen.iter().flatten());
+    } else {
+        let project = |point: DVec3| -> Option<Corner> {
+            let at = basis.project_precise(point, rect)?;
+            Some((
+                Pos2::new(at.x as f32, at.y as f32),
+                (1.0 / basis.view_depth(point)) as f32,
+            ))
+        };
+        for (index, &from) in world.iter().enumerate() {
+            let to = world[(index + 1) % world.len()];
+            let (ahead_from, ahead_to) = (
+                basis.view_depth(from) - NEAR_RADII,
+                basis.view_depth(to) - NEAR_RADII,
+            );
+            if ahead_from >= 0.0 {
+                corners.extend(project(from));
+            }
+            if (ahead_from >= 0.0) != (ahead_to >= 0.0) {
+                let cut = from.lerp(to, ahead_from / (ahead_from - ahead_to));
+                corners.extend(project(cut));
+            }
+        }
+    }
+    if corners.len() >= 3 {
+        push(
+            out,
+            depth,
+            &corners,
+            &FAN[..(corners.len() - 2) * 3],
+            colour,
+        );
     }
 }
 
@@ -617,6 +667,40 @@ mod tests {
         input.sun = Some(DVec3::new(0.0, 0.001, 1.0).normalize());
         let lit = preparer.prepare(input);
         assert!(!Arc::ptr_eq(&first.buildings, &lit.buildings));
+    }
+
+    #[test]
+    fn a_wall_reaching_behind_the_camera_is_cut_not_dropped() {
+        // At street level, looking north along a long wall that starts behind the
+        // camera: its near end does not project, and the wall was left out.
+        let mut input = view(80.0, 0.0);
+        input.view.altitude_km = 0.03;
+        input.view.basis = Cam {
+            lat: 48.0,
+            lon: 11.0,
+            heading: 0.0,
+            alt: 0.03,
+            tilt: 80.0,
+        }
+        .basis(1.5);
+        // The camera stands 29.5 m south of the point it looks at; the block's
+        // west wall, two metres east of the view line, runs from 10 m behind the
+        // camera to 8 m ahead of it.
+        let mut slab = block_at(48.0, 11.0);
+        slab.rings = vec![vec![
+            (47.99964, 11.00003),
+            (47.99964, 11.00013),
+            (47.999807, 11.00013),
+            (47.999807, 11.00003),
+        ]];
+        input.buildings = tiles(vec![slab]);
+        let cut = project(&input, None, None);
+        assert!(
+            !cut.indices.is_empty(),
+            "the wall beside the camera is drawn"
+        );
+        assert!(cut.vertices.iter().all(|vertex| vertex.at.is_finite()));
+        assert!(cut.vertices.iter().all(|vertex| vertex.nearness > 0.0));
     }
 
     #[test]
