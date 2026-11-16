@@ -1,5 +1,6 @@
 //! Buildings as blocks (roadmap 8.6): walls and roofs on the ground (raised onto the
-//! relief when it is drawn), lit by the sun, as one mesh of triangles drawn from far
+//! relief when it is drawn), coloured from the imagery under them, lit by the sun,
+//! as one mesh of triangles drawn from far
 //! to near so nearer blocks cover farther ones (there is no depth buffer: the
 //! overlays are drawn over the globe's picture).
 //!
@@ -11,6 +12,7 @@ use crate::overlays::{Ground, TerrainVisibility};
 use emath::{Pos2, Rect};
 use glam::DVec3;
 use globecraft_data::buildings::{Building, MAX_ALTITUDE_KM};
+use globecraft_data::tiles::TileCache;
 use rayon::prelude::*;
 
 /// The blocks to draw: screen points with their colours (RGBA, not premultiplied),
@@ -30,6 +32,19 @@ const ROOF: [f32; 3] = [0.74, 0.72, 0.70];
 const MAPPED_COLOUR_SHARE: f32 = 0.45;
 /// No block is darker than this (luminance, 0–1), whatever its mapped colour.
 const MIN_LUMINANCE: f32 = 0.35;
+/// Walls without a mapped colour take this share of the imagery's colour under the
+/// block: facades are not seen from above, but a block the colour of its street
+/// looked more like the place than a white one.
+const IMAGERY_WALL_SHARE: f32 = 0.35;
+/// The share of a block's width (east–west) its roof colour is averaged over, so
+/// the street around it stays out.
+const ROOF_SAMPLE_SHARE: f64 = 0.6;
+/// No roof taken from imagery is darker than this (luminance, 0–1): roofs in
+/// shadow in the photo, or dark slate, came out black (screenshots, 2026-11-16).
+const MIN_IMAGERY_LUMINANCE: f32 = 0.2;
+/// The coarsest imagery a roof takes its colour from: one texel at zoom 12 spans
+/// about 40 m, a block or two.
+const COARSEST_IMAGERY_ZOOM: u8 = 12;
 /// Light from the sky alone, and from the sun on a face turned to it.
 const AMBIENT: f32 = 0.55;
 const DIRECT: f32 = 0.45;
@@ -58,7 +73,14 @@ struct Face {
     colour: [u8; 4],
 }
 
-pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> BuildingMesh {
+/// The blocks of `input` on screen; with `imagery`, roofs and walls take the colours
+/// of its loaded tiles of `input.imagery`.
+pub(super) fn project(
+    input: &LiveInput,
+    ground: Option<&dyn Ground>,
+    imagery: Option<&TileCache>,
+) -> BuildingMesh {
+    let imagery = imagery.zip(input.imagery);
     let Some(buildings) = &input.buildings else {
         return BuildingMesh::default();
     };
@@ -79,6 +101,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Buildin
                     building,
                     input,
                     ground,
+                    imagery,
                     visibility.as_ref(),
                     reach,
                     (opacity * 255.0) as u8,
@@ -148,6 +171,7 @@ fn block(
     building: &Building,
     input: &LiveInput,
     ground: Option<&dyn Ground>,
+    imagery: Option<(&TileCache, super::BuildingImagery)>,
     visibility: Option<&TerrainVisibility<'_>>,
     reach: Rect,
     alpha: u8,
@@ -205,12 +229,39 @@ fn block(
     }
     let camera = basis.c;
     let light = Light::at(input.sun, up);
-    let wall = building
-        .wall_colour
-        .map_or(WALL, |mapped| toned(WALL, mapped));
-    let roof = building
-        .roof_colour
-        .map_or(ROOF, |mapped| toned(ROOF, mapped));
+    let (west, east) = outline.iter().fold(
+        (f64::INFINITY, f64::NEG_INFINITY),
+        |(west, east), &(_, lon)| (west.min(lon), east.max(lon)),
+    );
+    let photo = imagery.and_then(|(cache, imagery)| {
+        let span_deg = (east - west) * ROOF_SAMPLE_SHARE;
+        cache
+            .loaded_colour(
+                imagery.provider,
+                imagery.release,
+                (lat, lon),
+                span_deg,
+                COARSEST_IMAGERY_ZOOM,
+            )
+            .map(|colour| lifted([colour.x, colour.y, colour.z], MIN_IMAGERY_LUMINANCE))
+    });
+    let wall = match (building.wall_colour, photo) {
+        (Some(mapped), _) => toned(WALL, mapped),
+        (None, Some(photo)) => std::array::from_fn(|channel| {
+            WALL[channel] + (photo[channel] - WALL[channel]) * IMAGERY_WALL_SHARE
+        }),
+        (None, None) => WALL,
+    };
+    // The imagery is already lit by the sun of its day; only dusk dims it.
+    let (roof, roof_light) = match photo {
+        Some(photo) => (photo, light.daylight),
+        None => (
+            building
+                .roof_colour
+                .map_or(ROOF, |mapped| toned(ROOF, mapped)),
+            light.on(up),
+        ),
+    };
     // Walls: each faces the right-hand side of its edge (outlines run anticlockwise,
     // courtyards clockwise, seen from above), and only those facing the camera show.
     let mut first = 0;
@@ -268,7 +319,7 @@ fn block(
             (roof_middle - camera).length_squared(),
             &corners,
             &building.roof,
-            colour(roof, light.on(up), alpha),
+            colour(roof, roof_light, alpha),
         );
     }
 }
@@ -298,16 +349,18 @@ fn anticlockwise(ring: &[(f64, f64)]) -> bool {
 /// A mapped colour taken `MAPPED_COLOUR_SHARE` of the way from `default`, and
 /// lightened to `MIN_LUMINANCE`.
 fn toned(default: [f32; 3], mapped: [u8; 3]) -> [f32; 3] {
-    let mut colour: [f32; 3] = std::array::from_fn(|channel| {
+    let colour: [f32; 3] = std::array::from_fn(|channel| {
         let mapped = f32::from(mapped[channel]) / 255.0;
         default[channel] + (mapped - default[channel]) * MAPPED_COLOUR_SHARE
     });
+    lifted(colour, MIN_LUMINANCE)
+}
+
+/// `colour` lightened to at least `min_luminance`.
+fn lifted(colour: [f32; 3], min_luminance: f32) -> [f32; 3] {
     let luminance = 0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2];
-    if luminance < MIN_LUMINANCE {
-        let lift = MIN_LUMINANCE - luminance;
-        colour = colour.map(|channel| (channel + lift).min(1.0));
-    }
-    colour
+    let lift = (min_luminance - luminance).max(0.0);
+    colour.map(|channel| (channel + lift).min(1.0))
 }
 
 fn colour(base: [f32; 3], brightness: f32, alpha: u8) -> [u8; 4] {
@@ -401,7 +454,7 @@ mod tests {
 
     #[test]
     fn straight_down_the_block_below_shows_only_its_roof() {
-        let mesh = project(&view(0.0, 0.0), None);
+        let mesh = project(&view(0.0, 0.0), None, None);
         // Two roofs, and the south wall of the block north of the view's centre (seen
         // in perspective); the block below shows no wall.
         assert_eq!(mesh.indices.len(), 3 * 2 * 3, "{mesh:?}");
@@ -411,7 +464,7 @@ mod tests {
     fn a_tilted_view_shows_near_walls_and_draws_far_blocks_first() {
         // Looking north from the south: each block shows its south wall and roof,
         // perhaps an east or west wall edge-on; never the north wall.
-        let mesh = project(&view(60.0, 0.0), None);
+        let mesh = project(&view(60.0, 0.0), None, None);
         let faces = mesh.indices.len() / 6;
         assert!((4..=6).contains(&faces), "{faces} faces");
         // The farther block (north, higher on screen) is drawn first.
@@ -443,6 +496,6 @@ mod tests {
     fn blocks_too_high_above_are_not_drawn() {
         let mut input = view(0.0, 0.0);
         input.view.altitude_km = MAX_ALTITUDE_KM + 1.0;
-        assert!(project(&input, None).indices.is_empty());
+        assert!(project(&input, None, None).indices.is_empty());
     }
 }

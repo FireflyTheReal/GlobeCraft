@@ -116,6 +116,17 @@ impl App {
                     let (latitude, longitude) = globecraft_core::math::subsolar(self.scene_unix());
                     globecraft_core::math::ll_to_v3(latitude, longitude)
                 }),
+            imagery: Some(self.imagery_source())
+                .filter(|(provider, _)| {
+                    provider.is_imagery() && self.map_data.buildings.current.is_some()
+                })
+                .map(
+                    |(provider, release)| globecraft_render::live_layers::BuildingImagery {
+                        provider,
+                        release,
+                        generation: self.tiles.cache.generation(),
+                    },
+                ),
             vessels: self
                 .layer(globecraft_core::layers::MapLayer::Vessels)
                 .then(|| self.live.vessels.shared_snapshot())
@@ -201,6 +212,7 @@ mod tests {
             roads: None,
             buildings: None,
             sun: None,
+            imagery: None,
             vessels: None,
             satellites: None,
             traffic: None,
@@ -263,6 +275,7 @@ mod tests {
             roads: None,
             buildings: None,
             sun: None,
+            imagery: None,
             vessels: None,
             satellites: None,
             traffic: None,

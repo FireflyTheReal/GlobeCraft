@@ -162,6 +162,9 @@ struct Job {
     revalidate: Option<Validity>,
 }
 
+/// The width of an imagery tile, in pixels, as the services serve them.
+const IMAGERY_TILE_PX: f64 = 256.0;
+
 impl TileCache {
     #[cfg(test)]
     fn with_budget(tx: tokio::sync::mpsc::Sender<TileKey>, budget: usize) -> Self {
@@ -328,6 +331,50 @@ impl TileCache {
     /// `elevation_m` without requesting anything: overlays follow what the frames load.
     pub fn loaded_elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
         self.elevation_at(lat, lon, zoom, false)
+    }
+    /// The colour (RGB, 0–1) of `provider`'s imagery around `(lat, lon)`, averaged
+    /// over about `span_deg` of longitude, from the finest loaded tile not coarser
+    /// than `coarsest_zoom`. Nothing is requested: buildings take the colour of what
+    /// the frames have loaded.
+    pub fn loaded_colour(
+        &self,
+        provider: super::Provider,
+        release: u16,
+        (lat, lon): (f64, f64),
+        span_deg: f64,
+        coarsest_zoom: u8,
+    ) -> Option<glam::Vec4> {
+        let lat = lat.clamp(-85.05, 85.05);
+        let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
+        let s = lat.to_radians().sin();
+        let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * std::f64::consts::PI);
+        // Finer levels than one whose texels the span covers `MAX_SAMPLE_STRIDE`
+        // times add nothing to the average, and each level tried is a lookup.
+        let finest = (Tile::MAX_SAMPLE_STRIDE * 360.0 / (span_deg * IMAGERY_TILE_PX))
+            .log2()
+            .ceil()
+            .clamp(f64::from(coarsest_zoom), f64::from(provider.max_zoom()))
+            as u8;
+        for level in (coarsest_zoom..=finest).rev() {
+            let n = f64::from(1u32 << level);
+            let (tx, ty) = ((u * n).floor().min(n - 1.0), (v * n).floor().min(n - 1.0));
+            // Only what is ready: a miss must not wait on the request table's lock,
+            // which the frames take for every tile they ask for.
+            let Some(tile) = self
+                .ready
+                .get(&make_key(provider, level, tx as u32, ty as u32, release))
+            else {
+                continue;
+            };
+            if tile.elevation().is_some() {
+                return None;
+            }
+            let (width, _, _) = tile.rgba();
+            let texels = span_deg / 360.0 * n * width as f64;
+            let stride = texels.clamp(1.0, Tile::MAX_SAMPLE_STRIDE) as f32;
+            return Some(tile.sample(u * n - tx, v * n - ty, stride));
+        }
+        None
     }
     fn elevation_at(&self, lat: f64, lon: f64, zoom: u8, request: bool) -> Option<f32> {
         let lat = lat.clamp(-85.05, 85.05);

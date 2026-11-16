@@ -451,6 +451,7 @@ pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
         roads: None,
         buildings: None,
         sun: None,
+        imagery: None,
         vessels: None,
         satellites: None,
         traffic: None,

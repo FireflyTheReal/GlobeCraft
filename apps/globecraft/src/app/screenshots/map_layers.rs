@@ -532,12 +532,21 @@ fn buildings_screenshots() {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
         let input = app.live_layer_input(app.view_basis(1.6), rect, app.cam, 2.0);
         let blocks = input.buildings.as_ref().map_or(0, |blocks| blocks.len());
-        let started = std::time::Instant::now();
-        let geometry = globecraft_render::live_layers::LivePreparer::default().prepare(input);
-        println!(
-            "{name}: {blocks} blocks, {} triangles, projected in {:?}",
-            geometry.buildings.indices.len() / 3,
-            started.elapsed()
-        );
+        let uncoloured = globecraft_render::live_layers::LiveInput {
+            imagery: None,
+            ..input.clone()
+        };
+        for (label, input) in [("imagery colours", input), ("default colours", uncoloured)] {
+            let started = std::time::Instant::now();
+            let geometry = globecraft_render::live_layers::LivePreparer::with_elevation(
+                app.tiles.cache.clone(),
+            )
+            .prepare(input);
+            println!(
+                "{name}: {blocks} blocks, {} triangles, projected in {:?} ({label})",
+                geometry.buildings.indices.len() / 3,
+                started.elapsed()
+            );
+        }
     }
 }
