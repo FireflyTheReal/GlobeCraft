@@ -410,6 +410,7 @@ mod tests {
                     longitude: lon,
                     altitude_km,
                     tilt_deg,
+                    heading_deg: 0.0,
                 },
                 floor,
             },

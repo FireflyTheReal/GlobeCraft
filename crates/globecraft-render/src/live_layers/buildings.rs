@@ -21,9 +21,23 @@ use rayon::prelude::*;
 /// and triangles over them, farthest first.
 #[derive(Debug, Default)]
 pub struct BuildingMesh {
-    pub vertices: Vec<(Pos2, [u8; 4])>,
+    pub vertices: Vec<BuildingVertex>,
     pub indices: Vec<u32>,
 }
+
+/// A corner of a face.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BuildingVertex {
+    pub at: Pos2,
+    /// 0–1, greater nearer the camera, straight between a face's corners on
+    /// screen (the inverse of the depth along the view): what a depth buffer
+    /// compares, so a renderer with one need not trust the order of the faces.
+    pub nearness: f32,
+    pub colour: [u8; 4],
+}
+
+/// A projected corner: where it is on screen and the inverse of its depth.
+type Corner = (Pos2, f32);
 
 /// Walls in the default colour: light stone. Roofs: a little darker.
 const WALL: [f32; 3] = [0.86, 0.83, 0.78];
@@ -146,13 +160,26 @@ pub(super) fn project(
         mesh.vertices.extend(
             points[face.points.start as usize..face.points.end as usize]
                 .iter()
-                .map(|&point| (point, face.colour)),
+                .map(|&(at, nearness)| BuildingVertex {
+                    at,
+                    nearness,
+                    colour: face.colour,
+                }),
         );
         mesh.indices.extend(
             triangles[face.triangles.start as usize..face.triangles.end as usize]
                 .iter()
                 .map(|&index| first + index),
         );
+    }
+    let nearest = mesh
+        .vertices
+        .iter()
+        .fold(f32::MIN_POSITIVE, |nearest, vertex| {
+            nearest.max(vertex.nearness)
+        });
+    for vertex in &mut mesh.vertices {
+        vertex.nearness /= nearest;
     }
     mesh
 }
@@ -161,7 +188,7 @@ pub(super) fn project(
 #[derive(Default)]
 struct Faces {
     faces: Vec<Face>,
-    points: Vec<Pos2>,
+    points: Vec<Corner>,
     triangles: Vec<u32>,
 }
 
@@ -170,8 +197,8 @@ struct Faces {
 struct Scratch {
     base: Vec<DVec3>,
     top: Vec<DVec3>,
-    base_on_screen: Vec<Option<Pos2>>,
-    top_on_screen: Vec<Option<Pos2>>,
+    base_on_screen: Vec<Option<Corner>>,
+    top_on_screen: Vec<Option<Corner>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -212,15 +239,18 @@ fn block(
     let mut box_min = Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut box_max = Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
     let on_screen = |point: DVec3| {
-        basis
-            .project_precise(point, rect)
-            .map(|at| Pos2::new(at.x as f32, at.y as f32))
+        basis.project_precise(point, rect).map(|at| -> Corner {
+            (
+                Pos2::new(at.x as f32, at.y as f32),
+                (1.0 / basis.view_depth(point)) as f32,
+            )
+        })
     };
     for &(lat, lon) in building.rings.iter().flatten() {
         let surface = basis.surface_position(lat, lon);
         let (base, top) = (surface + up * base_lift, surface + up * top_lift);
         let (base_at, top_at) = (on_screen(base), on_screen(top));
-        for at in [base_at, top_at].into_iter().flatten() {
+        for (at, _) in [base_at, top_at].into_iter().flatten() {
             box_min = box_min.min(at);
             box_max = box_max.max(at);
         }
@@ -324,7 +354,7 @@ fn block(
             for piece in 1..=pieces {
                 let stop = end(piece);
                 let corners = [start.2, stop.2, stop.3, start.3];
-                if let Some(corners) = corners.into_iter().collect::<Option<Vec<Pos2>>>() {
+                if let Some(corners) = corners.into_iter().collect::<Option<Vec<Corner>>>() {
                     let middle = (start.0 + start.1 + stop.0 + stop.1) / 4.0;
                     push(
                         out,
@@ -346,7 +376,7 @@ fn block(
             .top_on_screen
             .iter()
             .copied()
-            .collect::<Option<Vec<Pos2>>>()
+            .collect::<Option<Vec<Corner>>>()
     {
         let shade = colour(roof, roof_light, alpha);
         for triangle in building.roof.chunks_exact(3) {
@@ -363,7 +393,7 @@ fn block(
     }
 }
 
-fn push(out: &mut Faces, depth: f64, corners: &[Pos2], triangles: &[u32], colour: [u8; 4]) {
+fn push(out: &mut Faces, depth: f64, corners: &[Corner], triangles: &[u32], colour: [u8; 4]) {
     let (point, triangle) = (out.points.len() as u32, out.triangles.len() as u32);
     out.points.extend_from_slice(corners);
     out.triangles.extend_from_slice(triangles);
@@ -512,9 +542,14 @@ mod tests {
         let triangles = mesh.indices.len() / 3;
         assert!((8..=16).contains(&triangles), "{triangles} triangles");
         // The farther block (north, higher on screen) is drawn first.
-        let first = mesh.vertices[mesh.indices[0] as usize].0;
-        let last = mesh.vertices[*mesh.indices.last().unwrap() as usize].0;
+        let first = mesh.vertices[mesh.indices[0] as usize].at;
+        let last = mesh.vertices[*mesh.indices.last().unwrap() as usize].at;
         assert!(first.y < last.y, "{first:?} {last:?}");
+        // And for a depth buffer: nearer corners have the greater nearness, up to one.
+        let nearness = |index: u32| mesh.vertices[index as usize].nearness;
+        assert!(nearness(mesh.indices[0]) < nearness(*mesh.indices.last().unwrap()));
+        let nearest = mesh.vertices.iter().map(|v| v.nearness).fold(0.0, f32::max);
+        assert_eq!(nearest, 1.0);
     }
 
     #[test]
@@ -537,7 +572,7 @@ mod tests {
         input.buildings = tiles(vec![slab, small]);
         let mesh = project(&input, None, None);
         let red = |index: u32| {
-            let [r, g, ..] = mesh.vertices[index as usize].1;
+            let [r, g, ..] = mesh.vertices[index as usize].colour;
             r > g + 20
         };
         let triangles: Vec<&[u32]> = mesh.indices.chunks_exact(3).collect();
@@ -548,21 +583,21 @@ mod tests {
         let red_box = triangles
             .iter()
             .filter(|t| red(t[0]))
-            .flat_map(|t| t.iter().map(|&index| mesh.vertices[index as usize].0))
+            .flat_map(|t| t.iter().map(|&index| mesh.vertices[index as usize].at))
             .fold(Rect::NOTHING, |rect, at| {
                 rect.union(Rect::from_min_max(at, at))
             });
         for triangle in &triangles[first_red..] {
             let points = triangle
                 .iter()
-                .map(|&index| mesh.vertices[index as usize].0);
+                .map(|&index| mesh.vertices[index as usize].at);
             let bounds = points.fold(Rect::NOTHING, |rect, at| {
                 rect.union(Rect::from_min_max(at, at))
             });
             assert!(
                 red(triangle[0]) || !bounds.intersects(red_box.shrink(1.0)),
                 "slab drawn over the small block in front of it: {bounds:?} {:?} over {red_box:?}",
-                mesh.vertices[triangle[0] as usize].1
+                mesh.vertices[triangle[0] as usize].colour
             );
         }
     }

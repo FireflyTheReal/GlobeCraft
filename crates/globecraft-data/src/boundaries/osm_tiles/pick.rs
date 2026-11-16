@@ -108,6 +108,38 @@ pub(crate) fn view_radius_deg(altitude_km: f64, tilt_deg: f64) -> f64 {
     ((altitude_km * RADIUS_PER_ALTITUDE).max(reach_km) / KM_PER_DEGREE).min(horizon_deg)
 }
 
+/// The disc of ground a view sees: its centre and radius (degrees). Straight down
+/// that is [`view_radius_deg`] around the view's centre. A tilted view sees far
+/// ahead and little behind, so its disc lies ahead, between the ground at the
+/// bottom and at the top edge of the screen: a disc around the centre spent most
+/// of its tiles behind the camera, and the cap on tiles left the far ground empty
+/// (reported 2026-11-16).
+/// shortcut: the far corners of a wide, steeply tilted view lie outside the disc;
+/// take the view's ground outline if empty corners show.
+pub(crate) fn seen_disc(view: crate::ViewQuery) -> ((f64, f64), f64) {
+    let centre = (view.latitude, view.longitude);
+    let whole = view_radius_deg(view.altitude_km, view.tilt_deg);
+    if view.tilt_deg <= 0.0 {
+        return (centre, whole);
+    }
+    let altitude_km = view.altitude_km.max(0.05);
+    let tilt = view.tilt_deg.to_radians();
+    let half_view = globecraft_core::VERTICAL_FOV_HALF_TAN.atan();
+    // Along the ground from under the camera, whose height is `altitude · cos tilt`.
+    let height_km = altitude_km * tilt.cos();
+    let looked_at = height_km * tilt.tan();
+    let far = height_km * (tilt + half_view).min(TILTED_REACH_MAX_RAD).tan();
+    let near = height_km * (tilt - half_view).tan();
+    let radius_km = ((far - near) / 2.0).max(altitude_km * RADIUS_PER_ALTITUDE);
+    let ahead_km = ((far + near) / 2.0 - looked_at).max(0.0);
+    let radius = (radius_km / KM_PER_DEGREE).min(whole);
+    let ahead_km = ahead_km.min(whole * KM_PER_DEGREE);
+    (
+        globecraft_core::math::destination(centre.0, centre.1, view.heading_deg, ahead_km),
+        radius,
+    )
+}
+
 /// The highest camera altitude at `lat` whose tiles hold municipal lines (the
 /// inverse of the detail choice in [`wanted`], which rounds the ideal zoom).
 pub(super) fn max_altitude_km_for_municipal(lat: f64) -> f64 {
@@ -157,6 +189,34 @@ pub(crate) fn around(zoom: u8, lat: f64, lon: f64, radius_deg: f64) -> Vec<TileK
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tilted_view_loads_ahead_of_where_it_looks() {
+        let mut view = crate::ViewQuery {
+            latitude: 48.0,
+            longitude: 11.0,
+            altitude_km: 2.0,
+            tilt_deg: 0.0,
+            heading_deg: 0.0,
+        };
+        let (centre, straight_down) = seen_disc(view);
+        assert_eq!(centre, (48.0, 11.0));
+        assert_eq!(straight_down, view_radius_deg(2.0, 0.0));
+        // Looking north at 65°: the disc is north of the view's centre, reaches the
+        // ground at the top of the screen and little behind the camera, with far
+        // fewer tiles than the disc around the centre.
+        view.tilt_deg = 65.0;
+        let ((latitude, longitude), radius) = seen_disc(view);
+        assert!(latitude > 48.0 && (longitude - 11.0).abs() < 1e-9);
+        let around_centre = view_radius_deg(2.0, 65.0);
+        assert!(radius < 0.6 * around_centre, "{radius} {around_centre}");
+        assert!(latitude + radius > 48.0 + 0.9 * around_centre * 0.8);
+        assert!(latitude - radius < 48.0, "the looked-at point stays inside");
+        // Looking east it lies east.
+        view.heading_deg = 90.0;
+        let ((latitude, longitude), _) = seen_disc(view);
+        assert!(longitude > 11.0 && (latitude - 48.0).abs() < 1e-3);
+    }
 
     #[test]
     fn state_lines_keep_tiles_at_zoom_five_or_finer() {

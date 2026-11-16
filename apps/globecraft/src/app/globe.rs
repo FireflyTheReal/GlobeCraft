@@ -728,7 +728,9 @@ impl App {
         if self.layer(MapLayer::Buildings)
             && let Some(geometry) = &live_geometry
         {
-            self.map_data.buildings.draw(painter, &geometry.buildings);
+            self.map_data
+                .buildings
+                .draw(painter, &geometry.buildings, &geometry.input.view);
         }
         if self.layer(MapLayer::Traffic)
             && let Some(geometry) = &live_geometry

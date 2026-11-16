@@ -165,6 +165,11 @@ impl Basis {
         ground + ground.normalize() * (km / crate::EARTH_RADIUS_KM)
     }
     /// Any point in front of the camera, in f64 screen points, hidden or not.
+    /// How far `p` lies in front of the camera along its view axis (mean Earth
+    /// radii): the depth a depth buffer orders by.
+    pub fn view_depth(&self, p: DVec3) -> f64 {
+        -(self.view_from_world * (p - self.c)).z
+    }
     fn screen_point(&self, p: DVec3, rect: Rect) -> Option<DVec2> {
         let v = p - self.c;
         let local = self.view_from_world * v;
