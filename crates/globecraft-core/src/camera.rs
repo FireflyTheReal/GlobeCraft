@@ -10,8 +10,11 @@ use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dcamera::rh};
 const PROJECTION_DEPTH_EPSILON: f64 = 1e-9;
 const ROTATION_AXIS_EPSILON: f64 = 1e-13;
 const MIN_PAN_LATITUDE_COSINE: f64 = 0.05;
-/// Pans that start or end closer to a pole than this follow great circles.
-const POLE_PAN_LATITUDE_DEG: f64 = 87.0;
+/// Pans that start or end closer to a pole than this follow great circles, and
+/// from here to `POLE_HELD_LATITUDE_DEG` north stays up less and less.
+const POLE_PAN_LATITUDE_DEG: f64 = 60.0;
+/// From this latitude on the globe moves as held in the hand: north turns with it.
+const POLE_HELD_LATITUDE_DEG: f64 = 85.0;
 // The CPU renderer uses Earth radii. Projection depth is not used for clipping.
 const PROJECTION_NEAR_EARTH_RADII: f64 = MIN_CAMERA_ALTITUDE_KM / EARTH_RADIUS_KM;
 
@@ -278,15 +281,20 @@ impl Cam {
             wrap_lon(self.lon + de / self.lat.to_radians().cos().max(MIN_PAN_LATITUDE_COSINE));
     }
 
-    /// Whether a pan by `dn` degrees north starts or ends near a pole, where steps in
-    /// latitude and longitude would stop at the pole and spin around it.
+    /// Whether a pan by `dn` degrees north starts or ends toward a pole, where steps
+    /// in latitude and longitude turn the picture around the pole: a small drag
+    /// sideways spun the view (at 87°, nineteen degrees of longitude for one of
+    /// ground), and steps north stopped at the pole.
     fn pans_over_a_pole(&self, dn: f64) -> bool {
         self.lat.abs() > POLE_PAN_LATITUDE_DEG || (self.lat + dn).abs() > POLE_PAN_LATITUDE_DEG
     }
 
     /// A pan along the great circle the drag points in, `de` and `dn` degrees east and
-    /// north: the view goes straight over the pole and down the other side, turning
-    /// with the globe as it would held in the hand.
+    /// north: the view goes straight over the pole and down the other side. Near the
+    /// pole it turns with the globe as it would held in the hand; farther away north
+    /// keeps its place on screen more and more, until at `POLE_PAN_LATITUDE_DEG` the
+    /// pan is the same as a step in latitude and longitude. (One switch at 87° from
+    /// "north stays up" to "held in the hand" made the view lurch there.)
     fn pan_great_circle(&mut self, de: f64, dn: f64) {
         let degrees = de.hypot(dn);
         if degrees <= 0.0 {
@@ -311,7 +319,13 @@ impl Cam {
                 break;
             }
         }
+        let (heading, latitude) = (self.heading, self.lat.abs());
         self.rotate(ll_to_v3(self.lat, self.lon), ll_to_v3(to.0, to.1));
+        let held = ((latitude.max(self.lat.abs()) - POLE_PAN_LATITUDE_DEG)
+            / (POLE_HELD_LATITUDE_DEG - POLE_PAN_LATITUDE_DEG))
+            .clamp(0.0, 1.0);
+        let held = held * held * (3.0 - 2.0 * held);
+        self.heading = wrap_lon(heading + wrap_lon(self.heading - heading) * held);
     }
 
     pub fn pan_for_model(&mut self, dx: f64, dy: f64, height_pts: f32, model: EarthModel) {
@@ -324,7 +338,7 @@ impl Cam {
             DMat2::from_angle(-self.heading.to_radians()) * DVec2::new(-dx, dy) * km_per_point;
         let (meridional, prime_vertical) = model.geometry().curvature_km(self.lat);
         if self.pans_over_a_pole((movement.y / meridional).to_degrees()) {
-            // Near the pole the sphere's step is within metres of the ellipsoid's.
+            // The sphere's step is within a third of a percent of the ellipsoid's.
             self.pan_great_circle(
                 (movement.x / prime_vertical).to_degrees(),
                 (movement.y / meridional).to_degrees(),
@@ -514,6 +528,44 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    /// Dragging sideways at 86° moves the globe with the hand: the pole, in view
+    /// above the centre, goes along by about the drag. Stepping in longitude left
+    /// the pole where it was and spun everything else around it (user, 2026-11-16).
+    #[test]
+    fn a_sideways_drag_near_the_pole_moves_the_pole_with_it() {
+        let (rect, aspect) = (
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0)),
+            1.5,
+        );
+        let start = Cam {
+            lat: 86.0,
+            lon: 10.0,
+            heading: 0.0,
+            alt: 2_000.0,
+            tilt: 0.0,
+        };
+        let mut cam = start;
+        let pole = ll_to_v3(90.0, 0.0);
+        let before = cam.basis(aspect).project(pole, rect).unwrap();
+        cam.pan(60.0, 0.0, 800.0);
+        let after = cam.basis(aspect).project(pole, rect).unwrap();
+        let moved = after - before;
+        assert!(
+            (moved.x - 60.0).abs() < 6.0 && moved.y.abs() < 6.0,
+            "{moved:?}"
+        );
+        // At 50° north stays up, as before.
+        let mut cam = Cam { lat: 50.0, ..start };
+        cam.pan(60.0, 0.0, 800.0);
+        assert_eq!((cam.heading, cam.lat), (0.0, 50.0));
+        // And between, the heading turns by less than the globe does.
+        let mut cam = Cam { lat: 72.0, ..start };
+        let mut held = cam;
+        cam.pan(60.0, 0.0, 800.0);
+        held.rotate(ll_to_v3(72.0, 10.0), ll_to_v3(cam.lat, cam.lon));
+        assert!(cam.heading.abs() > 0.0 && cam.heading.abs() < held.heading.abs());
+    }
 
     /// Zooming toward a point across the North Pole moves the view toward it in
     /// small steps, never round the globe (the user's recording of 2026-11-05).
