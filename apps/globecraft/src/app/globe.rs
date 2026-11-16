@@ -86,12 +86,27 @@ impl App {
 
         let basis = self.view_basis(aspect);
         // ── rendering
-        // A playing time moves the sun every frame: it renders like a moving camera.
+        let relief = self.terrain_active();
+        // Relief that just arrived grows in: the view is drawn again for each step
+        // of it, also at rest.
+        let relief_step = if relief {
+            self.tiles.cache.elevation_fade_step(RELIEF_FADE_STEP)
+        } else {
+            0
+        };
+        if relief_step != 0 {
+            ui.ctx().request_repaint_after(RELIEF_FADE_STEP);
+        }
+        // Growing relief renders like a moving camera, at the lighter size: at
+        // full size a frame took as long as the whole growth, which then showed as
+        // one late jump (seen on a probe and reported by the user, 2026-11-16).
+        // A playing time moves the sun every frame: it too renders like a moving
+        // camera.
         let idle = self.frame.last_interact.elapsed() > IDLE_RENDER_DELAY
             && !resp.dragged()
-            && self.time.speed() == 0.0;
+            && self.time.speed() == 0.0
+            && relief_step == 0;
         let render_aspect = (viewport.width() / viewport.height()) as f64;
-        let relief = self.terrain_active();
         let (w, h) = globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief);
         let keys = globecraft_render::view::RasterView {
             camera: self.cam,
@@ -115,16 +130,6 @@ impl App {
             stars: self.layer(MapLayer::Stars),
         }
         .keys(now_unix());
-        // Relief that just arrived grows in: the view is drawn again for each step
-        // of it, also at rest.
-        let relief_step = if relief {
-            self.tiles.cache.elevation_fade_step(RELIEF_FADE_STEP)
-        } else {
-            0
-        };
-        if relief_step != 0 {
-            ui.ctx().request_repaint_after(RELIEF_FADE_STEP);
-        }
         let state = keys.state.wrapping_add(relief_step);
         let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;

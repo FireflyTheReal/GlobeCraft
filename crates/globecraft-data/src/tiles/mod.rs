@@ -172,7 +172,7 @@ pub struct Tile {
 
 /// An elevation tile's relief grows in over this long instead of snapping to its
 /// heights when it arrives (the ground jumped while relief loaded: user, 2026-11-16).
-pub const ELEVATION_FADE: std::time::Duration = std::time::Duration::from_millis(400);
+pub const ELEVATION_FADE: std::time::Duration = std::time::Duration::from_millis(600);
 
 impl Tile {
     /// How far this elevation tile's relief has grown in at `now`: 0 as it arrives,
