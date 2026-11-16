@@ -8,6 +8,8 @@ pub struct ViewQuery {
     pub altitude_km: f64,
     /// From straight down, degrees.
     pub tilt_deg: f64,
+    /// The bearing the top of the screen points to, degrees.
+    pub heading_deg: f64,
 }
 
 impl From<Cam> for ViewQuery {
@@ -17,6 +19,7 @@ impl From<Cam> for ViewQuery {
             longitude: camera.lon,
             altitude_km: camera.alt,
             tilt_deg: camera.tilt,
+            heading_deg: camera.heading,
         }
     }
 }

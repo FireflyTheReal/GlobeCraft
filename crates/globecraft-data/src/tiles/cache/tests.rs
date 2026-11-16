@@ -649,3 +649,27 @@ fn a_paused_host_does_not_hold_the_slots_of_other_hosts() {
     );
     assert_eq!(cache.next_job().unwrap().key, lights);
 }
+
+#[test]
+fn loaded_colour_takes_the_finest_ready_tile_and_never_requests() {
+    let (cache, _rx) = test_cache(1 << 20);
+    let (lat, lon): (f64, f64) = (48.137, 11.575);
+    let at = |zoom: u8| {
+        let n = f64::from(1u32 << zoom);
+        let s = lat.to_radians().sin();
+        let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * std::f64::consts::PI);
+        let x = ((lon + 180.0) / 360.0 * n) as u32;
+        make_key(Provider::Satellite, zoom, x, (v * n) as u32, 0)
+    };
+    let colour = |cache: &TileCache, coarsest| {
+        cache.loaded_colour(Provider::Satellite, 0, (lat, lon), 0.0001, coarsest)
+    };
+    assert!(colour(&cache, 12).is_none());
+    cache.complete(at(12), Ok(tiny_tile(51)));
+    cache.complete(at(15), Ok(tiny_tile(204)));
+    assert!((colour(&cache, 12).unwrap().x - 0.8).abs() < 1e-6);
+    // A coarser tile than asked for is not used.
+    cache.complete(at(10), Ok(tiny_tile(0)));
+    assert!(colour(&cache, 16).is_none());
+    assert_eq!(cache.inflight(), 0);
+}

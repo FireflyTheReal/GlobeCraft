@@ -164,6 +164,7 @@ impl RasterTiles {
             longitude: lon,
             altitude_km,
             tilt_deg,
+            ..
         } = view;
         // Tiles across the view: a 256-pixel tile about every 400 screen pixels keeps
         // the overlay about as sharp as the imagery under it.

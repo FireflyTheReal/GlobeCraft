@@ -126,6 +126,16 @@ impl App {
             self.settings.layers.basemap
         }
     }
+    /// The basemap drawn and its release (the Wayback date shown, else 0).
+    pub(super) fn imagery_source(&self) -> (Provider, u16) {
+        let provider = self.effective_provider();
+        let release = if provider == Provider::Wayback {
+            self.wayback.index as u16
+        } else {
+            0
+        };
+        (provider, release)
+    }
 }
 
 /// The index of the newest release dated on or before `date` in a list sorted newest

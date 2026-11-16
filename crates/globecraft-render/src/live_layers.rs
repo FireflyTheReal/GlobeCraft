@@ -5,11 +5,11 @@ mod transport;
 mod worker;
 use crate::motion;
 use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility};
-pub use buildings::BuildingMesh;
+pub use buildings::{BuildingMesh, BuildingVertex};
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
-    buildings::Building, roads::Road, satellites::Satellite, tiles::TileCache,
+    buildings::BuildingSnapshot, roads::Road, satellites::Satellite, tiles::TileCache,
     traffic::TrafficTiles, vessels::Vessel,
 };
 pub use poi::{PoiKey, PoiLayers, PoiShown, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
@@ -95,13 +95,26 @@ impl LiveView {
         )
     }
 }
+/// The basemap blocks take their colours from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BuildingImagery {
+    pub provider: globecraft_data::tiles::Provider,
+    pub release: u16,
+    /// The tile cache's generation: imagery arriving colours the blocks again.
+    /// shortcut: any finished tile counts, so blocks are coloured again for each tile
+    /// while a view loads; count imagery tiles alone if that shows in profiles.
+    pub generation: u64,
+}
 #[derive(Clone)]
 pub struct LiveInput {
     pub view: LiveView,
     pub roads: Option<Arc<[Road]>>,
-    pub buildings: Option<Arc<[Building]>>,
-    /// Where the sun is (unit vector), when Sunlight is on: blocks are lit by it.
+    pub buildings: Option<Arc<BuildingSnapshot>>,
+    /// Where the sun is (unit vector), when Sunlight is on: blocks are lit by it. The
+    /// app moves it in steps, so a still view keeps its blocks between them.
     pub sun: Option<glam::DVec3>,
+    /// The imagery under the blocks: they take its colours.
+    pub imagery: Option<BuildingImagery>,
     pub vessels: Option<Arc<[Vessel]>>,
     pub satellites: Option<Arc<[Satellite]>>,
     pub traffic: Option<Arc<TrafficTiles>>,
@@ -155,16 +168,11 @@ impl LiveInput {
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
     }
-    /// The same blocks under the same light. The sun moves slowly: a step of the
-    /// light coarser than this keeps the projection.
+    /// The same blocks under the same light (the app moves the sun in steps).
     fn same_buildings(&self, other: &Self) -> bool {
-        /// About a minute of the sun's travel.
-        const SUN_STEP: f64 = 0.004;
         same(&self.buildings, &other.buildings)
-            && match (self.sun, other.sun) {
-                (Some(a), Some(b)) => a.distance(b) < SUN_STEP,
-                (a, b) => a.is_none() && b.is_none(),
-            }
+            && self.imagery == other.imagery
+            && self.sun == other.sun
     }
     fn same_transport(&self, other: &Self) -> bool {
         same(&self.transport, &other.transport)
@@ -222,15 +230,16 @@ pub struct LiveGeometry {
 #[derive(Default)]
 pub struct LivePreparer {
     latest: Option<Arc<LiveGeometry>>,
-    /// Where the relief heights come from when the view asks for them.
-    elevation: Option<Arc<TileCache>>,
+    /// Where the relief heights come from when the view asks for them, and the
+    /// imagery the blocks take their colours from.
+    tiles: Option<Arc<TileCache>>,
 }
 impl LivePreparer {
     /// A preparer that can raise live layers onto the relief from `cache`'s
-    /// elevation tiles.
+    /// elevation tiles and colour blocks from its imagery.
     pub fn with_elevation(cache: Arc<TileCache>) -> Self {
         Self {
-            elevation: Some(cache),
+            tiles: Some(cache),
             ..Self::default()
         }
     }
@@ -241,7 +250,7 @@ impl LivePreparer {
             return old.clone();
         }
         let heights = GroundHeights::new(
-            self.elevation.as_deref(),
+            self.tiles.as_deref(),
             input.view.ground,
             input.view.altitude_km,
         );
@@ -262,7 +271,7 @@ impl LivePreparer {
         let buildings = on_ground
             .filter(|old| old.input.same_buildings(&input))
             .map(|old| old.buildings.clone())
-            .unwrap_or_else(|| Arc::new(buildings::project(&input, ground)));
+            .unwrap_or_else(|| Arc::new(buildings::project(&input, ground, self.tiles.as_deref())));
         let vessels = previous
             .filter(|old| {
                 same(&old.input.vessels, &input.vessels) && old.input.same_vessel_time(&input)

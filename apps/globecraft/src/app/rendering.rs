@@ -6,7 +6,6 @@ use globecraft_core::{
     camera::{Basis, Cam},
     math::{ll_to_v3, now_unix, subsolar},
 };
-use globecraft_data::tiles::Provider;
 use globecraft_render::RenderCfg;
 use globecraft_render::worker::{RenderRequest, RenderWorker};
 use std::sync::Arc;
@@ -273,12 +272,7 @@ impl App {
         } else {
             None
         };
-        let prov = self.effective_provider();
-        let rel = if prov == Provider::Wayback {
-            self.wayback.index as u16
-        } else {
-            0
-        };
+        let (prov, rel) = self.imagery_source();
         let sky = if let Some(image) = self.sky.image.clone().filter(|_| self.sky_ready()) {
             let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
             let time = (self.scene_unix() / interval).floor() * interval;

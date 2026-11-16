@@ -19,7 +19,8 @@ impl LiveWorker {
     pub fn new(repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         Self::with_elevation(None, repaint)
     }
-    /// A worker whose layers can be raised onto the relief from `elevation`.
+    /// A worker whose layers can be raised onto the relief from `elevation`, whose
+    /// imagery also colours the blocks.
     pub fn with_elevation(
         elevation: Option<Arc<TileCache>>,
         repaint: impl Fn() + Send + 'static,
@@ -30,7 +31,7 @@ impl LiveWorker {
             .name("globecraft-live-layers".into())
             .spawn(move || {
                 let mut preparer = LivePreparer {
-                    elevation,
+                    tiles: elevation,
                     ..LivePreparer::default()
                 };
                 loop {

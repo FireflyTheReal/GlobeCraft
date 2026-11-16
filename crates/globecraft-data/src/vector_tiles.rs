@@ -9,7 +9,7 @@
 //! cache's, in Settings -> Cache). A tile on disk shows at once; one of an older
 //! build of the set shows too and is downloaded again.
 use crate::boundaries::osm_tiles::content::TileKey;
-use crate::boundaries::osm_tiles::pick::{around, ideal_zoom, view_radius_deg};
+use crate::boundaries::osm_tiles::pick::{around, ideal_zoom, seen_disc};
 use crate::boundaries::osm_tiles::store::DiskStore;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -593,9 +593,9 @@ pub(crate) fn wanted<T>(spec: &Spec<T>, view: View) -> (u8, Vec<TileKey>) {
     if skip(zoom) && zoom < spec.max_zoom {
         zoom += 1;
     }
-    let radius = view_radius_deg(view.at.altitude_km, view.at.tilt_deg);
+    let ((latitude, longitude), radius) = seen_disc(view.at);
     loop {
-        let tiles = around(zoom, view.at.latitude, view.at.longitude, radius);
+        let tiles = around(zoom, latitude, longitude, radius);
         let limit = if zoom <= floor {
             spec.max_floor_tiles
         } else {
@@ -742,6 +742,7 @@ mod tests {
                 longitude: 11.6,
                 altitude_km: 400.0,
                 tilt_deg: 0.0,
+                heading_deg: 0.0,
             },
             floor: 4,
         };

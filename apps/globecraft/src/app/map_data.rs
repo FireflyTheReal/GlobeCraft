@@ -73,7 +73,7 @@ impl MapDataState {
             .tiles
             .update(runtime, buildings, query.view, wake());
         self.buildings.current = if buildings {
-            self.buildings.tiles.buildings()
+            self.buildings.tiles.shared_snapshot()
         } else {
             None
         };

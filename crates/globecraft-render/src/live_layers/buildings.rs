@@ -1,25 +1,43 @@
 //! Buildings as blocks (roadmap 8.6): walls and roofs on the ground (raised onto the
-//! relief when it is drawn), lit by the sun, as one mesh of triangles drawn from far
+//! relief when it is drawn), coloured from the imagery under them, lit by the sun,
+//! as one mesh of triangles drawn from far
 //! to near so nearer blocks cover farther ones (there is no depth buffer: the
 //! overlays are drawn over the globe's picture).
 //!
-//! shortcut: faces are ordered by their middles, so where two blocks overlap on
-//! screen a long wall can be drawn over a nearer roof; split long faces or draw on
-//! the GPU path if that shows in dense cities.
+//! Faces are ordered by their middles, walls cut into pieces of at most
+//! `WALL_PIECE_M` and roofs drawn triangle by triangle, so a long wall no longer
+//! covers a nearer block beside it.
+//! shortcut: roofs triangulate into long slivers on big buildings, and a sliver's
+//! middle can still sort wrongly; a depth buffer (the GPU path) is the real fix.
 use super::{LiveInput, altitude_fade};
 use crate::overlays::{Ground, TerrainVisibility};
 use emath::{Pos2, Rect};
 use glam::DVec3;
 use globecraft_data::buildings::{Building, MAX_ALTITUDE_KM};
+use globecraft_data::tiles::TileCache;
 use rayon::prelude::*;
 
 /// The blocks to draw: screen points with their colours (RGBA, not premultiplied),
 /// and triangles over them, farthest first.
 #[derive(Debug, Default)]
 pub struct BuildingMesh {
-    pub vertices: Vec<(Pos2, [u8; 4])>,
+    pub vertices: Vec<BuildingVertex>,
     pub indices: Vec<u32>,
 }
+
+/// A corner of a face.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BuildingVertex {
+    pub at: Pos2,
+    /// 0–1, greater nearer the camera, straight between a face's corners on
+    /// screen (the inverse of the depth along the view): what a depth buffer
+    /// compares, so a renderer with one need not trust the order of the faces.
+    pub nearness: f32,
+    pub colour: [u8; 4],
+}
+
+/// A projected corner: where it is on screen and the inverse of its depth.
+type Corner = (Pos2, f32);
 
 /// Walls in the default colour: light stone. Roofs: a little darker.
 const WALL: [f32; 3] = [0.86, 0.83, 0.78];
@@ -30,6 +48,19 @@ const ROOF: [f32; 3] = [0.74, 0.72, 0.70];
 const MAPPED_COLOUR_SHARE: f32 = 0.45;
 /// No block is darker than this (luminance, 0–1), whatever its mapped colour.
 const MIN_LUMINANCE: f32 = 0.35;
+/// Walls without a mapped colour take this share of the imagery's colour under the
+/// block: facades are not seen from above, but a block the colour of its street
+/// looked more like the place than a white one.
+const IMAGERY_WALL_SHARE: f32 = 0.35;
+/// The share of a block's width (east–west) its roof colour is averaged over, so
+/// the street around it stays out.
+const ROOF_SAMPLE_SHARE: f64 = 0.6;
+/// No roof taken from imagery is darker than this (luminance, 0–1): roofs in
+/// shadow in the photo, or dark slate, came out black (screenshots, 2026-11-16).
+const MIN_IMAGERY_LUMINANCE: f32 = 0.2;
+/// The coarsest imagery a roof takes its colour from: one texel at zoom 12 spans
+/// about 40 m, a block or two.
+const COARSEST_IMAGERY_ZOOM: u8 = 12;
 /// Light from the sky alone, and from the sun on a face turned to it.
 const AMBIENT: f32 = 0.55;
 const DIRECT: f32 = 0.45;
@@ -46,6 +77,10 @@ const VIEW_MARGIN_POINTS: f32 = 32.0;
 /// several hundred thousand.
 const MAX_FACES: usize = 300_000;
 const METRES_PER_RADIUS: f64 = globecraft_core::EARTH_RADIUS_M;
+/// Walls are cut into pieces at most this long (metres), each ordered by its own
+/// middle: a 100 m wall ordered as one face was drawn over the nearer blocks along
+/// it (screenshots, 2026-11-16).
+const WALL_PIECE_M: f64 = 15.0;
 /// Blocks projected per parallel job: enough to outweigh a job's cost.
 const BLOCKS_PER_JOB: usize = 2_048;
 
@@ -58,8 +93,15 @@ struct Face {
     colour: [u8; 4],
 }
 
-pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> BuildingMesh {
-    let Some(buildings) = &input.buildings else {
+/// The blocks of `input` on screen; with `imagery`, roofs and walls take the colours
+/// of its loaded tiles of `input.imagery`.
+pub(super) fn project(
+    input: &LiveInput,
+    ground: Option<&dyn Ground>,
+    imagery: Option<&TileCache>,
+) -> BuildingMesh {
+    let imagery = imagery.zip(input.imagery);
+    let Some(snapshot) = &input.buildings else {
         return BuildingMesh::default();
     };
     let view = &input.view;
@@ -70,8 +112,10 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Buildin
     let visibility = TerrainVisibility::new(&view.basis, ground);
     let reach = view.rect.expand(VIEW_MARGIN_POINTS);
     // Blocks are projected on every core, a run of them per job, then joined.
-    let runs: Vec<Faces> = buildings
-        .par_chunks(BLOCKS_PER_JOB)
+    let runs: Vec<Faces> = snapshot
+        .tiles
+        .par_iter()
+        .flat_map(|tile| tile.buildings.par_chunks(BLOCKS_PER_JOB))
         .map(|run| {
             let (mut faces, mut scratch) = (Faces::default(), Scratch::default());
             for building in run {
@@ -79,6 +123,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Buildin
                     building,
                     input,
                     ground,
+                    imagery,
                     visibility.as_ref(),
                     reach,
                     (opacity * 255.0) as u8,
@@ -115,13 +160,26 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Buildin
         mesh.vertices.extend(
             points[face.points.start as usize..face.points.end as usize]
                 .iter()
-                .map(|&point| (point, face.colour)),
+                .map(|&(at, nearness)| BuildingVertex {
+                    at,
+                    nearness,
+                    colour: face.colour,
+                }),
         );
         mesh.indices.extend(
             triangles[face.triangles.start as usize..face.triangles.end as usize]
                 .iter()
                 .map(|&index| first + index),
         );
+    }
+    let nearest = mesh
+        .vertices
+        .iter()
+        .fold(f32::MIN_POSITIVE, |nearest, vertex| {
+            nearest.max(vertex.nearness)
+        });
+    for vertex in &mut mesh.vertices {
+        vertex.nearness /= nearest;
     }
     mesh
 }
@@ -130,7 +188,7 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Buildin
 #[derive(Default)]
 struct Faces {
     faces: Vec<Face>,
-    points: Vec<Pos2>,
+    points: Vec<Corner>,
     triangles: Vec<u32>,
 }
 
@@ -139,8 +197,8 @@ struct Faces {
 struct Scratch {
     base: Vec<DVec3>,
     top: Vec<DVec3>,
-    base_on_screen: Vec<Option<Pos2>>,
-    top_on_screen: Vec<Option<Pos2>>,
+    base_on_screen: Vec<Option<Corner>>,
+    top_on_screen: Vec<Option<Corner>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -148,6 +206,7 @@ fn block(
     building: &Building,
     input: &LiveInput,
     ground: Option<&dyn Ground>,
+    imagery: Option<(&TileCache, super::BuildingImagery)>,
     visibility: Option<&TerrainVisibility<'_>>,
     reach: Rect,
     alpha: u8,
@@ -179,16 +238,19 @@ fn block(
     scratch.top_on_screen.clear();
     let mut box_min = Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut box_max = Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let on_screen = |point: DVec3| {
+        basis.project_precise(point, rect).map(|at| -> Corner {
+            (
+                Pos2::new(at.x as f32, at.y as f32),
+                (1.0 / basis.view_depth(point)) as f32,
+            )
+        })
+    };
     for &(lat, lon) in building.rings.iter().flatten() {
         let surface = basis.surface_position(lat, lon);
         let (base, top) = (surface + up * base_lift, surface + up * top_lift);
-        let on_screen = |point: DVec3| {
-            basis
-                .project_precise(point, rect)
-                .map(|at| Pos2::new(at.x as f32, at.y as f32))
-        };
         let (base_at, top_at) = (on_screen(base), on_screen(top));
-        for at in [base_at, top_at].into_iter().flatten() {
+        for (at, _) in [base_at, top_at].into_iter().flatten() {
             box_min = box_min.min(at);
             box_max = box_max.max(at);
         }
@@ -205,12 +267,39 @@ fn block(
     }
     let camera = basis.c;
     let light = Light::at(input.sun, up);
-    let wall = building
-        .wall_colour
-        .map_or(WALL, |mapped| toned(WALL, mapped));
-    let roof = building
-        .roof_colour
-        .map_or(ROOF, |mapped| toned(ROOF, mapped));
+    let (west, east) = outline.iter().fold(
+        (f64::INFINITY, f64::NEG_INFINITY),
+        |(west, east), &(_, lon)| (west.min(lon), east.max(lon)),
+    );
+    let photo = imagery.and_then(|(cache, imagery)| {
+        let span_deg = (east - west) * ROOF_SAMPLE_SHARE;
+        cache
+            .loaded_colour(
+                imagery.provider,
+                imagery.release,
+                (lat, lon),
+                span_deg,
+                COARSEST_IMAGERY_ZOOM,
+            )
+            .map(|colour| lifted([colour.x, colour.y, colour.z], MIN_IMAGERY_LUMINANCE))
+    });
+    let wall = match (building.wall_colour, photo) {
+        (Some(mapped), _) => toned(WALL, mapped),
+        (None, Some(photo)) => std::array::from_fn(|channel| {
+            WALL[channel] + (photo[channel] - WALL[channel]) * IMAGERY_WALL_SHARE
+        }),
+        (None, None) => WALL,
+    };
+    // The imagery is already lit by the sun of its day; only dusk dims it.
+    let (roof, roof_light) = match photo {
+        Some(photo) => (photo, light.daylight),
+        None => (
+            building
+                .roof_colour
+                .map_or(ROOF, |mapped| toned(ROOF, mapped)),
+            light.on(up),
+        ),
+    };
     // Walls: each faces the right-hand side of its edge (outlines run anticlockwise,
     // courtyards clockwise, seen from above), and only those facing the camera show.
     let mut first = 0;
@@ -235,22 +324,48 @@ fn block(
             if normal.dot(camera - middle) <= 0.0 {
                 continue;
             }
-            let corners = [
-                scratch.base_on_screen[a],
-                scratch.base_on_screen[b],
-                scratch.top_on_screen[b],
-                scratch.top_on_screen[a],
-            ];
-            let Some(corners) = corners.into_iter().collect::<Option<Vec<Pos2>>>() else {
-                continue;
+            let shade = colour(wall, light.on(normal), alpha);
+            let length_m = (scratch.base[b] - scratch.base[a]).length() * METRES_PER_RADIUS;
+            let pieces = (length_m / WALL_PIECE_M).ceil().max(1.0) as usize;
+            // Each piece's corners: its ends at the base and the top, on screen.
+            let end = |piece: usize| {
+                if piece == 0 {
+                    return (
+                        scratch.base[a],
+                        scratch.top[a],
+                        scratch.base_on_screen[a],
+                        scratch.top_on_screen[a],
+                    );
+                }
+                if piece == pieces {
+                    return (
+                        scratch.base[b],
+                        scratch.top[b],
+                        scratch.base_on_screen[b],
+                        scratch.top_on_screen[b],
+                    );
+                }
+                let share = piece as f64 / pieces as f64;
+                let base = scratch.base[a].lerp(scratch.base[b], share);
+                let top = scratch.top[a].lerp(scratch.top[b], share);
+                (base, top, on_screen(base), on_screen(top))
             };
-            push(
-                out,
-                (middle - camera).length_squared(),
-                &corners,
-                &[0, 1, 2, 0, 2, 3],
-                colour(wall, light.on(normal), alpha),
-            );
+            let mut start = end(0);
+            for piece in 1..=pieces {
+                let stop = end(piece);
+                let corners = [start.2, stop.2, stop.3, start.3];
+                if let Some(corners) = corners.into_iter().collect::<Option<Vec<Corner>>>() {
+                    let middle = (start.0 + start.1 + stop.0 + stop.1) / 4.0;
+                    push(
+                        out,
+                        (middle - camera).length_squared(),
+                        &corners,
+                        &[0, 1, 2, 0, 2, 3],
+                        shade,
+                    );
+                }
+                start = stop;
+            }
         }
         first += n;
     }
@@ -261,19 +376,24 @@ fn block(
             .top_on_screen
             .iter()
             .copied()
-            .collect::<Option<Vec<Pos2>>>()
+            .collect::<Option<Vec<Corner>>>()
     {
-        push(
-            out,
-            (roof_middle - camera).length_squared(),
-            &corners,
-            &building.roof,
-            colour(roof, light.on(up), alpha),
-        );
+        let shade = colour(roof, roof_light, alpha);
+        for triangle in building.roof.chunks_exact(3) {
+            let at = |corner: usize| triangle[corner] as usize;
+            let middle = (scratch.top[at(0)] + scratch.top[at(1)] + scratch.top[at(2)]) / 3.0;
+            push(
+                out,
+                (middle - camera).length_squared(),
+                &[corners[at(0)], corners[at(1)], corners[at(2)]],
+                &[0, 1, 2],
+                shade,
+            );
+        }
     }
 }
 
-fn push(out: &mut Faces, depth: f64, corners: &[Pos2], triangles: &[u32], colour: [u8; 4]) {
+fn push(out: &mut Faces, depth: f64, corners: &[Corner], triangles: &[u32], colour: [u8; 4]) {
     let (point, triangle) = (out.points.len() as u32, out.triangles.len() as u32);
     out.points.extend_from_slice(corners);
     out.triangles.extend_from_slice(triangles);
@@ -298,16 +418,18 @@ fn anticlockwise(ring: &[(f64, f64)]) -> bool {
 /// A mapped colour taken `MAPPED_COLOUR_SHARE` of the way from `default`, and
 /// lightened to `MIN_LUMINANCE`.
 fn toned(default: [f32; 3], mapped: [u8; 3]) -> [f32; 3] {
-    let mut colour: [f32; 3] = std::array::from_fn(|channel| {
+    let colour: [f32; 3] = std::array::from_fn(|channel| {
         let mapped = f32::from(mapped[channel]) / 255.0;
         default[channel] + (mapped - default[channel]) * MAPPED_COLOUR_SHARE
     });
+    lifted(colour, MIN_LUMINANCE)
+}
+
+/// `colour` lightened to at least `min_luminance`.
+fn lifted(colour: [f32; 3], min_luminance: f32) -> [f32; 3] {
     let luminance = 0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2];
-    if luminance < MIN_LUMINANCE {
-        let lift = MIN_LUMINANCE - luminance;
-        colour = colour.map(|channel| (channel + lift).min(1.0));
-    }
-    colour
+    let lift = (min_luminance - luminance).max(0.0);
+    colour.map(|channel| (channel + lift).min(1.0))
 }
 
 fn colour(base: [f32; 3], brightness: f32, alpha: u8) -> [u8; 4] {
@@ -357,8 +479,17 @@ impl Light {
 mod tests {
     use super::*;
     use globecraft_core::camera::Cam;
-    use globecraft_data::buildings::HeightSource;
+    use globecraft_data::buildings::{BuildingSnapshot, BuildingTile};
     use std::sync::Arc;
+
+    /// `buildings` as one tile.
+    fn tiles(buildings: Vec<Building>) -> Option<Arc<BuildingSnapshot>> {
+        Some(Arc::new(BuildingSnapshot {
+            tiles: vec![Arc::new(BuildingTile { buildings })],
+            zoom: 14,
+            fades: Vec::new(),
+        }))
+    }
 
     /// A block 40 m square and 30 m tall at (lat, lon), its outline anticlockwise.
     fn block_at(lat: f64, lon: f64) -> Building {
@@ -374,10 +505,8 @@ mod tests {
             roof: vec![0, 1, 2, 0, 2, 3],
             base_m: 0.0,
             top_m: 30.0,
-            height: HeightSource::Given,
             roof_colour: None,
             wall_colour: None,
-            fade: Default::default(),
         }
     }
 
@@ -392,32 +521,102 @@ mod tests {
         };
         input.view.basis = camera.basis_for_model(1.0, Default::default());
         input.view.altitude_km = camera.alt;
-        input.buildings = Some(Arc::from(vec![
-            block_at(48.0, 11.0),
-            block_at(48.001, 11.0),
-        ]));
+        input.buildings = tiles(vec![block_at(48.0, 11.0), block_at(48.001, 11.0)]);
         input
     }
 
     #[test]
     fn straight_down_the_block_below_shows_only_its_roof() {
-        let mesh = project(&view(0.0, 0.0), None);
-        // Two roofs, and the south wall of the block north of the view's centre (seen
-        // in perspective); the block below shows no wall.
-        assert_eq!(mesh.indices.len(), 3 * 2 * 3, "{mesh:?}");
+        let mesh = project(&view(0.0, 0.0), None, None);
+        // Two roofs (two triangles each), and the south wall of the block north of the
+        // view's centre (seen in perspective; 22 m long, so two pieces of two
+        // triangles); the block below shows no wall.
+        assert_eq!(mesh.indices.len(), 3 * (2 * 2 + 2 * 2), "{mesh:?}");
     }
 
     #[test]
     fn a_tilted_view_shows_near_walls_and_draws_far_blocks_first() {
         // Looking north from the south: each block shows its south wall and roof,
         // perhaps an east or west wall edge-on; never the north wall.
-        let mesh = project(&view(60.0, 0.0), None);
-        let faces = mesh.indices.len() / 6;
-        assert!((4..=6).contains(&faces), "{faces} faces");
+        let mesh = project(&view(60.0, 0.0), None, None);
+        let triangles = mesh.indices.len() / 3;
+        assert!((8..=16).contains(&triangles), "{triangles} triangles");
         // The farther block (north, higher on screen) is drawn first.
-        let first = mesh.vertices[mesh.indices[0] as usize].0;
-        let last = mesh.vertices[*mesh.indices.last().unwrap() as usize].0;
+        let first = mesh.vertices[mesh.indices[0] as usize].at;
+        let last = mesh.vertices[*mesh.indices.last().unwrap() as usize].at;
         assert!(first.y < last.y, "{first:?} {last:?}");
+        // And for a depth buffer: nearer corners have the greater nearness, up to one.
+        let nearness = |index: u32| mesh.vertices[index as usize].nearness;
+        assert!(nearness(mesh.indices[0]) < nearness(*mesh.indices.last().unwrap()));
+        let nearest = mesh.vertices.iter().map(|v| v.nearness).fold(0.0, f32::max);
+        assert_eq!(nearest, 1.0);
+    }
+
+    #[test]
+    fn a_long_wall_behind_a_small_block_is_drawn_before_it() {
+        // Looking north: a 600 m slab ahead, and a small red block in front of its
+        // east end. Ordered as one face, the slab's wall (its middle straight ahead)
+        // was nearer than the small block and was drawn over it.
+        let mut input = view(60.0, 0.0);
+        let mut slab = block_at(48.002, 11.0);
+        slab.rings = vec![vec![
+            (48.0019, 10.996),
+            (48.0019, 11.004),
+            (48.0021, 11.004),
+            (48.0021, 10.996),
+        ]];
+        let mut small = block_at(48.0017, 11.0033);
+        small.top_m = 6.0;
+        small.wall_colour = Some([255, 0, 0]);
+        small.roof_colour = Some([255, 0, 0]);
+        input.buildings = tiles(vec![slab, small]);
+        let mesh = project(&input, None, None);
+        let red = |index: u32| {
+            let [r, g, ..] = mesh.vertices[index as usize].colour;
+            r > g + 20
+        };
+        let triangles: Vec<&[u32]> = mesh.indices.chunks_exact(3).collect();
+        let first_red = triangles
+            .iter()
+            .position(|t| red(t[0]))
+            .expect("small block drawn");
+        let red_box = triangles
+            .iter()
+            .filter(|t| red(t[0]))
+            .flat_map(|t| t.iter().map(|&index| mesh.vertices[index as usize].at))
+            .fold(Rect::NOTHING, |rect, at| {
+                rect.union(Rect::from_min_max(at, at))
+            });
+        for triangle in &triangles[first_red..] {
+            let points = triangle
+                .iter()
+                .map(|&index| mesh.vertices[index as usize].at);
+            let bounds = points.fold(Rect::NOTHING, |rect, at| {
+                rect.union(Rect::from_min_max(at, at))
+            });
+            assert!(
+                red(triangle[0]) || !bounds.intersects(red_box.shrink(1.0)),
+                "slab drawn over the small block in front of it: {bounds:?} {:?} over {red_box:?}",
+                mesh.vertices[triangle[0] as usize].colour
+            );
+        }
+    }
+
+    #[test]
+    fn blocks_are_lit_again_whenever_the_sun_steps() {
+        let mut preparer = super::super::LivePreparer::default();
+        let mut input = view(60.0, 0.0);
+        input.sun = Some(DVec3::Z);
+        let first = preparer.prepare(input.clone());
+        // Another layer's step keeps the blocks.
+        input.unix_secs += 5.0;
+        let kept = preparer.prepare(input.clone());
+        assert!(Arc::ptr_eq(&first.buildings, &kept.buildings));
+        // However small the sun's step (once compared with the request before,
+        // small steps added up without ever lighting the blocks again).
+        input.sun = Some(DVec3::new(0.0, 0.001, 1.0).normalize());
+        let lit = preparer.prepare(input);
+        assert!(!Arc::ptr_eq(&first.buildings, &lit.buildings));
     }
 
     #[test]
@@ -443,6 +642,6 @@ mod tests {
     fn blocks_too_high_above_are_not_drawn() {
         let mut input = view(0.0, 0.0);
         input.view.altitude_km = MAX_ALTITUDE_KM + 1.0;
-        assert!(project(&input, None).indices.is_empty());
+        assert!(project(&input, None, None).indices.is_empty());
     }
 }

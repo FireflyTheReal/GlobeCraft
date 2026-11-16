@@ -39,6 +39,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         ),
         buildings: None,
         sun: None,
+        imagery: None,
         vessels: Some(
             vec![Vessel {
                 mmsi: "123456789".into(),

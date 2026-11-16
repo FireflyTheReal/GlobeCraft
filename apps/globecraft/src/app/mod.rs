@@ -331,6 +331,7 @@ impl App {
             time: globecraft_core::time::AppTime::default(),
             runtime,
         };
+        app.map_data.buildings.gpu = cc.wgpu_render_state.clone();
         app.restore_kml_session();
         if let Some(error) = &app.updates.restart.error {
             app.status = error.clone();
