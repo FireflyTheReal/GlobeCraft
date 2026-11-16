@@ -847,6 +847,30 @@ impl App {
                     "https://www.openstreetmap.org/copyright",
                 );
             }
+            MapLayer::Buildings => {
+                let max_km = globecraft_data::buildings::MAX_ALTITUDE_KM;
+                let tiles = &self.map_data.buildings.tiles;
+                let status = if self.cam.alt > max_km {
+                    lang.format(
+                        "buildings-zoom-help",
+                        &[("altitude", self.distance_units().altitude(max_km).into())],
+                    )
+                } else if let Some(error) = tiles.error() {
+                    lang.format("transport-error-status", &[("error", error.into())])
+                } else if tiles.loading() {
+                    lang.text("transport-loading-status").into()
+                } else {
+                    lang.text("buildings-legend").into()
+                };
+                if !status.is_empty() {
+                    note(ui, t, &status);
+                }
+                credit(
+                    ui,
+                    crate::app::globe::BUILDINGS_CREDIT,
+                    "https://docs.overturemaps.org/attribution/",
+                );
+            }
             MapLayer::Traffic => {
                 ui.horizontal(|ui| {
                     ui.add_space(INDENT + 46.0);

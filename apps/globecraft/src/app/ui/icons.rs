@@ -1718,6 +1718,22 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                 p.line(&[(12.0, y0), (12.0, y1)], 1.6, amber);
             }
         }
+        "building" => {
+            // A low block and a tower beside it, its windows lit.
+            p.fill(
+                &[(3.0, 11.0), (10.0, 11.0), (10.0, 22.0), (3.0, 22.0)],
+                ink.gamma_multiply(0.6),
+            );
+            p.fill(
+                &[(11.0, 3.0), (21.0, 3.0), (21.0, 22.0), (11.0, 22.0)],
+                ink.gamma_multiply(0.85),
+            );
+            for y in [5.5, 9.5, 13.5, 17.5] {
+                for x in [13.0, 17.0] {
+                    p.rect(x, y, 2.0, 2.0, Some(amber), None, 0.0);
+                }
+            }
+        }
         "traffic" => {
             p.rect(
                 7.5,

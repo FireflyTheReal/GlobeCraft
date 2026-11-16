@@ -20,6 +20,7 @@ const DETAIL_FLOOR_ZOOM: u8 = 8;
 /// at zoom 14, and zoom 13 holds nothing zoom 14 lacks.
 static SPEC: Spec<TransportTile> = Spec {
     set: "transport",
+    source: crate::vector_tiles::Source::Manifest,
     bands: &[],
     min_zoom: 5,
     max_zoom: 14,

@@ -20,6 +20,7 @@ pub const MAX_ALTITUDE_KM: f64 = 40.0;
 
 static SPEC: Spec<PlaceTile> = Spec {
     set: "places",
+    source: crate::vector_tiles::Source::Manifest,
     bands: &[],
     min_zoom: 13,
     max_zoom: 14,

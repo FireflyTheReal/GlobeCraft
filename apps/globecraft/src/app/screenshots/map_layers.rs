@@ -491,3 +491,53 @@ fn polar_screenshot() {
         save(&mut h, &dir, name);
     }
 }
+
+/// Buildings as blocks over a city, straight down and tilted, by day with the sun and
+/// without it: for judging their look by eye (roadmap 8.6). Manual.
+/// `GLOBECRAFT_SHOT_LAT` / `_LON` move it elsewhere (default: Munich's old town).
+#[test]
+#[ignore = "manual: needs network; buildings over a city"]
+fn buildings_screenshots() {
+    use globecraft_core::layers::MapLayer;
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let env_f64 = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+    let lat = env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(48.1374);
+    let lon = env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(11.5755);
+    let mut h = harness(ThemePreference::Dark);
+    for layer in [MapLayer::Buildings, MapLayer::Roads] {
+        h.state_mut().settings.set_layer_visible(layer, true);
+    }
+    // (name, altitude km, tilt, heading, sunlight)
+    for (name, altitude_km, tilt_deg, heading_deg, sunlight) in [
+        ("12-buildings-top", 1.2, 0.0, 0.0, false),
+        ("12-buildings-tilt", 0.8, 60.0, 20.0, false),
+        ("12-buildings-tilt-low", 0.35, 72.0, 200.0, false),
+        ("12-buildings-sun", 0.8, 60.0, 20.0, true),
+    ] {
+        h.state_mut()
+            .settings
+            .set_layer_visible(MapLayer::Sunlight, sunlight);
+        let _ = h.state_mut().run(
+            "camera.set",
+            json!({"lat": lat, "lon": lon, "altitude_km": altitude_km,
+                "tilt_deg": tilt_deg, "heading_deg": heading_deg}),
+        );
+        settle(&mut h, 25.0);
+        save(&mut h, &dir, name);
+        // What a camera move costs: the blocks projected again for this view.
+        let app = h.state();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+        let input = app.live_layer_input(app.view_basis(1.6), rect, app.cam, 2.0);
+        let blocks = input.buildings.as_ref().map_or(0, |blocks| blocks.len());
+        let started = std::time::Instant::now();
+        let geometry = globecraft_render::live_layers::LivePreparer::default().prepare(input);
+        println!(
+            "{name}: {blocks} blocks, {} triangles, projected in {:?}",
+            geometry.buildings.indices.len() / 3,
+            started.elapsed()
+        );
+    }
+}

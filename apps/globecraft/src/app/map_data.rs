@@ -1,5 +1,5 @@
 //! The map data layers (roadmap 10.2: one of the feature states split out of `App`).
-use super::{live_layers, roads};
+use super::{buildings, live_layers, roads};
 use eframe::egui;
 use globecraft_data::runtime::ServiceRuntime;
 
@@ -16,9 +16,10 @@ pub(super) struct MapDataQuery {
     /// A places of interest layer shows.
     pub(super) poi: bool,
     pub(super) roads: bool,
+    pub(super) buildings: bool,
 }
 
-/// Roads, transport and places of interest: their tiles around the view and the
+/// Roads, buildings, transport and places of interest: their tiles around the view and the
 /// shapes drawn from them.
 #[derive(Default)]
 pub(super) struct MapDataState {
@@ -27,6 +28,7 @@ pub(super) struct MapDataState {
     pub(super) poi: globecraft_data::poi::PoiTiles,
     pub(super) poi_shapes: live_layers::PoiShapes,
     pub(super) roads: roads::RoadOverlay,
+    pub(super) buildings: buildings::BuildingOverlay,
 }
 
 impl MapDataState {
@@ -63,6 +65,15 @@ impl MapDataState {
         self.roads.tiles.update(runtime, roads, query.view, wake());
         self.roads.current = if roads {
             self.roads.tiles.roads()
+        } else {
+            None
+        };
+        let buildings = query.earth && query.buildings;
+        self.buildings
+            .tiles
+            .update(runtime, buildings, query.view, wake());
+        self.buildings.current = if buildings {
+            self.buildings.tiles.buildings()
         } else {
             None
         };

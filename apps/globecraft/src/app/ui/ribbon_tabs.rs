@@ -201,6 +201,7 @@ impl App {
                     app.layer_small(ui, MapLayer::Airports);
                 });
                 col(ui, |ui| {
+                    app.layer_small(ui, MapLayer::Buildings);
                     app.layer_small(ui, MapLayer::Ferries);
                 });
             },
@@ -409,6 +410,7 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Vessels => "ribbon-layer-vessels",
         MapLayer::Satellites => "ribbon-layer-satellites",
         MapLayer::Roads => "ribbon-layer-roads",
+        MapLayer::Buildings => "ribbon-layer-buildings",
         MapLayer::Traffic => "ribbon-layer-traffic",
         MapLayer::NightLights => "ribbon-layer-night-lights",
         MapLayer::Railways => "ribbon-layer-railways",

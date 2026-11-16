@@ -6,6 +6,7 @@ pub mod antarctic_claims;
 pub mod aurora;
 pub mod boundaries;
 mod bounded;
+pub mod buildings;
 mod cpu;
 pub mod download_stats;
 mod error;

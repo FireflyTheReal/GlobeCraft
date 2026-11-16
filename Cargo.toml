@@ -24,6 +24,8 @@ globecraft-data = { path = "crates/globecraft-data", default-features = false }
 globecraft-render = { path = "crates/globecraft-render", default-features = false }
 globecraft-assistant = { path = "crates/globecraft-assistant" }
 eframe = "0.36.2"
+# Building roofs with courtyards (roadmap 8.6): Mapbox's earcut, ported by georust.
+earcut = "0.4.12"
 # Native desktop menu adapters; keep GUI/platform dependencies out of the libraries.
 muda = { version = "0.21.2", default-features = false }
 rfd = { version = "0.17.2", default-features = false }

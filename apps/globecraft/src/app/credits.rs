@@ -3,7 +3,7 @@
 //! layers), in that order. When they do not fit on one line they wrap, a whole
 //! credit to a line part, never cut inside one.
 use super::App;
-use super::globe::OSM_TILES_CREDIT;
+use super::globe::{BUILDINGS_CREDIT, OSM_TILES_CREDIT};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect};
 use globecraft_core::{camera::Basis, language::Lang, layers::MapLayer};
 use globecraft_data::tiles::Provider;
@@ -81,6 +81,13 @@ impl App {
         if (self.uses_border_tiles() && self.borders.loader.has_osm_tiles()) || transport_drawn {
             // The tiles are cut from OpenFreeMap's planet build (OpenMapTiles schema).
             credits.push(OSM_TILES_CREDIT.to_owned());
+        }
+        if earth
+            && self.layer(MapLayer::Buildings)
+            && self.cam.alt <= globecraft_data::buildings::MAX_ALTITUDE_KM
+            && self.map_data.buildings.current.is_some()
+        {
+            credits.push(BUILDINGS_CREDIT.to_owned());
         }
         if earth && self.layer(MapLayer::SeaNames) && self.live.marine_names.names().is_some() {
             credits.push(lg.text("sea-names-credit").to_owned());

@@ -12,6 +12,7 @@ pub const MAX_ALTITUDE_KM: f64 = 3_000.0;
 
 static SPEC: Spec<PoiTile> = Spec {
     set: "poi",
+    source: crate::vector_tiles::Source::Manifest,
     bands: &[],
     min_zoom: 4,
     max_zoom: 14,

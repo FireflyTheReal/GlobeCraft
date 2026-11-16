@@ -163,10 +163,10 @@ mod tests {
 
     #[test]
     fn a_tall_mountain_hides_a_label_behind_it_and_the_ray_is_bounded() {
-        struct Counted(std::cell::Cell<usize>);
+        struct Counted(std::sync::atomic::AtomicUsize);
         impl Ground for Counted {
             fn height(&self, lat: f64, _lon: f64) -> f64 {
-                self.0.set(self.0.get() + 1);
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if (0.05..0.15).contains(&lat) {
                     world_height(9.0)
                 } else {
@@ -182,13 +182,13 @@ mod tests {
             tilt: 65.0,
         }
         .basis(1.0);
-        let ground = Counted(std::cell::Cell::new(0));
+        let ground = Counted(std::sync::atomic::AtomicUsize::new(0));
         let visibility = TerrainVisibility::new(&basis, Some(&ground)).unwrap();
         assert!(!visibility.visible(0.4, 0.0));
         assert!(
-            ground.0.get() <= OCCLUSION_RAY_SAMPLES + 1,
+            ground.0.load(std::sync::atomic::Ordering::Relaxed) <= OCCLUSION_RAY_SAMPLES + 1,
             "{} elevation lookups for one point",
-            ground.0.get()
+            ground.0.load(std::sync::atomic::Ordering::Relaxed)
         );
     }
 
@@ -205,10 +205,10 @@ mod cost {
     use globecraft_core::{EARTH_RADIUS_KM, camera::Cam};
 
     /// A 9 km mountain range, counting its lookups.
-    struct Counted(std::cell::Cell<usize>, f64);
+    struct Counted(std::sync::atomic::AtomicUsize, f64);
     impl Ground for Counted {
         fn height(&self, lat: f64, _lon: f64) -> f64 {
-            self.0.set(self.0.get() + 1);
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if (0.05..0.15).contains(&lat) {
                 9.0 / EARTH_RADIUS_KM
             } else {
@@ -231,8 +231,11 @@ mod cost {
             tilt: 65.0,
         }
         .basis(1.0);
-        let unbounded = Counted(std::cell::Cell::new(0), f64::INFINITY);
-        let bounded = Counted(std::cell::Cell::new(0), 9.0 / EARTH_RADIUS_KM);
+        let unbounded = Counted(std::sync::atomic::AtomicUsize::new(0), f64::INFINITY);
+        let bounded = Counted(
+            std::sync::atomic::AtomicUsize::new(0),
+            9.0 / EARTH_RADIUS_KM,
+        );
         let (a, b) = (
             TerrainVisibility::new(&basis, Some(&unbounded)).unwrap(),
             TerrainVisibility::new(&basis, Some(&bounded)).unwrap(),
@@ -243,7 +246,10 @@ mod cost {
                 assert_eq!(a.visible(lat, lon), b.visible(lat, lon), "{lat} {lon}");
             }
         }
-        let (all, skipped) = (unbounded.0.get(), bounded.0.get());
+        let (all, skipped) = (
+            unbounded.0.load(std::sync::atomic::Ordering::Relaxed),
+            bounded.0.load(std::sync::atomic::Ordering::Relaxed),
+        );
         println!("lookups: {all} without a ceiling, {skipped} with");
         // At 30 km with a 9 km ceiling the upper ~40% of each line needs no lookup.
         assert!(skipped * 4 < all * 3, "{skipped} of {all}");

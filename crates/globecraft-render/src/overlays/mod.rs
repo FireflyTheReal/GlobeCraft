@@ -85,8 +85,9 @@ pub fn ground_position(
     }
 }
 
-/// Terrain height (world units, exaggerated) at a coordinate.
-pub trait Ground {
+/// Terrain height (world units, exaggerated) at a coordinate. Shared by the workers
+/// that project a layer in parallel (buildings).
+pub trait Ground: Sync {
     fn height(&self, lat: f64, lon: f64) -> f64;
     /// No height exceeds this (world units). Line-of-sight tests skip their lookups
     /// where the line runs higher than any relief can reach.
