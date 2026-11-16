@@ -193,20 +193,19 @@ pub(super) fn sky(
     cc: f64,
     air: Option<&atmosphere::Frame>,
     cfg: &RenderCfg,
+    raster_height: usize,
 ) -> Vec4 {
     let d = ray.direction;
     let mut col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
-    let cell = (
-        (d.x * STAR_GRID_RESOLUTION).floor() as i64,
-        (d.y * STAR_GRID_RESOLUTION).floor() as i64,
-        (d.z * STAR_GRID_RESOLUTION).floor() as i64,
-    );
-    let hs = hash3(cell.0, cell.1, cell.2);
-    if cfg.stars && hs.is_multiple_of(STAR_OCCURRENCE_MODULUS) {
-        let br = STAR_MIN_BRIGHTNESS
-            + ((hs >> STAR_BRIGHTNESS_SHIFT) & STAR_BRIGHTNESS_MASK) as f32
-                / STAR_BRIGHTNESS_DIVISOR;
-        col = col.max(Vec4::new(br, br, br, 0.0));
+    if cfg.stars {
+        let br = if cfg.lod_scale < 1.0 {
+            star_across_pixel(d, raster_height)
+        } else {
+            star(d)
+        };
+        if let Some(br) = br {
+            col = col.max(Vec4::new(br, br, br, 0.0));
+        }
     }
     match air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32)) {
         Some(air) => air.over_sky(col),
@@ -214,10 +213,63 @@ pub(super) fn sky(
     }
 }
 
+/// The brightest star four rays across the pixel around `d` meet, in a raster
+/// `raster_height` pixels tall. A motion frame's pixel is wider than a star's cell,
+/// so its one ray met a star in one frame and missed it in the next: the stars
+/// flickered while the view moved (user, 2026-11-16).
+fn star_across_pixel(d: DVec3, raster_height: usize) -> Option<f32> {
+    let quarter = 0.5 * VERTICAL_FOV_HALF_TAN / raster_height as f64;
+    let across = d.any_orthonormal_vector();
+    let up = d.cross(across);
+    [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+        .into_iter()
+        .filter_map(|(x, y)| star(d + (across * x + up * y) * quarter))
+        .reduce(f32::max)
+}
+
+/// The brightness of the star in direction `d`'s cell of the sky, if it has one.
+fn star(d: DVec3) -> Option<f32> {
+    let hs = hash3(
+        (d.x * STAR_GRID_RESOLUTION).floor() as i64,
+        (d.y * STAR_GRID_RESOLUTION).floor() as i64,
+        (d.z * STAR_GRID_RESOLUTION).floor() as i64,
+    );
+    hs.is_multiple_of(STAR_OCCURRENCE_MODULUS).then(|| {
+        STAR_MIN_BRIGHTNESS
+            + ((hs >> STAR_BRIGHTNESS_SHIFT) & STAR_BRIGHTNESS_MASK) as f32
+                / STAR_BRIGHTNESS_DIVISOR
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use globecraft_core::{camera::Cam, earth_model::EarthModel};
+
+    #[test]
+    fn a_motion_pixel_shows_its_star_wherever_the_star_lies_in_it() {
+        // A star near straight up, where the cells lie square to the view.
+        let cell = 1.0 / STAR_GRID_RESOLUTION;
+        let centre = (0..200)
+            .flat_map(|x| (0..200).map(move |y| (x, y)))
+            .map(|(x, y)| {
+                DVec3::new(x as f64 + 0.5, y as f64 + 0.5, STAR_GRID_RESOLUTION + 0.5) * cell
+            })
+            .find(|&d| star(d).is_some())
+            .expect("a star among 40,000 cells");
+        // A motion raster whose pixels are 1.8 cells wide: the star's cell is in
+        // the pixel whenever the pixel's centre is within 0.8 cells of it.
+        let height = (2.0 * VERTICAL_FOV_HALF_TAN * STAR_GRID_RESOLUTION / 1.8) as usize;
+        let mut missed_by_one_ray = 0;
+        for x in -4..=4 {
+            for y in -4..=4 {
+                let offset = DVec3::new(f64::from(x), f64::from(y), 0.0) * 0.2 * cell;
+                assert!(star_across_pixel(centre + offset, height).is_some());
+                missed_by_one_ray += usize::from(star(centre + offset).is_none());
+            }
+        }
+        assert!(missed_by_one_ray > 0, "one ray would do");
+    }
 
     #[test]
     fn level_of_detail_matches_the_displayed_pixel_density_across_raster_scales() {

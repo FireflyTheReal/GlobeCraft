@@ -210,8 +210,10 @@ impl Basis {
 
 /// The steepest tilt, near the ground: the horizon stays in view.
 pub const MAX_TILT_DEG: f64 = 80.0;
-/// A tilted camera keeps at least this height above the ground point.
-const MIN_TILTED_HEIGHT_KM: f64 = 0.3;
+/// A tilted camera keeps at least this height above the ground point: eye level.
+/// It was 300 m, which pushed the camera away on every tilt close up (user,
+/// 2026-11-16); the app keeps the camera above the relief itself.
+const MIN_TILTED_HEIGHT_KM: f64 = 0.002;
 
 impl Cam {
     /// The steepest tilt at this distance: `MAX_TILT_DEG`, less when the camera would
@@ -750,17 +752,20 @@ mod tests {
         cam.set_tilt(60.0);
         cam.zoom(0.5);
         assert_eq!(cam.tilt, 60.0);
-        // Zooming all the way in keeps the tilt and stops at the minimum height.
+        // Zooming all the way in keeps the tilt and stops at the closest distance,
+        // still above the minimum height.
         for _ in 0..200 {
             cam.zoom(0.8);
         }
         assert_eq!(cam.tilt, 60.0);
-        assert!((cam.alt * cam.tilt.to_radians().cos() - MIN_TILTED_HEIGHT_KM).abs() < 1e-9);
+        assert_eq!(cam.alt, MIN_CAMERA_ALTITUDE_KM);
+        assert!(cam.alt * cam.tilt.to_radians().cos() >= MIN_TILTED_HEIGHT_KM);
         cam.zoom(2.0);
         assert_eq!(cam.tilt, 60.0);
         // Very close in, the camera may not dip below the minimum height.
-        cam.alt = 0.4;
+        cam.alt = 0.004;
         cam.set_tilt(80.0);
+        assert!(cam.tilt < 80.0);
         assert!(cam.alt * cam.tilt.to_radians().cos() >= MIN_TILTED_HEIGHT_KM - 1e-9);
         let (rect, aspect) = (
             Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0)),

@@ -424,7 +424,7 @@ fn render_row<const ELLIPSOID: bool>(
                             loc,
                             1.0,
                         ),
-                        terrain::March::Miss => sky(&ray, cc, air, cfg),
+                        terrain::March::Miss => sky(&ray, cc, air, cfg, h),
                     }
                 }
                 None if hits_surface => shade_surface(
@@ -438,7 +438,7 @@ fn render_row<const ELLIPSOID: bool>(
                     loc,
                     1.0,
                 ),
-                None => sky(&ray, cc, air, cfg),
+                None => sky(&ray, cc, air, cfg, h),
             };
             let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
             pixel[0] = channels.x as u8;
