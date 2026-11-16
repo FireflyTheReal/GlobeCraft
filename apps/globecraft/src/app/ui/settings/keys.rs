@@ -8,11 +8,7 @@ use globecraft_data::keys::{self, SERVICES};
 impl App {
     /// The typed key of a service.
     pub(in crate::app) fn key_buffer(&mut self, id: &'static str) -> &mut String {
-        if id == keys::TOMTOM {
-            &mut self.keys.tomtom
-        } else {
-            self.keys.others.entry(id).or_default()
-        }
+        self.keys.edit(id)
     }
 
     /// Takes a typed key into use and saves the keys in the background.
@@ -21,7 +17,7 @@ impl App {
         let all = keys::set(id, &value);
         self.runtime.handle().spawn_blocking(move || {
             if let Err(error) = keys::save(&all) {
-                eprintln!("Saving the service keys failed: {error}");
+                globecraft_data::log_line!("Saving the service keys failed: {error}");
             }
         });
     }
@@ -29,6 +25,21 @@ impl App {
     pub(super) fn settings_keys(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
         ui.weak(lang.text("settings-keys-intro"));
+        if globecraft_data::secret_store::available() {
+            let mut on = self.settings.keys_in_keychain;
+            if ui
+                .checkbox(&mut on, lang.text("settings-keys-keychain"))
+                .on_hover_text(lang.text("settings-keys-keychain-help"))
+                .changed()
+            {
+                self.settings.keys_in_keychain = on;
+                self.runtime.handle().spawn_blocking(move || {
+                    if let Err(error) = keys::move_to_keychain(on) {
+                        globecraft_data::log_line!("Moving the keys failed: {error}");
+                    }
+                });
+            }
+        }
         for service in SERVICES {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {

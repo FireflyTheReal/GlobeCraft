@@ -10,7 +10,15 @@ publish = false
 workspace = true
 
 [features]
+default = ["updater", "live"]
+# The live feeds: aircraft, vessels, satellites, the aurora forecast, traffic, clouds and
+# radar. Off, their services never ask for anything (see `src/live.rs`).
+live = []
 profiling = []
+# Exposes `globecraft_data::fuzzing`, the entry points of the fuzz targets in `fuzz/`.
+fuzzing = ["live"]
+# The self-updater (GitHub releases). Off for packages updated by a package manager.
+updater = ["dep:self_update"]
 
 [dependencies]
 globecraft-core.workspace = true
@@ -35,5 +43,9 @@ flate2.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 sgp4.workspace = true
-self_update.workspace = true
+self_update = { workspace = true, optional = true }
 semver.workspace = true
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+# Settings › Keys can keep the keys in the system keychain (off by default).
+keyring = { version = "3.6", features = ["apple-native", "windows-native"] }

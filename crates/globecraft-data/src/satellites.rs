@@ -1,7 +1,7 @@
 //! CelesTrak OMM element sets propagated with SGP4 (the model the elements are made
 //! for) into predicted positions, with their altitude. Element sets older than 14
 //! days are not shown; a set SGP4 rejects falls back to a two-body estimate.
-mod decode;
+pub(crate) mod decode;
 use decode::parse_omm;
 use globecraft_core::math::now_unix;
 use std::{
@@ -264,13 +264,14 @@ impl LiveSatellites {
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.error = Some("CelesTrak disconnected".into());
+                    self.error = Some(crate::Error::msg("CelesTrak disconnected"));
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if enabled
+        if crate::live::ENABLED
+            && enabled
             && self.rx.is_none()
             && self
                 .attempted
@@ -351,7 +352,10 @@ async fn download() -> Result<Arc<[Satellite]>, crate::Error> {
     crate::cpu::run(crate::cpu::Service::Features, move || {
         let all = merged(groups.into_iter().map(|(_, s)| s));
         if all.is_empty() {
-            return Err(format!("CelesTrak unavailable: {}", errors.join("; ")).into());
+            return Err(crate::Error::msg(format!(
+                "CelesTrak unavailable: {}",
+                errors.join("; ")
+            )));
         }
         Ok(all)
     })

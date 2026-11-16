@@ -14,8 +14,9 @@ pub(super) struct BordersState {
     pub(super) source: Arc<BoundaryData>,
     /// Zoom 13–14 place names around the view.
     pub(super) place_names: PlaceNameTiles,
-    /// The place-name snapshot `shown` was built with (its address; 0 for none).
-    pub(super) place_names_shown: usize,
+    /// The place-name snapshot `shown` was built with. Kept, not just its address, so
+    /// a new snapshot can never reuse the address and look unchanged.
+    pub(super) place_names_shown: Option<globecraft_data::boundaries::PlaceNameSnapshot>,
     pub(super) overlay_cache: OverlayCache,
     pub(super) updates: BoundaryUpdates,
     pub(super) log: StatusLog,
@@ -34,7 +35,7 @@ impl BordersState {
             shown: Arc::new(BoundaryData::default()),
             source: Arc::new(BoundaryData::default()),
             place_names: Default::default(),
-            place_names_shown: 0,
+            place_names_shown: None,
             overlay_cache,
             updates,
             log,

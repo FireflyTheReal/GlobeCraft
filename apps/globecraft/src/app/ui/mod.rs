@@ -3,6 +3,7 @@
 pub(in crate::app) mod add_data;
 pub(in crate::app) mod aircraft;
 pub(in crate::app) mod altitude;
+#[cfg(feature = "assistant")]
 mod assistant_pane;
 mod brand;
 mod chrome;

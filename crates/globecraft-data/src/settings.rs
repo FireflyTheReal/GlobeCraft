@@ -5,6 +5,7 @@ pub mod controllers;
 mod coordinates;
 pub mod experience;
 pub mod layers;
+mod lenient;
 pub mod map_style;
 pub mod navigation;
 pub mod screenshot;
@@ -12,9 +13,9 @@ pub mod sidebar;
 pub mod sky;
 pub mod workspace;
 mod writer;
-use crate::paths::{cache_dir, default_out_dir};
+use crate::paths::{config_dir, default_out_dir};
 use globecraft_core::{earth_model::EarthModel, language::LanguagePreference, units::RulerUnit};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 pub use writer::SettingsWriter;
 pub const MIN_UI_SCALE: f32 = 0.7;
@@ -23,7 +24,7 @@ pub const MIN_MAP_SCALE: f32 = 0.6;
 pub const MAX_MAP_SCALE: f32 = 3.0;
 
 fn lang_file() -> PathBuf {
-    cache_dir().join("lang.txt")
+    config_dir().join("lang.txt")
 }
 pub fn load_language_preference() -> LanguagePreference {
     load_language_preference_at(&lang_file())
@@ -36,7 +37,7 @@ fn load_language_preference_at(path: &std::path::Path) -> LanguagePreference {
         .and_then(LanguagePreference::from_code)
         .unwrap_or_default()
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnitPreference {
     #[default]
@@ -57,8 +58,15 @@ impl UnitPreference {
         }
     }
 }
-#[derive(Clone, PartialEq, Serialize)]
+/// The settings file format. Raise it when a release changes what a saved value means,
+/// and teach [`migrate`] to bring older files forward.
+pub const SETTINGS_VERSION: u64 = 1;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
+    /// Always [`SETTINGS_VERSION`] once loaded; files without one are version 0.
+    pub version: u64,
     pub sky: sky::SkyPreferences,
     pub controllers: controllers::ControllerPreferences,
     pub appearance: appearance::AppearancePreferences,
@@ -68,7 +76,10 @@ pub struct Settings {
     pub workspace: workspace::WorkspaceLayout,
     pub layers: layers::LayerPreferences,
     pub assistant: assistant::AssistantPreferences,
-    #[serde(serialize_with = "coordinates::serialize")]
+    #[serde(
+        serialize_with = "coordinates::serialize",
+        deserialize_with = "coordinates::deserialize"
+    )]
     pub coordinate_display: globecraft_core::coordinates::CoordinateDisplay,
     pub screenshot_dir: String,
     pub screenshot_quality: screenshot::ScreenshotQuality,
@@ -78,6 +89,10 @@ pub struct Settings {
     /// Colour, width and dash of border lines; label sizes.
     pub map_style: map_style::MapStyle,
     pub uncap_fps: bool,
+    /// Work offline: no request leaves GlobeCraft; tiles and data come from disk only.
+    pub offline: bool,
+    /// Keep service and assistant keys in the system keychain (Settings › Keys).
+    pub keys_in_keychain: bool,
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
@@ -87,11 +102,18 @@ pub struct Settings {
     /// appear; user-tunable from the Layers panel.
     pub state_max_altitude_km: f64,
     pub distance_units: UnitPreference,
-    #[serde(serialize_with = "serialize_earth_model")]
+    #[serde(
+        serialize_with = "serialize_earth_model",
+        deserialize_with = "deserialize_earth_model"
+    )]
     pub earth_model: EarthModel,
-    #[serde(serialize_with = "serialize_ruler_unit")]
+    #[serde(
+        serialize_with = "serialize_ruler_unit",
+        deserialize_with = "deserialize_ruler_unit"
+    )]
     pub ruler_unit: RulerUnit,
     /// Layers the user added (Add Data), bottom to top.
+    #[serde(deserialize_with = "deserialize_user_layers")]
     pub user_layers: Vec<crate::user_data::UserLayer>,
     /// Starred and recently added sources (the Browser pane).
     pub saved_sources: crate::user_data::SavedSources,
@@ -110,9 +132,27 @@ fn serialize_ruler_unit<S: serde::Serializer>(
 ) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(unit.code())
 }
+fn deserialize_earth_model<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<EarthModel, D::Error> {
+    lenient::coded(deserializer, EarthModel::from_code)
+}
+fn deserialize_ruler_unit<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<RulerUnit, D::Error> {
+    lenient::coded(deserializer, RulerUnit::from_code)
+}
+fn deserialize_user_layers<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<crate::user_data::UserLayer>, D::Error> {
+    lenient::applied(deserializer, |layers: &mut Vec<_>, value| {
+        *layers = crate::user_data::layers_from_json(value);
+    })
+}
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            version: SETTINGS_VERSION,
             sky: sky::SkyPreferences::default(),
             controllers: controllers::ControllerPreferences::default(),
             appearance: appearance::AppearancePreferences::default(),
@@ -130,6 +170,8 @@ impl Default for Settings {
             map_scale: 1.0,
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
+            offline: false,
+            keys_in_keychain: false,
             gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,
@@ -148,149 +190,101 @@ impl Default for Settings {
 pub const STATE_MAX_ALTITUDE_DEFAULT_KM: f64 = 1_609.0;
 pub const STATE_MAX_ALTITUDE_MAX_KM: f64 = 8_000.0;
 
+/// Brings a settings file written by an older version to [`SETTINGS_VERSION`], in place.
+/// Fields a version renamed or whose meaning changed are rewritten here, so the readers
+/// below only know the current format.
+fn migrate(value: &mut serde_json::Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    let version = map
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if version < 1 {
+        // Version 0 files without a level were written before levels existed: they
+        // keep showing everything.
+        map.entry("experience")
+            .or_insert_with(|| serde_json::Value::from("advanced"));
+    }
+    map.insert("version".to_owned(), SETTINGS_VERSION.into());
+}
+
+/// `settings.json.bak` beside `path`: the last settings file that loaded.
+fn backup_path(path: &std::path::Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".bak");
+    path.with_file_name(name)
+}
+
 fn settings_file() -> PathBuf {
-    cache_dir().join("settings.json")
+    config_dir().join("settings.json")
 }
-#[derive(Default, Deserialize)]
-struct SettingsInput {
-    sky: Option<serde_json::Value>,
-    controllers: Option<serde_json::Value>,
-    appearance: Option<serde_json::Value>,
-    navigation: Option<serde_json::Value>,
-    cache: Option<serde_json::Value>,
-    sidebar: Option<serde_json::Value>,
-    workspace: Option<serde_json::Value>,
-    layers: Option<serde_json::Value>,
-    assistant: Option<serde_json::Value>,
-    coordinate_display: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    screenshot_dir: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    screenshot_quality: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    kml_dir: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::number")]
-    ui_scale: Option<f64>,
-    #[serde(default, deserialize_with = "crate::json_fields::number")]
-    map_scale: Option<f64>,
-    map_style: Option<serde_json::Value>,
-    user_layers: Option<serde_json::Value>,
-    saved_sources: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    uncap_fps: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    gpu_globe: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    grid_numbers: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::boolean")]
-    hide_navigation_controls: Option<bool>,
-    #[serde(default, deserialize_with = "crate::json_fields::number")]
-    state_max_altitude_km: Option<f64>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    distance_units: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    earth_model: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    ruler_unit: Option<String>,
-    #[serde(default, deserialize_with = "crate::json_fields::string")]
-    experience: Option<String>,
-}
+/// Top-level fields `apply_json` reads by its own rules: an empty folder name is not
+/// taken, and the user's layers are kept entry by entry.
+const OWN_RULES: [&str; 3] = ["screenshot_dir", "kml_dir", "user_layers"];
+
 impl Settings {
     fn apply_json(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
-        let input: SettingsInput = serde_json::from_slice(bytes)?;
-        // A file without a level was written before it existed: show everything.
-        self.experience = input
-            .experience
-            .as_deref()
-            .and_then(experience::ExperienceLevel::from_code)
-            .unwrap_or(experience::ExperienceLevel::Advanced);
-        if let Some(value) = input.sky {
-            self.sky.apply(&value);
+        let mut value: serde_json::Value = serde_json::from_slice(bytes)?;
+        migrate(&mut value);
+        if !value.is_object() {
+            return Err(crate::Error::msg("a settings file holds a JSON object"));
         }
-        if let Some(value) = input.controllers {
-            self.controllers.apply(&value);
+        // Every plain setting, by its field's name and type.
+        lenient::apply(self, &value, &OWN_RULES);
+        self.ui_scale = self.ui_scale.clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+        self.map_scale = self.map_scale.clamp(MIN_MAP_SCALE, MAX_MAP_SCALE);
+        self.state_max_altitude_km = self
+            .state_max_altitude_km
+            .clamp(0.0, STATE_MAX_ALTITUDE_MAX_KM);
+        let text = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
+        if let Some(path) = text("screenshot_dir").filter(|path| !path.is_empty()) {
+            self.screenshot_dir = path.to_owned();
         }
-        if let Some(value) = input.appearance {
-            self.appearance.apply(&value);
+        if let Some(path) = text("kml_dir").filter(|path| !path.is_empty()) {
+            self.kml_dir = path.to_owned();
         }
-        if let Some(value) = input.navigation {
-            self.navigation.apply(&value);
+        // The sections and tables read themselves.
+        if let Some(value) = value.get("sky") {
+            self.sky.apply(value);
         }
-        if let Some(value) = input.cache {
-            self.cache.apply(&value);
+        if let Some(value) = value.get("controllers") {
+            self.controllers.apply(value);
         }
-        if let Some(value) = input.coordinate_display {
-            coordinates::apply(&mut self.coordinate_display, &value);
+        if let Some(value) = value.get("appearance") {
+            self.appearance.apply(value);
         }
-        if let Some(sidebar) = input.sidebar {
-            self.sidebar.apply_json(&sidebar);
+        if let Some(value) = value.get("navigation") {
+            self.navigation.apply(value);
         }
-        if let Some(value) = input.workspace {
-            self.workspace.apply(&value);
+        if let Some(value) = value.get("cache") {
+            self.cache.apply(value);
         }
-        if let Some(value) = input.layers {
-            self.layers.apply(&value);
+        if let Some(value) = value.get("coordinate_display") {
+            coordinates::apply(&mut self.coordinate_display, value);
         }
-        if let Some(value) = input.assistant {
-            self.assistant.apply(&value);
+        if let Some(value) = value.get("sidebar") {
+            self.sidebar.apply_json(value);
         }
-        if let Some(path) = input.screenshot_dir.filter(|s| !s.is_empty()) {
-            self.screenshot_dir = path;
+        if let Some(value) = value.get("workspace") {
+            self.workspace.apply(value);
         }
-        if let Some(quality) = input
-            .screenshot_quality
-            .as_deref()
-            .and_then(screenshot::ScreenshotQuality::from_code)
-        {
-            self.screenshot_quality = quality;
+        if let Some(value) = value.get("layers") {
+            self.layers.apply(value);
         }
-        if let Some(path) = input.kml_dir.filter(|s| !s.is_empty()) {
-            self.kml_dir = path;
+        if let Some(value) = value.get("assistant") {
+            self.assistant.apply(value);
         }
-        if let Some(scale) = input.ui_scale {
-            self.ui_scale = (scale as f32).clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+        if let Some(value) = value.get("map_style") {
+            self.map_style.apply(value);
         }
-        if let Some(scale) = input.map_scale {
-            self.map_scale = (scale as f32).clamp(MIN_MAP_SCALE, MAX_MAP_SCALE);
-        }
-        if let Some(value) = input.map_style {
-            self.map_style.apply(&value);
-        }
-        if let Some(value) = input.user_layers {
-            self.user_layers = crate::user_data::layers_from_json(&value);
+        if let Some(value) = value.get("user_layers") {
+            self.user_layers = crate::user_data::layers_from_json(value);
             crate::user_data::presets::refresh_sources(&mut self.user_layers);
         }
-        if let Some(value) = input.saved_sources {
-            self.saved_sources.apply(&value);
-        }
-        if let Some(uncap) = input.uncap_fps {
-            self.uncap_fps = uncap;
-        }
-        if let Some(gpu) = input.gpu_globe {
-            self.gpu_globe = gpu;
-        }
-        if let Some(hide) = input.hide_navigation_controls {
-            self.hide_navigation_controls = hide;
-        }
-        if let Some(state_max) = input.state_max_altitude_km {
-            self.state_max_altitude_km = state_max.clamp(0.0, STATE_MAX_ALTITUDE_MAX_KM);
-        }
-        if let Some(model) = input.earth_model.as_deref().and_then(EarthModel::from_code) {
-            self.earth_model = model;
-        }
-        if let Some(units) = input.distance_units {
-            self.distance_units = match units.as_str() {
-                "metric" => UnitPreference::Metric,
-                "imperial" => UnitPreference::Imperial,
-                "system" => UnitPreference::System,
-                _ => self.distance_units,
-            };
-        }
-        if let Some(unit) = input.ruler_unit.as_deref().and_then(RulerUnit::from_code) {
-            self.ruler_unit = unit;
-        }
-        if let Some(value) = input.grid_numbers {
-            self.grid_numbers = value;
+        if let Some(value) = value.get("saved_sources") {
+            self.saved_sources.apply(value);
         }
         Ok(())
     }
@@ -301,7 +295,6 @@ impl Settings {
         match layer {
             MapLayer::Stars => self.sky.stars,
             MapLayer::MilkyWay => self.sky.enabled,
-            MapLayer::CinematicSky => self.sky.cinematic,
             MapLayer::GridLabels => self.grid_numbers,
             _ => self.layers.visible.contains(layer),
         }
@@ -311,7 +304,6 @@ impl Settings {
         match layer {
             MapLayer::Stars => self.sky.stars = visible,
             MapLayer::MilkyWay => self.sky.enabled = visible,
-            MapLayer::CinematicSky => self.sky.cinematic = visible,
             MapLayer::GridLabels => self.grid_numbers = visible,
             _ => self.layers.visible.set(layer, visible),
         }
@@ -323,17 +315,151 @@ impl Settings {
             .filter(|layer| self.layer_visible(*layer))
             .collect()
     }
-    pub fn load() -> Self {
-        let mut settings = Self::default();
-        if let Ok(bytes) = std::fs::read(settings_file()) {
-            let _ = settings.apply_json(&bytes);
+    /// The settings as an export file (File › Export Settings): readable JSON. Service and
+    /// assistant keys are stored apart and never included.
+    pub fn export(&self) -> Result<Vec<u8>, crate::Error> {
+        Ok(serde_json::to_vec_pretty(self)?)
+    }
+    /// Settings read from an export file, over the defaults, as a saved file is read. A
+    /// JSON value that shares no field with the settings is refused, so importing the wrong
+    /// file cannot reset everything.
+    pub fn import(bytes: &[u8]) -> Result<Self, crate::Error> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        let known = serde_json::to_value(Self::default())?;
+        let shares_a_field = value
+            .as_object()
+            .zip(known.as_object())
+            .is_some_and(|(file, known)| file.keys().any(|key| known.contains_key(key)));
+        if !shares_a_field {
+            return Err(crate::Error::Message(
+                "the file holds no GlobeCraft settings".to_owned(),
+            ));
         }
-        settings
+        let mut settings = Self::default();
+        settings.apply_json(bytes)?;
+        Ok(settings)
+    }
+    /// The saved settings, and an English message when `settings.json` exists but could not
+    /// be used. A file that does not parse is renamed `settings.json.corrupt-<unix seconds>`
+    /// first, so the next save cannot overwrite what it held, and the defaults are used.
+    pub fn load() -> (Self, Option<String>) {
+        Self::load_from(&settings_file())
+    }
+    fn load_from(path: &std::path::Path) -> (Self, Option<String>) {
+        let mut settings = Self::default();
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return (settings, None),
+            Err(error) => {
+                return (
+                    settings,
+                    Some(format!(
+                        "Could not read {} ({error}); default settings are in use.",
+                        path.display()
+                    )),
+                );
+            }
+        };
+        let backup = backup_path(path);
+        let Err(error) = settings.apply_json(&bytes) else {
+            // The last file that loaded, for when a later one cannot be read.
+            if let Err(error) = crate::paths::write_atomic(&backup, &bytes, false) {
+                crate::log_line!("Could not keep a copy of the settings: {error}");
+            }
+            return (settings, None);
+        };
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let mut kept_name = path.file_name().unwrap_or_default().to_owned();
+        kept_name.push(format!(".corrupt-{seconds}"));
+        let kept = path.with_file_name(kept_name);
+        let set_aside = std::fs::rename(path, &kept);
+        // The copy of the last file that loaded, if there is one and it reads.
+        let mut restored = Self::default();
+        let from_backup = std::fs::read(&backup)
+            .ok()
+            .is_some_and(|bytes| restored.apply_json(&bytes).is_ok());
+        let fallback = if from_backup {
+            "the settings from the last start are in use"
+        } else {
+            "default settings are in use"
+        };
+        let message = match set_aside {
+            Ok(()) => format!(
+                "The settings file could not be read ({error}). It was kept as {} and {fallback}.",
+                kept.display()
+            ),
+            Err(rename) => format!(
+                "The settings file could not be read ({error}) or set aside ({rename}); {fallback}."
+            ),
+        };
+        if from_backup {
+            (restored, Some(message))
+        } else {
+            (Self::default(), Some(message))
+        }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reader starts from the settings as they save and reads the result back
+    /// (`lenient::apply`), so whatever the settings hold must read back as itself:
+    /// customised values, and states only a running application has (a live layer
+    /// shown, a tab that is not on the ribbon).
+    #[test]
+    fn settings_read_back_exactly_what_they_save() {
+        use globecraft_core::layers::MapLayer;
+        let mut customised = Settings::default();
+        customised
+            .apply_json(include_bytes!("../tests/fixtures/settings-v0.4.0.json"))
+            .unwrap();
+        let mut running = customised.clone();
+        running.set_layer_visible(MapLayer::Flights, true);
+        running.set_layer_visible(MapLayer::Radar, true);
+        running.workspace.ribbon_tab = globecraft_core::commands::Tab::Help;
+        running.workspace.open_right(workspace::RightPane::Legend);
+        running.coordinate_display.precision = 1;
+        for settings in [Settings::default(), customised, running] {
+            let saved = serde_json::to_value(&settings).unwrap();
+            let read: Settings = serde_json::from_value(saved).unwrap();
+            assert!(read == settings, "a setting does not read back as saved");
+            // A file with nothing usable changes nothing.
+            let mut again = settings.clone();
+            again.apply_json(br#"{"version": 1}"#).unwrap();
+            again
+                .apply_json(br#"{"version": 1, "ui_scale": "bad", "uncap_fps": 1}"#)
+                .unwrap();
+            assert!(again == settings);
+        }
+    }
+
+    /// A setting is a field and its default: nothing else names it. Each plain field
+    /// of the defaults is read from a file that holds only that field.
+    #[test]
+    fn every_plain_setting_is_read_by_its_name_alone() {
+        let defaults = serde_json::to_value(Settings::default()).unwrap();
+        let mut read = 0;
+        for (key, value) in defaults.as_object().unwrap() {
+            let changed = match value {
+                serde_json::Value::Bool(on) => serde_json::Value::Bool(!on),
+                _ => continue,
+            };
+            let mut settings = Settings::default();
+            settings
+                .apply_json(
+                    &serde_json::to_vec(&serde_json::json!({ "version": 1, key: changed }))
+                        .unwrap(),
+                )
+                .unwrap();
+            let saved = serde_json::to_value(&settings).unwrap();
+            assert_eq!(saved[key], changed, "{key} was not read");
+            read += 1;
+        }
+        assert!(read >= 6, "only {read} switches found");
+    }
 
     /// Every value a settings file of each release holds survives loading and saving
     /// it with this version (roadmap 10.3). Each fixture was written by that release's
@@ -409,6 +535,64 @@ mod tests {
         );
     }
     #[test]
+    fn exported_settings_import_and_other_files_are_refused() {
+        let settings = Settings {
+            ui_scale: 1.4,
+            offline: true,
+            kml_dir: "elsewhere".into(),
+            ..Settings::default()
+        };
+        let imported = Settings::import(&settings.export().unwrap()).unwrap();
+        assert!(imported.ui_scale == 1.4 && imported.offline && imported.kml_dir == "elsewhere");
+        for other in [
+            &b"{}"[..],
+            br#"{"type":"FeatureCollection"}"#,
+            b"[1, 2]",
+            b"not json",
+        ] {
+            assert!(
+                Settings::import(other).is_err(),
+                "{}",
+                String::from_utf8_lossy(other)
+            );
+        }
+    }
+    #[test]
+    fn an_unreadable_settings_file_is_set_aside_not_overwritten() {
+        let root =
+            std::env::temp_dir().join(format!("globecraft-settings-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        let (_, problem) = Settings::load_from(&path);
+        assert!(problem.is_none(), "a missing file is a first start");
+        std::fs::write(&path, br#"{"ui_scale": 1.5, "map_sc"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert!(settings == Settings::default());
+        assert!(problem.unwrap().contains("corrupt-"));
+        assert!(!path.exists());
+        let kept: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            kept.len() == 1 && kept[0].starts_with("settings.json.corrupt-"),
+            "{kept:?}"
+        );
+        std::fs::write(&path, br#"{"ui_scale": 1.5}"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert!(problem.is_none());
+        assert!((settings.ui_scale - 1.5).abs() < 1e-6);
+        // That load kept a copy, so a file damaged later falls back to it.
+        assert!(backup_path(&path).exists());
+        std::fs::write(&path, br#"{"ui_scale": 1.2, "map_sc"#).unwrap();
+        let (settings, problem) = Settings::load_from(&path);
+        assert!((settings.ui_scale - 1.5).abs() < 1e-6);
+        assert!(problem.unwrap().contains("from the last start"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
     fn new_installs_start_basic_and_earlier_settings_load_advanced() {
         use experience::ExperienceLevel;
         assert_eq!(Settings::default().experience, ExperienceLevel::Basic);
@@ -422,6 +606,13 @@ mod tests {
             .apply_json(&serde_json::to_vec(&Settings::default()).unwrap())
             .unwrap();
         assert_eq!(restored.experience, ExperienceLevel::Basic);
+        // From version 1 on, a missing level is the default, not the version 0 rule.
+        let mut current = Settings::default();
+        current
+            .apply_json(br#"{"version": 1, "ui_scale": 1.2}"#)
+            .unwrap();
+        assert_eq!(current.experience, ExperienceLevel::Basic);
+        assert_eq!(current.version, SETTINGS_VERSION);
     }
     #[test]
     fn layer_visibility_uses_one_field_per_layer() {
@@ -612,6 +803,7 @@ mod tests {
     #[test]
     fn partial_invalid_settings_preserve_valid_fields_and_clamping() {
         let mut settings = Settings {
+            version: SETTINGS_VERSION,
             sky: sky::SkyPreferences::default(),
             controllers: controllers::ControllerPreferences::default(),
             appearance: appearance::AppearancePreferences::default(),
@@ -629,6 +821,8 @@ mod tests {
             map_scale: 1.0,
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
+            offline: false,
+            keys_in_keychain: false,
             gpu_globe: true,
             grid_numbers: false,
             hide_navigation_controls: false,

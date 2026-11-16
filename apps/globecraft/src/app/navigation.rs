@@ -19,7 +19,7 @@ pub(super) struct NavState {
 
 impl App {
     pub(super) fn active_earth_model(&self) -> globecraft_core::earth_model::EarthModel {
-        if self.explorer.active == globecraft_core::body::Body::Earth {
+        if self.explorer.on_earth() {
             self.settings.earth_model
         } else {
             globecraft_core::earth_model::EarthModel::PerfectSphere
@@ -115,7 +115,7 @@ impl App {
     pub(super) fn terrain_active(&self) -> bool {
         self.layer(MapLayer::Terrain)
             && self.cam.alt <= globecraft_render::TERRAIN_MAX_ALTITUDE_KM
-            && self.explorer.active == globecraft_core::body::Body::Earth
+            && self.explorer.on_earth()
             && !self.flat_earth.open
     }
 

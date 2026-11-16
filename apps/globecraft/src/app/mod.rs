@@ -18,9 +18,10 @@ use globecraft_data::{
 };
 use std::{
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 mod antarctica;
+#[cfg(feature = "assistant")]
 mod assistant;
 mod borders;
 mod cache;
@@ -28,23 +29,10 @@ mod chrome;
 mod commands;
 mod controllers;
 mod credits;
+mod diagnostics;
 mod explorer;
 mod files;
 mod flat_earth;
-/// State lines (which need border tiles of zoom 5 or finer) count as showing below this
-/// share of their threshold altitude, where their fade-in reaches about 6 %.
-const STATE_TILES_FROM_RATIO: f64 = 0.85;
-/// Just after the scene's minute turns over (see [`clock_wake`]).
-const CLOCK_WAKE_MARGIN_SECS: f64 = 0.05;
-
-/// How long until the wall clock reaches the next scene minute, when something on
-/// screen shows it.
-fn clock_wake(now_unix: f64, shows_clock: bool) -> Option<Duration> {
-    let minute = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-    shows_clock.then(|| {
-        Duration::from_secs_f64(minute - now_unix.rem_euclid(minute) + CLOCK_WAKE_MARGIN_SECS)
-    })
-}
 mod fonts;
 mod frame;
 mod frame_timing;
@@ -93,9 +81,42 @@ mod view_links;
 mod wayback;
 mod windows;
 pub(crate) use update_restart::RestartRequest;
+
 const OVERVIEW_WARMUP_ALTITUDE_KM: f64 = 14_000.0;
 const PAN_SPEED_POINTS_PER_SECOND: f64 = 350.0;
 const BOUNDARY_POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// While a refreshing layer is on, the interface wakes at least this often, so its
+/// services refresh without the user moving.
+const LIVE_SERVICE_HEARTBEAT: Duration = Duration::from_secs(30);
+/// How often the whole settings tree is compared with the saved copy. Settings change
+/// by hand, so a few checks a second save promptly without a deep compare every frame.
+const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(250);
+/// State lines (which need border tiles of zoom 5 or finer) count as showing below this
+/// share of their threshold altitude, where their fade-in reaches about 6 %.
+const STATE_TILES_FROM_RATIO: f64 = 0.85;
+/// Just after the scene's minute turns over (see [`clock_wake`]).
+const CLOCK_WAKE_MARGIN_SECS: f64 = 0.05;
+
+/// How long until the wall clock reaches the next scene minute, when something on
+/// screen shows it.
+fn clock_wake(now_unix: f64, shows_clock: bool) -> Option<Duration> {
+    let minute = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
+    shows_clock.then(|| {
+        Duration::from_secs_f64(minute - now_unix.rem_euclid(minute) + CLOCK_WAKE_MARGIN_SECS)
+    })
+}
+
+/// egui's theme for the saved choice.
+fn egui_theme(
+    theme: globecraft_data::settings::appearance::ThemePreference,
+) -> egui::ThemePreference {
+    use globecraft_data::settings::appearance::ThemePreference;
+    match theme {
+        ThemePreference::System => egui::ThemePreference::System,
+        ThemePreference::Dark => egui::ThemePreference::Dark,
+        ThemePreference::Light => egui::ThemePreference::Light,
+    }
+}
 
 type SuggestionResponse = (String, Result<Vec<Suggestion>, globecraft_data::Error>);
 
@@ -104,6 +125,7 @@ pub(crate) struct App {
     ctx: egui::Context,
     /// The header and the ribbon.
     chrome: chrome::ChromeState,
+    #[cfg(feature = "assistant")]
     assistant: assistant::AssistantState,
     runtime: globecraft_data::runtime::ServiceRuntime,
     updates: update_restart::UpdatesState,
@@ -149,10 +171,7 @@ pub(crate) struct App {
     /// The navigator's drags and eased turns.
     nav: navigation::NavState,
     /// The layer shown alone (`layer.solo`), and what was visible before.
-    solo: Option<(
-        globecraft_core::layers::MapLayer,
-        globecraft_core::layers::LayerSet,
-    )>,
+    solo: Option<layer_solo::Solo>,
 
     /// The place search box: query, results and suggestions.
     search: search::SearchState,
@@ -169,7 +188,10 @@ pub(crate) struct App {
 }
 
 impl App {
-    /// Whether a map layer is shown (its own switch; parents are checked by callers that care).
+    /// Whether the Earth is on screen as a globe (not another body, not the flat map).
+    pub(super) fn earth_shown(&self) -> bool {
+        self.explorer.on_earth() && !self.flat_earth.open
+    }
     /// Whether any layer draws from the border tiles (borders or place names).
     pub(super) fn uses_border_tiles(&self) -> bool {
         self.layer(MapLayer::CountryBorders)
@@ -189,14 +211,20 @@ impl App {
                 )
         })
     }
+    /// Whether this build offers a layer: all of them, except the live feeds in a build
+    /// without the `live` feature.
+    pub(crate) fn offers(layer: MapLayer) -> bool {
+        cfg!(feature = "live") || !layer.is_feed()
+    }
+    /// Whether a map layer is shown: its own switch and, for a refinement (grid labels),
+    /// its parent's too. A layer this build does not offer is never shown, whatever a
+    /// settings file or a view link says.
     pub(crate) fn layer(&self, layer: MapLayer) -> bool {
-        match layer {
-            // Refinements draw only with their parent.
-            MapLayer::GridLabels | MapLayer::CinematicSky => {
-                self.settings.visible_layers().effective(layer)
-            }
-            _ => self.settings.layer_visible(layer),
-        }
+        Self::offers(layer)
+            && self.settings.layer_visible(layer)
+            && layer
+                .parent()
+                .is_none_or(|parent| self.settings.layer_visible(parent))
     }
     fn distance_units(&self) -> globecraft_core::units::DistanceUnits {
         self.settings
@@ -209,7 +237,12 @@ impl App {
         settings: Settings,
         restart: Arc<RestartRequest>,
     ) -> Self {
-        let settings = restart.settings.lock().unwrap().take().unwrap_or(settings);
+        let settings = restart
+            .settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap_or(settings);
         // Every font family the interface names exists from the first frame; installed system
         // faces replace these once the font worker has loaded them.
         cc.egui_ctx.set_fonts(fonts::base_definitions());
@@ -242,6 +275,7 @@ impl App {
         let mut app = App {
             ctx: cc.egui_ctx.clone(),
             chrome: chrome::ChromeState::new(cc),
+            #[cfg(feature = "assistant")]
             assistant: assistant::AssistantState::default(),
             updates: update_restart::UpdatesState {
                 service: globecraft_data::updater::UpdateService::new(runtime.handle(), repaint()),
@@ -287,6 +321,7 @@ impl App {
             settings: settings.clone(),
             saved: saved::SavedSettings {
                 settings,
+                checked: Instant::now(),
                 writer: globecraft_data::settings::SettingsWriter::new(repaint())
                     .expect("start settings writer"),
             },
@@ -299,10 +334,28 @@ impl App {
         if let Some(error) = &app.updates.restart.error {
             app.status = error.clone();
         }
-        if let Some(version) = restart.installed_version.lock().unwrap().as_deref() {
+        if let Some(problem) = restart
+            .load_problem
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            app.status = problem;
+        }
+        if let Some(version) = restart
+            .installed_version
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref()
+        {
             app.updates.service.resume_installed(version);
         }
-        if let Some(path) = restart.planet.lock().unwrap().take() {
+        if let Some(path) = restart
+            .planet
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             app.explorer.request_open(path, &app.files.jobs);
         }
         #[cfg(target_os = "macos")]
@@ -341,7 +394,20 @@ impl App {
             std::thread::sleep(Duration::from_millis(20));
         }
         if !self.tiles.cache.wait_for_disk_writes(QUIT_DISK_WAIT) {
-            eprintln!("Quit before every tile reached the disk cache");
+            globecraft_data::log_line!("Quit before every tile reached the disk cache");
+        }
+    }
+}
+
+impl App {
+    /// Queues the settings for writing when they differ from what was last queued.
+    fn persist_settings(&mut self) {
+        self.saved.checked = Instant::now();
+        if self.settings != self.saved.settings {
+            // However the setting changed (a command, Settings, an import), requests follow.
+            globecraft_data::network::set_offline(self.settings.offline);
+            self.saved.writer.settings(&self.settings);
+            self.saved.settings = self.settings.clone();
         }
     }
 }
@@ -354,15 +420,22 @@ impl eframe::App for App {
             .request
             .requested
             .load(std::sync::atomic::Ordering::Acquire);
+        self.persist_settings();
         match self.saved.writer.finish() {
             Ok(()) => {}
             Err(error) if restarting => {
-                *self.updates.restart.request.error.lock().unwrap() = Some(format!(
+                *self
+                    .updates
+                    .restart
+                    .request
+                    .error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(format!(
                     "Settings save before restart failed: {error}. Click Restart to update to retry."
                 ));
             }
             Err(error) => {
-                eprintln!("Settings persistence failed during shutdown: {error}");
+                globecraft_data::log_line!("Settings persistence failed during shutdown: {error}");
             }
         }
         #[cfg(feature = "profiling")]
@@ -380,15 +453,27 @@ impl eframe::App for App {
         // finishes normally.
         #[cfg(target_os = "macos")]
         if restarting {
-            if let Some(error) = self.updates.restart.request.error.lock().unwrap().clone() {
-                eprintln!("Update restart stopped: {error}. Relaunch GlobeCraft manually.");
+            if let Some(error) = self
+                .updates
+                .restart
+                .request
+                .error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            {
+                globecraft_data::log_line!(
+                    "Update restart stopped: {error}. Relaunch GlobeCraft manually."
+                );
                 std::process::exit(1);
             }
-            eprintln!("Restarting GlobeCraft to finish the update");
+            globecraft_data::log_line!("Restarting GlobeCraft to finish the update");
             match self_update::restart::restart() {
                 Ok(never) => match never {},
                 Err(error) => {
-                    eprintln!("Restart failed: {error}. Relaunch GlobeCraft manually.");
+                    globecraft_data::log_line!(
+                        "Restart failed: {error}. Relaunch GlobeCraft manually."
+                    );
                     std::process::exit(1);
                 }
             }
@@ -452,17 +537,18 @@ impl eframe::App for App {
                 // Airports by code: for the search box and a selected flight's route.
                 airports: self.picked.flight.selected().is_some()
                     || !self.search.query.trim().is_empty(),
-                tomtom_key: &self.keys.tomtom,
+                tomtom_key: self.keys.get(globecraft_data::keys::TOMTOM),
             },
         );
         self.update_time_zones(ctx, earth);
         self.update_marine_names(ctx, earth);
+        let view = globecraft_data::ViewQuery::from(self.cam);
         self.map_data.update(
             &self.runtime,
             ctx,
             map_data::MapDataQuery {
                 earth,
-                view: (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+                view,
                 transport: self.transport_shown(),
                 rail_or_airports: self.layer(MapLayer::Railways) || self.layer(MapLayer::Airports),
                 poi: self.poi_layers().any(),
@@ -474,7 +560,7 @@ impl eframe::App for App {
             ctx,
             &self.runtime,
             &self.settings.user_layers,
-            (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+            view,
             earth,
             scene,
         );
@@ -486,7 +572,7 @@ impl eframe::App for App {
         self.borders.place_names.update(
             &self.runtime,
             earth && self.layer(MapLayer::PlaceLabels),
-            (self.cam.lat, self.cam.lon, self.cam.alt, self.cam.tilt),
+            view,
             move || place_wake.request_repaint(),
         );
         self.refresh_place_names();
@@ -500,9 +586,10 @@ impl eframe::App for App {
                 || self.layer(MapLayer::Aurora)
                 || self.user_layers_refresh())
         {
-            ctx.request_repaint_after(Duration::from_secs(30));
+            ctx.request_repaint_after(LIVE_SERVICE_HEARTBEAT);
         }
         self.poll_files(ctx);
+        #[cfg(feature = "assistant")]
         self.poll_assistant();
         self.poll_update_restart(ctx);
         self.ensure_wayback(ctx);
@@ -526,8 +613,7 @@ impl eframe::App for App {
         let mut profile = globecraft_data::profiling::Span::new("ui.update");
         #[cfg(feature = "profiling")]
         let mut watchdog = globecraft_data::profiling::PassWatchdog::new("ui.slow");
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.setup");
+        profile_checkpoint!(watchdog, "ui.slow.setup");
         // egui recreates its font atlas when it fills up, before the frame: the atlas is
         // then emptier than at the last frame's start. Label shapes kept across frames
         // must be laid out again, or they show other glyphs.
@@ -536,17 +622,7 @@ impl eframe::App for App {
             self.borders.overlay_cache.font_atlas_reset();
         }
         self.chrome.font_atlas_fill = atlas_fill;
-        ui.set_theme(match self.settings.appearance.theme {
-            globecraft_data::settings::appearance::ThemePreference::System => {
-                egui::ThemePreference::System
-            }
-            globecraft_data::settings::appearance::ThemePreference::Dark => {
-                egui::ThemePreference::Dark
-            }
-            globecraft_data::settings::appearance::ThemePreference::Light => {
-                egui::ThemePreference::Light
-            }
-        });
+        ui.set_theme(egui_theme(self.settings.appearance.theme));
         let dt = frame_timing::animation_delta_secs(ui);
         if self
             .chrome
@@ -556,16 +632,16 @@ impl eframe::App for App {
             ui::theme::apply(ui, self.settings.ui_scale);
             self.chrome.styled_scale = Some(self.settings.ui_scale);
         }
-        // persist settings once a slider is released
-        if self.settings != self.saved.settings && !ui.input(|i| i.pointer.any_down()) {
-            self.saved.writer.settings(&self.settings);
-            self.saved.settings = self.settings.clone();
+        // persist settings once a slider is released; frames with no input (animation)
+        // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more
+        let (pointer_down, had_input) = ui.input(|i| (i.pointer.any_down(), !i.events.is_empty()));
+        if !pointer_down && (had_input || self.saved.checked.elapsed() >= SETTINGS_CHECK_INTERVAL) {
+            self.persist_settings();
         }
         if let Some(error) = self.saved.writer.take_error() {
             self.status = format!("Settings persistence failed: {error}");
         }
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.input");
+        profile_checkpoint!(watchdog, "ui.slow.input");
         if self.updates.restart.is_saving() {
             ui.disable();
         } else {
@@ -580,21 +656,16 @@ impl eframe::App for App {
         if self.motion.fly.is_some() {
             ui.request_repaint();
         }
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.header");
+        profile_checkpoint!(watchdog, "ui.slow.header");
         self.header(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.ribbon");
+        profile_checkpoint!(watchdog, "ui.slow.ribbon");
         self.ribbon(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.status");
+        profile_checkpoint!(watchdog, "ui.slow.status");
         self.status_bar(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.panes");
+        profile_checkpoint!(watchdog, "ui.slow.panes");
         self.left_pane(ui);
         self.right_pane(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.windows");
+        profile_checkpoint!(watchdog, "ui.slow.windows");
         self.settings_window(ui);
         self.menu_windows(ui);
         self.altitude_window(ui);
@@ -602,18 +673,15 @@ impl eframe::App for App {
         self.command_search_window(ui);
         self.shortcut_dialog(ui);
         ui::focus::paint_focus_ring(ui.ctx());
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.live_maps");
+        profile_checkpoint!(watchdog, "ui.slow.live_maps");
         self.live.maps.update(
             ui,
             &self.runtime,
             self.layer(MapLayer::Clouds),
             self.layer(MapLayer::Radar),
         );
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.boundary");
-        let earth_visible =
-            self.explorer.active == globecraft_core::body::Body::Earth && !self.flat_earth.open;
+        profile_checkpoint!(watchdog, "ui.slow.boundary");
+        let earth_visible = self.earth_shown();
         // The vector sets (transport, roads, places, points of interest) keep their
         // tiles on disk under the same limit as the border tiles, each.
         globecraft_data::vector_tiles::set_disk_cache_limit(self.settings.cache.border_bytes());
@@ -643,8 +711,7 @@ impl eframe::App for App {
         self.log_downloads();
         self.poll_still_shot();
         self.follow_ground(ui);
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.globe");
+        profile_checkpoint!(watchdog, "ui.slow.globe");
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(ui::theme::Tokens::get(ui).canvas))
             .show(ui, |ui| {
@@ -655,8 +722,7 @@ impl eframe::App for App {
                     self.globe_view(ui);
                 }
             });
-        #[cfg(feature = "profiling")]
-        watchdog.checkpoint("ui.slow.native_menu");
+        profile_checkpoint!(watchdog, "ui.slow.native_menu");
         #[cfg(target_os = "macos")]
         self.refresh_native_menu(ui);
         #[cfg(feature = "profiling")]

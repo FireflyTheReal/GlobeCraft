@@ -195,7 +195,7 @@ impl App {
         };
         self.runtime.handle().spawn_blocking(move || {
             if let Err(error) = globecraft_data::settings::assistant::save_keys(&keys) {
-                eprintln!("Saving assistant keys failed: {error}");
+                globecraft_data::log_line!("Saving assistant keys failed: {error}");
             }
         });
     }

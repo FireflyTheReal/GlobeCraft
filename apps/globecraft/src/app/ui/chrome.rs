@@ -243,7 +243,11 @@ impl App {
                 menu_item(ui, self, id, Value::Null);
             }
             ui.separator();
-            for id in ["help.documentation", "help.reportIssue"] {
+            for id in [
+                "help.documentation",
+                "help.reportIssue",
+                "help.copyDiagnostics",
+            ] {
                 menu_item(ui, self, id, Value::Null);
             }
             ui.separator();
@@ -288,7 +292,7 @@ impl App {
                     // elevation tile is requested under the cursor (about 40 km wide at
                     // level 10, so moving the pointer loads few). Padded so the readouts
                     // after it hold still.
-                    if self.explorer.active == globecraft_core::body::Body::Earth {
+                    if self.explorer.on_earth() {
                         let metres = self.pointer.cursor.and_then(|(lat, lon)| {
                             if self.terrain_active() {
                                 self.tiles.cache.loaded_elevation_m(
@@ -419,6 +423,26 @@ impl App {
                                 .color(color),
                         );
                         separator(ui, &t);
+                        if self.settings.offline {
+                            let offline = ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(lang.text("statusbar-offline"))
+                                            .size(11.0)
+                                            .color(t.amber),
+                                    )
+                                    .sense(Sense::click()),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(lang.text("statusbar-offline-help"));
+                            if offline.clicked() {
+                                self.run_reporting(
+                                    "app.workOffline",
+                                    serde_json::json!({"on": false}),
+                                );
+                            }
+                            separator(ui, &t);
+                        }
                         let action = super::updater::indicator(
                             ui,
                             self.updates.service.state(),

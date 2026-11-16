@@ -1,0 +1,1 @@
+{"id": "x", "choices": [{"message": {"role": "assistant", "content": "Hi", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "run_command", "arguments": "{\"id\":\"camera.flyTo\"}"}}]}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "prompt_tokens_details": {"cached_tokens": 2}}}

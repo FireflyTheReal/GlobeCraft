@@ -24,6 +24,9 @@ const WORLDS: [(&str, &str, &str); 3] = [
 
 impl App {
     pub(super) fn layer_big(&mut self, ui: &mut Ui, layer: MapLayer) {
+        if !Self::offers(layer) {
+            return;
+        }
         let label = short_layer_label(self.lang, layer);
         big_with(
             ui,
@@ -40,6 +43,9 @@ impl App {
     }
 
     pub(super) fn layer_small(&mut self, ui: &mut Ui, layer: MapLayer) {
+        if !Self::offers(layer) {
+            return;
+        }
         let label = short_layer_label(self.lang, layer);
         small_with(
             ui,
@@ -229,29 +235,32 @@ impl App {
     /// What is happening now, and when.
     pub(super) fn live_tab(&mut self, ui: &mut Ui) {
         let lang = self.lang;
-        group(
-            ui,
-            self,
-            "live.weather",
-            lang.text("sidebar-weather-title"),
-            |ui, app| {
-                app.layer_big(ui, MapLayer::Radar);
-                app.layer_big(ui, MapLayer::Clouds);
-                app.layer_big(ui, MapLayer::Aurora);
-            },
-        );
-        group(
-            ui,
-            self,
-            "live.tracking",
-            lang.text("ribbon-group-tracking"),
-            |ui, app| {
-                app.layer_big(ui, MapLayer::Flights);
-                app.layer_big(ui, MapLayer::Vessels);
-                app.layer_big(ui, MapLayer::Satellites);
-                app.layer_big(ui, MapLayer::Traffic);
-            },
-        );
+        // The feeds' groups, in a build that has them.
+        if cfg!(feature = "live") {
+            group(
+                ui,
+                self,
+                "live.weather",
+                lang.text("sidebar-weather-title"),
+                |ui, app| {
+                    app.layer_big(ui, MapLayer::Radar);
+                    app.layer_big(ui, MapLayer::Clouds);
+                    app.layer_big(ui, MapLayer::Aurora);
+                },
+            );
+            group(
+                ui,
+                self,
+                "live.tracking",
+                lang.text("ribbon-group-tracking"),
+                |ui, app| {
+                    app.layer_big(ui, MapLayer::Flights);
+                    app.layer_big(ui, MapLayer::Vessels);
+                    app.layer_big(ui, MapLayer::Satellites);
+                    app.layer_big(ui, MapLayer::Traffic);
+                },
+            );
+        }
         group(
             ui,
             self,
@@ -393,7 +402,6 @@ fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> 
         MapLayer::Sunlight => "ribbon-layer-sunlight",
         MapLayer::Stars => "ribbon-layer-stars",
         MapLayer::MilkyWay => "ribbon-layer-milky-way",
-        MapLayer::CinematicSky => "ribbon-layer-cinematic",
         MapLayer::Radar => "ribbon-layer-radar",
         MapLayer::Clouds => "ribbon-layer-clouds",
         MapLayer::Aurora => "ribbon-layer-aurora",

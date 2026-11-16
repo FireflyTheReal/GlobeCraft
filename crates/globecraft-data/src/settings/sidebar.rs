@@ -1,5 +1,5 @@
 //! Stored desktop layout; invalid fields retain their last valid preference.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_SIDEBAR_WIDTH_POINTS: f32 = 240.0;
 pub const MIN_SIDEBAR_WIDTH_POINTS: f32 = 210.0;
@@ -8,18 +8,23 @@ pub const DEFAULT_PINNED_PLACES_HEIGHT_POINTS: f32 = 300.0;
 pub const MIN_PINNED_PLACES_HEIGHT_POINTS: f32 = 180.0;
 pub const MAX_PINNED_PLACES_HEIGHT_POINTS: f32 = 1000.0;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SidebarPanel {
+    /// `data` in files from before the Layers pane.
+    #[serde(alias = "data")]
     Layers,
+    /// `explore` in files from before the Places pane.
     #[default]
+    #[serde(alias = "explore")]
     Places,
 }
 impl SidebarPanel {
     pub const ALL: [Self; 2] = [Self::Layers, Self::Places];
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SidebarLayout {
     pub panel: SidebarPanel,
     pub open: bool,
@@ -40,48 +45,14 @@ impl Default for SidebarLayout {
 }
 impl SidebarLayout {
     pub(super) fn apply_json(&mut self, value: &serde_json::Value) {
-        if let Some(panel) = value.get("panel").and_then(|v| v.as_str()) {
-            self.panel = match panel {
-                // The Explore pane (search results, navigation, export) went in 2026-11:
-                // search results are in Places now.
-                "explore" => SidebarPanel::Places,
-                "layers" => SidebarPanel::Layers,
-                "places" => SidebarPanel::Places,
-                // The Data pane went into Map › My data ▾ (2026-11).
-                "data" => SidebarPanel::Layers,
-                _ => self.panel,
-            };
-        }
-        for (name, target) in [
-            ("open", &mut self.open),
-            ("places_pinned", &mut self.places_pinned),
-        ] {
-            if let Some(value) = value.get(name).and_then(|v| v.as_bool()) {
-                *target = value;
-            }
-        }
-        for (name, target, min, max) in [
-            (
-                "width_points",
-                &mut self.width_points,
-                MIN_SIDEBAR_WIDTH_POINTS,
-                MAX_SIDEBAR_WIDTH_POINTS,
-            ),
-            (
-                "pinned_places_height_points",
-                &mut self.pinned_places_height_points,
-                MIN_PINNED_PLACES_HEIGHT_POINTS,
-                MAX_PINNED_PLACES_HEIGHT_POINTS,
-            ),
-        ] {
-            if let Some(value) = value
-                .get(name)
-                .and_then(|v| v.as_f64())
-                .filter(|v| v.is_finite())
-            {
-                *target = value.clamp(f64::from(min), f64::from(max)) as f32;
-            }
-        }
+        super::lenient::apply(self, value, &[]);
+        self.width_points = self
+            .width_points
+            .clamp(MIN_SIDEBAR_WIDTH_POINTS, MAX_SIDEBAR_WIDTH_POINTS);
+        self.pinned_places_height_points = self.pinned_places_height_points.clamp(
+            MIN_PINNED_PLACES_HEIGHT_POINTS,
+            MAX_PINNED_PLACES_HEIGHT_POINTS,
+        );
     }
 }
 

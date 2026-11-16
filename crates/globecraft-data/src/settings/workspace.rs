@@ -1,6 +1,6 @@
 //! The ribbon and the right pane, kept across launches (the left pane is `SidebarLayout`).
 use globecraft_core::commands::Tab;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 
 pub const DEFAULT_RIGHT_PANE_WIDTH_POINTS: f32 = 340.0;
@@ -15,7 +15,7 @@ const MAX_SAVED_TOOLS: usize = 500;
 const MAX_TOOL_KEY_LEN: usize = 200;
 
 /// Panes on the right of the globe.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPane {
     Assistant,
@@ -40,9 +40,10 @@ impl RightPane {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WorkspaceLayout {
-    #[serde(serialize_with = "serialize_tab")]
+    #[serde(serialize_with = "serialize_tab", deserialize_with = "deserialize_tab")]
     pub ribbon_tab: Tab,
     pub ribbon_minimized: bool,
     /// The right pane in view, if any.
@@ -78,6 +79,20 @@ impl Default for WorkspaceLayout {
 fn serialize_tab<S: Serializer>(tab: &Tab, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(tab.code())
 }
+
+fn deserialize_tab<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Tab, D::Error> {
+    super::lenient::coded(deserializer, Tab::from_code)
+}
+
+/// Fields `apply` reads by its own rules: a file's tab may carry an older name, the
+/// panes depend on each other, and the lists are filtered entry by entry.
+const OWN_RULES: [&str; 5] = [
+    "ribbon_tab",
+    "right_pane",
+    "right_open",
+    "ribbon_toggled",
+    "quick_tools",
+];
 
 fn valid_key(key: &str) -> bool {
     !key.trim().is_empty() && key.len() <= MAX_TOOL_KEY_LEN
@@ -151,15 +166,16 @@ impl WorkspaceLayout {
     }
 
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
+        super::lenient::apply(self, value, &OWN_RULES);
+        self.right_width_points = self
+            .right_width_points
+            .clamp(MIN_RIGHT_PANE_WIDTH_POINTS, MAX_RIGHT_PANE_WIDTH_POINTS);
         if let Some(tab) = value
             .get("ribbon_tab")
             .and_then(|v| v.as_str())
             .and_then(Tab::ribbon_from_code)
         {
             self.ribbon_tab = tab;
-        }
-        if let Some(minimized) = value.get("ribbon_minimized").and_then(|v| v.as_bool()) {
-            self.ribbon_minimized = minimized;
         }
         if let Some(open) = value.get("right_open").and_then(|v| v.as_array()) {
             self.right_open = open
@@ -186,14 +202,6 @@ impl WorkspaceLayout {
             .is_some_and(|p| !self.right_open.contains(&p))
         {
             self.right_pane = None;
-        }
-        if let Some(width) = value
-            .get("right_width_points")
-            .and_then(|v| v.as_f64())
-            .filter(|v| v.is_finite())
-        {
-            self.right_width_points =
-                (width as f32).clamp(MIN_RIGHT_PANE_WIDTH_POINTS, MAX_RIGHT_PANE_WIDTH_POINTS);
         }
         if let Some(list) = value
             .get("ribbon_toggled")

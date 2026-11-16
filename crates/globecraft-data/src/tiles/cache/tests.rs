@@ -79,7 +79,7 @@ fn unavailable_tiles_are_never_requested_again() {
     assert_eq!(cache.inflight(), 0);
     assert!(!cache.request(1));
     // Other requests finishing must not forget it.
-    cache.complete(2, Err("network failure".into()));
+    cache.complete(2, Err(TileFailure::Error));
     assert!(matches!(cache.lookup(1), Lookup::Unavailable));
 }
 
@@ -93,7 +93,7 @@ fn only_the_exact_esri_placeholder_counts_as_missing() {
 #[test]
 fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weight() {
     let (cache, _rx) = test_cache(4);
-    cache.complete(1, Err("network failure".into()));
+    cache.complete(1, Err(TileFailure::Error));
     cache.complete(
         2,
         Ok(Tile {
@@ -116,7 +116,7 @@ fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weig
     assert!(matches!(cache.lookup(1), Lookup::Absent));
     assert!(cache.request(1));
     assert_eq!(cache.inflight(), 1);
-    cache.complete(1, Err("network failure".into()));
+    cache.complete(1, Err(TileFailure::Error));
     assert_eq!(cache.inflight(), 0);
     assert_eq!(cache.generation(), 3);
 }
@@ -235,7 +235,7 @@ fn overview_skips_cached_loading_and_failed_tiles_without_blocking_foreground() 
     let failed = make_key(Provider::Satellite, 1, 0, 0, 0);
     let loading = make_key(Provider::Satellite, 1, 0, 1, 0);
     cache.complete(cached, Ok(tiny_tile(1)));
-    cache.complete(failed, Err("fixture failure".into()));
+    cache.complete(failed, Err(TileFailure::Error));
     assert!(cache.request(loading));
     assert_eq!(rx.try_recv().unwrap(), loading);
     let mut warmup = TileWarmup::startup_satellite();
@@ -296,7 +296,7 @@ fn new_view_retires_queued_work_and_stops_downloads_it_left_keeping_the_overview
     assert_eq!(cache.inflight(), 2);
     assert!(matches!(cache.lookup(stale), Lookup::Absent));
     assert!(matches!(cache.lookup(left), Lookup::Absent));
-    assert!(cache.downloading.lock().unwrap().is_empty());
+    assert!(cache.downloading.lock().unwrap().keys().next().is_none());
     let stopped = running.cancel.notified();
     tokio::pin!(stopped);
     assert!(futures_ready(stopped.as_mut()));
@@ -337,7 +337,7 @@ fn each_source_downloads_at_most_its_parallel_limit() {
     // The next streets tile waits; the imagery behind it does not.
     assert_eq!(cache.next_job().unwrap().key, imagery);
     assert!(cache.next_job().is_none());
-    cache.downloading.lock().unwrap().remove(&jobs[0].key);
+    cache.downloading.lock().unwrap().remove(jobs[0].key);
     cache.complete(jobs[0].key, Ok(tiny_tile(1)));
     assert_eq!(cache.next_job().unwrap().key, streets[limit]);
 }
@@ -367,13 +367,13 @@ fn sources_on_one_host_share_its_downloads_and_its_pauses() {
     // The polar tile has slots of its own source left, but not of the host.
     assert_eq!(cache.next_job().unwrap().key, imagery);
     assert!(cache.next_job().is_none());
-    cache.downloading.lock().unwrap().remove(&jobs[0].key);
+    cache.downloading.lock().unwrap().remove(jobs[0].key);
     cache.complete(jobs[0].key, Ok(tiny_tile(1)));
     assert_eq!(cache.next_job().unwrap().key, north);
     // A throttling answer to one of them pauses the host's other sources too.
     let south = make_key(Provider::PolarSouth, 3, 0, 0, 0);
     assert!(cache.request(south));
-    cache.downloading.lock().unwrap().remove(&north);
+    cache.downloading.lock().unwrap().remove(north);
     cache.throttle(north, Duration::from_secs(60));
     assert!(cache.next_job().is_none(), "the host is pausing");
     let paused: Vec<_> = cache
@@ -393,7 +393,7 @@ fn a_throttled_source_pauses_and_its_tile_waits_at_the_front() {
     let second = make_key(Provider::Topo, 9, 1, 0, 0);
     assert!(cache.request(first) && cache.request(second));
     let job = cache.next_job().unwrap();
-    cache.downloading.lock().unwrap().remove(&job.key);
+    cache.downloading.lock().unwrap().remove(job.key);
     cache.throttle(job.key, Duration::from_millis(200));
     assert!(matches!(cache.lookup(first), Lookup::Pending));
     assert!(cache.next_job().is_none(), "the source is pausing");
@@ -426,7 +426,7 @@ fn retired_wake_tickets_stay_bounded_and_duplicate_priorities_do_not_duplicate_j
 #[test]
 fn failed_visible_tiles_keep_retry_deadlines_without_raster_invalidation() {
     let (cache, _rx) = test_cache(4096);
-    cache.complete(1, Err("offline".into()));
+    cache.complete(1, Err(TileFailure::Error));
     assert!(cache.retry_delay(&[1]).unwrap() > Duration::ZERO);
     cache.requests.lock().unwrap().insert(
         1,
@@ -601,4 +601,51 @@ fn only_changing_sources_are_revalidated_and_old_caches_start_fresh() {
     ] {
         assert_eq!(needs_revalidation(never, Some(&fetched(10_000)), now), None);
     }
+}
+
+#[test]
+fn expired_failures_leave_the_request_map_in_passes_and_missing_tiles_stay() {
+    let (cache, _rx) = test_cache(4096);
+    cache.complete(1, Err(TileFailure::Unavailable));
+    let expired = Instant::now() - FAILED_TILE_RETRY_DELAY;
+    {
+        let mut requests = cache.requests.lock().unwrap();
+        for key in 10..10 + REQUEST_PRUNE_MIN_ENTRIES as TileKey {
+            requests.insert(key, RequestState::Failed(expired));
+        }
+    }
+    cache.complete(2, Ok(tiny_tile(10)));
+    let requests = cache.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1, "only the missing tile is remembered");
+    assert!(matches!(requests.get(&1), Some(RequestState::Unavailable)));
+    drop(requests);
+    assert_eq!(
+        cache.prune_above.load(Ordering::Relaxed),
+        REQUEST_PRUNE_MIN_ENTRIES
+    );
+}
+
+#[test]
+fn a_paused_host_does_not_hold_the_slots_of_other_hosts() {
+    let (cache, _tickets) = test_cache(4096);
+    let imagery: Vec<_> = (0..MAX_INFLIGHT as u32)
+        .map(|x| make_key(Provider::Satellite, 12, x, 0, 0))
+        .collect();
+    for &key in &imagery {
+        assert!(cache.request(key));
+    }
+    let lights = make_key(Provider::NightLights, 5, 0, 0, 0);
+    assert!(!cache.request(lights), "every slot is taken");
+    assert_eq!(cache.retry_delay(&[lights]), None);
+    // The imagery host answers 429: its tiles wait, and stop holding the slots.
+    let job = cache.next_job().unwrap();
+    cache.downloading.lock().unwrap().remove(job.key);
+    cache.throttle(job.key, Duration::from_secs(60));
+    assert_eq!(cache.retry_delay(&[lights]), Some(Duration::ZERO));
+    assert!(cache.request(lights), "the paused imagery leaves room");
+    assert!(
+        !cache.request(make_key(Provider::Satellite, 12, 0, 1, 0)),
+        "the paused host gets no more"
+    );
+    assert_eq!(cache.next_job().unwrap().key, lights);
 }

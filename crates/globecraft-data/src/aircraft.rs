@@ -1,7 +1,7 @@
 //! Bounded live telemetry; the desktop only swaps immutable snapshots.
 #[cfg(test)]
 mod benchmarks;
-mod decode;
+pub(crate) mod decode;
 pub mod route;
 mod snapshot;
 #[cfg(test)]
@@ -181,6 +181,9 @@ pub struct LiveAircraft {
     updates: watch::Receiver<Arc<AircraftSnapshot>>,
     latest: Arc<AircraftSnapshot>,
     stopped: bool,
+    /// The worker's end of `updates` in a build without live feeds, where no worker
+    /// runs: kept so the snapshot stays the empty one, not "service stopped".
+    _unused_publisher: Option<watch::Sender<Arc<AircraftSnapshot>>>,
 }
 impl LiveAircraft {
     pub fn new(
@@ -209,12 +212,18 @@ impl LiveAircraft {
         let (control, queries) = watch::channel(AircraftQuery::default());
         let latest = Arc::new(AircraftSnapshot::default());
         let (publish, updates) = watch::channel(latest.clone());
-        runtime.spawn(worker::run(queries, publish, repaint, endpoints));
+        let unused_publisher = if crate::live::ENABLED {
+            runtime.spawn(worker::run(queries, publish, repaint, endpoints));
+            None
+        } else {
+            Some(publish)
+        };
         Self {
             control,
             updates,
             latest,
             stopped: false,
+            _unused_publisher: unused_publisher,
         }
     }
 
@@ -232,9 +241,9 @@ impl LiveAircraft {
                     aircraft: self.latest.aircraft.clone(),
                     global: self.latest.global.clone(),
                     local: self.latest.local.clone(),
-                    error: Some(Arc::new(
-                        "Aircraft service stopped before publishing its result".into(),
-                    )),
+                    error: Some(Arc::new(crate::Error::msg(
+                        "Aircraft service stopped before publishing its result",
+                    ))),
                     valid_until: self.latest.valid_until,
                 });
             }

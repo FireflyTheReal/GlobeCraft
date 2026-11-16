@@ -10,6 +10,16 @@ use globecraft_data::user_data::UserSource;
 impl App {
     pub(super) fn settings_network(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang;
+        if ui
+            .checkbox(
+                &mut self.settings.offline,
+                lang.text("settings-network-offline"),
+            )
+            .on_hover_text(lang.text("settings-network-offline-help"))
+            .changed()
+        {
+            globecraft_data::network::set_offline(self.settings.offline);
+        }
         ui.weak(lang.text("settings-network-intro"));
         for category in Category::ALL {
             match category {
@@ -24,7 +34,10 @@ impl App {
                     ));
                 }
                 Category::UserData => self.network_user_layers(ui),
+                #[cfg(feature = "assistant")]
                 Category::Assistant => self.network_assistant(ui),
+                #[cfg(not(feature = "assistant"))]
+                Category::Assistant => {}
                 Category::MapData | Category::Search | Category::Live | Category::Updates => {
                     group_title(ui, lang, category);
                     for service in SERVICES
@@ -74,6 +87,7 @@ impl App {
         ui.weak(lang.text("settings-network-user-layer-help"));
     }
 
+    #[cfg(feature = "assistant")]
     fn network_assistant(&self, ui: &mut egui::Ui) {
         let lang = self.lang;
         group_title(ui, lang, Category::Assistant);
@@ -94,7 +108,23 @@ impl App {
         ui.weak(lang.text("settings-network-assistant-help"));
     }
 
+    /// Whether the assistant's provider or address matches the search.
+    #[cfg(feature = "assistant")]
+    fn assistant_matches(&self, query: &str) -> bool {
+        self.assistant_target().is_some_and(|(preset, base_url)| {
+            fold_name(preset.label).contains(query)
+                || fold_name(preset.id).contains(query)
+                || network::host_of_url(&base_url)
+                    .is_some_and(|host| fold_name(host).contains(query))
+        })
+    }
+    #[cfg(not(feature = "assistant"))]
+    fn assistant_matches(&self, _query: &str) -> bool {
+        false
+    }
+
     /// The provider the assistant would use and its effective base address.
+    #[cfg(feature = "assistant")]
     fn assistant_target(
         &self,
     ) -> Option<(&'static globecraft_assistant::provider::Preset, String)> {
@@ -125,12 +155,7 @@ impl App {
                 || layer
                     .network_host()
                     .is_some_and(|host| fold_name(host).contains(query))
-        }) || self.assistant_target().is_some_and(|(preset, base_url)| {
-            fold_name(preset.label).contains(query)
-                || fold_name(preset.id).contains(query)
-                || network::host_of_url(&base_url)
-                    .is_some_and(|host| fold_name(host).contains(query))
-        })
+        }) || self.assistant_matches(query)
     }
 }
 

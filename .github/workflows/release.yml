@@ -104,7 +104,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev
       - name: Build CPU-only release binary
-        run: cargo build -p globecraft --release --no-default-features --locked --target ${{ matrix.target }}
+        run: cargo build -p globecraft --release --no-default-features --features standard --locked --target ${{ matrix.target }}
       - name: Install cargo-packager
         if: runner.os != 'Windows'
         run: cargo install cargo-packager --version 0.11.8 --locked
@@ -266,7 +266,7 @@ jobs:
             set -eu
             . "$HOME/.cargo/env"
             export CARGO_TARGET_DIR=/var/tmp/globecraft-target CARGO_BUILD_JOBS=4
-            cargo build -p globecraft --release --no-default-features --locked --target x86_64-unknown-freebsd
+            cargo build -p globecraft --release --no-default-features --features standard --locked --target x86_64-unknown-freebsd
             python3.12 -m unittest discover -s scripts -p 'test_package_*.py'
             python3.12 scripts/package_release.py package --version "$(python3.12 scripts/package_release.py validate)" --target x86_64-unknown-freebsd --binary /var/tmp/globecraft-target/x86_64-unknown-freebsd/release/globecraft --output dist
             ldd /var/tmp/globecraft-target/x86_64-unknown-freebsd/release/globecraft
@@ -296,14 +296,48 @@ jobs:
           merge-multiple: true
       - name: Require the complete native release asset set
         run: python scripts/package_release.py verify --version ${{ needs.version.outputs.version }} --output dist
-      - name: Verify archives and assemble release checksums
+      - name: Verify the built archives
         working-directory: dist
         run: |
           set -euo pipefail
           sha256sum --check *.sha256
-          cat *.sha256 > SHA256SUMS.txt
-          sha256sum --check SHA256SUMS.txt
           rm -- *.sha256
+      # The archives the in-app updater installs are signed with zipsign when the
+      # ZIPSIGN_PRIVATE_KEY secret holds the key (base64 of `zipsign gen-key`'s private
+      # file); builds then refuse unsigned updates once release-signing.pub holds the
+      # public half. See docs/RELEASING.md.
+      - name: Sign the updater archives
+        env:
+          ZIPSIGN_PRIVATE_KEY: ${{ secrets.ZIPSIGN_PRIVATE_KEY }}
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          if [ -z "${ZIPSIGN_PRIVATE_KEY}" ]; then
+            # Builds with a public key refuse unsigned updates: never publish one.
+            if [ -s "$GITHUB_WORKSPACE/crates/globecraft-data/release-signing.pub" ]; then
+              echo "::error::release-signing.pub holds a key but ZIPSIGN_PRIVATE_KEY is not set."
+              exit 1
+            fi
+            echo "::warning::ZIPSIGN_PRIVATE_KEY is not set; updater archives are not signed."
+            exit 0
+          fi
+          # The signature format must match the zipsign-api version self_update uses (0.2).
+          cargo install zipsign --locked --version '^0.2'
+          key="$RUNNER_TEMP/zipsign.key"
+          printf '%s' "$ZIPSIGN_PRIVATE_KEY" | base64 --decode > "$key"
+          for archive in *-update.zip *-portable.zip; do
+            [ -e "$archive" ] && zipsign sign zip "$archive" "$key"
+          done
+          for archive in *.tar.gz; do
+            [ -e "$archive" ] && zipsign sign tar "$archive" "$key"
+          done
+          rm -f "$key"
+      - name: Assemble release checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum -- * > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
       - name: Publish only after every platform succeeds
         env:
           GH_TOKEN: ${{ github.token }}

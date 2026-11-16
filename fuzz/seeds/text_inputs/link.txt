@@ -1,0 +1,1 @@
+globecraft://view?lat=47.5458&lon=9.6833&alt=120&tilt=30&heading=10&layers=borders,roads&data=preset:gebco&data=https://example.org/a.geojson

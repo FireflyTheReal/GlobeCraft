@@ -126,7 +126,9 @@ impl App {
                 self.tiles.controls.clear_rx = Some(rx);
                 return;
             }
-            Err(mpsc::TryRecvError::Disconnected) => Err("cache clearing task stopped".into()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err(globecraft_data::Error::msg("cache clearing task stopped"))
+            }
         };
         self.tiles.controls.last_usage_scan = None;
         self.tiles.controls.usage = None;
@@ -183,7 +185,9 @@ impl App {
                 self.tiles.controls.usage_rx = Some(rx);
                 return;
             }
-            Err(mpsc::TryRecvError::Disconnected) => Err("cache measurement task stopped".into()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("cache measurement task stopped".to_owned())
+            }
         };
         self.tiles.controls.usage = Some(result);
     }
@@ -197,8 +201,8 @@ impl App {
     /// after new downloads: a bounded diagnostic, not a timing log.
     pub(super) fn log_downloads(&mut self) {
         use globecraft_data::download_stats::{DownloadKind, totals};
-        let (last, logged_bytes) = self.frame.download_log;
-        if last.elapsed() < DOWNLOAD_LOG_INTERVAL {
+        let logged_bytes = self.frame.download_log.bytes;
+        if self.frame.download_log.at.elapsed() < DOWNLOAD_LOG_INTERVAL {
             return;
         }
         let imagery = totals(DownloadKind::Imagery);
@@ -206,9 +210,12 @@ impl App {
         let borders = totals(DownloadKind::BorderTiles);
         let disk = totals(DownloadKind::ImageryFromDisk);
         let bytes = imagery.bytes + ahead.bytes + borders.bytes + disk.bytes;
-        self.frame.download_log = (Instant::now(), bytes);
+        self.frame.download_log = super::frame::DownloadLog {
+            at: Instant::now(),
+            bytes,
+        };
         if bytes != logged_bytes {
-            eprintln!(
+            globecraft_data::log_line!(
                 "Downloaded this session: imagery for the view {} in {} tiles, imagery ahead {} in {} tiles, border tiles {} in {} tiles; imagery from disk {} in {} tiles ({} confirmed unchanged by the server); {} downloads stopped (tile left the view)",
                 cache_size_text(imagery.bytes),
                 imagery.responses,

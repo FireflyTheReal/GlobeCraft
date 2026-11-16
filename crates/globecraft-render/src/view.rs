@@ -70,7 +70,6 @@ pub struct RasterView {
     pub night_lights: Option<u16>,
     pub stars: bool,
     pub sky: bool,
-    pub cinematic_sky: bool,
 }
 pub struct ViewKeys {
     pub state: u64,
@@ -103,7 +102,6 @@ impl RasterView {
                 sun_key,
                 self.release_index,
                 self.sky,
-                self.cinematic_sky,
                 self.compare,
             ),
             (
@@ -131,7 +129,7 @@ impl RasterView {
             self.terrain,
             self.terrain_exaggeration.to_bits(),
             sun_key,
-            (self.model.code(), self.sky, self.cinematic_sky),
+            (self.model.code(), self.sky),
         )
             .hash(&mut presentation);
         ViewKeys {
@@ -168,7 +166,6 @@ mod tests {
             ground_km: 0.0,
             sunlight: false,
             sky: false,
-            cinematic_sky: false,
             night_lights: None,
             stars: true,
         };
@@ -186,9 +183,6 @@ mod tests {
         view.sky = true;
         assert_ne!(off.presentation, view.keys(120.0).presentation);
         assert_ne!(view.keys(120.0).presentation, view.keys(180.0).presentation);
-        let realistic = view.keys(120.0);
-        view.cinematic_sky = true;
-        assert_ne!(realistic.presentation, view.keys(120.0).presentation);
     }
     #[test]
     fn motion_changes_state_but_preserves_presentation_compatibility() {
@@ -214,7 +208,6 @@ mod tests {
             ground_km: 0.0,
             sunlight: true,
             sky: false,
-            cinematic_sky: false,
             night_lights: None,
             stars: true,
         };
@@ -265,7 +258,6 @@ mod tests {
             atmosphere: false,
             sunlight: false,
             sky: false,
-            cinematic_sky: false,
             terrain: false,
             terrain_exaggeration: 1.0,
             ground_km: 0.0,

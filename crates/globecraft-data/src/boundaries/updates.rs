@@ -81,7 +81,10 @@ impl BoundaryUpdates {
                     let Some(output) = output.upgrade() else {
                         return;
                     };
-                    let previous = output.lock().unwrap().replace(snapshot);
+                    let previous = output
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .replace(snapshot);
                     drop(previous);
                     repaint();
                 }
@@ -90,7 +93,10 @@ impl BoundaryUpdates {
     }
 
     pub fn take_latest(&self) -> Option<BoundarySnapshot> {
-        self.latest.lock().unwrap().take()
+        self.latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 }
 

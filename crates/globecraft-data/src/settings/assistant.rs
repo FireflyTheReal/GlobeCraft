@@ -1,10 +1,11 @@
 //! The AI assistant's provider choice. API keys are not part of `settings.json`: they come from
 //! the environment, the session, or (when the user opts in) `assistant-keys.json`, which only
 //! the current user may read.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AssistantPreferences {
     /// A provider preset id; empty until chosen.
     pub provider: String,
@@ -18,9 +19,8 @@ pub struct AssistantPreferences {
 
 impl AssistantPreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
-        if let Some(provider) = value.get("provider").and_then(|v| v.as_str()) {
-            self.provider = provider.to_string();
-        }
+        super::lenient::apply(self, value, &[]);
+        // The tables keep their text entries and drop the rest.
         for (field, target) in [
             ("models", &mut self.models),
             ("base_urls", &mut self.base_urls),
@@ -32,25 +32,22 @@ impl AssistantPreferences {
                     .collect();
             }
         }
-        if let Some(remember) = value.get("remember_keys").and_then(|v| v.as_bool()) {
-            self.remember_keys = remember;
-        }
     }
 }
 
-fn keys_file() -> PathBuf {
-    crate::paths::cache_dir().join("assistant-keys.json")
+pub(crate) fn keys_path() -> PathBuf {
+    crate::paths::config_dir().join("assistant-keys.json")
 }
 
 /// Saved API keys by provider id (empty when none were saved or the file is unreadable).
 pub fn load_keys() -> BTreeMap<String, String> {
-    crate::keys::read_private(&keys_file())
+    crate::keys::read_private(&keys_path())
 }
 
 /// Replaces the saved API keys; an empty map removes the file. Runs on the caller's thread:
 /// call it from a background task.
 pub fn save_keys(keys: &BTreeMap<String, String>) -> Result<(), crate::Error> {
-    crate::keys::write_private(&keys_file(), keys)
+    crate::keys::write_private(&keys_path(), keys)
 }
 
 #[cfg(test)]

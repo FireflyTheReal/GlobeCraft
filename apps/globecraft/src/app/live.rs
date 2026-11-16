@@ -100,9 +100,7 @@ impl LiveState {
             globecraft_data::traffic::TrafficQuery {
                 enabled: query.earth && query.traffic,
                 key: query.tomtom_key,
-                latitude: query.cam.lat,
-                longitude: query.cam.lon,
-                altitude_km: query.cam.alt,
+                view: globecraft_data::ViewQuery::from(*query.cam),
             },
             wake(),
         );

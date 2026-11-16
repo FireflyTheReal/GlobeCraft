@@ -23,17 +23,23 @@ struct PlanetFile {
     sky_bytes: Vec<u8>,
 }
 
+/// A surface or sky picture, up to the largest size a planet may have.
+fn picture(bytes: &[u8]) -> Result<image::DynamicImage, crate::Error> {
+    crate::bounded::image(bytes, crate::bounded::ImageLimit::WORLD)
+}
+
 pub fn save_planet(
     path: &Path,
     name: &str,
     source: &str,
     sky: &str,
 ) -> Result<String, crate::Error> {
-    let texture_bytes = fs::read(source).map_err(|e| format!("Planet image: {e}"))?;
+    let texture_bytes =
+        fs::read(source).map_err(|e| crate::Error::msg(format!("Planet image: {e}")))?;
     let sky_bytes = if sky.trim().is_empty() {
         Vec::new()
     } else {
-        fs::read(sky).map_err(|e| format!("Sky: {e}"))?
+        fs::read(sky).map_err(|e| crate::Error::msg(format!("Sky: {e}")))?
     };
     fs::write(path, encode_planet(name, texture_bytes, sky_bytes)?)?;
     Ok(format!("Planet and sky embedded in {}", path.display()))
@@ -44,9 +50,9 @@ pub fn encode_planet(
     texture_bytes: Vec<u8>,
     sky_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, crate::Error> {
-    image::load_from_memory(&texture_bytes)?;
+    picture(&texture_bytes)?;
     if !sky_bytes.is_empty() {
-        image::load_from_memory(&sky_bytes)?;
+        picture(&sky_bytes)?;
     }
     Ok(serde_json::to_vec(&PlanetFile {
         version: 2,
@@ -73,19 +79,19 @@ pub fn decode_planet(
     let data = if doc.version == 1 {
         let rel = Path::new(&doc.texture);
         if rel.components().count() != 1 {
-            return Err("Invalid path".into());
+            return Err(crate::Error::msg("Invalid path"));
         }
         read_texture(&doc.texture)?
     } else if doc.version == 2 {
         doc.texture_bytes
     } else {
-        return Err("Unsupported version".into());
+        return Err(crate::Error::Unsupported("Unsupported version".into()));
     };
-    let planet = image::load_from_memory(&data)?.to_rgba8();
+    let planet = picture(&data)?.into_rgba8();
     let sky = if doc.sky_bytes.is_empty() {
         None
     } else {
-        Some(image::load_from_memory(&doc.sky_bytes)?.to_rgba8())
+        Some(picture(&doc.sky_bytes)?.into_rgba8())
     };
     Ok(LoadedPlanet {
         name: doc.name,

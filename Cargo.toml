@@ -7,6 +7,8 @@ members = [
     "crates/globecraft-assistant",
 ]
 default-members = ["apps/globecraft"]
+# The fuzz targets are their own workspace (nightly-only dependencies); see fuzz/README.md.
+exclude = ["fuzz"]
 resolver = "3"
 
 [workspace.package]
@@ -17,7 +19,8 @@ license = "MIT"
 
 [workspace.dependencies]
 globecraft-core = { path = "crates/globecraft-core" }
-globecraft-data = { path = "crates/globecraft-data" }
+# Without its default features; the app turns the updater on (feature `updater`).
+globecraft-data = { path = "crates/globecraft-data", default-features = false }
 globecraft-render = { path = "crates/globecraft-render", default-features = false }
 globecraft-assistant = { path = "crates/globecraft-assistant" }
 eframe = "0.36.2"
@@ -29,7 +32,7 @@ emath = "0.36.2"
 egui-wgpu = "0.36.2"
 egui_kittest = { version = "0.36.2", features = ["wgpu", "eframe", "snapshot"] }
 sys-locale = "0.3.2"
-self_update = { version = "1.3.0", default-features = false, features = ["github", "reqwest", "rustls", "async", "checksums", "archive-zip", "compression-zip-deflate", "archive-tar", "compression-tar-gz"] }
+self_update = { version = "1.3.0", default-features = false, features = ["github", "reqwest", "rustls", "async", "checksums", "archive-zip", "compression-zip-deflate", "archive-tar", "compression-tar-gz", "signatures"] }
 semver = "1.0"
 mgrs-convert = "0.1.0"
 sofars = "0.6.1"
@@ -52,7 +55,8 @@ unicode-normalization = "0.1.25"
 quick-xml = "0.42.0"
 kml = { version = "0.14.0", default-features = false }
 # Reads KMZ imports (bounded) and writes KMZ exports; kml decodes the extracted text.
-zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+# The version self_update uses, so one zip is built.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 rayon = "1.12.0"
 rstar = "0.13.0"
 geo-index = "0.4.0"
@@ -75,8 +79,13 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 
+# Light optimisation for the workspace keeps rebuilds quick; dependencies, built once,
+# are fully optimised so debug runs and tests stay fast. Run the app with --release.
 [profile.dev]
-opt-level = 2
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
 
 # Thin LTO keeps local release builds quick; the release workflow switches to fat
 # LTO with one codegen unit for published binaries. Panics keep unwinding, since the

@@ -32,7 +32,7 @@ pub(super) fn reference_text(reference: &quick_xml::events::BytesRef) -> Option<
 }
 
 /// The `Layer` elements that have a `Name`, with their `Title`, in document order.
-fn parse(bytes: &[u8]) -> Result<Vec<WmsLayer>, crate::Error> {
+pub(crate) fn parse(bytes: &[u8]) -> Result<Vec<WmsLayer>, crate::Error> {
     // Text is not trimmed by the reader and is added up: a title with `&amp;` or in
     // CDATA arrives in pieces (only its last piece used to be kept).
     let mut reader = quick_xml::Reader::from_reader(bytes);
@@ -101,7 +101,9 @@ fn parse(bytes: &[u8]) -> Result<Vec<WmsLayer>, crate::Error> {
         buffer.clear();
     }
     if layers.is_empty() {
-        return Err("the service lists no named layers (is it a WMS?)".into());
+        return Err(crate::Error::msg(
+            "the service lists no named layers (is it a WMS?)",
+        ));
     }
     Ok(layers)
 }

@@ -10,7 +10,15 @@ pub(super) struct PickedState {
     /// The flight, with its track and route.
     pub(super) flight: FlightSelection,
     pub(super) satellite: SatelliteSelection,
-    /// The flights with the picked one's newest position: (list it was made from,
-    /// that position's time, flights).
-    pub(super) snapshot: Option<(usize, f64, Arc<AircraftSnapshot>)>,
+    /// The flights with the picked one's newest position merged in.
+    pub(super) snapshot: Option<MergedFlights>,
+}
+
+/// The flight list with the picked flight's newest position merged in.
+pub(super) struct MergedFlights {
+    /// The list it was made from, kept (not its address) so a new list never matches.
+    pub(super) from: Arc<AircraftSnapshot>,
+    /// When the merged position was observed (Unix seconds).
+    pub(super) observed_unix: f64,
+    pub(super) flights: Arc<AircraftSnapshot>,
 }

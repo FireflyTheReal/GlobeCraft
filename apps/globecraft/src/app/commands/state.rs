@@ -1,11 +1,16 @@
 //! Whether each command can run now and whether it is on, for buttons and menus.
-use super::{CommandState, str_param};
+use super::CommandState;
 use crate::app::App;
 use globecraft_core::{body::Body, layers::MapLayer};
 use globecraft_data::settings::{
     UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
 };
 use serde_json::Value;
+
+/// A choice's text parameter, as the buttons and menus pass it.
+fn str_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+    params.get(key).and_then(Value::as_str).map(str::trim)
+}
 
 impl App {
     /// Whether a command is available and checked, for buttons and menus.
@@ -18,7 +23,7 @@ impl App {
             enabled: true,
             checked,
         };
-        let earth = self.explorer.active == Body::Earth;
+        let earth = self.explorer.on_earth();
         match id {
             "camera.autoRotate" => on(self.motion.auto_rotate),
             "ruler.enable" => on(self.measure.on),
@@ -56,7 +61,10 @@ impl App {
                 checked: false,
             },
             "assistant.stop" => CommandState {
+                #[cfg(feature = "assistant")]
                 enabled: self.assistant.busy(),
+                #[cfg(not(feature = "assistant"))]
+                enabled: false,
                 checked: false,
             },
             "layer.basemap" => CommandState {
@@ -68,6 +76,7 @@ impl App {
                 let layer = str_param(params, "layer").and_then(MapLayer::from_code);
                 CommandState {
                     enabled: earth
+                        && layer.is_none_or(Self::offers)
                         && layer
                             .and_then(MapLayer::parent)
                             .is_none_or(|parent| self.layer(parent)),
@@ -103,7 +112,7 @@ impl App {
                     .is_some_and(|m| m == self.settings.earth_model.code()))
             }
             "world.body" => on(match str_param(params, "body") {
-                Some("earth") => self.explorer.active == Body::Earth,
+                Some("earth") => self.explorer.on_earth(),
                 Some("moon") => self.explorer.active == Body::Moon,
                 Some("custom") => self.explorer.active == Body::Custom,
                 _ => false,
@@ -117,12 +126,14 @@ impl App {
                 on(self.settings.sidebar.open
                     && self.settings.sidebar.panel == SidebarPanel::Places)
             }
-            "ui.pane.assistant" => {
-                on(self.settings.workspace.right_pane == Some(RightPane::Assistant))
-            }
+            "ui.pane.assistant" => CommandState {
+                enabled: cfg!(feature = "assistant"),
+                checked: self.settings.workspace.right_pane == Some(RightPane::Assistant),
+            },
             "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
             "ui.leftPane" => on(self.settings.sidebar.open),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
+            "app.workOffline" => on(self.settings.offline),
             "ui.tileDiagnostics" => on(self.frame.diagnostics),
             "ui.timeline" => on(self.timeline.open),
             "ui.legend" => on(self.legend_open()),

@@ -11,15 +11,25 @@ authors = ["Julien Foss (@FireflyTheReal)"]
 workspace = true
 
 [features]
-default = ["gpu"]
+default = ["gpu", "standard"]
+# Everything a release download has: all optional parts except the experimental GPU
+# renderer. Release builds use `--no-default-features --features standard`.
+standard = ["updater", "assistant", "live"]
 gpu = ["globecraft-render/gpu"]
+# The self-updater; packagers that update through a package manager build without it.
+updater = ["globecraft-data/updater"]
+# The live feeds: aircraft, vessels, satellites, aurora, traffic, clouds and radar.
+# Without it their layers are not offered and their services are never asked.
+live = ["globecraft-data/live"]
+# The AI assistant pane and its model connections.
+assistant = ["dep:globecraft-assistant"]
 profiling = ["globecraft-data/profiling", "globecraft-render/profiling"]
 
 [dependencies]
 globecraft-core.workspace = true
 globecraft-data.workspace = true
 globecraft-render.workspace = true
-globecraft-assistant.workspace = true
+globecraft-assistant = { workspace = true, optional = true }
 serde_json.workspace = true
 # glow: the OpenGL interface renderer, used when wgpu cannot start (issue #1).
 eframe = { workspace = true, features = ["glow"] }

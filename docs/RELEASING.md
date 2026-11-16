@@ -5,8 +5,9 @@ binaries with Rust 1.95 (Flatpak builds use its Rust SDK extension). Portable ar
 native installers and Linux bundles also contain their desktop integration and
 runtime/package metadata. macOS keeps its Apple Silicon DMG and a ZIP of that
 same signed app bundle for in-app updates.
-These artifacts use `--no-default-features`: experimental GPU globe rendering is excluded
-from release downloads on every platform. CPU rendering remains the default.
+These artifacts use `--no-default-features --features standard`: experimental GPU globe
+rendering is excluded from release downloads on every platform, and everything else (the
+self-updater, the assistant, the live feeds) is in. CPU rendering remains the default.
 
 Each native build restores Cargo dependency caches through `Swatinem/rust-cache@v2`
 after installing Rust. Release cache keys include the target architecture and stay
@@ -109,7 +110,31 @@ and replaces the entire `GlobeCraft.app` bundle; `codesign --verify --deep --str
 checks the extracted bundle before replacement. The existing DMG remains the
 first-install download. The ZIP contains the same ad-hoc signed bundle as the DMG;
 checksums and ad-hoc signing do not establish independent publisher authenticity.
-No trusted signing key or attestation verification is configured.
+
+### Signed updates (zipsign)
+
+The updater archives (`*-update.zip`, `*-portable.zip`, `*.tar.gz`) can carry an
+ed25519 signature that builds check before installing, so a release replaced by
+someone with access to the GitHub account is refused. The key exists: its public half is
+`crates/globecraft-data/release-signing.pub`, and the private half was made on the
+maintainer's Mac in `~/Documents/GlobeCraft release signing key/` (back it up
+offline). A release fails while the `ZIPSIGN_PRIVATE_KEY` secret is missing, so no
+unsigned update reaches builds that check. To make a new key:
+
+1. On a trusted machine: `cargo install zipsign --locked --version '^0.2'`, then
+   `zipsign gen-key globecraft-release.key release-signing.pub`. Keep the private
+   `globecraft-release.key` out of the repository and back it up offline.
+2. Add the repository secret `ZIPSIGN_PRIVATE_KEY` with
+   `base64 < globecraft-release.key` as its value. The release workflow's
+   *Sign the updater archives* step then signs every updater archive before the
+   checksums are made. Without the secret it fails while `release-signing.pub`
+   holds a key, and only warns while that file is empty.
+3. Replace `crates/globecraft-data/release-signing.pub` with the new public
+   file (32 bytes) and commit it. Builds made from then on refuse any update archive
+   without a matching signature, so publish one signed release before relying on it.
+
+Losing the private key means shipping a build with a new public key through a manual
+download; keep the backup.
 
 After installation, **Restart to update** appears. Clicking it offers the existing
 save dialogs for a nonempty places tree and any loaded custom planet. Canceling
@@ -264,7 +289,7 @@ Python 3.12+ is required for the packaging helper. For a native Linux x86-64 bui
 
 ```sh
 python3 scripts/package_release.py validate --tag v0.3.0
-cargo build -p globecraft --release --no-default-features --locked
+cargo build -p globecraft --release --no-default-features --features standard --locked
 python3 scripts/package_release.py package --version 0.3.0 --target x86_64-unknown-linux-gnu --binary target/release/globecraft --output /tmp/globecraft-release
 ```
 
@@ -288,7 +313,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 python3 -m venv /tmp/globecraft-packaging
 /tmp/globecraft-packaging/bin/python -m pip install dmgbuild==1.6.7
 rustup target add aarch64-apple-darwin
-MACOSX_DEPLOYMENT_TARGET=11.0 cargo build -p globecraft --release --no-default-features --locked --target aarch64-apple-darwin
+MACOSX_DEPLOYMENT_TARGET=11.0 cargo build -p globecraft --release --no-default-features --features standard --locked --target aarch64-apple-darwin
 /tmp/globecraft-packaging/bin/python scripts/package_release.py package --version 0.3.0 --target aarch64-apple-darwin --binary target/aarch64-apple-darwin/release/globecraft --output /tmp/globecraft-release
 ```
 

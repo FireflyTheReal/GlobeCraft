@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Trip</name>
+<Style id="pin"><IconStyle><color>ff0000ff</color><scale>1.2</scale></IconStyle></Style>
+<Folder><name>Lake</name><open>1</open>
+<Placemark><name>Lindau</name><description><![CDATA[<b>Harbour</b>]]></description>
+<styleUrl>#pin</styleUrl><LookAt><longitude>9.68</longitude><latitude>47.54</latitude>
+<range>5000</range><tilt>30</tilt><heading>10</heading></LookAt>
+<Point><coordinates>9.6833,47.5458,400</coordinates></Point></Placemark>
+<Placemark><name>Route</name><LineString><coordinates>9.6,47.5 9.7,47.6 9.8,47.55</coordinates>
+</LineString></Placemark>
+<Placemark><name>Area</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+9,47 10,47 10,48 9,48 9,47</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+</Folder></Document></kml>

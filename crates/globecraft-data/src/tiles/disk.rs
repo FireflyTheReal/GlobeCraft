@@ -61,7 +61,7 @@ impl DiskCache {
         if provider == Provider::Wayback {
             base = base.join(
                 wayback_release(release)
-                    .ok_or("wayback: release not loaded")?
+                    .ok_or_else(|| crate::Error::msg("wayback: release not loaded"))?
                     .id
                     .to_string(),
             );

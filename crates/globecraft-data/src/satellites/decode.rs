@@ -7,20 +7,17 @@ fn num(v: &serde_json::Value, k: &str) -> Option<f64> {
         .or_else(|| v[k].as_str()?.parse().ok())
         .filter(|n: &f64| n.is_finite())
 }
-// Days since Unix epoch via proleptic Gregorian calendar (timezone is always UTC).
-fn unix_day(y: i64, m: i64, d: i64) -> i64 {
-    let y = y - i64::from(m <= 2);
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = m + if m > 2 { -3 } else { 9 };
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
+/// Element sets name years in four digits; anything else is not a date (a year near
+/// the integer limit overflowed the day count: found by fuzzing, 2026-11-16).
+const EPOCH_YEARS: std::ops::RangeInclusive<i64> = 1..=9999;
 fn parse_epoch(s: &str) -> Option<f64> {
     let (date, time) = s.split_once('T')?;
     let mut date = date.split('-');
-    let y: i64 = date.next()?.parse().ok()?;
+    let y: i64 = date
+        .next()?
+        .parse()
+        .ok()
+        .filter(|year| EPOCH_YEARS.contains(year))?;
     let m: i64 = date.next()?.parse().ok()?;
     let d: i64 = date.next()?.parse().ok()?;
     let mut time = time.trim_end_matches('Z').split(':');
@@ -42,9 +39,14 @@ fn parse_epoch(s: &str) -> Option<f64> {
     {
         return None;
     }
-    Some(unix_day(y, m, d) as f64 * 86400.0 + hour * 3600.0 + minute * 60.0 + second)
+    Some(
+        globecraft_core::time::days_from_civil(y, m, d) as f64 * 86400.0
+            + hour * 3600.0
+            + minute * 60.0
+            + second,
+    )
 }
-pub(super) fn parse_omm(
+pub(crate) fn parse_omm(
     value: &serde_json::Value,
     now_unix_secs: f64,
     group: SatelliteGroup,
@@ -121,6 +123,10 @@ mod validation_tests {
             "2024-01-01T24:00:00Z",
             "2024-01-01T00:60:00Z",
             "2024-01-01T00:00:NaNZ",
+            // Years the day count cannot hold (found by fuzzing).
+            "9223372036854775807-01-01T00:00:00Z",
+            "-9223372036854775808-01-01T00:00:00Z",
+            "0-01-01T00:00:00Z",
         ] {
             assert!(parse_epoch(epoch).is_none(), "{epoch}");
         }

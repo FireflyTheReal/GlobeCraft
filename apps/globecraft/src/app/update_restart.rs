@@ -17,6 +17,8 @@ pub(crate) struct RestartRequest {
     pub(crate) planet: Mutex<Option<PathBuf>>,
     pub(crate) installed_version: Mutex<Option<String>>,
     pub(crate) settings: Mutex<Option<globecraft_data::settings::Settings>>,
+    /// Why the saved settings could not be used at startup, for the status bar.
+    pub(crate) load_problem: Mutex<Option<String>>,
 }
 
 /// Updates (roadmap 10.2: one of the feature states split out of `App`): the service
@@ -35,7 +37,11 @@ pub(super) struct UpdateRestart {
 }
 impl UpdateRestart {
     pub(super) fn new(request: Arc<RestartRequest>) -> Self {
-        let error = request.error.lock().unwrap().take();
+        let error = request
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         Self {
             request,
             saving: false,
@@ -131,7 +137,13 @@ impl App {
             self.updates.restart.error = Some(format!("Save before restart failed: {error}"));
             return;
         }
-        *self.updates.restart.request.planet.lock().unwrap() = planet.clone();
+        *self
+            .updates
+            .restart
+            .request
+            .planet
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = planet.clone();
         self.updates.restart.kml = kml;
         self.updates.restart.planet = planet;
         self.updates.restart.saving = true;
@@ -145,7 +157,13 @@ impl App {
             && !self.files.jobs.is_busy()
         {
             self.saved.writer.settings(&self.settings);
-            *self.updates.restart.request.settings.lock().unwrap() = Some(self.settings.clone());
+            *self
+                .updates
+                .restart
+                .request
+                .settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self.settings.clone());
             if let globecraft_data::updater::UpdateState::ReadyToRestart { version } =
                 self.updates.service.state()
             {
@@ -155,7 +173,7 @@ impl App {
                     .request
                     .installed_version
                     .lock()
-                    .unwrap() = Some(version.clone());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(version.clone());
             }
             self.updates
                 .restart
@@ -184,7 +202,7 @@ mod tests {
         assert!(restart.kml.is_some());
         restart.file_completed(
             FileKind::SaveKml,
-            &Err(globecraft_data::Error::from("disk full")),
+            &Err(globecraft_data::Error::msg("disk full")),
         );
         assert!(!restart.saving);
         assert!(restart.error.unwrap().contains("disk full"));

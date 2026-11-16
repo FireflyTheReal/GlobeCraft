@@ -48,9 +48,14 @@ struct NominatimResult {
     #[serde(default, deserialize_with = "crate::json_fields::string")]
     display_name: Option<String>,
 }
-fn parse_geocode_response(value: serde_json::Value) -> Result<Vec<GeoResult>, crate::Error> {
+pub(crate) fn parse_geocode_response(
+    value: serde_json::Value,
+) -> Result<Vec<GeoResult>, crate::Error> {
     let mut out = Vec::new();
-    for item in value.as_array().ok_or("invalid search response")? {
+    for item in value
+        .as_array()
+        .ok_or_else(|| crate::Error::msg("invalid search response"))?
+    {
         let Ok(row) = serde_json::from_value::<NominatimResult>(item.clone()) else {
             continue;
         };
@@ -103,7 +108,7 @@ pub async fn photon_suggest(q: &str, lang: &str) -> Result<Vec<Suggestion>, crat
     Ok(parse_photon_response(v))
 }
 
-fn parse_photon_response(v: serde_json::Value) -> Vec<Suggestion> {
+pub(crate) fn parse_photon_response(v: serde_json::Value) -> Vec<Suggestion> {
     let mut out: Vec<Suggestion> = Vec::new();
     for f in v["features"].as_array().into_iter().flatten() {
         let Some((lat, lon)) = f

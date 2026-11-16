@@ -74,20 +74,18 @@ pub async fn legend_image(url: String) -> Result<RgbaImage, crate::Error> {
     })
     .await?;
     if image.width() < MIN_LEGEND_SIDE_PX || image.height() < MIN_LEGEND_SIDE_PX {
-        return Err(format!(
+        return Err(crate::Error::msg(format!(
             "the legend is {}×{} pixels, too small to show",
             image.width(),
             image.height()
-        )
-        .into());
+        )));
     }
     if image.width() > MAX_LEGEND_SIDE_PX || image.height() > MAX_LEGEND_SIDE_PX {
-        return Err(format!(
+        return Err(crate::Error::msg(format!(
             "the legend is {}×{} pixels, larger than {MAX_LEGEND_SIDE_PX}",
             image.width(),
             image.height()
-        )
-        .into());
+        )));
     }
     Ok(image)
 }

@@ -60,7 +60,9 @@ impl BackendPreference {
             Some("auto") => Self::Auto,
             Some("cpu") | None => Self::Cpu,
             Some(value) => {
-                eprintln!("Unknown GLOBECRAFT_RENDERER value {value:?}; using CPU rendering");
+                globecraft_data::log_line!(
+                    "Unknown GLOBECRAFT_RENDERER value {value:?}; using CPU rendering"
+                );
                 Self::Cpu
             }
         }
@@ -101,7 +103,9 @@ impl FrameRenderer {
         if self.preference != BackendPreference::Cpu {
             match gpu_call(initialize).and_then(|result| result) {
                 Ok(gpu) => self.gpu = Some(gpu),
-                Err(error) => eprintln!("GPU renderer unavailable; using CPU: {error}"),
+                Err(error) => {
+                    globecraft_data::log_line!("GPU renderer unavailable; using CPU: {error}")
+                }
             }
         }
     }
@@ -131,7 +135,9 @@ impl FrameRenderer {
         #[cfg(not(feature = "gpu"))]
         {
             if !self.initialized && self.preference != BackendPreference::Cpu {
-                eprintln!("GPU support is disabled in this build; using CPU renderer");
+                globecraft_data::log_line!(
+                    "GPU support is disabled in this build; using CPU renderer"
+                );
             }
             self.initialized = true;
         }
@@ -146,7 +152,7 @@ impl FrameRenderer {
                 }
                 Err((error, buffer, permanent)) => {
                     if permanent || !self.capacity_warning {
-                        eprintln!("GPU renderer using CPU fallback: {error}");
+                        globecraft_data::log_line!("GPU renderer using CPU fallback: {error}");
                     }
                     self.capacity_warning = true;
                     if permanent {

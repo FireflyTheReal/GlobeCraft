@@ -1,0 +1,3 @@
+ident	type	name	lat	lon	elevation_ft	iata	icao	country	city
+EDDM	large_airport	Munich Airport	48.3538	11.7861	1487	MUC	EDDM	DE	Munich
+LPPT	large_airport	Humberto Delgado	38.7813	-9.1359	374	LIS	LPPT	PT	Lisbon

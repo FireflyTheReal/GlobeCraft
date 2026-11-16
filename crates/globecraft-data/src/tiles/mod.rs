@@ -169,12 +169,11 @@ pub struct Tile {
 impl Tile {
     /// Decodes a Terrarium elevation tile into heights and block maxima.
     pub fn decode_elevation(bytes: &[u8]) -> Result<Self, crate::Error> {
-        let img = image::load_from_memory(bytes)
-            .map_err(crate::Error::from)?
-            .to_rgba8();
+        let img = crate::bounded::image(bytes, crate::bounded::ImageLimit::TILE)?.into_rgba8();
         let (w, h) = (img.width() as usize, img.height() as usize);
-        let elevation = Elevation::from_terrarium(w, h, img.as_raw())
-            .ok_or("elevation tiles must be square with a power-of-two size")?;
+        let elevation = Elevation::from_terrarium(w, h, img.as_raw()).ok_or_else(|| {
+            crate::Error::msg("elevation tiles must be square with a power-of-two size")
+        })?;
         Ok(Self {
             w,
             h,
@@ -201,9 +200,7 @@ impl Tile {
     }
     /// Decodes the same PNG/JPEG tile bytes used by the disk and network loaders.
     pub fn decode(bytes: &[u8]) -> Result<Self, crate::Error> {
-        let img = image::load_from_memory(bytes)
-            .map_err(crate::Error::from)?
-            .to_rgba8();
+        let img = crate::bounded::image(bytes, crate::bounded::ImageLimit::TILE)?.into_rgba8();
         Ok(Self {
             w: img.width() as usize,
             h: img.height() as usize,
@@ -323,6 +320,7 @@ impl Tile {
 
 mod cache;
 mod disk;
+mod downloads;
 pub mod source;
 pub use source::{Access, Prefetch, SourceKind, TileSource};
 mod elevation;

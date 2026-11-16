@@ -3,18 +3,18 @@
 //! computer or a URL, refreshed at an interval when it is a live feed. Each becomes a
 //! user layer with its own visibility, opacity and place in the order, saved in the
 //! settings. KML and KMZ keep their own path: they open into My Places.
-mod capabilities;
+pub(crate) mod capabilities;
 mod legend;
 pub mod presets;
 mod properties;
-mod raster;
+pub(crate) mod raster;
 mod saved;
 mod vector;
 
 pub use capabilities::{WmsLayer, wms_layers};
 pub use legend::{legend_image, wms_legend_url};
 pub use properties::format_time_utc;
-mod archive;
+pub(crate) mod archive;
 pub use archive::{ArchiveInfo, MBTILES_PREFIX, PMTILES_PREFIX, describe_archive};
 pub use raster::{RasterSnapshot, RasterTiles, test_tile};
 pub use saved::{SavedSources, export_sources, import_sources};

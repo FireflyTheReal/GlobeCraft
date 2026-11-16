@@ -23,7 +23,7 @@ pub(super) async fn download_clouds() -> Result<RgbaImage, crate::Error> {
     let bytes = crate::http::body(client.get(url), CLOUD_IMAGE_MAX_BYTES).await?;
     // Decode off the UI thread and keep only the working resolution in memory.
     tokio::task::spawn_blocking(move || {
-        let image = image::load_from_memory(&bytes)?;
+        let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?;
         Ok(image
             .resize_exact(2048, 1024, FilterType::Triangle)
             .to_rgba8())
@@ -39,22 +39,22 @@ pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {
         .pointer("/radar/past")
         .and_then(|v| v.as_array())
         .and_then(|v| v.last())
-        .ok_or("No radar frames available")?;
+        .ok_or_else(|| crate::Error::msg("No radar frames available"))?;
     let path = frame
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or("Radar path missing")?;
+        .ok_or_else(|| crate::Error::msg("Radar path missing"))?;
     if !path.starts_with("/v2/radar/")
         || !path[10..]
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '/')
     {
-        return Err("Unexpected radar path".into());
+        return Err(crate::Error::msg("Unexpected radar path"));
     }
     let time = frame
         .get("time")
         .and_then(|v| v.as_i64())
-        .ok_or("Radar time missing")?;
+        .ok_or_else(|| crate::Error::msg("Radar time missing"))?;
     let n = 1usize << TILE_ZOOM;
     let mut image = RgbaImage::new((n as u32) * TILE_SIZE, (n as u32) * TILE_SIZE);
     let mut accepted = 0;
@@ -73,7 +73,9 @@ pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {
                 let bytes = crate::http::body(client.get(url), RADAR_TILE_MAX_BYTES)
                     .await
                     .ok()?;
-                let image = image::load_from_memory(&bytes).ok()?.to_rgba8();
+                let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::TILE)
+                    .ok()?
+                    .into_rgba8();
                 Some((x, y, image))
             });
         }
@@ -96,7 +98,9 @@ pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {
         }
     }
     if accepted == 0 {
-        return Err("RainViewer radar tiles unavailable (check network/coverage)".into());
+        return Err(crate::Error::msg(
+            "RainViewer radar tiles unavailable (check network/coverage)",
+        ));
     }
     Ok(RadarFrame { image, time })
 }

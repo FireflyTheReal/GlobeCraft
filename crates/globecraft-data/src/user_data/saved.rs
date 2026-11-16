@@ -3,14 +3,15 @@
 //! saved in the settings. A source is identified by where its data comes from, not by
 //! its name.
 use super::{UserLayer, UserSource};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Recently added sources kept.
 pub const MAX_RECENT: usize = 12;
 /// Starred sources kept.
 pub const MAX_FAVORITES: usize = 100;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SavedSources {
     /// Starred, in the order they were starred.
     pub favorites: Vec<UserLayer>,
@@ -102,12 +103,14 @@ pub fn import_sources(bytes: &[u8]) -> Result<Vec<UserLayer>, crate::Error> {
             if let Some(format) = map.get("format").and_then(serde_json::Value::as_str)
                 && format != EXPORT_FORMAT
             {
-                return Err(format!("not a GlobeCraft source list ({format})").into());
+                return Err(crate::Error::msg(format!(
+                    "not a GlobeCraft source list ({format})"
+                )));
             }
             map.get("sources")
-                .ok_or("not a GlobeCraft source list (no sources)")?
+                .ok_or_else(|| crate::Error::msg("not a GlobeCraft source list (no sources)"))?
         }
-        _ => return Err("not a GlobeCraft source list".into()),
+        _ => return Err(crate::Error::msg("not a GlobeCraft source list")),
     };
     let mut saved = SavedSources::default();
     saved.apply(&serde_json::json!({ "favorites": list }));

@@ -27,35 +27,27 @@ pub(super) async fn adsb_lol(
         .expect("ADSB.lol pause poisoned");
     if let Some(until) = paused.filter(|until| *until > Instant::now()) {
         let left = until.saturating_duration_since(Instant::now()).as_secs() + 1;
-        return Err(
-            format!("ADSB.lol asked to wait (too many requests); again in {left} s").into(),
-        );
+        return Err(crate::Error::msg(format!(
+            "ADSB.lol asked to wait (too many requests); again in {left} s"
+        )));
     }
-    match crate::http::body_or_retry_after(request, limit + 1).await? {
-        crate::http::Fetched::Body(bytes) if bytes.len() as u64 > limit => {
-            Err(format!("Aircraft response exceeds {limit} bytes").into())
-        }
+    match crate::http::body_or_retry_after(request, limit).await? {
         crate::http::Fetched::Body(bytes) => Ok(bytes),
         crate::http::Fetched::RetryAfter(wait) => {
             let wait = wait.max(ADSB_LOL_MIN_PAUSE);
             *ADSB_LOL_PAUSED_UNTIL
                 .lock()
                 .expect("ADSB.lol pause poisoned") = Some(Instant::now() + wait);
-            Err(format!(
+            Err(crate::Error::msg(format!(
                 "ADSB.lol asked to wait (too many requests); again in {} s",
                 wait.as_secs()
-            )
-            .into())
+            )))
         }
     }
 }
 
 async fn response(request: reqwest::RequestBuilder, limit: u64) -> Result<Vec<u8>, crate::Error> {
-    let bytes = crate::http::body(request, limit + 1).await?;
-    if bytes.len() as u64 > limit {
-        return Err(format!("Aircraft response exceeds {limit} bytes").into());
-    }
-    Ok(bytes)
+    crate::http::body(request, limit).await
 }
 fn number(v: Option<&serde_json::Value>) -> Option<f64> {
     v.and_then(|v| v.as_f64()).filter(|v| v.is_finite())
@@ -72,7 +64,7 @@ pub(super) async fn download_global(url: String) -> Result<Arc<[Aircraft]>, crat
         move || -> Result<_, crate::Error> {
             let json: serde_json::Value = serde_json::from_slice(&bytes)?;
             if !json.get("states").is_some_and(|states| states.is_array()) {
-                return Err("OpenSky response lacks state vectors".into());
+                return Err(crate::Error::msg("OpenSky response lacks state vectors"));
             }
             Ok(parse_opensky(&json, now_unix()).into())
         },
@@ -92,7 +84,7 @@ pub(super) async fn download_local(
         move || -> Result<_, crate::Error> {
             let json: serde_json::Value = serde_json::from_slice(&bytes)?;
             if !json.get("ac").is_some_and(|aircraft| aircraft.is_array()) {
-                return Err("ADSB.lol response lacks aircraft".into());
+                return Err(crate::Error::msg("ADSB.lol response lacks aircraft"));
             }
             Ok(parse_adsb_lol(&json, now_unix()).into())
         },
@@ -100,7 +92,7 @@ pub(super) async fn download_local(
     .await
 }
 
-fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
+pub(crate) fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
     json.get("states")
         .and_then(|v| v.as_array())
         .into_iter()
@@ -153,7 +145,7 @@ fn parse_opensky(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
         .collect()
 }
 /// The aircraft of an ADSB.lol answer (`ac`), in the air with a recent position.
-pub(super) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
+pub(crate) fn parse_adsb_lol(json: &serde_json::Value, now: f64) -> Vec<Aircraft> {
     json.get("ac")
         .and_then(|v| v.as_array())
         .into_iter()

@@ -9,7 +9,7 @@ use super::App;
 use super::live_layers::{satellite_colour, satellite_symbol};
 use super::ui::surface::Surface;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke};
-use globecraft_core::{camera::Basis, math::now_unix};
+use globecraft_core::{camera::Basis, commands::SatelliteCommand, math::now_unix};
 use globecraft_data::satellites::{Satellite, SatellitePosition};
 use serde_json::{Value, json};
 
@@ -99,17 +99,10 @@ fn runs(points: impl Iterator<Item = Option<Pos2>>) -> Vec<Vec<Pos2>> {
 }
 
 impl App {
-    pub(super) fn run_satellite(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        match id {
-            "satellite.select" => {
-                let norad = p
-                    .get("norad")
-                    .and_then(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .or_else(|| v.as_u64().map(|n| n.to_string()))
-                    })
-                    .ok_or("norad (the satellite's catalogue number) is required")?;
+    pub(super) fn run_satellite(&mut self, command: SatelliteCommand) -> Result<Value, String> {
+        match command {
+            SatelliteCommand::Select(p) => {
+                let norad = p.norad.0;
                 let Some(satellite) = self
                     .live
                     .satellites
@@ -124,11 +117,10 @@ impl App {
                 self.picked.satellite.norad = Some(norad.clone());
                 Ok(json!({"norad": norad, "name": name}))
             }
-            "satellite.clear" => {
+            SatelliteCommand::Clear => {
                 self.picked.satellite.norad = None;
                 Ok(json!({"cleared": true}))
             }
-            _ => Err(format!("unknown command {id}")),
         }
     }
 

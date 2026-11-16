@@ -137,7 +137,9 @@ pub fn parse_features(
     set.value_field = reader.value_field().map(str::to_owned);
     let set = set.finish();
     if set.points.is_empty() && set.lines.is_empty() {
-        return Err("no points or lines with coordinates were found".into());
+        return Err(crate::Error::msg(
+            "no points or lines with coordinates were found",
+        ));
     }
     Ok(set)
 }
@@ -372,7 +374,9 @@ fn coordinates(element: &quick_xml::events::BytesStart) -> Option<(f64, f64)> {
 fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::Error> {
     let text = String::from_utf8_lossy(bytes);
     let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-    let header = lines.next().ok_or("the file is empty")?;
+    let header = lines
+        .next()
+        .ok_or_else(|| crate::Error::msg("the file is empty"))?;
     let delimiter = [',', ';', '\t', '|']
         .into_iter()
         .max_by_key(|d| header.matches(*d).count())
@@ -383,7 +387,7 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
     let columns: Vec<String> = headers.iter().map(|c| c.to_ascii_lowercase()).collect();
     let find = |names: &[&str]| columns.iter().position(|c| names.contains(&c.as_str()));
     let lat = find(&["lat", "latitude", "y", "lat_dd", "decimallatitude"])
-        .ok_or("no latitude column (lat, latitude or y)")?;
+        .ok_or_else(|| crate::Error::msg("no latitude column (lat, latitude or y)"))?;
     let lon = find(&[
         "lon",
         "lng",
@@ -393,7 +397,7 @@ fn csv(bytes: &[u8], reader: &mut PropertyReader) -> Result<FeatureSet, crate::E
         "lon_dd",
         "decimallongitude",
     ])
-    .ok_or("no longitude column (lon, lng, longitude or x)")?;
+    .ok_or_else(|| crate::Error::msg("no longitude column (lon, lng, longitude or x)"))?;
     let name = find(&["name", "title", "label", "place", "city"]);
     let mut set = FeatureSet::default();
     for line in lines {
@@ -559,7 +563,7 @@ pub async fn load(
         let address = crate::keys::fill(&location)?;
         crate::http::body(client.get(&address), MAX_BYTES + 1)
             .await
-            .map_err(|error| crate::keys::without_address(error, &location))?
+            .map_err(crate::keys::redact_error)?
     } else {
         crate::cpu::run(crate::cpu::Service::Files, move || {
             use std::io::Read;
@@ -572,11 +576,10 @@ pub async fn load(
         .await?
     };
     if bytes.len() as u64 > MAX_BYTES {
-        return Err(format!(
+        return Err(crate::Error::msg(format!(
             "the file is larger than {} MiB, the most a layer reads",
             MAX_BYTES / (1024 * 1024)
-        )
-        .into());
+        )));
     }
     crate::cpu::run(crate::cpu::Service::Features, move || {
         parse_features(format, &bytes, value_field.as_deref())
@@ -734,5 +737,29 @@ mod tests {
         // Without any value, no field is claimed.
         let plain = parse_features(FeatureFormat::Csv, b"lat,lon\n1,2\n", None).unwrap();
         assert_eq!((plain.value_field, plain.value_range), (None, None));
+    }
+
+    #[test]
+    fn damaged_feature_files_are_refused_without_panicking() {
+        let samples: [(FeatureFormat, &[u8]); 3] = [
+            (
+                FeatureFormat::GeoJson,
+                br#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"title":"M 4.6","mag":4.6,"time":"2026-11-04T09:38+01:00"},"geometry":{"type":"Point","coordinates":[142.1,38.3]}},{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}"#,
+            ),
+            (
+                FeatureFormat::Gpx,
+                br#"<gpx><wpt lat="1" lon="2"><name>A</name><time>2026-11-04T09:38:00Z</time></wpt><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="3" lon="4"/></trkseg></trk></gpx>"#,
+            ),
+            (
+                FeatureFormat::Csv,
+                "name;lat;lon;mag;time\n\"A, B\";48,1;11,5;4,6;2026-11-04T09:38é1234\nC;-91;200;x;1793785080000\n".as_bytes(),
+            ),
+        ];
+        let mut inputs = crate::test_inputs::Inputs::new(15);
+        for (format, sample) in samples {
+            for _ in 0..10_000 {
+                let _ = parse_features(format, &inputs.mutate(sample), Some("mag"));
+            }
+        }
     }
 }

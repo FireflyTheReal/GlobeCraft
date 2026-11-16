@@ -175,7 +175,7 @@ impl App {
                                 .0
                                 .on_hover_text(lang.text("cmd-time-window-help"));
                             if icon_button(ui, &t, "close", lang.text("cmd-ui-timeline"), false) {
-                                run = Some(("ui.timeline", json!({"visible": false})));
+                                run = Some(("ui.timeline", json!({"on": false})));
                             }
                         });
                     });

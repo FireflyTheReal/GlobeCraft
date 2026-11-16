@@ -1,6 +1,14 @@
 //! The command catalog. Every user action in GlobeCraft is a command with a stable id and JSON
 //! parameters: ribbon buttons, menus, keyboard shortcuts, the command palette and the AI
 //! assistant all run the same commands. This module only describes them; frontends execute.
+//!
+//! A frontend runs a command by id: [`Command::parse`] reads the id and its parameters
+//! into a typed [`Command`] (see `command` and `params`).
+
+mod command;
+pub mod params;
+
+pub use command::*;
 
 /// What a command touches beyond the globe view, which decides whether the assistant must ask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,6 +19,9 @@ pub enum Reach {
     Files,
     /// Discards work or closes the application.
     Destructive,
+    /// May download from web addresses given in its parameters (not built-in sources): the
+    /// assistant asks first when the parameters name one.
+    Network,
     /// Opens interface surfaces; meaningless without a person at the window.
     Interface,
 }
@@ -87,8 +98,8 @@ pub struct CommandSpec {
 }
 
 impl CommandSpec {
-    /// Whether the assistant may run this command (after the user's approval for [`Reach::Files`]
-    /// and [`Reach::Destructive`]).
+    /// Whether the assistant may run this command (after the user's approval for [`Reach::Files`],
+    /// [`Reach::Destructive`] and [`Reach::Network`]).
     pub fn assistant_may_run(&self) -> bool {
         self.reach != Reach::Interface
     }
@@ -97,6 +108,7 @@ impl CommandSpec {
         match self.reach {
             Reach::Files => Some("it reads or writes files on this computer"),
             Reach::Destructive => Some("it discards work or closes GlobeCraft"),
+            Reach::Network => Some("it downloads from a web address you have not added yourself"),
             Reach::View | Reach::Interface => None,
         }
     }
@@ -249,7 +261,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         "places-remove",
         "delete",
         Explore,
-        View,
+        // No undo (Edit › Undo covers the ruler only): the placemark and its folder are gone.
+        Destructive,
         r#"{"type":"object","properties":{"name":{"type":"string","description":"Placemark or folder name"}},"required":["name"]}"#
     ),
     command!("places.open", "places-open", "open", File, Files, NO_PARAMS),
@@ -350,7 +363,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "view-open-link",
         "goto_xy",
         Explore,
-        View,
+        Network,
         r#"{"type":"object","properties":{"link":{"type":"string","description":"A globecraft://view?lat=…&lon=… link (optional alt, heading, tilt, basemap, layers, data)"}},"required":["link"]}"#
     ),
     command!(
@@ -391,7 +404,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data-add",
         "web_data",
         Map,
-        View,
+        Network,
         r#"{"type":"object","properties":{"preset":{"type":"string","enum":["gebco","emodnet_bathymetry","gibs_true_colour","forest_loss","earthquakes"],"description":"A library source: GEBCO seafloor, EMODnet European bathymetry, NASA GIBS yesterday's true colour, Global Forest Watch tree cover loss, USGS earthquakes of the past week"},"url":{"type":"string","description":"Instead of a preset: a web address. For tiles a template with {z}, {x} and {y}; for a WMS its service address; for features a GeoJSON, GPX or CSV file"},"kind":{"type":"string","enum":["tiles","wms","features"]},"layers":{"type":"string","description":"WMS layer names, comma-separated"},"format":{"type":"string","enum":["geojson","gpx","csv"]},"refresh_minutes":{"type":"integer","description":"Reload a feature URL this often; 0 loads it once"},"size_by":{"type":"string","description":"For features: the property points are sized and ranked by (for example mag or population); left out, the usual ones are found"},"max_zoom":{"type":"integer"},"name":{"type":"string"},"attribution":{"type":"string"}}}"#
     ),
     command!(
@@ -439,7 +452,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         "data-remove",
         "delete",
         Map,
-        View,
+        // No undo: the layer's address, style and settings are gone.
+        Destructive,
         r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#
     ),
     // Layers.
@@ -473,7 +487,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "eye",
         Map,
         View,
-        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","cinematic_sky","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
+        r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","radar","clouds","aurora","flights","vessels","satellites","roads","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
         "layer.opacity",
@@ -869,7 +883,8 @@ pub const COMMANDS: &[CommandSpec] = &[
         "style-reset",
         "symbology",
         View,
-        View,
+        // No undo: every style choice returns to its default.
+        Destructive,
         NO_PARAMS
     ),
     // Help.
@@ -897,7 +912,40 @@ pub const COMMANDS: &[CommandSpec] = &[
         Interface,
         NO_PARAMS
     ),
+    command!(
+        "help.copyDiagnostics",
+        "help-copy-diagnostics",
+        "copy",
+        Help,
+        Interface,
+        NO_PARAMS
+    ),
     command!("ui.about", "ui-about", "logo", Help, Interface, NO_PARAMS),
+    command!(
+        "file.exportSettings",
+        "file-export-settings",
+        "export",
+        File,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
+        "file.importSettings",
+        "file-import-settings",
+        "open",
+        File,
+        Interface,
+        NO_PARAMS
+    ),
+    // Interface: the assistant itself needs the network, so only a person turns it off.
+    command!(
+        "app.workOffline",
+        "app-work-offline",
+        "web_data",
+        File,
+        Interface,
+        TOGGLE
+    ),
     command!(
         "app.quit",
         "app-quit",

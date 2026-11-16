@@ -1,6 +1,7 @@
 //! Places commands (`places.*`).
-use super::{position, str_param};
+use super::position;
 use crate::app::App;
+use globecraft_core::commands::PlacesCommand;
 use globecraft_core::placemark::{PlaceItem, PlaceNode, Placemark};
 use serde_json::{Value, json};
 
@@ -9,27 +10,27 @@ const PLACE_FLY_ALTITUDE_KM: f64 = 3.0;
 
 impl App {
     /// Runs a `places.*` command.
-    pub(super) fn run_places(&mut self, id: &str, p: &Value) -> Result<Value, String> {
-        Ok(match id {
-            "places.addAtCenter" => {
-                if let Some(name) = str_param(p, "name") {
-                    self.places.new_name = name.to_string();
+    pub(super) fn run_places(&mut self, command: PlacesCommand) -> Result<Value, String> {
+        Ok(match command {
+            PlacesCommand::AddAtCenter(p) => {
+                if let Some(name) = p.name {
+                    self.places.new_name = name;
                 }
                 self.add_center_placemark();
-                if let Some(desc) = str_param(p, "description")
+                if let Some(desc) = p.description
                     && let Some(node) = self
                         .places
                         .selection
                         .and_then(|id| self.places.items.find_mut(id))
                 {
-                    *node.description_mut() = desc.to_string();
+                    *node.description_mut() = desc;
                 }
                 self.reveal_places();
                 json!({"added": {"lat": self.cam.lat, "lon": self.cam.lon}})
             }
-            "places.add" => {
-                let (lat, lon) = position(p)?;
-                let parent = match str_param(p, "folder").filter(|f| !f.is_empty()) {
+            PlacesCommand::Add(p) => {
+                let (lat, lon) = position(p.lat, p.lon)?;
+                let parent = match p.folder.as_deref().filter(|f| !f.is_empty()) {
                     Some(folder) => Some(
                         self.places
                             .items
@@ -40,18 +41,15 @@ impl App {
                     ),
                     None => None,
                 };
-                let name = str_param(p, "name")
-                    .filter(|n| !n.is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| {
-                        self.lang.format(
-                            "placemarks-generated-name",
-                            &[("number", (self.places.items.len() + 1).to_string().into())],
-                        )
-                    });
+                let name = p.name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
+                    self.lang.format(
+                        "placemarks-generated-name",
+                        &[("number", (self.places.items.len() + 1).to_string().into())],
+                    )
+                });
                 let node = PlaceNode::marker(Placemark {
                     name: name.clone(),
-                    desc: str_param(p, "description").unwrap_or_default().to_string(),
+                    desc: p.description.unwrap_or_default(),
                     lat,
                     lon,
                 });
@@ -59,16 +57,16 @@ impl App {
                 self.places.items.insert(parent, node);
                 json!({"added": name})
             }
-            "places.addFolder" => {
-                if let Some(name) = str_param(p, "name") {
-                    self.places.new_name = name.to_string();
+            PlacesCommand::AddFolder(p) => {
+                if let Some(name) = p.name {
+                    self.places.new_name = name;
                 }
                 self.add_places_folder();
                 self.reveal_places();
                 json!({})
             }
-            "places.flyTo" => {
-                let name = str_param(p, "name").ok_or("name is required")?;
+            PlacesCommand::FlyTo(p) => {
+                let name = &p.name;
                 let node = self
                     .places
                     .items
@@ -81,12 +79,12 @@ impl App {
                 self.fly_to(lat, lon, PLACE_FLY_ALTITUDE_KM);
                 json!({"flying_to": {"lat": lat, "lon": lon}})
             }
-            "places.remove" => {
-                let name = str_param(p, "name").ok_or("name is required")?;
+            PlacesCommand::Remove(p) => {
+                let name = p.name;
                 let id = self
                     .places
                     .items
-                    .find_by_name(name)
+                    .find_by_name(&name)
                     .map(PlaceNode::id)
                     .ok_or_else(|| format!("no place named '{name}'"))?;
                 self.places.items.remove(id);
@@ -95,25 +93,26 @@ impl App {
                 }
                 json!({"removed": name})
             }
-            "places.open" => {
+            PlacesCommand::Open => {
                 self.pick_kml_open();
                 json!({})
             }
-            "places.save" => {
+            PlacesCommand::Save => {
                 let path = self.resolve_kml_path(&self.places.kml_path.clone());
                 self.save_kml_to(path.clone());
                 json!({"saving": path})
             }
-            "places.saveAs" => {
+            PlacesCommand::SaveAs => {
                 self.pick_kml_save_as();
                 json!({})
             }
-            "places.export" => self.export_places(str_param(p, "path"), str_param(p, "format"))?,
-            "places.clear" => {
+            PlacesCommand::Export(p) => {
+                self.export_places(p.path.as_deref(), p.format.as_deref())?
+            }
+            PlacesCommand::Clear => {
                 self.clear_places();
                 json!({})
             }
-            _ => return Err(format!("unknown command '{id}'")),
         })
     }
 }

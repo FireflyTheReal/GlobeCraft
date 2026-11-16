@@ -8,6 +8,9 @@ use super::osm_tiles::content::{TileBounds, TileKey};
 use crate::vector_tiles::{Snapshot, Spec, TileStream, View};
 use std::sync::Arc;
 
+/// The close-up place names loaded for the view at one moment.
+pub type PlaceNameSnapshot = Arc<Snapshot<PlaceTile>>;
+
 /// Tiles across the view: as the border tiles' finer choice, so zoom 13 takes over
 /// from the border tiles' zoom 12 where those would go finer.
 const TILES_ACROSS_VIEW: f64 = 4.0;
@@ -47,7 +50,7 @@ fn size_bytes(tile: &PlaceTile) -> usize {
             .sum::<usize>()
 }
 
-fn decode(key: TileKey, bytes: &[u8]) -> Option<PlaceTile> {
+pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<PlaceTile> {
     Some(PlaceTile {
         bounds: key.bounds(),
         labels: super::osm_tiles::place_labels(key, bytes)?,
@@ -61,27 +64,22 @@ pub struct PlaceNameTiles {
 }
 
 impl PlaceNameTiles {
-    /// `view`: latitude, longitude, altitude (km) and tilt (degrees).
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
         enabled: bool,
-        view: (f64, f64, f64, f64),
+        view: crate::ViewQuery,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
         let stream = self.stream.get_or_insert_with(|| TileStream::new(&SPEC));
-        let (latitude, longitude, altitude_km, tilt_deg) = view;
-        if !enabled || altitude_km > MAX_ALTITUDE_KM {
+        if !enabled || view.altitude_km > MAX_ALTITUDE_KM {
             stream.hide();
             return;
         }
         stream.update(
             runtime,
             View {
-                latitude,
-                longitude,
-                altitude_km,
-                tilt_deg,
+                at: view,
                 floor: SPEC.min_zoom,
             },
             repaint,
@@ -89,7 +87,7 @@ impl PlaceNameTiles {
     }
 
     /// The names on show: the same snapshot while the tiles do not change.
-    pub fn snapshot(&self) -> Option<Arc<Snapshot<PlaceTile>>> {
+    pub fn snapshot(&self) -> Option<PlaceNameSnapshot> {
         self.stream.as_ref().and_then(TileStream::shared_snapshot)
     }
 }

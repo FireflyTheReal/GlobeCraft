@@ -40,6 +40,10 @@ pub struct Values {
     pub inflight: usize,
     pub resident_bytes: usize,
     pub count: usize,
+    /// Camera altitude, metres (`frame.raster`).
+    pub altitude_m: usize,
+    /// Camera tilt, tenths of a degree (`frame.raster`).
+    pub tilt_decideg: usize,
 }
 pub fn init() {
     LOGGER.get_or_init(|| {
@@ -72,7 +76,7 @@ pub fn init() {
 fn write_events(mut writer: impl Write, events: mpsc::Receiver<Message>) -> std::io::Result<()> {
     writeln!(
         writer,
-        "unix_us,operation,elapsed_us,width,height,inflight,resident_bytes,count,dropped_events"
+        "unix_us,operation,elapsed_us,width,height,inflight,resident_bytes,count,dropped_events,altitude_m,tilt_decideg"
     )?;
     loop {
         match events.recv_timeout(PROFILE_FLUSH_INTERVAL) {
@@ -80,7 +84,7 @@ fn write_events(mut writer: impl Write, events: mpsc::Receiver<Message>) -> std:
                 let v = event.values;
                 writeln!(
                     writer,
-                    "{},{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{},{},{},{},{}",
                     event.unix_us,
                     event.operation,
                     event.elapsed_us,
@@ -89,7 +93,9 @@ fn write_events(mut writer: impl Write, events: mpsc::Receiver<Message>) -> std:
                     v.inflight,
                     v.resident_bytes,
                     v.count,
-                    DROPPED.load(Ordering::Relaxed)
+                    DROPPED.load(Ordering::Relaxed),
+                    v.altitude_m,
+                    v.tilt_decideg
                 )?;
             }
             Ok(Message::Flush(done)) => {

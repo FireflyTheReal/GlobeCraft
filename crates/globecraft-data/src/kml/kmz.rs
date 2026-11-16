@@ -9,7 +9,12 @@ const MAX_DOCUMENT_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Return the first `.kml` entry in archive order, matching GeoRust's KMZ reader.
 pub(super) fn decode(path: &str) -> Result<String, crate::Error> {
-    let mut archive = ZipArchive::new(std::fs::File::open(path)?)?;
+    decode_from(std::fs::File::open(path)?)
+}
+
+/// [`decode`] for an archive from any seekable source.
+pub(super) fn decode_from(source: impl Read + std::io::Seek) -> Result<String, crate::Error> {
+    let mut archive = ZipArchive::new(source)?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
         if !entry.name().to_ascii_lowercase().ends_with(".kml") {
@@ -18,15 +23,14 @@ pub(super) fn decode(path: &str) -> Result<String, crate::Error> {
         let mut xml = Vec::new();
         entry.take(MAX_DOCUMENT_BYTES + 1).read_to_end(&mut xml)?;
         if xml.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(format!(
+            return Err(crate::Error::msg(format!(
                 "KMZ document exceeds the {} MiB import limit",
                 MAX_DOCUMENT_BYTES / (1024 * 1024)
-            )
-            .into());
+            )));
         }
         return Ok(super::text_of(xml));
     }
-    Err("KMZ archive contains no KML document".into())
+    Err(crate::Error::msg("KMZ archive contains no KML document"))
 }
 
 pub(super) fn encode(xml: &[u8]) -> Result<Vec<u8>, crate::Error> {

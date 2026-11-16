@@ -84,10 +84,9 @@ impl Renderer {
                         profile.values.width = request.width;
                         profile.values.height = request.height;
                         profile.values.inflight = cache.inflight();
-                        // The view: altitude in metres and tilt in tenths of a degree, so a
-                        // capture shows where slow frames happened.
-                        profile.values.resident_bytes = (request.cam.alt * 1000.0) as usize;
-                        profile.values.count = (request.cam.tilt * 10.0) as usize;
+                        // The view, so a capture shows where slow frames happened.
+                        profile.values.altitude_m = (request.cam.alt * 1000.0) as usize;
+                        profile.values.tilt_decideg = (request.cam.tilt * 10.0) as usize;
                     }
                     let mut frame = backend.render(request, &cache, buffer);
                     if let Some(compare) = request.compare {
@@ -314,8 +313,7 @@ impl App {
             lod_scale,
             level_blend: true,
             fixed_level: None,
-            night_lights: (self.layer(MapLayer::NightLights)
-                && self.explorer.active == globecraft_core::body::Body::Earth)
+            night_lights: (self.layer(MapLayer::NightLights) && self.explorer.on_earth())
                 .then(|| self.night_lights_edition()),
             stars: self.layer(MapLayer::Stars),
         }
@@ -355,8 +353,7 @@ impl App {
             cfg,
             compare,
             presentation,
-            aircraft: (self.layer(MapLayer::Flights)
-                && self.explorer.active == globecraft_core::body::Body::Earth)
+            aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
                 .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
             live_layers: (self.layer(MapLayer::Roads)
                 || self.layer(MapLayer::Traffic)
@@ -470,8 +467,11 @@ impl App {
                     Some(ctx.load_texture("globe", img, egui::TextureOptions::LINEAR))
             }
         }
-        if let Some((_, _, previous)) = self.frame.image.replace((w, h, Arc::new(buf)))
-            && let Ok(previous) = Arc::try_unwrap(previous)
+        if let Some(previous) = self.frame.image.replace(super::frame::Frame {
+            width: w,
+            height: h,
+            pixels: Arc::new(buf),
+        }) && let Ok(previous) = Arc::try_unwrap(previous.pixels)
         {
             self.frame.renderer.worker.recycle(previous);
         }

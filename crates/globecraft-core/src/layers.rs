@@ -16,7 +16,6 @@ pub enum MapLayer {
     Stars,
     /// NASA's Milky Way map behind the globe.
     MilkyWay,
-    CinematicSky,
     Radar,
     Clouds,
     Flights,
@@ -84,7 +83,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 29] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -97,7 +96,6 @@ impl MapLayer {
         Self::Sunlight,
         Self::Stars,
         Self::MilkyWay,
-        Self::CinematicSky,
         Self::Radar,
         Self::Clouds,
         Self::Aurora,
@@ -131,7 +129,6 @@ impl MapLayer {
             Self::Sunlight => "sunlight",
             Self::Stars => "stars",
             Self::MilkyWay => "milky_way",
-            Self::CinematicSky => "cinematic_sky",
             Self::Radar => "radar",
             Self::Clouds => "clouds",
             Self::Aurora => "aurora",
@@ -171,7 +168,6 @@ impl MapLayer {
             Self::Sunlight => "layers-sunlight-toggle",
             Self::Stars => "layers-stars-toggle",
             Self::MilkyWay => "layers-milky-way-toggle",
-            Self::CinematicSky => "sky-cinematic",
             Self::Radar => "layers-weather-toggle",
             Self::Clouds => "layers-clouds-toggle",
             Self::Aurora => "layers-aurora-toggle",
@@ -204,7 +200,7 @@ impl MapLayer {
             Self::Grid | Self::GridLabels => "graticule",
             Self::Atmosphere => "atmosphere",
             Self::Sunlight => "sun",
-            Self::Stars | Self::CinematicSky => "stars",
+            Self::Stars => "stars",
             Self::MilkyWay => "planet",
             Self::Radar => "radar",
             Self::Clouds => "cloud",
@@ -243,8 +239,7 @@ impl MapLayer {
             | Self::Sunlight
             | Self::NightLights
             | Self::Stars
-            | Self::MilkyWay
-            | Self::CinematicSky => LayerGroup::Sky,
+            | Self::MilkyWay => LayerGroup::Sky,
             Self::Radar | Self::Clouds | Self::Aurora => LayerGroup::Weather,
             Self::Flights | Self::Vessels | Self::Satellites => LayerGroup::LiveObjects,
             Self::Roads | Self::Traffic | Self::Railways | Self::Ferries | Self::Airports => {
@@ -257,7 +252,6 @@ impl MapLayer {
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::GridLabels => Some(Self::Grid),
-            Self::CinematicSky => Some(Self::MilkyWay),
             _ => None,
         }
     }
@@ -278,6 +272,22 @@ impl MapLayer {
         )
     }
 
+    /// Whether the layer is a live feed: data that changes by the minute, from a
+    /// tracking, weather or traffic service. A build without the feeds does not offer
+    /// these layers.
+    pub fn is_feed(self) -> bool {
+        matches!(
+            self,
+            Self::Radar
+                | Self::Clouds
+                | Self::Aurora
+                | Self::Flights
+                | Self::Vessels
+                | Self::Satellites
+                | Self::Traffic
+        )
+    }
+
     /// Live feeds from tracking and traffic services start hidden on every launch, as they always
     /// did: opening GlobeCraft never contacts them until the user asks. Terrain is a view
     /// preference and is remembered.
@@ -291,13 +301,6 @@ impl MapLayer {
             self,
             Self::CountryBorders | Self::StateBorders | Self::PlaceLabels | Self::Atmosphere
         )
-    }
-
-    /// Whether the layer has its own switch in the interface. Cinematic Sky was
-    /// dropped (2026-10-26): the Milky Way shows whenever it is on. Its code still
-    /// works in commands.
-    pub fn listed(self) -> bool {
-        self != Self::CinematicSky
     }
 
     /// Whether the layer has its own opacity (roadmap 6.1): the ones laid over the
@@ -318,17 +321,15 @@ impl MapLayer {
     /// Whether "solo" (show only this layer) hides the layer when another is soloed:
     /// the map's content, not the globe's look (relief, atmosphere, light, sky).
     pub fn soloable(self) -> bool {
-        self.listed()
-            && !matches!(
-                self,
-                Self::Terrain
-                    | Self::Atmosphere
-                    | Self::Sunlight
-                    | Self::Stars
-                    | Self::MilkyWay
-                    | Self::CinematicSky
-                    | Self::GridLabels
-            )
+        !matches!(
+            self,
+            Self::Terrain
+                | Self::Atmosphere
+                | Self::Sunlight
+                | Self::Stars
+                | Self::MilkyWay
+                | Self::GridLabels
+        )
     }
 
     fn bit(self) -> u32 {
@@ -403,6 +404,20 @@ impl FromIterator<MapLayer> for LayerSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The feeds are the layers a build without the `live` feature leaves out: each
+    /// asks a third-party service and starts hidden, and none is on by default.
+    #[test]
+    fn feeds_are_live_layers_that_start_hidden() {
+        let feeds: Vec<_> = MapLayer::ALL.into_iter().filter(|l| l.is_feed()).collect();
+        assert_eq!(feeds.len(), 7);
+        for layer in feeds {
+            assert!(layer.is_live() && layer.starts_hidden(), "{layer:?}");
+            assert!(!layer.default_visible(), "{layer:?}");
+        }
+        // Map tiles are live data but not feeds.
+        assert!(!MapLayer::Roads.is_feed() && !MapLayer::Terrain.is_feed());
+    }
 
     #[test]
     fn codes_are_unique_and_roundtrip() {

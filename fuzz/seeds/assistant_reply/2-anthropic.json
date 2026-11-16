@@ -1,0 +1,1 @@
+{"type": "message", "content": [{"type": "text", "text": "Hi"}, {"type": "tool_use", "id": "t1", "name": "run_command", "input": {"id": "camera.flyTo"}}], "stop_reason": "tool_use", "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 2}}

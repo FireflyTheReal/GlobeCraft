@@ -8,6 +8,15 @@
     windows_subsystem = "windows"
 )]
 
+/// `watchdog.checkpoint(name)` in profiling builds and nothing otherwise, so a pass
+/// can be marked in one line.
+macro_rules! profile_checkpoint {
+    ($watchdog:ident, $name:literal) => {
+        #[cfg(feature = "profiling")]
+        $watchdog.checkpoint($name);
+    };
+}
+
 mod app;
 mod presentation;
 use app::{App, RestartRequest, WINDOW_TITLE};
@@ -20,18 +29,42 @@ const APP_ICON_PNG: &[u8] = std::cfg_select! {
 };
 
 fn main() -> Result<(), eframe::Error> {
+    globecraft_data::run_log::install_panic_hook();
     #[cfg(feature = "profiling")]
     globecraft_data::profiling::init();
-    // First start after the rename: bring settings and caches over from EarthCraft.
-    if let Err(error) = globecraft_data::migrate_legacy_data() {
-        eprintln!("Could not copy EarthCraft settings and caches: {error}");
+    // The cache folder moves to the system's cache location, once.
+    let cache_move = globecraft_data::migrate_cache();
+    // First start after the rename: bring settings and caches over from EarthCraft. Before
+    // the run log opens, which creates the data folder (an existing folder ends migration).
+    let migration = globecraft_data::migrate_legacy_data();
+    // Then settings and keys leave the cache folder for the configuration folder.
+    let config_move = globecraft_data::migrate_config();
+    globecraft_data::run_log::init();
+    if let Err(error) = cache_move {
+        globecraft_data::log_line!("Could not move the cache folder: {error}");
+    }
+    if let Err(error) = migration {
+        globecraft_data::log_line!("Could not copy EarthCraft settings and caches: {error}");
+    }
+    if let Err(error) = config_move {
+        globecraft_data::log_line!("Could not move settings to the configuration folder: {error}");
     }
     // Downloads of the border pipeline removed on 2026-10-25.
     std::thread::spawn(globecraft_data::remove_retired_caches);
     let restart = Arc::new(RestartRequest::default());
     let mut renderer = eframe::Renderer::Wgpu;
     loop {
-        let settings = globecraft_data::settings::Settings::load();
+        let (settings, load_problem) = globecraft_data::settings::Settings::load();
+        globecraft_data::network::set_offline(settings.offline);
+        // Before anything reads a key: they are read from where this setting keeps them.
+        globecraft_data::keys::keep_in_keychain(settings.keys_in_keychain);
+        if let Some(problem) = load_problem {
+            globecraft_data::log_line!("{problem}");
+            *restart
+                .load_problem
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(problem);
+        }
         let mut viewport = egui::ViewportBuilder::default()
             .with_inner_size(INITIAL_WINDOW_SIZE_POINTS)
             .with_title(WINDOW_TITLE)
@@ -70,7 +103,9 @@ fn main() -> Result<(), eframe::Error> {
         if let Err(error) = &result
             && presentation::retry_with_glow(renderer, error)
         {
-            eprintln!("The wgpu interface renderer could not start ({error}); using OpenGL");
+            globecraft_data::log_line!(
+                "The wgpu interface renderer could not start ({error}); using OpenGL"
+            );
             renderer = eframe::Renderer::Glow;
             continue;
         }
@@ -80,13 +115,21 @@ fn main() -> Result<(), eframe::Error> {
         if !restart.requested.swap(false, Ordering::AcqRel) {
             return Ok(());
         }
-        if restart.error.lock().unwrap().is_some() {
+        if restart
+            .error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
             continue;
         }
         match self_update::restart::restart() {
             Ok(never) => match never {},
             Err(error) => {
-                *restart.error.lock().unwrap() = Some(format!(
+                *restart
+                    .error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(format!(
                     "Restart failed: {error}. Save your work and relaunch GlobeCraft manually, or click Restart to update to retry."
                 ));
             }

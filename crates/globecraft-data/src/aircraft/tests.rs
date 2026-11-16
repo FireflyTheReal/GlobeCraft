@@ -1,10 +1,11 @@
 use super::*;
 use snapshot::{Samples, prepare};
+use std::time::Duration;
+#[cfg(feature = "live")]
 use std::{
     io::{Read, Write},
     net::TcpListener,
     sync::mpsc,
-    time::Duration,
 };
 
 fn flight(hex: &str, observed: f64, latitude: f64) -> Aircraft {
@@ -84,6 +85,7 @@ fn snapshot_reads_share_the_same_data_and_a_stopped_service_reports_an_error() {
         updates,
         latest,
         stopped: false,
+        _unused_publisher: None,
     };
     let first = service.snapshot();
     assert!(Arc::ptr_eq(&first, &service.snapshot()));
@@ -93,6 +95,7 @@ fn snapshot_reads_share_the_same_data_and_a_stopped_service_reports_an_error() {
     assert!(Arc::ptr_eq(&first.aircraft, &service.snapshot().aircraft));
 }
 
+#[cfg(feature = "live")]
 fn server(status: &str, body: String) -> (String, std::thread::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -119,6 +122,7 @@ fn server(status: &str, body: String) -> (String, std::thread::JoinHandle<String
     (format!("http://{address}"), thread)
 }
 
+#[cfg(feature = "live")]
 #[test]
 fn live_service_fetches_both_sources_off_ui_and_publishes_without_duplicate_requests() {
     let now = globecraft_core::math::now_unix();
@@ -186,6 +190,7 @@ fn live_service_fetches_both_sources_off_ui_and_publishes_without_duplicate_requ
     );
 }
 
+#[cfg(feature = "live")]
 #[test]
 fn service_wakes_after_http_failure_and_does_not_fetch_local_above_its_altitude_limit() {
     let (url, server) = server("503 Service Unavailable", String::new());
@@ -219,6 +224,7 @@ fn service_wakes_after_http_failure_and_does_not_fetch_local_above_its_altitude_
     server.join().unwrap();
 }
 
+#[cfg(feature = "live")]
 #[test]
 fn disabling_pauses_expiry_publication_and_enabling_discards_expired_positions() {
     let (global_url, global) = server("200 OK", "{\"states\":[]}".into());
@@ -278,4 +284,37 @@ fn disabling_pauses_expiry_publication_and_enabling_discards_expired_positions()
     }
     global.join().unwrap();
     local.join().unwrap();
+}
+
+/// A build without the live feeds starts no worker: asking for flights changes nothing,
+/// and the service does not report itself stopped.
+#[cfg(not(feature = "live"))]
+#[test]
+fn a_build_without_live_feeds_asks_for_nothing() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // Nothing listens here: a request would show as an error in the snapshot.
+    let mut service = LiveAircraft::with_sources(
+        runtime.handle(),
+        || {},
+        "http://127.0.0.1:9/states".into(),
+        "http://127.0.0.1:9/v2".into(),
+    );
+    let query = AircraftQuery {
+        enabled: true,
+        latitude: 10.0,
+        longitude: 20.0,
+        altitude_km: 1000.0,
+        radius_km: 0.0,
+    };
+    for _ in 0..3 {
+        service.update(query);
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(20)).await });
+    }
+    let snapshot = service.snapshot();
+    assert!(snapshot.aircraft.is_empty());
+    assert!(snapshot.error.is_none(), "the service is idle, not stopped");
+    assert!(snapshot.global.loaded.is_none() && snapshot.local.loaded.is_none());
 }

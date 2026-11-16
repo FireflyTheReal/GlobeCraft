@@ -45,14 +45,14 @@ impl AuroraGrid {
             json.get(key)
                 .and_then(serde_json::Value::as_str)
                 .and_then(globecraft_core::time::parse_iso)
-                .ok_or_else(|| format!("aurora forecast without {key}"))
+                .ok_or_else(|| crate::Error::msg(format!("aurora forecast without {key}")))
         };
         let observed = time("Observation Time")?;
         let forecast = time("Forecast Time")?;
         let rows = json
             .get("coordinates")
             .and_then(serde_json::Value::as_array)
-            .ok_or("aurora forecast without coordinates")?;
+            .ok_or_else(|| crate::Error::msg("aurora forecast without coordinates"))?;
         let mut values = vec![0u8; LONGITUDES * LATITUDES].into_boxed_slice();
         let mut filled = 0usize;
         for row in rows {
@@ -71,7 +71,9 @@ impl AuroraGrid {
             filled += 1;
         }
         if filled < LONGITUDES * LATITUDES / 2 {
-            return Err(format!("aurora forecast has only {filled} grid values").into());
+            return Err(crate::Error::msg(format!(
+                "aurora forecast has only {filled} grid values"
+            )));
         }
         Ok(Self {
             observed,
@@ -109,13 +111,14 @@ impl LiveAurora {
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.error = Some("NOAA SWPC disconnected".into());
+                    self.error = Some(crate::Error::msg("NOAA SWPC disconnected"));
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if enabled
+        if crate::live::ENABLED
+            && enabled
             && self.rx.is_none()
             && self
                 .attempted

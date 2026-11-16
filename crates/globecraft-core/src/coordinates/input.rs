@@ -257,4 +257,17 @@ mod tests {
             assert!(parse_coordinate_query(input).unwrap().is_none(), "{input}");
         }
     }
+
+    #[test]
+    fn any_text_is_parsed_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(2);
+        let pieces = [
+            "0", "1", "5", "9", "60", ".", ",", "-", "+", "°", "'", "\"", "′", "″", "N", "S", "E",
+            "W", "U", "P", "T", "M", "Z", " ", "é", "日", "33U", "UPS", "32U MV",
+        ];
+        for _ in 0..50_000 {
+            let text = inputs.text(&pieces, 10);
+            let _ = parse_coordinate_query(&text);
+        }
+    }
 }

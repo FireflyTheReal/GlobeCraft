@@ -4,6 +4,7 @@
 //! over them.
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, Shape, Stroke, TextureHandle, Vec2};
 use globecraft_core::camera::Basis;
+use globecraft_core::commands::DataCommand;
 use globecraft_data::user_data::{
     FeatureSet, RasterSnapshot, RasterTiles, UserLayer, UserSource, VectorLayer,
 };
@@ -89,7 +90,7 @@ impl UserLayers {
         ctx: &egui::Context,
         runtime: &globecraft_data::runtime::ServiceRuntime,
         layers: &[UserLayer],
-        view: (f64, f64, f64, f64),
+        view: globecraft_data::ViewQuery,
         earth: bool,
         scene_unix: f64,
     ) {
@@ -129,8 +130,10 @@ impl UserLayers {
             if !layer.visible || !earth {
                 continue;
             }
-            let wake = ctx.clone();
-            let repaint = move || wake.request_repaint();
+            let repaint = {
+                let ctx = ctx.clone();
+                move || ctx.request_repaint()
+            };
             match &mut loaded.stream {
                 Stream::Raster { tiles, snapshot } => {
                     tiles.set_date(date.clone());
@@ -578,11 +581,7 @@ impl super::App {
         id
     }
 
-    fn user_layer_index(&self, params: &serde_json::Value) -> Result<usize, String> {
-        let id = params
-            .get("id")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("id must be a user layer's id (see info.view)")?;
+    fn user_layer_index(&self, id: u64) -> Result<usize, String> {
         self.settings
             .user_layers
             .iter()
@@ -593,23 +592,17 @@ impl super::App {
     /// The `data.*` commands and `ui.addData`.
     pub(super) fn run_user_data(
         &mut self,
-        id: &str,
-        p: &serde_json::Value,
+        command: DataCommand,
     ) -> Result<serde_json::Value, String> {
         use globecraft_data::user_data::{FeatureFormat, is_url, presets, wms_template};
         use serde_json::json;
-        let text = |key: &str| {
-            p.get(key)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-        };
-        Ok(match id {
-            "ui.addData" => {
+        Ok(match command {
+            DataCommand::OpenAddData => {
                 self.windows.add_data = Some(Default::default());
                 json!({})
             }
-            "data.add" => {
-                let layer = if let Some(code) = text("preset") {
+            DataCommand::Add(p) => {
+                let layer = if let Some(code) = p.preset.as_deref() {
                     let preset = presets::find(code).ok_or_else(|| {
                         let codes: Vec<&str> = presets::PRESETS.iter().map(|p| p.code).collect();
                         format!("unknown preset; one of {}", codes.join(", "))
@@ -625,26 +618,27 @@ impl super::App {
                         preset: Some(preset.code.to_owned()),
                     }
                 } else {
-                    let url = text("url").ok_or("give a preset, or a url and its kind")?;
+                    let url = p
+                        .url
+                        .as_deref()
+                        .ok_or("give a preset, or a url and its kind")?;
                     // Files on this computer go through the Add Data window, which
                     // the user drives; commands only take web addresses.
                     if !is_url(url) {
                         return Err("url must start with https:// or http://".into());
                     }
-                    let source = match text("kind").unwrap_or("tiles") {
+                    let source = match p.kind.as_deref().unwrap_or("tiles") {
                         "tiles" => UserSource::Tiles {
                             template: url.to_owned(),
                             min_zoom: 0,
-                            max_zoom: p
-                                .get("max_zoom")
-                                .and_then(serde_json::Value::as_u64)
-                                .map_or(18, |z| z.min(22) as u8),
+                            max_zoom: p.max_zoom.map_or(18, |z| z.min(22) as u8),
                             tile_px: 256,
                         },
                         "wms" => UserSource::Tiles {
                             template: wms_template(
                                 url,
-                                text("layers")
+                                p.layers
+                                    .as_deref()
                                     .ok_or("a WMS needs layers (names, comma-separated)")?,
                             ),
                             min_zoom: 0,
@@ -653,25 +647,24 @@ impl super::App {
                         },
                         "features" => UserSource::Features {
                             location: url.to_owned(),
-                            format: text("format")
+                            format: p
+                                .format
+                                .as_deref()
                                 .and_then(FeatureFormat::from_code)
                                 .or_else(|| FeatureFormat::guess(url))
                                 .ok_or("format must be geojson, gpx or csv")?,
-                            refresh_minutes: p
-                                .get("refresh_minutes")
-                                .and_then(serde_json::Value::as_u64)
-                                .map_or(0, |m| m.min(24 * 60) as u32),
-                            value_field: text("size_by").map(str::to_owned),
+                            refresh_minutes: p.refresh_minutes.map_or(0, |m| m.min(24 * 60) as u32),
+                            value_field: p.size_by.clone(),
                         },
                         _ => return Err("kind must be tiles, wms or features".into()),
                     };
                     UserLayer {
                         id: 0,
-                        name: text("name").unwrap_or(url).to_owned(),
+                        name: p.name.as_deref().unwrap_or(url).to_owned(),
                         source,
                         visible: true,
                         opacity: 1.0,
-                        attribution: text("attribution").unwrap_or_default().to_owned(),
+                        attribution: p.attribution.clone().unwrap_or_default(),
                         color: "#ffb000".into(),
                         preset: None,
                     }
@@ -680,8 +673,9 @@ impl super::App {
                 let id = self.add_user_layer(layer);
                 json!({"id": id, "name": name})
             }
-            "data.search" => {
-                let words: Vec<String> = text("query")
+            DataCommand::Search(p) => {
+                let words: Vec<String> = p
+                    .query
                     .unwrap_or_default()
                     .split_whitespace()
                     .map(str::to_lowercase)
@@ -719,33 +713,26 @@ impl super::App {
                     .collect();
                 json!({"results": results, "hint": "add one with data.add {\"preset\": …}"})
             }
-            "data.remove" => {
-                let index = self.user_layer_index(p)?;
+            DataCommand::Remove(p) => {
+                let index = self.user_layer_index(p.id)?;
                 let layer = self.settings.user_layers.remove(index);
                 json!({"removed": layer.id, "name": layer.name})
             }
-            "data.show" => {
-                let index = self.user_layer_index(p)?;
+            DataCommand::Show(p) => {
+                let index = self.user_layer_index(p.id)?;
                 let layer = &mut self.settings.user_layers[index];
-                layer.visible = p
-                    .get("visible")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(!layer.visible);
+                layer.visible = p.visible.unwrap_or(!layer.visible);
                 json!({"id": layer.id, "visible": layer.visible})
             }
-            "data.opacity" => {
-                let index = self.user_layer_index(p)?;
-                let opacity = p
-                    .get("opacity")
-                    .and_then(serde_json::Value::as_f64)
-                    .ok_or("opacity must be a number from 0 to 1")?;
+            DataCommand::Opacity(p) => {
+                let index = self.user_layer_index(p.id)?;
                 let layer = &mut self.settings.user_layers[index];
-                layer.opacity = (opacity as f32).clamp(0.0, 1.0);
+                layer.opacity = (p.opacity as f32).clamp(0.0, 1.0);
                 json!({"id": layer.id, "opacity": layer.opacity})
             }
-            "data.move" => {
-                let index = self.user_layer_index(p)?;
-                let up = text("direction") != Some("down");
+            DataCommand::Move(p) => {
+                let index = self.user_layer_index(p.id)?;
+                let up = p.direction.as_deref() != Some("down");
                 let layers = &mut self.settings.user_layers;
                 // Up is towards the top of the drawing order: the end of the list.
                 let target = if up {
@@ -756,8 +743,8 @@ impl super::App {
                 layers.swap(index, target);
                 json!({"id": layers[target].id, "position": target})
             }
-            "data.zoomTo" => {
-                let index = self.user_layer_index(p)?;
+            DataCommand::ZoomTo(p) => {
+                let index = self.user_layer_index(p.id)?;
                 let layer_id = self.settings.user_layers[index].id;
                 let [south, west, north, east] = self
                     .user_layers
@@ -773,7 +760,6 @@ impl super::App {
                 )?;
                 json!({"lat": lat, "lon": lon, "altitude_km": altitude_km})
             }
-            _ => return Err(format!("unknown command '{id}'")),
         })
     }
 

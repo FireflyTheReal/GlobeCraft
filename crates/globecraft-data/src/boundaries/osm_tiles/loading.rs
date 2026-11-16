@@ -189,7 +189,7 @@ async fn fetch_tile(key: TileKey, template: &str) -> Result<Filtered, crate::Err
     crate::cpu::run(crate::cpu::Service::Features, move || {
         let bytes = gunzip_if_needed(bytes)?;
         Filtered::from_mvt(&bytes)
-            .ok_or_else(|| crate::Error::from(format!("malformed vector tile {url}")))
+            .ok_or_else(|| crate::Error::msg(format!("malformed vector tile {url}")))
     })
     .await
 }
@@ -205,7 +205,7 @@ async fn fetch_archived_tile(key: TileKey, archives: &str) -> Result<Filtered, c
             tile.extend(gunzip_if_needed(bytes)?);
         }
         Filtered::from_mvt(&tile).ok_or_else(|| {
-            crate::Error::from(format!(
+            crate::Error::msg(format!(
                 "malformed vector tile {}/{}/{}",
                 key.z, key.x, key.y
             ))
@@ -359,7 +359,8 @@ mod source_benchmark {
             response.error_for_status()?.bytes().await?.to_vec()
         };
         let moved = bytes.len() as u64;
-        let tile = Filtered::from_mvt(&gunzip_if_needed(bytes)?).ok_or("malformed tile")?;
+        let tile = Filtered::from_mvt(&gunzip_if_needed(bytes)?)
+            .ok_or_else(|| crate::Error::msg("malformed tile"))?;
         Ok((tile, moved))
     }
 

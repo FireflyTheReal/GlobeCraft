@@ -3,10 +3,7 @@
 //! under the pointer, the distance and height there, marked on the globe too.
 use super::App;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Vec2};
-use globecraft_core::{
-    body::Body,
-    profile::{self, ProfilePoint},
-};
+use globecraft_core::profile::{self, ProfilePoint};
 use globecraft_data::tiles::Provider;
 
 /// Samples along the whole ruler.
@@ -71,7 +68,7 @@ impl App {
     /// The ruler's profile, requesting the elevation tiles it still needs. `None`
     /// off the Earth or with fewer than two points on a path.
     pub(super) fn ruler_profile(&self) -> Option<Profile> {
-        if self.explorer.active != Body::Earth {
+        if !self.explorer.on_earth() {
             return None;
         }
         let model = self.active_earth_model();

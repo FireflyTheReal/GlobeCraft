@@ -4,9 +4,7 @@ use crate::network::{
     TILE_USER_AGENT, TRAFFIC_USER_AGENT, USER_DATA_USER_AGENT, VESSELS_USER_AGENT,
     WAYBACK_USER_AGENT,
 };
-use crate::paths::cache_dir;
-use std::{path::PathBuf, time::Duration};
-const MAX_CACHE_FILENAME_CHARS: usize = 120;
+use std::time::Duration;
 const JSON_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const JSON_READ_TIMEOUT: Duration = Duration::from_secs(90);
 /// Whole-request ceiling for boundary JSON and PMTiles range reads, including a slow
@@ -15,18 +13,9 @@ const BOUNDARY_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Concurrent PMTiles range reads across every archive. They all come from the same
 /// release host, so separate layers share one limit instead of multiplying it.
 const BOUNDARY_RANGE_CONCURRENCY: usize = 6;
-/// A place search (Nominatim) answers within a second or two.
+/// Place search (Nominatim): a stalled connection must not leave the search pending.
 const SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SEARCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
-
-pub(crate) fn geo_cache_path(url: &str) -> PathBuf {
-    let clean: String = url
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    let start = clean.len().saturating_sub(MAX_CACHE_FILENAME_CHARS);
-    cache_dir().join("geo").join(&clean[start..])
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Policy {
@@ -46,6 +35,9 @@ pub(crate) enum Policy {
     UserData,
 }
 pub(crate) fn client(policy: Policy) -> Result<reqwest::Client, crate::Error> {
+    if crate::network::offline() {
+        return Err(crate::Error::Offline);
+    }
     use std::{
         collections::HashMap,
         sync::{Mutex, OnceLock},
@@ -117,18 +109,31 @@ pub(crate) fn range_limit(policy: Policy) -> Option<&'static tokio::sync::Semaph
     (policy == Policy::Boundary)
         .then(|| BOUNDARY.get_or_init(|| tokio::sync::Semaphore::new(BOUNDARY_RANGE_CONCURRENCY)))
 }
+/// A response body of at most `limit` bytes; [`crate::Error::TooLarge`] for a longer one,
+/// rather than the first `limit` bytes of it (a cut CSV would load with rows missing).
 pub(crate) async fn body(
     request: reqwest::RequestBuilder,
     limit: u64,
 ) -> Result<Vec<u8>, crate::Error> {
-    let mut response = request.send().await?.error_for_status()?;
+    let response = request.send().await?.error_for_status()?;
+    read_limited(response, limit).await
+}
+async fn read_limited(
+    mut response: reqwest::Response,
+    limit: u64,
+) -> Result<Vec<u8>, crate::Error> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit)
+    {
+        return Err(crate::Error::TooLarge { limit });
+    }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
-        let remaining = (limit as usize).saturating_sub(bytes.len());
-        bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-        if bytes.len() as u64 >= limit {
-            break;
+        if (bytes.len() + chunk.len()) as u64 > limit {
+            return Err(crate::Error::TooLarge { limit });
         }
+        bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)
 }
@@ -152,7 +157,9 @@ pub(crate) async fn body_or_retry_after(
         Conditional::Body { bytes, .. } => Fetched::Body(bytes),
         Conditional::RetryAfter(wait) => Fetched::RetryAfter(wait),
         Conditional::NotModified => {
-            return Err("304 Not Modified for an unconditional request".into());
+            return Err(crate::Error::msg(
+                "304 Not Modified for an unconditional request",
+            ));
         }
     })
 }
@@ -174,7 +181,7 @@ pub(crate) async fn conditional_body(
     request: reqwest::RequestBuilder,
     limit: u64,
 ) -> Result<Conditional, crate::Error> {
-    let mut response = request.send().await?;
+    let response = request.send().await?;
     let status = response.status();
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS
         || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
@@ -190,7 +197,7 @@ pub(crate) async fn conditional_body(
     if status == reqwest::StatusCode::NOT_MODIFIED {
         return Ok(Conditional::NotModified);
     }
-    response = response.error_for_status()?;
+    let response = response.error_for_status()?;
     let header = |name: reqwest::header::HeaderName| {
         response
             .headers()
@@ -202,14 +209,7 @@ pub(crate) async fn conditional_body(
         header(reqwest::header::ETAG),
         header(reqwest::header::LAST_MODIFIED),
     );
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        let remaining = (limit as usize).saturating_sub(bytes.len());
-        bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-        if bytes.len() as u64 >= limit {
-            break;
-        }
-    }
+    let bytes = read_limited(response, limit).await?;
     Ok(Conditional::Body {
         bytes,
         etag,
@@ -221,7 +221,6 @@ pub(crate) async fn parse_json(bytes: Vec<u8>) -> Result<serde_json::Value, crat
         .await?
         .map_err(Into::into)
 }
-/// Fetch boundary JSON with bounded retries and disk-cache fallback.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,10 +241,14 @@ mod tests {
         (url, job)
     }
     #[tokio::test]
-    async fn body_caps_reads_and_rejects_http_errors() {
-        let (url, job) = server(vec![("200 OK", "hello world")]).await;
+    async fn body_rejects_long_responses_and_http_errors() {
+        let (url, job) = server(vec![("200 OK", "hello world"), ("200 OK", "hello")]).await;
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        assert_eq!(body(client.get(url), 4).await.unwrap(), b"hell");
+        assert!(matches!(
+            body(client.get(&url), 4).await,
+            Err(crate::Error::TooLarge { limit: 4 })
+        ));
+        assert_eq!(body(client.get(&url), 5).await.unwrap(), b"hello");
         job.await.unwrap();
         let (url, job) = server(vec![("500 Server Error", "bad")]).await;
         assert!(matches!(

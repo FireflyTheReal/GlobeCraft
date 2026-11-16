@@ -163,10 +163,7 @@ struct Shown<T> {
 /// Where and how the view looks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct View {
-    pub(crate) latitude: f64,
-    pub(crate) longitude: f64,
-    pub(crate) altitude_km: f64,
-    pub(crate) tilt_deg: f64,
+    pub(crate) at: crate::ViewQuery,
     /// Tiles at least this fine (e.g. the level a layer's features start at).
     pub(crate) floor: u8,
 }
@@ -571,15 +568,19 @@ fn insert<T>(shared: &mut Shared<T>, spec: &Spec<T>, key: TileKey, tile: T, now:
 pub(crate) fn wanted<T>(spec: &Spec<T>, view: View) -> (u8, Vec<TileKey>) {
     let floor = view.floor.clamp(spec.min_zoom, spec.max_zoom);
     let skip = |zoom: u8| spec.skip_zoom == Some(zoom);
-    let mut zoom = ideal_zoom(view.latitude, view.altitude_km, spec.tiles_across_view)
-        .round()
-        .clamp(f64::from(floor), f64::from(spec.max_zoom)) as u8;
+    let mut zoom = ideal_zoom(
+        view.at.latitude,
+        view.at.altitude_km,
+        spec.tiles_across_view,
+    )
+    .round()
+    .clamp(f64::from(floor), f64::from(spec.max_zoom)) as u8;
     if skip(zoom) && zoom < spec.max_zoom {
         zoom += 1;
     }
-    let radius = view_radius_deg(view.altitude_km, view.tilt_deg);
+    let radius = view_radius_deg(view.at.altitude_km, view.at.tilt_deg);
     loop {
-        let tiles = around(zoom, view.latitude, view.longitude, radius);
+        let tiles = around(zoom, view.at.latitude, view.at.longitude, radius);
         let limit = if zoom <= floor {
             spec.max_floor_tiles
         } else {
@@ -642,7 +643,7 @@ async fn fetch_many_stored<T: Send + 'static>(
 ) -> Result<Vec<(TileKey, Result<(T, Vec<u8>), crate::Error>)>, crate::Error> {
     let archives = template
         .strip_prefix(crate::map_data::PMTILES_PREFIX)
-        .ok_or("map data tiles need GlobeCraft's archives")?
+        .ok_or_else(|| crate::Error::msg("map data tiles need GlobeCraft's archives"))?
         .to_owned();
     let tiles: Vec<(u8, u32, u32)> = keys.iter().map(|key| (key.z, key.x, key.y)).collect();
     let parts = crate::map_data::tile_parts_many(&tiles, &archives).await?;
@@ -658,7 +659,7 @@ async fn fetch_many_stored<T: Send + 'static>(
                             bytes.extend(crate::map_data::gunzip_if_needed(part)?);
                         }
                         let tile = (spec.decode)(key, &bytes).ok_or_else(|| {
-                            crate::Error::from(format!(
+                            crate::Error::msg(format!(
                                 "malformed {} tile {}/{}/{}",
                                 spec.set, key.z, key.x, key.y
                             ))
@@ -720,10 +721,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let runtime = crate::runtime::ServiceRuntime::new().unwrap();
         let view = View {
-            latitude: 48.1,
-            longitude: 11.6,
-            altitude_km: 400.0,
-            tilt_deg: 0.0,
+            at: crate::ViewQuery {
+                latitude: 48.1,
+                longitude: 11.6,
+                altitude_km: 400.0,
+                tilt_deg: 0.0,
+            },
             floor: 4,
         };
         let (_, keys) = wanted(&TEST_SPEC, view);

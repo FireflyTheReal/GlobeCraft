@@ -1,0 +1,186 @@
+{
+  "sky": {
+    "enabled": true,
+    "cinematic": true,
+    "stars": false
+  },
+  "controllers": {
+    "enabled": true,
+    "selected": "",
+    "profiles": {}
+  },
+  "appearance": {
+    "theme": "light",
+    "ui_font": "",
+    "map_font": ""
+  },
+  "navigation": {
+    "pan_sensitivity": 0.8,
+    "zoom_sensitivity": 1.7,
+    "rotation_sensitivity": 1.0,
+    "invert_scroll": true,
+    "navigator": "classic",
+    "startup": {
+      "latitude": 48.137,
+      "longitude": 11.575,
+      "altitude_km": 900.0,
+      "heading_deg": 30.0
+    }
+  },
+  "cache": {
+    "decoded_mib": 384,
+    "disk_mib": 2048,
+    "borders_mib": 64
+  },
+  "sidebar": {
+    "panel": "places",
+    "open": false,
+    "places_pinned": true,
+    "width_points": 300.0,
+    "pinned_places_height_points": 300.0
+  },
+  "workspace": {
+    "ribbon_tab": "view",
+    "ribbon_minimized": true,
+    "right_pane": "assistant",
+    "right_open": [
+      "assistant"
+    ],
+    "right_width_points": 380.0
+  },
+  "layers": {
+    "visible": [
+      "country_borders",
+      "place_labels",
+      "terrain",
+      "grid",
+      "atmosphere"
+    ],
+    "basemap": "streets",
+    "terrain_exaggeration": 2.0
+  },
+  "assistant": {
+    "provider": "anthropic",
+    "models": {
+      "anthropic": "claude-opus-5-5"
+    },
+    "base_urls": {},
+    "remember_keys": true
+  },
+  "coordinate_display": {
+    "format": "dms",
+    "precision": 4
+  },
+  "screenshot_dir": "/Users/test/Shots",
+  "screenshot_quality": "normal",
+  "kml_dir": "/Users/test/KML",
+  "ui_scale": 1.25,
+  "map_scale": 1.4,
+  "map_style": {
+    "country": {
+      "color": "#ffcc00ff",
+      "width_points": 2.2,
+      "dash": "dotted"
+    },
+    "state": {
+      "color": "#96cdf0e1",
+      "width_points": 1.0,
+      "dash": "dashed"
+    },
+    "municipal": {
+      "color": "#96cdf0e1",
+      "width_points": 1.0,
+      "dash": "dashed"
+    },
+    "disputed": {
+      "color": "#fffffff5",
+      "width_points": 1.6,
+      "dash": "dashed"
+    },
+    "major_road": {
+      "color": "#cdd1ded4",
+      "width_points": 2.5,
+      "dash": "solid"
+    },
+    "minor_road": {
+      "color": "#a5aebfa5",
+      "width_points": 1.5,
+      "dash": "solid"
+    },
+    "roadworks": {
+      "color": "#f05346ff",
+      "width_points": 1.5,
+      "dash": "solid"
+    },
+    "railway": {
+      "color": "#3a3a42ff",
+      "width_points": 2.4,
+      "dash": "solid"
+    },
+    "service_rail": {
+      "color": "#60606aff",
+      "width_points": 1.0,
+      "dash": "solid"
+    },
+    "subway": {
+      "color": "#965cd2ff",
+      "width_points": 1.8,
+      "dash": "solid"
+    },
+    "tram": {
+      "color": "#d67038ff",
+      "width_points": 1.3,
+      "dash": "solid"
+    },
+    "ferry": {
+      "color": "#56b2ffff",
+      "width_points": 1.5,
+      "dash": "dashed"
+    },
+    "runway": {
+      "color": "#cdcdd4ff",
+      "width_points": 3.5,
+      "dash": "solid"
+    },
+    "taxiway": {
+      "color": "#e2c454ff",
+      "width_points": 1.0,
+      "dash": "solid"
+    },
+    "river": {
+      "color": "#4e96ebff",
+      "width_points": 1.6,
+      "dash": "solid"
+    },
+    "canal": {
+      "color": "#4e96ebff",
+      "width_points": 1.1,
+      "dash": "solid"
+    },
+    "park": {
+      "color": "#5cb460cc",
+      "width_points": 1.2,
+      "dash": "dashed"
+    },
+    "labels": {
+      "country_points": 14.0,
+      "state_points": 10.0,
+      "city_points": 10.0,
+      "road_points": 9.5
+    }
+  },
+  "uncap_fps": true,
+  "gpu_globe": false,
+  "grid_numbers": true,
+  "hide_navigation_controls": true,
+  "state_max_altitude_km": 2000.0,
+  "distance_units": "imperial",
+  "earth_model": "wgs84_g2296",
+  "ruler_unit": "miles",
+  "user_layers": [],
+  "saved_sources": {
+    "favorites": [],
+    "recent": []
+  },
+  "experience": "advanced"
+}

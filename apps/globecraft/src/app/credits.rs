@@ -5,7 +5,7 @@
 use super::App;
 use super::globe::OSM_TILES_CREDIT;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect};
-use globecraft_core::{body::Body, camera::Basis, language::Lang, layers::MapLayer};
+use globecraft_core::{camera::Basis, language::Lang, layers::MapLayer};
 use globecraft_data::tiles::Provider;
 
 const SEPARATOR: &str = " · ";
@@ -59,7 +59,7 @@ impl App {
             );
         }
         credits.push(base);
-        let earth = self.explorer.active == Body::Earth;
+        let earth = self.explorer.on_earth();
         if self.layer(MapLayer::NightLights) {
             credits.push(self.night_lights_credit(lg));
         }
@@ -108,7 +108,14 @@ impl App {
         {
             credits.push(lg.text("satellites-credit").to_owned());
         }
-        if earth && self.layer(MapLayer::Traffic) && !self.keys.tomtom.trim().is_empty() {
+        if earth
+            && self.layer(MapLayer::Traffic)
+            && !self
+                .keys
+                .get(globecraft_data::keys::TOMTOM)
+                .trim()
+                .is_empty()
+        {
             credits.push(lg.text("traffic-credit").to_owned());
         }
         // Credits of the layers the user added, as their licences ask.

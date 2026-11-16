@@ -1,7 +1,7 @@
 //! How map lines and names look: colour, width and dash per line type, and the label size
 //! per kind. Every value has a command (`style.*`), so the Settings window, Command Search
 //! and the assistant change the same fields.
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 pub const MIN_LINE_WIDTH_POINTS: f32 = 0.5;
@@ -189,7 +189,7 @@ impl LabelType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DashStyle {
     Solid,
@@ -234,8 +234,13 @@ impl Serialize for Rgba {
         serializer.serialize_str(&self.hex())
     }
 }
+impl<'de> Deserialize<'de> for Rgba {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        super::lenient::coded(deserializer, Self::parse_hex)
+    }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LineStyle {
     pub color: Rgba,
     pub width_points: f32,
@@ -243,23 +248,10 @@ pub struct LineStyle {
 }
 impl LineStyle {
     fn apply(&mut self, value: &Value) {
-        if let Some(color) = value
-            .get("color")
-            .and_then(Value::as_str)
-            .and_then(Rgba::parse_hex)
-        {
-            self.color = color;
-        }
-        if let Some(width) = value.get("width_points").and_then(Value::as_f64) {
-            self.width_points = clamp_width(width);
-        }
-        if let Some(dash) = value
-            .get("dash")
-            .and_then(Value::as_str)
-            .and_then(DashStyle::from_code)
-        {
-            self.dash = dash;
-        }
+        super::lenient::apply(self, value, &[]);
+        self.width_points = self
+            .width_points
+            .clamp(MIN_LINE_WIDTH_POINTS, MAX_LINE_WIDTH_POINTS);
     }
 }
 
@@ -271,7 +263,7 @@ pub fn clamp_label_size(size: f64) -> f32 {
 }
 
 /// Label font sizes in points, before the map text scale.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LabelSizes {
     pub country_points: f32,
     pub state_points: f32,
@@ -340,6 +332,11 @@ impl Serialize for MapStyle {
         map.end()
     }
 }
+impl<'de> Deserialize<'de> for MapStyle {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        super::lenient::applied(deserializer, Self::apply)
+    }
+}
 impl MapStyle {
     pub fn line(&self, kind: LineType) -> &LineStyle {
         &self.lines[kind.index()]
@@ -354,11 +351,13 @@ impl MapStyle {
             }
         }
         if let Some(labels) = value.get("labels") {
+            super::lenient::apply(&mut self.labels, labels, &[]);
             for kind in LabelType::ALL {
-                let field = format!("{}_points", kind.code());
-                if let Some(size) = labels.get(field.as_str()).and_then(Value::as_f64) {
-                    self.labels.set(kind, clamp_label_size(size));
-                }
+                let size = self.labels.get(kind);
+                self.labels.set(
+                    kind,
+                    size.clamp(MIN_LABEL_SIZE_POINTS, MAX_LABEL_SIZE_POINTS),
+                );
             }
         }
     }
@@ -446,5 +445,14 @@ mod tests {
             .collect();
         let codes: Vec<&str> = LineType::ALL.iter().map(|kind| kind.code()).collect();
         assert_eq!(listed, codes);
+    }
+
+    #[test]
+    fn any_colour_text_is_read_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(16);
+        let pieces = ["#", "0", "9", "a", "F", "g", "é", "日", " ", "ff"];
+        for _ in 0..50_000 {
+            let _ = Rgba::parse_hex(&inputs.text(&pieces, 10));
+        }
     }
 }

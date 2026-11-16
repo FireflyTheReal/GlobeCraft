@@ -329,7 +329,7 @@ impl App {
     pub(in crate::app) fn layers_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
-        let earth = self.explorer.active == globecraft_core::body::Body::Earth;
+        let earth = self.explorer.on_earth();
         let raw_query = self.panes.layers.query.clone();
         let query = fold_name(&raw_query);
         let active_only = self.panes.layers.active_only;
@@ -430,7 +430,7 @@ impl App {
             let group_title = lang.text(group.label_key());
             let layers: Vec<_> = MapLayer::ALL
                 .into_iter()
-                .filter(|layer| layer.group() == group && layer.listed())
+                .filter(|layer| layer.group() == group && Self::offers(*layer))
                 .filter(|layer| {
                     matches_filter(
                         &query,
@@ -852,9 +852,11 @@ impl App {
                     ui.add_space(INDENT + 46.0);
                     if ui
                         .add(
-                            egui::TextEdit::singleline(&mut self.keys.tomtom)
-                                .password(true)
-                                .hint_text(lang.text("layers-traffic-key")),
+                            egui::TextEdit::singleline(
+                                self.keys.edit(globecraft_data::keys::TOMTOM),
+                            )
+                            .password(true)
+                            .hint_text(lang.text("layers-traffic-key")),
                         )
                         .changed()
                     {
@@ -864,11 +866,11 @@ impl App {
                 note(
                     ui,
                     t,
-                    &self
-                        .live
-                        .traffic
-                        .service
-                        .status(&self.keys.tomtom, self.cam.alt, lang),
+                    &self.live.traffic.service.status(
+                        self.keys.get(globecraft_data::keys::TOMTOM),
+                        self.cam.alt,
+                        lang,
+                    ),
                 );
                 credit(ui, "TomTom Traffic", "https://developer.tomtom.com/");
             }

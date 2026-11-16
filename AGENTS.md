@@ -22,9 +22,14 @@ User instructions and the requested scope take precedence over these defaults.
   definitions as plain data. It depends on core only (for the command catalog); network I/O
   stays in data (`model_http`) and command execution in the app (`App::run`).
 - Every user action is a command in `globecraft_core::commands`. Add a command there (with
-  Fluent `cmd-…` label and help keys in both catalogs) and implement it in its feature's
-  handler under `apps/globecraft/src/app/commands/` (`commands::Feature::of` picks the
-  handler from the id's first part); widgets, menus and the assistant run it by id.
+  Fluent `cmd-…` label and help keys in both catalogs), give it a variant in its group in
+  `commands/command.rs` (with a parameter struct in `commands/params.rs` matching its
+  schema, and a line in the table there), and implement it in its feature's handler under
+  `apps/globecraft/src/app/commands/`, which will not compile until it does; widgets,
+  menus and the assistant run it by id.
+  Then regenerate `docs/COMMANDS.md` with
+  `UPDATE_COMMAND_REFERENCE=1 cargo test -p globecraft-core --test command_reference`;
+  the test fails while the reference is out of date.
 - `App` holds the values every feature reads and one state struct per feature. Put a new
   field into its feature's state, not into `App`; see "Application state" in
   `docs/ARCHITECTURE.md`.
@@ -74,6 +79,9 @@ User instructions and the requested scope take precedence over these defaults.
 - Write application-owned error messages and diagnostic logs in English, including
   error statuses displayed when the UI language is Portuguese. Normal UI labels
   and success messages remain localized. Preserve external names and source errors.
+- Write diagnostics with `globecraft_data::log_line!` (`crate::log_line!` inside data),
+  not `eprintln!`: it also reaches `globecraft.log`, which release builds on Windows and
+  apps started from Finder or a desktop menu otherwise lose. Tests and benchmarks may print.
 - Keep new error handling explicit and user-facing where appropriate. Do not add
   blanket lint allowances or swallow new errors just to make checks pass.
 - Write code comments and documentation in English only. The repository has no

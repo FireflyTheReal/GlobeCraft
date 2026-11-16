@@ -9,6 +9,7 @@
 
 use globecraft_core::commands::{self, CommandSpec};
 use globecraft_core::language::Lang;
+use globecraft_core::{view_link::ViewLink, web_address};
 use serde_json::{Value, json};
 
 use crate::provider::{ToolCall, ToolDef};
@@ -81,22 +82,58 @@ pub fn target(call: &ToolCall) -> Option<(String, Value)> {
     }
 }
 
-/// Whether a call needs the user's approval, and why (English, for the approval card).
-pub fn gate(call: &ToolCall) -> Option<String> {
-    let (id, _) = target(call)?;
-    commands::find(&id)?.approval_reason().map(str::to_string)
+/// The web addresses a network command would download from: `data.add`'s `url`, and the
+/// `data` entries of a link `view.openLink` opens. Library presets are not addresses.
+fn web_addresses(id: &str, params: &Value) -> Vec<String> {
+    match id {
+        "data.add" => params
+            .get("url")
+            .map(|url| url.as_str().unwrap_or_default().to_owned())
+            .into_iter()
+            .collect(),
+        "view.openLink" => params
+            .get("link")
+            .and_then(Value::as_str)
+            .and_then(|link| ViewLink::parse(link).ok())
+            .map(|link| link.web_addresses().map(str::to_owned).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
-/// What "allow for this conversation" remembers: the command with its exact parameters. Only
-/// file access can be allowed for good; destructive commands are asked about every time.
-pub fn approval_key(call: &ToolCall) -> Option<String> {
-    let (id, _) = target(call)?;
+/// Whether a call needs the user's approval, and why (English, for the approval card).
+pub fn gate(call: &ToolCall) -> Option<String> {
+    let (id, params) = target(call)?;
     let spec = commands::find(&id)?;
-    if spec.reach != commands::Reach::Files {
+    // A network command that names no address uses built-in sources only.
+    if spec.reach == commands::Reach::Network && web_addresses(&id, &params).is_empty() {
         return None;
     }
-    let params = params_arg(&call.args).ok()?;
-    Some(format!("{id} {params}"))
+    spec.approval_reason().map(str::to_string)
+}
+
+/// What "allow for this conversation" remembers: for file access the command with its exact
+/// parameters, for web addresses the command and the addresses' hosts. Destructive commands
+/// are asked about every time.
+pub fn approval_key(call: &ToolCall) -> Option<String> {
+    let (id, params) = target(call)?;
+    let spec = commands::find(&id)?;
+    match spec.reach {
+        commands::Reach::Files => {
+            let params = params_arg(&call.args).ok()?;
+            Some(format!("{id} {params}"))
+        }
+        commands::Reach::Network => {
+            let mut hosts = web_addresses(&id, &params)
+                .iter()
+                .map(|address| web_address::host(address))
+                .collect::<Option<Vec<_>>>()?;
+            hosts.sort();
+            hosts.dedup();
+            Some(format!("{id} hosts {}", hosts.join(" ")))
+        }
+        _ => None,
+    }
 }
 
 /// A one-line description of a call for the transcript and the approval card.
@@ -135,7 +172,20 @@ pub fn run(host: &mut dyn Host, call: &ToolCall, tokens: usize) -> Result<String
                     "'{id}' only opens part of the interface; the assistant can't use it"
                 ));
             }
-            host.run(&id, &params_arg(a)?)?
+            let params = params_arg(a)?;
+            if spec.reach == commands::Reach::Network {
+                for address in web_addresses(&id, &params) {
+                    let address_host = web_address::host(&address).ok_or_else(|| {
+                        format!("'{address}' is not an https:// or http:// address")
+                    })?;
+                    if web_address::is_local_host(&address_host) {
+                        return Err(format!(
+                            "'{address_host}' is this computer or the local network; the assistant may only add public web addresses"
+                        ));
+                    }
+                }
+            }
+            host.run(&id, &params)?
         }
         other => return Err(format!("unknown tool '{other}'")),
     };
@@ -326,6 +376,48 @@ mod tests {
             json!({"command": "camera.flyTo", "params": {"lat": 1, "lon": 2}}),
         );
         assert!(gate(&fly).is_none());
+    }
+
+    #[test]
+    fn web_addresses_are_gated_by_host_and_library_presets_are_not() {
+        let preset = call(
+            "run_command",
+            json!({"command": "data.add", "params": {"preset": "earthquakes"}}),
+        );
+        assert!(gate(&preset).is_none());
+        let web = |url: &str| {
+            call(
+                "run_command",
+                json!({"command": "data.add", "params": {"url": url, "kind": "features"}}),
+            )
+        };
+        let first = web("https://data.example/a.geojson");
+        assert!(gate(&first).is_some());
+        // Allowing a host covers other files on it, not other hosts.
+        assert_eq!(
+            approval_key(&first),
+            approval_key(&web("https://DATA.example:443/b.csv"))
+        );
+        assert_ne!(
+            approval_key(&first),
+            approval_key(&web("https://other.example/a.geojson"))
+        );
+        // A view link's web data is gated the same way; its presets are not.
+        let link = |data: &str| {
+            call(
+                "run_command",
+                json!({"command": "view.openLink", "params": {
+                    "link": format!("globecraft://view?lat=1&lon=2&data={data}")
+                }}),
+            )
+        };
+        assert!(gate(&link("preset%3Aearthquakes")).is_none());
+        assert!(gate(&link("https%3A%2F%2Fdata.example%2Fa.csv")).is_some());
+        assert!(gate(&call(
+            "run_command",
+            json!({"command": "view.openLink", "params": {"link": "globecraft://view?lat=1&lon=2"}})
+        ))
+        .is_none());
     }
 
     #[test]

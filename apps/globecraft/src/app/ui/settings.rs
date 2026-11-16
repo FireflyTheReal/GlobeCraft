@@ -283,9 +283,7 @@ impl App {
             self.set_language_preference(language_preference);
             ctx.request_repaint();
         }
-        if previous_model != self.settings.earth_model
-            && self.explorer.active == globecraft_core::body::Body::Earth
-        {
+        if previous_model != self.settings.earth_model && self.explorer.on_earth() {
             self.motion.fly = None;
             self.measure.paths.end_move();
             self.measure.drag = None;

@@ -1,0 +1,23 @@
+# Text keeps LF line endings on every platform: tests compare generated text with
+# files in the repository (docs/COMMANDS.md) and scan the sources, and a Windows
+# checkout would otherwise turn every line ending into CR LF.
+* text=auto eol=lf
+# Never text, whatever their first bytes look like.
+*.rgba binary
+*.misses binary
+*.tile binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.gz binary
+*.kmz binary
+*.mvt binary
+*.pmtiles binary
+*.planet binary
+*.pub binary
+# Fuzzing seeds are bytes, whatever their names say.
+fuzz/seeds/** binary

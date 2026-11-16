@@ -49,13 +49,19 @@ pub struct ModelCall {
 impl ModelCall {
     /// Pieces of the body that arrived since the last call.
     pub fn take_chunks(&self) -> Vec<u8> {
-        std::mem::take(&mut self.shared.lock().expect("model call poisoned").chunks)
+        std::mem::take(
+            &mut self
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .chunks,
+        )
     }
     /// The finished response, once.
     pub fn take_result(&self) -> Option<Result<ModelResponse, ModelFailure>> {
         self.shared
             .lock()
-            .expect("model call poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .result
             .take()
     }
@@ -83,7 +89,7 @@ fn client() -> Result<reqwest::Client, reqwest::Error> {
 
 fn failure(error: &reqwest::Error) -> ModelFailure {
     // Never include the URL: some providers carry keys in query strings.
-    let text = error.without_url_ref().to_string();
+    let text = redact_url(error);
     if error.is_timeout() {
         ModelFailure::Timeout(text)
     } else if error.is_connect() || error.is_request() {
@@ -93,16 +99,12 @@ fn failure(error: &reqwest::Error) -> ModelFailure {
     }
 }
 
-trait WithoutUrl {
-    fn without_url_ref(&self) -> String;
-}
-impl WithoutUrl for reqwest::Error {
-    fn without_url_ref(&self) -> String {
-        let mut text = self.to_string();
-        if let Some(url) = self.url() {
-            text = text.replace(url.as_str(), "<provider>");
-        }
-        text
+/// The error's text with its address replaced by `<provider>`.
+fn redact_url(error: &reqwest::Error) -> String {
+    let text = error.to_string();
+    match error.url() {
+        Some(url) => text.replace(url.as_str(), "<provider>"),
+        None => text,
     }
 }
 
@@ -116,7 +118,10 @@ pub fn send(
     let worker = shared.clone();
     let task = handle.spawn(async move {
         let result = run(request, &worker, &wake).await;
-        worker.lock().expect("model call poisoned").result = Some(result);
+        worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .result = Some(result);
         wake();
     });
     ModelCall { shared, task }
@@ -127,6 +132,11 @@ async fn run(
     shared: &Mutex<Shared>,
     wake: &(impl Fn() + Send + Sync),
 ) -> Result<ModelResponse, ModelFailure> {
+    if crate::network::offline() {
+        return Err(ModelFailure::Connection(
+            "GlobeCraft is set to work offline".to_owned(),
+        ));
+    }
     let client = client().map_err(|e| failure(&e))?;
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|e| ModelFailure::Connection(e.to_string()))?;
@@ -160,7 +170,7 @@ async fn run(
                 body.extend_from_slice(&chunk);
                 shared
                     .lock()
-                    .expect("model call poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .chunks
                     .extend_from_slice(&chunk);
                 wake();

@@ -26,7 +26,7 @@ pub struct SettingsWriter {
 
 impl SettingsWriter {
     pub fn new(repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
-        Self::at(super::cache_dir(), repaint)
+        Self::at(super::config_dir(), repaint)
     }
     fn at(root: PathBuf, repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         let shared = Arc::new(Shared::default());
@@ -36,13 +36,19 @@ impl SettingsWriter {
             .spawn(move || {
                 loop {
                     let (settings, lang, kml_paths) = {
-                        let mut state = worker.pending.lock().unwrap();
+                        let mut state = worker
+                            .pending
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         while state.settings.is_none()
                             && state.lang.is_none()
                             && state.kml_paths.is_none()
                             && !state.stopped
                         {
-                            state = worker.wake.wait(state).unwrap();
+                            state = worker
+                                .wake
+                                .wait(state)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                         }
                         if state.settings.is_none()
                             && state.lang.is_none()
@@ -59,25 +65,32 @@ impl SettingsWriter {
                     };
                     let result = (|| -> Result<(), crate::Error> {
                         std::fs::create_dir_all(&root)?;
+                        let write = crate::paths::write_atomic;
                         if let Some(settings) = settings {
-                            std::fs::write(
-                                root.join("settings.json"),
-                                serde_json::to_vec(&settings)?,
+                            write(
+                                &root.join("settings.json"),
+                                &serde_json::to_vec(&settings)?,
+                                false,
                             )?;
                         }
                         if let Some(paths) = kml_paths {
-                            std::fs::write(
-                                root.join("open-kml.json"),
-                                serde_json::to_vec(&paths)?,
+                            write(
+                                &root.join("open-kml.json"),
+                                &serde_json::to_vec(&paths)?,
+                                false,
                             )?;
                         }
                         if let Some(lang) = lang {
-                            std::fs::write(root.join("lang.txt"), lang.code())?;
+                            write(&root.join("lang.txt"), lang.code().as_bytes(), false)?;
                         }
                         Ok(())
                     })();
                     if let Err(error) = result {
-                        worker.pending.lock().unwrap().error = Some(error.to_string());
+                        worker
+                            .pending
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .error = Some(error.to_string());
                     }
                     repaint();
                 }
@@ -88,32 +101,53 @@ impl SettingsWriter {
         })
     }
     pub fn settings(&self, settings: &Settings) {
-        self.shared.pending.lock().unwrap().settings = Some(settings.clone());
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .settings = Some(settings.clone());
         self.shared.wake.notify_one();
     }
     /// Persist only source paths; never write the open documents themselves.
     pub fn kml_paths(&self, paths: &[PathBuf]) {
-        self.shared.pending.lock().unwrap().kml_paths = Some(paths.to_vec());
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .kml_paths = Some(paths.to_vec());
         self.shared.wake.notify_one();
     }
     pub fn language(&self, lang: LanguagePreference) {
-        self.shared.pending.lock().unwrap().lang = Some(lang);
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lang = Some(lang);
         self.shared.wake.notify_one();
     }
     pub fn take_error(&self) -> Option<String> {
-        self.shared.pending.lock().unwrap().error.take()
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .error
+            .take()
     }
     /// Final shutdown only: wait for the latest writes and report failures.
     pub fn finish(&mut self) -> Result<(), crate::Error> {
-        self.shared.pending.lock().unwrap().stopped = true;
+        self.shared
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stopped = true;
         self.shared.wake.notify_one();
         if let Some(thread) = self.thread.take() {
             thread
                 .join()
-                .map_err(|_| crate::Error::from("Settings writer panicked during shutdown"))?;
+                .map_err(|_| crate::Error::msg("Settings writer panicked during shutdown"))?;
         }
         match self.take_error() {
-            Some(error) => Err(crate::Error::from(error)),
+            Some(error) => Err(crate::Error::msg(error)),
             None => Ok(()),
         }
     }
@@ -122,7 +156,7 @@ impl Drop for SettingsWriter {
     fn drop(&mut self) {
         // Flush on final application shutdown only; normal UI updates never wait.
         if let Err(error) = self.finish() {
-            eprintln!("Settings persistence failed during shutdown: {error}");
+            crate::log_line!("Settings persistence failed during shutdown: {error}");
         }
     }
 }

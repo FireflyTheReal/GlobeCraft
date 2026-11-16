@@ -73,13 +73,14 @@ impl LiveVessels {
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.error = Some("AIS disconnected".into());
+                    self.error = Some(crate::Error::msg("AIS disconnected"));
                     self.rx = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if enabled
+        if crate::live::ENABLED
+            && enabled
             && self.rx.is_none()
             && self
                 .attempt
@@ -135,11 +136,13 @@ impl LiveVessels {
 async fn download() -> Result<VesselBatch, crate::Error> {
     if let Ok(url) = std::env::var("GLOBECRAFT_AIS_GEOJSON_URL") {
         if !url.starts_with("https://") {
-            return Err("AIS endpoint must use HTTPS".into());
+            return Err(crate::Error::msg("AIS endpoint must use HTTPS"));
         }
         let json = request_json(&url).await?;
         if !json["features"].is_array() {
-            return Err("Custom AIS endpoint must return a GeoJSON FeatureCollection".into());
+            return Err(crate::Error::msg(
+                "Custom AIS endpoint must return a GeoJSON FeatureCollection",
+            ));
         }
         return Ok(VesselBatch {
             vessels: crate::cpu::run(crate::cpu::Service::Features, move || {
@@ -162,7 +165,9 @@ async fn download() -> Result<VesselBatch, crate::Error> {
     }
     let json = request_json(FINNISH_URL).await?;
     if !json["features"].is_array() {
-        return Err("No compatible worldwide or Finnish AIS feed".into());
+        return Err(crate::Error::msg(
+            "No compatible worldwide or Finnish AIS feed",
+        ));
     }
     Ok(VesselBatch {
         vessels: crate::cpu::run(crate::cpu::Service::Features, move || {
@@ -215,7 +220,7 @@ fn ship_type(value: Option<&serde_json::Value>) -> Option<u16> {
 fn measurement(value: Option<&serde_json::Value>) -> Option<f64> {
     number(value).filter(|value| *value > 0.0)
 }
-fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
+pub(crate) fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
     json["vessels"]
         .as_array()
         .into_iter()
@@ -248,7 +253,7 @@ fn parse_world_snapshot(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
         })
         .collect()
 }
-fn parse_ais_geojson(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
+pub(crate) fn parse_ais_geojson(json: &serde_json::Value, now: f64) -> Vec<Vessel> {
     json["features"]
         .as_array()
         .into_iter()

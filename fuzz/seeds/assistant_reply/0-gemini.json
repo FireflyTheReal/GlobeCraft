@@ -1,0 +1,1 @@
+{"candidates": [{"content": {"parts": [{"text": "Hi"}, {"functionCall": {"name": "run_command", "args": {"id": "camera.flyTo"}}}]}, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}}

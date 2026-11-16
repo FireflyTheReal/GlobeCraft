@@ -125,11 +125,16 @@ impl GpuRenderer {
         let failure = Arc::new(Mutex::new(None));
         let errors = failure.clone();
         device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
-            *errors.lock().unwrap() = Some(error.to_string());
+            *errors
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error.to_string());
         }));
         let lost = failure.clone();
         device.set_device_lost_callback(move |reason, message| {
-            *lost.lock().unwrap() = Some(format!("GPU device lost ({reason:?}): {message}"));
+            *lost
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(format!("GPU device lost ({reason:?}): {message}"));
         });
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
@@ -151,10 +156,14 @@ impl GpuRenderer {
         if let Some(error) = scope.pop().await {
             return Err(error.to_string());
         }
-        if let Some(error) = failure.lock().unwrap().take() {
+        if let Some(error) = failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             return Err(error);
         }
-        eprintln!(
+        globecraft_data::log_line!(
             "Experimental GPU globe rendering enabled: {} ({:?}), {} MiB tile atlas",
             adapter.get_info().name,
             adapter.get_info().backend,
@@ -256,7 +265,12 @@ impl GpuRenderer {
         cache: &TileCache,
         buffer: Vec<u8>,
     ) -> Result<RenderedView, (String, Vec<u8>, bool)> {
-        if let Some(error) = self.failure.lock().unwrap().take() {
+        if let Some(error) = self
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             return Err((error, buffer, true));
         }
         let Some(max_zoom) = overview::supported_zoom(request) else {
@@ -313,7 +327,12 @@ impl GpuRenderer {
                 &|key| cache.lookup(key),
                 buffer,
             )?;
-            if let Some(error) = self.failure.lock().unwrap().take() {
+            if let Some(error) = self
+                .failure
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
                 return Err((error, frame.view.pixels, true));
             }
             let wanted: std::collections::HashSet<_> = frame

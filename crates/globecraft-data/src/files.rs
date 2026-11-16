@@ -48,6 +48,14 @@ pub enum FileOutcome {
         path: PathBuf,
         sources: Vec<crate::user_data::UserLayer>,
     },
+    /// Settings exported (File › Export Settings).
+    SettingsSaved {
+        path: PathBuf,
+    },
+    SettingsLoaded {
+        path: PathBuf,
+        settings: Box<crate::settings::Settings>,
+    },
     /// Places and ruler paths written as GeoJSON or GPX.
     Exported {
         path: PathBuf,
@@ -65,6 +73,8 @@ pub enum FileKind {
     SavePlanet,
     OpenSources,
     SaveSources,
+    OpenSettings,
+    SaveSettings,
     Export,
 }
 pub struct FileCompletion {
@@ -80,6 +90,8 @@ enum Job {
     SavePlanet(PlanetSave),
     OpenSources(PathBuf),
     SaveSources(PathBuf, Vec<crate::user_data::UserLayer>),
+    OpenSettings(PathBuf),
+    SaveSettings(PathBuf, Box<crate::settings::Settings>),
     Export(PathBuf, ExportFormat, ExportContent),
 }
 impl Job {
@@ -93,6 +105,8 @@ impl Job {
             Self::SavePlanet(..) => FileKind::SavePlanet,
             Self::OpenSources(..) => FileKind::OpenSources,
             Self::SaveSources(..) => FileKind::SaveSources,
+            Self::OpenSettings(..) => FileKind::OpenSettings,
+            Self::SaveSettings(..) => FileKind::SaveSettings,
             Self::Export(..) => FileKind::Export,
         }
     }
@@ -114,7 +128,8 @@ impl Job {
             }
             Self::Image(target, source) => {
                 let encoded = source.read()?;
-                let pixels = image::load_from_memory(&encoded)?.to_rgba8();
+                let pixels = crate::bounded::image(&encoded, crate::bounded::ImageLimit::WORLD)?
+                    .into_rgba8();
                 Ok(FileOutcome::ImageLoaded {
                     target,
                     image: LoadedImage { pixels, encoded },
@@ -136,7 +151,7 @@ impl Job {
                     texture.as_ref().clone(),
                     sky.as_ref().clone(),
                 )?;
-                std::fs::write(&path, document)?;
+                crate::paths::write_atomic(&path, &document, false)?;
                 Ok(FileOutcome::PlanetSaved { path })
             }
             Self::OpenSources(path) => Ok(FileOutcome::SourcesLoaded {
@@ -144,11 +159,20 @@ impl Job {
                 path,
             }),
             Self::SaveSources(path, sources) => {
-                std::fs::write(&path, crate::user_data::export_sources(&sources))?;
+                let document = crate::user_data::export_sources(&sources);
+                crate::paths::write_atomic(&path, &document, false)?;
                 Ok(FileOutcome::SourcesSaved {
                     path,
                     count: sources.len(),
                 })
+            }
+            Self::OpenSettings(path) => Ok(FileOutcome::SettingsLoaded {
+                settings: Box::new(crate::settings::Settings::import(&std::fs::read(&path)?)?),
+                path,
+            }),
+            Self::SaveSettings(path, settings) => {
+                crate::paths::write_atomic(&path, &settings.export()?, false)?;
+                Ok(FileOutcome::SettingsSaved { path })
             }
             Self::Export(path, format, content) => {
                 let path = std::path::absolute(path)?;
@@ -157,7 +181,7 @@ impl Job {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                crate::paths::write_atomic(&path, &bytes)?;
+                crate::paths::write_atomic(&path, &bytes, false)?;
                 let (places, paths) = content.counts();
                 Ok(FileOutcome::Exported {
                     path,
@@ -205,10 +229,10 @@ impl FileJobs {
     fn reserve(&self) -> Result<tokio::sync::mpsc::Permit<'_, Job>, crate::Error> {
         self.sender.try_reserve().map_err(|error| match error {
             tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                crate::Error::from("file job queue is full")
+                crate::Error::msg("file job queue is full")
             }
             tokio::sync::mpsc::error::TrySendError::Closed(_) => {
-                crate::Error::from("file service is unavailable")
+                crate::Error::msg("file service is unavailable")
             }
         })
     }
@@ -225,7 +249,7 @@ impl FileJobs {
     /// Restore saved sources on the ordered file worker, without blocking the UI.
     pub fn restore_kml(&self, lang: Lang) -> Result<(), crate::Error> {
         self.submit(Job::Restore(
-            crate::paths::cache_dir().join("open-kml.json"),
+            crate::paths::config_dir().join("open-kml.json"),
             lang,
         ))
     }
@@ -245,6 +269,16 @@ impl FileJobs {
         self.submit(Job::SavePlanet(snapshot))
     }
     /// Reads an exported list of data sources.
+    pub fn open_settings(&self, path: PathBuf) -> Result<(), crate::Error> {
+        self.submit(Job::OpenSettings(path))
+    }
+    pub fn save_settings(
+        &self,
+        path: PathBuf,
+        settings: &crate::settings::Settings,
+    ) -> Result<(), crate::Error> {
+        self.submit(Job::SaveSettings(path, Box::new(settings.clone())))
+    }
     pub fn open_sources(&self, path: PathBuf) -> Result<(), crate::Error> {
         self.submit(Job::OpenSources(path))
     }

@@ -6,7 +6,7 @@
 use super::icons;
 use super::theme::{Tokens, regular, semibold};
 use crate::app::App;
-use eframe::egui::{self, Align2, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, CornerRadius, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use globecraft_core::commands;
 use serde_json::Value;
 use std::sync::Arc;
@@ -570,6 +570,7 @@ pub(in crate::app) fn forget_last_column(ctx: &egui::Context) {
 }
 
 /// A filled action button (Send, Allow…), with its label centred on the capital letters.
+#[cfg(feature = "assistant")]
 pub(in crate::app) fn primary_button(
     ui: &mut Ui,
     label: &str,
@@ -603,7 +604,7 @@ pub(in crate::app) fn primary_button(
     ui.painter().rect_filled(r, CornerRadius::same(6), fill);
     ui.painter().text(
         r.center(),
-        Align2::CENTER_CENTER,
+        egui::Align2::CENTER_CENTER,
         label,
         font,
         egui::Color32::WHITE,

@@ -1,3 +1,4 @@
+use super::super::Provider;
 use super::super::tests::Fixture;
 use super::*;
 #[tokio::test]
@@ -100,4 +101,24 @@ async fn providers_releases_and_payload_formats_have_distinct_tilesets() {
 fn bundled_sqlite_supports_fts5_and_rtree_without_loading_extensions() {
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch("CREATE VIRTUAL TABLE text_index USING fts5(name); CREATE VIRTUAL TABLE spatial_index USING rtree(id,min_x,max_x,min_y,max_y);").unwrap();
+}
+
+#[test]
+fn polar_grids_have_two_tiles_a_side_at_level_zero() {
+    let root = Path::new("/cache");
+    let polar = Provider::PolarNorth.dir();
+    let address = Address::parse(root, &root.join(format!("{polar}/0/1/1.tile"))).unwrap();
+    assert_eq!((address.column, address.row), (1, 0));
+    let address = Address::parse(root, &root.join(format!("{polar}/2/7/0.tile"))).unwrap();
+    assert_eq!(address.row, 7);
+    assert!(Address::parse(root, &root.join(format!("{polar}/0/2/0.tile"))).is_err());
+    // Web Mercator keeps 2^zoom a side.
+    let mercator = Provider::Streets.dir();
+    assert!(Address::parse(root, &root.join(format!("{mercator}/0/1/0.tile"))).is_err());
+    assert_eq!(
+        Address::parse(root, &root.join(format!("{mercator}/3/2/1.tile")))
+            .unwrap()
+            .row,
+        6
+    );
 }

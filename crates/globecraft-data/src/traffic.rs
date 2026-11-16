@@ -59,9 +59,7 @@ impl TrafficTiles {
 pub struct TrafficQuery<'a> {
     pub enabled: bool,
     pub key: &'a str,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub altitude_km: f64,
+    pub view: crate::ViewQuery,
 }
 
 #[derive(Default)]
@@ -116,17 +114,13 @@ impl LiveTraffic {
         query: TrafficQuery<'_>,
         repaint: impl Fn() + Send + Sync + 'static,
     ) {
-        let TrafficQuery {
-            enabled,
-            key,
-            latitude: lat,
-            longitude: lon,
-            altitude_km: alt,
-        } = query;
+        let TrafficQuery { enabled, key, view } = query;
+        let (lat, lon, alt) = (view.latitude, view.longitude, view.altitude_km);
         let key = key.trim();
         self.set_key(key);
         self.poll(key);
-        if !enabled
+        if !crate::live::ENABLED
+            || !enabled
             || key.is_empty()
             || alt > MAX_TRAFFIC_ALTITUDE_KM
             || lat.abs() >= MAX_TRAFFIC_LATITUDE_DEG
@@ -177,7 +171,7 @@ impl LiveTraffic {
         let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Err("TomTom disconnected".into()),
+            Err(mpsc::TryRecvError::Disconnected) => Err(crate::Error::msg("TomTom disconnected")),
         };
         self.rx = None;
         if self.pending_key.take().as_deref() != Some(key) {
@@ -231,7 +225,10 @@ async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles
                 .await
                 .ok()?;
                 let tile = crate::cpu::run(crate::cpu::Service::Tiles, move || {
-                    Ok(image::load_from_memory(&bytes)?.to_rgba8())
+                    Ok(
+                        crate::bounded::image(&bytes, crate::bounded::ImageLimit::TILE)?
+                            .into_rgba8(),
+                    )
                 })
                 .await
                 .ok()?;
@@ -248,9 +245,9 @@ async fn download(zoom: u32, x: i64, y: i64, key: String) -> Result<TrafficTiles
         }
     }
     if decoded.is_empty() {
-        return Err(
-            "No live traffic tiles (invalid key, rate limit or provider unavailable)".into(),
-        );
+        return Err(crate::Error::msg(
+            "No live traffic tiles (invalid key, rate limit or provider unavailable)",
+        ));
     }
     crate::cpu::run(crate::cpu::Service::Features, move || {
         let mut image = RgbaImage::new(TRAFFIC_COMPOSITE_SIZE_PX, TRAFFIC_COMPOSITE_SIZE_PX);

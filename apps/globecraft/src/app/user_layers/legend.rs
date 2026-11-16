@@ -66,7 +66,10 @@ impl Legends {
                     *legend = Legend::Ready(ctx.load_texture(name, image, Default::default()));
                 }
                 Some(Err(error)) => {
-                    eprintln!("Legend of layer {} not loaded: {error}", layer.name);
+                    globecraft_data::log_line!(
+                        "Legend of layer {} not loaded: {error}",
+                        layer.name
+                    );
                     *legend = Legend::Failed;
                 }
                 None => {}

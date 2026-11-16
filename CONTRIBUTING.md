@@ -288,6 +288,30 @@ the full message; a message that fits without abbreviation must have no tooltip.
 Resize the window and change UI scale: verify filename endings remain visible
 and status text does not push toolbar buttons out of view.
 
+## Fuzzing the decoders
+
+Everything that reads a file or a server's answer (KML/KMZ, GeoJSON, GPX, CSV,
+PMTiles, MBTiles, vector and image tiles, JSON feeds, gzip, settings) has a fuzz
+target in `fuzz/`; see [fuzz/README.md](fuzz/README.md). The `fuzz` workflow runs
+them weekly, and for 30 seconds each when `fuzz/` or the entry points change.
+After changing a decoder, run its target for a few minutes:
+
+```sh
+fuzz/run.sh 300 kml
+```
+
+Two rules come from what the fuzzers found:
+
+- Arithmetic on numbers read from a file is checked (`checked_add`, `try_from`):
+  a zoom level, an offset or a row number can be anything.
+- Compressed bytes and images are decoded through `globecraft_data`'s `bounded`
+  module, which names the largest output it accepts. Do not call
+  `image::load_from_memory` or read a `GzDecoder` to its end directly.
+
+A new decoder gets an entry point in `crates/globecraft-data/src/fuzzing.rs` and
+a target; a finding gets a unit test beside the decoder, and its input is kept in
+`fuzz/seeds/`.
+
 ## Resource-constrained builds
 
 For a small disk or a quick local check, reduce generated debug information and
@@ -487,6 +511,17 @@ The Explorer, live meteorological/aircraft layers, moon and custom planet
 remain integrated in `apps/globecraft`. See [GPU_RENDERER.md](docs/features/GPU_RENDERER.md)
 for hardware limits, performance and CPU-only build instructions.
 
+The self-updater (`updater`), the AI assistant (`assistant`) and the live feeds
+(`live`) are features, on by default; `standard` names the three together, and release
+downloads are built with `--no-default-features --features standard` (everything but
+the experimental GPU renderer). Packagers who update GlobeCraft through a package
+manager can build without the updater: `cargo build -p globecraft --release
+--no-default-features --features assistant,live`. No update check runs then, and
+nothing is downloaded from GitHub. Without `assistant` the assistant pane and its
+commands are left out, and so is the `globecraft-assistant` crate. Without `live` the
+layers for aircraft, vessels, satellites, the aurora forecast, traffic, clouds and
+radar are not offered, and those services are never asked.
+
 ## Panes, commands and native menus
 
 The left pane (Layers, Places, Globe) and right pane (AI Assistant, Measure) open and
@@ -499,8 +534,10 @@ remain available with the panes hidden.
 
 Every action is a command (`globecraft_core::commands`) implemented once in
 `App::run`; add new actions there rather than in a widget, with `cmd-…` label and
-help keys in both Fluent catalogs. The catalog test checks that ids are unique,
-parameters are JSON Schema objects and every label is translated.
+help keys in both Fluent catalogs, a variant and a parameter struct (see "Commands and
+the interface" in `docs/ARCHITECTURE.md`). The catalog tests check that ids are unique,
+parameters are JSON Schema objects, every label is translated, and each parameter
+struct has exactly its schema's parameters.
 
 macOS uses muda 0.21 (compatible with Rust 1.95) in `apps/globecraft/src/app/menu`.
 Menu objects and handlers stay on the window thread. Callbacks enqueue actions

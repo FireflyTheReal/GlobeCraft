@@ -18,7 +18,9 @@ impl SkyImage {
     /// Accepts only the supported 4K RGB derivative; no arbitrary giant textures.
     pub fn decode(encoded: &[u8]) -> Result<Self, crate::Error> {
         if encoded.len() > MAX_ENCODED_BYTES {
-            return Err("Celestial image exceeds the encoded limit".into());
+            return Err(crate::Error::msg(
+                "Celestial image exceeds the encoded limit",
+            ));
         }
         let mut limits = Limits::default();
         limits.max_image_width = Some(WIDTH_PX);
@@ -28,7 +30,9 @@ impl SkyImage {
         reader.limits(limits);
         let pixels = reader.decode()?.into_rgb8();
         if pixels.dimensions() != (WIDTH_PX, HEIGHT_PX) {
-            return Err("Celestial image must be the supported 4096×2048 map".into());
+            return Err(crate::Error::msg(
+                "Celestial image must be the supported 4096×2048 map",
+            ));
         }
         Ok(Self { pixels })
     }
@@ -58,8 +62,9 @@ impl SkyService {
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                     self.pending = None;
-                    self.error =
-                        Some("Celestial decoder stopped before returning its result".into());
+                    self.error = Some(crate::Error::msg(
+                        "Celestial decoder stopped before returning its result",
+                    ));
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
             }

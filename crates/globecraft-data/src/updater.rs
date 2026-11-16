@@ -1,8 +1,12 @@
 //! One startup check and click-to-install updates, independent of the desktop UI.
+#[cfg(feature = "updater")]
+mod release;
+#[cfg(not(feature = "updater"))]
+#[path = "updater/release_disabled.rs"]
 mod release;
 #[cfg(test)]
 mod tests;
-use release::{SelectedRelease, check, install};
+use release::{Checked, SelectedRelease, check, install, install_path_protected};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -72,7 +76,7 @@ impl UpdateService {
         Self::configured(
             runtime,
             Arc::new(repaint),
-            development_build || mode == "off",
+            development_build || mode == "off" || !cfg!(feature = "updater"),
             if mode == "manual" {
                 Some("This installation uses manual or package-manager updates.".into())
             } else {
@@ -116,7 +120,8 @@ impl UpdateService {
     }
     /// Called from application logic after window initialization. Never starts twice.
     pub fn start_once(&mut self) {
-        if !self.disabled && self.state == UpdateState::Idle {
+        // While offline the check waits; it starts once work offline is turned off.
+        if !self.disabled && self.state == UpdateState::Idle && !crate::network::offline() {
             self.start_check();
         }
     }
@@ -144,14 +149,39 @@ impl UpdateService {
             _ => {}
         }
     }
+    /// Fails `operation` when work offline is on, so it can be retried later.
+    fn refuse_offline(&mut self, operation: UpdateOperation) -> bool {
+        if !crate::network::offline() {
+            return false;
+        }
+        self.state = UpdateState::Failed {
+            operation,
+            message: crate::Error::Offline.to_string(),
+        };
+        true
+    }
     fn start_check(&mut self) {
+        if self.refuse_offline(UpdateOperation::Check) {
+            return;
+        }
         self.state = UpdateState::Checking;
         let sender = self.sender.clone();
         let repaint = self.repaint.clone();
         let manual_reason = self.manual_reason.clone();
         self.runtime.spawn(async move {
             let snapshot = match check().await {
-                Ok(Some(selected)) => Snapshot {
+                Ok(Some(Checked::NoBuild { version })) => Snapshot {
+                    state: UpdateState::Unsupported {
+                        version,
+                        reason: format!(
+                            "No update is published for this system ({} {}). Open Releases to see what is available.",
+                            std::env::consts::OS,
+                            std::env::consts::ARCH
+                        ),
+                    },
+                    selected: None,
+                },
+                Ok(Some(Checked::Installable(selected))) => Snapshot {
                     state: if let Some(reason) = manual_reason {
                         UpdateState::Unsupported {
                             version: selected.version.clone(),
@@ -181,6 +211,9 @@ impl UpdateService {
         });
     }
     fn start_install(&mut self) {
+        if self.refuse_offline(UpdateOperation::Install) {
+            return;
+        }
         let Some(selected) = self.selected.clone() else {
             return;
         };
@@ -196,7 +229,7 @@ impl UpdateService {
             let state = match result {
                 Ok(true) => UpdateState::ReadyToRestart { version: selected.version.clone() },
                 Ok(false) => UpdateState::Failed { operation: UpdateOperation::Install, message: "The updater did not install the selected release. Open Releases to update manually.".into() },
-                Err(error @ self_update::Error::InstallPathNotWritable { .. }) => UpdateState::Unsupported { version: selected.version.clone(), reason: format!("Update installation is protected: {error}. Open Releases or use your package manager to update.") },
+                Err(error) if install_path_protected(&error) => UpdateState::Unsupported { version: selected.version.clone(), reason: format!("Update installation is protected: {error}. Open Releases or use your package manager to update.") },
                 Err(error) => UpdateState::Failed { operation: UpdateOperation::Install, message: format!("Update installation failed: {error}. Open Releases to update manually if this installation is protected.") },
             };
             sender.send_replace(Snapshot { state, selected: Some(selected) });

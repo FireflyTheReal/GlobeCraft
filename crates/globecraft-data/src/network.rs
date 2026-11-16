@@ -9,29 +9,51 @@
 
 use crate::tiles::{Prefetch, Provider};
 use globecraft_core::language::Lang;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Settings › Work offline: while set, every HTTP client refuses before connecting, so
+/// tiles and data come only from the disk caches.
+static OFFLINE: AtomicBool = AtomicBool::new(false);
+pub fn set_offline(offline: bool) {
+    OFFLINE.store(offline, Ordering::Relaxed);
+}
+pub fn offline() -> bool {
+    OFFLINE.load(Ordering::Relaxed)
+}
 
 /// The public user agents. Keeping them here means the table and the HTTP clients
 /// cannot drift apart.
+/// `GlobeCraft/<version> (<purpose>)`: every agent names the running version.
+macro_rules! user_agent {
+    ($purpose:literal) => {
+        concat!(
+            "GlobeCraft/",
+            env!("CARGO_PKG_VERSION"),
+            " (",
+            $purpose,
+            ")"
+        )
+    };
+}
 pub const TILE_USER_AGENT: &str =
-    "GlobeCraft/0.2 (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)";
-pub(crate) const BOUNDARY_USER_AGENT: &str = "GlobeCraft/0.1 (map boundary overlay)";
-pub(crate) const WAYBACK_USER_AGENT: &str = "GlobeCraft/0.2 (wayback release list)";
-pub(crate) const SEARCH_USER_AGENT: &str =
-    "GlobeCraft/0.2 (educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft)";
-pub(crate) const SUGGEST_USER_AGENT: &str = "GlobeCraft/0.2 (search suggestions)";
-pub(crate) const CLOUD_USER_AGENT: &str = "GlobeCraft/1.0 (attribution: Matt Eason, EUMETSAT)";
-pub(crate) const RADAR_USER_AGENT: &str = "GlobeCraft/1.0 radar viewer";
-pub(crate) const TRAFFIC_USER_AGENT: &str = "GlobeCraft/1.0 (traffic; TomTom)";
+    user_agent!("educational 3D globe viewer; +https://github.com/FireflyTheReal/GlobeCraft");
+pub(crate) const BOUNDARY_USER_AGENT: &str = user_agent!("map boundary overlay");
+pub(crate) const WAYBACK_USER_AGENT: &str = user_agent!("wayback release list");
+/// Nominatim's usage policy asks for an identifying agent with a contact.
+pub(crate) const SEARCH_USER_AGENT: &str = TILE_USER_AGENT;
+pub(crate) const SUGGEST_USER_AGENT: &str = user_agent!("search suggestions");
+pub(crate) const CLOUD_USER_AGENT: &str = user_agent!("attribution: Matt Eason, EUMETSAT");
+pub(crate) const RADAR_USER_AGENT: &str = user_agent!("radar viewer");
+pub(crate) const TRAFFIC_USER_AGENT: &str = user_agent!("traffic; TomTom");
 pub(crate) const AIRCRAFT_USER_AGENT: &str =
-    "GlobeCraft/1.0 (live aircraft viewer; OpenSky / ADSB.lol)";
+    user_agent!("live aircraft viewer; OpenSky / ADSB.lol");
 pub(crate) const VESSELS_USER_AGENT: &str =
-    "GlobeCraft/1.0 (live vessel viewer; OpenSeaFeed / Digitraffic)";
-pub(crate) const AURORA_USER_AGENT: &str = "GlobeCraft/1.0 (aurora forecast; NOAA SWPC)";
-pub(crate) const SATELLITES_USER_AGENT: &str = "GlobeCraft/1.0 (satellite orbits; CelesTrak)";
+    user_agent!("live vessel viewer; OpenSeaFeed / Digitraffic");
+pub(crate) const AURORA_USER_AGENT: &str = user_agent!("aurora forecast; NOAA SWPC");
+pub(crate) const SATELLITES_USER_AGENT: &str = user_agent!("satellite orbits; CelesTrak");
 pub const USER_DATA_USER_AGENT: &str =
-    "GlobeCraft/0.3 (3D globe; user-added layer; +https://github.com/FireflyTheReal/GlobeCraft)";
-pub const ASSISTANT_USER_AGENT: &str =
-    concat!("GlobeCraft/", env!("CARGO_PKG_VERSION"), " (AI assistant)");
+    user_agent!("3D globe; user-added layer; +https://github.com/FireflyTheReal/GlobeCraft");
+pub const ASSISTANT_USER_AGENT: &str = user_agent!("AI assistant");
 
 /// The host of Esri Wayback's tile service; its release list lives on S3.
 pub(crate) const WAYBACK_TILE_HOST: &str = "wayback.maptiles.arcgis.com";

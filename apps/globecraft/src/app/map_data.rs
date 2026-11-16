@@ -8,7 +8,7 @@ pub(super) struct MapDataQuery {
     /// The globe shows the Earth (not another world or the flat map).
     pub(super) earth: bool,
     /// The camera: latitude, longitude, altitude (km) and tilt (degrees).
-    pub(super) view: (f64, f64, f64, f64),
+    pub(super) view: globecraft_data::ViewQuery,
     /// A transport layer shows.
     pub(super) transport: bool,
     /// Railways or airports show (not only ferries).
@@ -42,16 +42,12 @@ impl MapDataState {
             let ctx = ctx.clone();
             move || ctx.request_repaint()
         };
-        let (latitude, longitude, altitude_km, tilt_deg) = query.view;
         self.transport.update(
             runtime,
             globecraft_data::transport::TransportQuery {
                 enabled: query.earth && query.transport,
                 rail_or_airports: query.rail_or_airports,
-                latitude,
-                longitude,
-                altitude_km,
-                tilt_deg,
+                view: query.view,
             },
             wake(),
         );
@@ -59,10 +55,7 @@ impl MapDataState {
             runtime,
             globecraft_data::poi::PoiQuery {
                 enabled: query.earth && query.poi,
-                latitude,
-                longitude,
-                altitude_km,
-                tilt_deg,
+                view: query.view,
             },
             wake(),
         );

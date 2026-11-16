@@ -8,6 +8,9 @@
 
 /// The scheme and the one kind of link so far.
 pub const PREFIX: &str = "globecraft://view";
+/// A `data` entry naming a library source by its preset code (`preset:earthquakes`)
+/// rather than by a web address.
+pub const PRESET_PREFIX: &str = "preset:";
 
 /// What a view link carries. Only the position is required.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -27,6 +30,13 @@ pub struct ViewLink {
 }
 
 impl ViewLink {
+    /// The `data` entries that are web addresses (not library presets).
+    pub fn web_addresses(&self) -> impl Iterator<Item = &str> {
+        self.data
+            .iter()
+            .map(String::as_str)
+            .filter(|data| !data.starts_with(PRESET_PREFIX))
+    }
     /// The link as text, with five decimals for the position (about a metre).
     pub fn to_link(&self) -> String {
         let mut link = format!("{PREFIX}?lat={:.5}&lon={:.5}", self.lat, self.lon);
@@ -191,5 +201,54 @@ mod tests {
         assert!(ViewLink::parse("globecraft://view?lat=x&lon=0").is_err());
         assert!(ViewLink::parse("https://example.org/?lat=1&lon=2").is_err());
         assert!(ViewLink::parse("globecraft://view?lat=1&lon=2&data=%G0").is_err());
+    }
+
+    #[test]
+    fn web_addresses_leave_out_library_presets() {
+        let link = ViewLink::parse(
+            "globecraft://view?lat=1&lon=2&data=preset%3Agebco&data=https%3A%2F%2Fa.example%2Fx.csv",
+        )
+        .unwrap();
+        assert_eq!(
+            link.web_addresses().collect::<Vec<_>>(),
+            ["https://a.example/x.csv"]
+        );
+    }
+
+    #[test]
+    fn any_text_is_parsed_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(3);
+        let pieces = [
+            "globecraft://view?",
+            "lat=",
+            "lon=",
+            "alt=",
+            "heading=",
+            "tilt=",
+            "layers=",
+            "data=",
+            "basemap=",
+            "&",
+            "=",
+            "%",
+            "%2",
+            "%G",
+            "%C3",
+            "%A9",
+            "1",
+            "-",
+            "90",
+            ".",
+            "e",
+            "é",
+            "NaN",
+            "inf",
+        ];
+        for _ in 0..50_000 {
+            let text = inputs.text(&pieces, 12);
+            if let Ok(link) = ViewLink::parse(&text) {
+                let _ = ViewLink::parse(&link.to_link());
+            }
+        }
     }
 }

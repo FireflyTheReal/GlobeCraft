@@ -3,7 +3,6 @@
 //! ADSB.lol data is ODbL.
 use super::Aircraft;
 use globecraft_core::math::now_unix;
-use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -13,6 +12,9 @@ const HEX: &str = "https://api.adsb.lol/v2/hex";
 /// A day's trace is at most a few MB.
 const MAX_TRACE_BYTES: u64 = 16_000_000;
 const MAX_SMALL_BYTES: u64 = 2_000_000;
+/// The most a gzip-compressed answer may unpack to: a day's trace of a long flight
+/// is a few megabytes of JSON.
+const MAX_UNPACKED_BYTES: u64 = 64_000_000;
 /// How often the selected flight's position, and its recent trace, are asked for.
 const POSITION_EVERY: Duration = Duration::from_secs(5);
 /// A position from the flights list this recent makes asking for it needless.
@@ -90,11 +92,11 @@ pub fn parse_trace(json: &serde_json::Value) -> Result<Trace, crate::Error> {
     let start = json
         .get("timestamp")
         .and_then(serde_json::Value::as_f64)
-        .ok_or("trace without timestamp")?;
+        .ok_or_else(|| crate::Error::msg("trace without timestamp"))?;
     let points = json
         .get("trace")
         .and_then(serde_json::Value::as_array)
-        .ok_or("trace without points")?;
+        .ok_or_else(|| crate::Error::msg("trace without points"))?;
     let mut track = Vec::new();
     for point in points {
         let Some(fields) = point.as_array() else {
@@ -197,10 +199,9 @@ pub fn parse_route(
 }
 
 /// A JSON body, gunzipped when the server sends the stored gzip file as it is.
-fn json_body(bytes: &[u8]) -> Result<serde_json::Value, crate::Error> {
+pub(crate) fn json_body(bytes: &[u8]) -> Result<serde_json::Value, crate::Error> {
     if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut text = Vec::new();
-        flate2::read::GzDecoder::new(bytes).read_to_end(&mut text)?;
+        let text = crate::bounded::gunzip(bytes, MAX_UNPACKED_BYTES)?;
         Ok(serde_json::from_slice(&text)?)
     } else {
         Ok(serde_json::from_slice(bytes)?)
@@ -345,7 +346,7 @@ impl FlightSelection {
         listed: Option<&Aircraft>,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) {
-        if self.fixed {
+        if self.fixed || !crate::live::ENABLED {
             return;
         }
         let (Some(flight), Some(rx), Some(tx)) = (&mut self.flight, &self.rx, &self.tx) else {

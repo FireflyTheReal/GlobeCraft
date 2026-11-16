@@ -1,7 +1,7 @@
 //! Interface commands: panes, windows, the ribbon and the application (`ui.*`, `help.*`, `app.*`).
-use super::{bool_param, str_param, toggled};
 use crate::app::App;
 use eframe::egui;
+use globecraft_core::commands::InterfaceCommand;
 use globecraft_data::settings::{
     appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
 };
@@ -12,12 +12,12 @@ const ISSUES_URL: &str = "https://github.com/FireflyTheReal/GlobeCraft/issues/ne
 
 impl App {
     /// Runs a `ui.*`, `assistant.*`, `help.*` or `app.*` command.
-    pub(super) fn run_interface(&mut self, id: &str, p: &Value) -> Result<Value, String> {
+    pub(super) fn run_interface(&mut self, command: InterfaceCommand) -> Result<Value, String> {
         let ctx = self.ctx.clone();
-        Ok(match id {
-            "ui.pane.layers" | "ui.pane.places" => {
-                let panel = match id {
-                    "ui.pane.layers" => SidebarPanel::Layers,
+        Ok(match command {
+            InterfaceCommand::LayersPane | InterfaceCommand::PlacesPane => {
+                let panel = match command {
+                    InterfaceCommand::LayersPane => SidebarPanel::Layers,
                     _ => SidebarPanel::Places,
                 };
                 let layout = &mut self.settings.sidebar;
@@ -29,68 +29,74 @@ impl App {
                 }
                 json!({})
             }
-            "ui.pane.assistant" => {
-                match str_param(p, "ask").filter(|q| !q.is_empty()) {
+            #[cfg(not(feature = "assistant"))]
+            InterfaceCommand::AssistantPane(_) | InterfaceCommand::StopAssistant => {
+                return Err("this build of GlobeCraft has no assistant".into());
+            }
+            #[cfg(feature = "assistant")]
+            InterfaceCommand::AssistantPane(p) => {
+                match p.ask.filter(|q| !q.is_empty()) {
                     Some(question) => {
                         self.settings.workspace.open_right(RightPane::Assistant);
-                        self.assistant.queue(question.to_string());
+                        self.assistant.queue(question);
                     }
                     None => self.settings.workspace.toggle_right(RightPane::Assistant),
                 }
                 json!({})
             }
-            "assistant.stop" => {
+            #[cfg(feature = "assistant")]
+            InterfaceCommand::StopAssistant => {
                 let running = self.assistant.busy();
                 self.assistant_stop();
                 json!({"stopped": running})
             }
-            "ui.pane.measure" => {
+            InterfaceCommand::MeasurePane => {
                 self.settings.workspace.toggle_right(RightPane::Measure);
                 json!({})
             }
-            "ui.leftPane" => {
+            InterfaceCommand::LeftPane => {
                 self.settings.sidebar.open = !self.settings.sidebar.open;
                 json!({})
             }
-            "ui.navigationControls" => {
-                let shown = toggled(p, !self.settings.hide_navigation_controls);
+            InterfaceCommand::NavigationControls(p) => {
+                let shown = p.toggled(!self.settings.hide_navigation_controls);
                 self.settings.hide_navigation_controls = !shown;
                 json!({"shown": shown})
             }
-            "ui.tileDiagnostics" => {
-                let shown = toggled(p, self.frame.diagnostics);
+            InterfaceCommand::TileDiagnostics(p) => {
+                let shown = p.toggled(self.frame.diagnostics);
                 self.frame.diagnostics = shown;
                 json!({"shown": shown})
             }
-            "ui.navigatorStyle" => {
-                let style = str_param(p, "style")
-                    .and_then(globecraft_data::settings::navigation::NavigatorStyle::from_code)
-                    .ok_or("style must be globe or classic")?;
+            InterfaceCommand::NavigatorStyle(p) => {
+                let style =
+                    globecraft_data::settings::navigation::NavigatorStyle::from_code(&p.style)
+                        .ok_or("style must be globe or classic")?;
                 self.settings.navigation.navigator = style;
                 self.settings.hide_navigation_controls = false;
                 json!({"style": style.code()})
             }
-            "ui.ribbon" => {
+            InterfaceCommand::Ribbon => {
                 self.settings.workspace.ribbon_minimized =
                     !self.settings.workspace.ribbon_minimized;
                 self.chrome.ribbon_peek = false;
                 json!({})
             }
-            "ui.focusNext" | "ui.focusPrevious" => {
-                self.focus_next_region(&ctx, id == "ui.focusPrevious");
+            InterfaceCommand::FocusNext | InterfaceCommand::FocusPrevious => {
+                let backwards = command == InterfaceCommand::FocusPrevious;
+                self.focus_next_region(&ctx, backwards);
                 json!({})
             }
-            "ui.ribbon.pin" => {
-                let group = str_param(p, "group").ok_or("group is required")?;
-                let tool = str_param(p, "tool").ok_or("tool is required")?;
-                let on = bool_param(p, "on").unwrap_or(!self.tool_pinned(group, tool));
+            InterfaceCommand::PinRibbonTool(p) => {
+                let (group, tool) = (p.group.as_str(), p.tool.as_str());
+                let on = p.on.unwrap_or(!self.tool_pinned(group, tool));
                 let entry = crate::app::tools::group_entry(group, tool);
                 let toggled = on != crate::app::tools::pinned_by_default(group, tool);
                 self.settings.workspace.set_ribbon_toggled(&entry, toggled);
                 json!({"pinned": on})
             }
-            "ui.quickTools.pin" => {
-                let tool = str_param(p, "tool").ok_or("tool is required")?;
+            InterfaceCommand::PinQuickTool(p) => {
+                let tool = p.tool.as_str();
                 crate::app::tools::parse_tool(tool).ok_or("tool is not a command")?;
                 let present = self
                     .settings
@@ -98,7 +104,7 @@ impl App {
                     .quick_tools
                     .iter()
                     .any(|k| k == tool);
-                let on = bool_param(p, "on").unwrap_or(!present);
+                let on = p.on.unwrap_or(!present);
                 self.settings.workspace.set_quick_tool(tool, on);
                 let now = self
                     .settings
@@ -114,18 +120,16 @@ impl App {
                 }
                 json!({"pinned": now})
             }
-            "ui.shortcut.edit" => {
-                let tool = str_param(p, "tool").ok_or("tool is required")?;
-                crate::app::tools::parse_tool(tool).ok_or("tool is not a command")?;
-                self.chrome.ribbon_tools.capture = Some(tool.to_string());
+            InterfaceCommand::EditShortcut(p) => {
+                crate::app::tools::parse_tool(&p.tool).ok_or("tool is not a command")?;
+                self.chrome.ribbon_tools.capture = Some(p.tool);
                 json!({})
             }
-            "ui.shortcut.set" => {
-                let tool = str_param(p, "tool").ok_or("tool is required")?.to_string();
-                crate::app::tools::parse_tool(&tool).ok_or("tool is not a command")?;
-                self.set_shortcut(&tool, str_param(p, "keys"))?
+            InterfaceCommand::SetShortcut(p) => {
+                crate::app::tools::parse_tool(&p.tool).ok_or("tool is not a command")?;
+                self.set_shortcut(&p.tool, p.keys.as_deref())?
             }
-            "ui.ribbon.resetTools" => {
+            InterfaceCommand::ResetRibbonTools => {
                 let defaults = globecraft_data::settings::workspace::WorkspaceLayout::default();
                 let w = &mut self.settings.workspace;
                 w.ribbon_toggled = defaults.ribbon_toggled;
@@ -134,58 +138,69 @@ impl App {
                 crate::app::tools::sync_shortcuts(&w.shortcuts);
                 json!({})
             }
-            "ui.theme" => {
-                self.settings.appearance.theme = match str_param(p, "theme") {
-                    Some("system") => ThemePreference::System,
-                    Some("dark") => ThemePreference::Dark,
-                    Some("light") => ThemePreference::Light,
+            InterfaceCommand::Theme(p) => {
+                self.settings.appearance.theme = match p.theme.as_str() {
+                    "system" => ThemePreference::System,
+                    "dark" => ThemePreference::Dark,
+                    "light" => ThemePreference::Light,
                     _ => return Err("theme must be system, dark or light".into()),
                 };
                 json!({})
             }
-            "ui.fullscreen" => {
+            InterfaceCommand::Fullscreen => {
                 let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
                 json!({})
             }
-            "ui.minimize" => {
+            InterfaceCommand::Minimize => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 json!({})
             }
-            "ui.commandSearch" => {
+            InterfaceCommand::CommandSearch => {
                 self.windows.command_search =
                     Some(crate::app::ui::palette::CommandSearch::default());
                 json!({})
             }
-            "ui.settings" => {
+            InterfaceCommand::Settings => {
                 self.windows.settings = !self.windows.settings;
                 json!({})
             }
-            "ui.shortcuts" => {
+            InterfaceCommand::Shortcuts => {
                 self.windows.shortcuts = !self.windows.shortcuts;
                 json!({})
             }
-            "ui.about" => {
+            InterfaceCommand::About => {
                 self.windows.about = !self.windows.about;
                 json!({})
             }
-            "help.documentation" => {
+            InterfaceCommand::Documentation => {
                 ctx.open_url(egui::OpenUrl::new_tab(DOCUMENTATION_URL));
                 json!({})
             }
-            "help.reportIssue" => {
+            InterfaceCommand::ReportIssue => {
                 ctx.open_url(egui::OpenUrl::new_tab(ISSUES_URL));
                 json!({})
             }
-            "app.quit" => {
+            InterfaceCommand::CopyDiagnostics => {
+                ctx.copy_text(self.diagnostics_text());
+                self.status = self.lang.text("diagnostics-copied-status").to_owned();
+                json!({"copied": true})
+            }
+            InterfaceCommand::WorkOffline(p) => {
+                let offline = p.toggled(self.settings.offline);
+                self.settings.offline = offline;
+                globecraft_data::network::set_offline(offline);
+                json!({"offline": offline})
+            }
+            InterfaceCommand::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 json!({})
             }
-            "ui.timeline" => {
-                self.timeline.open = bool_param(p, "visible").unwrap_or(!self.timeline.open);
+            InterfaceCommand::Timeline(p) => {
+                // `on`, as the schema says (this read `visible`, which no caller sent).
+                self.timeline.open = p.toggled(self.timeline.open);
                 json!({"visible": self.timeline.open})
             }
-            _ => return Err(format!("unknown command '{id}'")),
         })
     }
 }

@@ -1,9 +1,11 @@
-use serde::Serialize;
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SkyPreferences {
     /// The Milky Way background (NASA's map behind the globe).
     pub enabled: bool,
-    /// No longer offered (2026-10-27): the Milky Way shows whenever it is on.
+    /// No longer offered (2026-10-27): the Milky Way shows whenever it is on. Still read
+    /// and written so files keep the value; nothing uses it.
     pub cinematic: bool,
     /// The point stars.
     pub stars: bool,
@@ -19,14 +21,6 @@ impl Default for SkyPreferences {
 }
 impl SkyPreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
-        if let Some(enabled) = value.get("enabled").and_then(|v| v.as_bool()) {
-            self.enabled = enabled;
-        }
-        if let Some(cinematic) = value.get("cinematic").and_then(|v| v.as_bool()) {
-            self.cinematic = cinematic;
-        }
-        if let Some(stars) = value.get("stars").and_then(|v| v.as_bool()) {
-            self.stars = stars;
-        }
+        super::lenient::apply(self, value, &[]);
     }
 }

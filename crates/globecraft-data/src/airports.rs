@@ -3,12 +3,13 @@
 //! `.github/workflows/airports.yml` (public domain). Found by IATA or ICAO code, for
 //! the search box and the airports of a selected flight's route.
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 /// The file is about 300 KB compressed.
 const MAX_BYTES: u64 = 8_000_000;
+/// The most the file may unpack to (it is a few megabytes of text).
+const MAX_UNPACKED_BYTES: u64 = 64_000_000;
 const RETRY: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -46,19 +47,26 @@ pub struct Airports {
 }
 
 impl Airports {
+    /// Reads the published file: the gzip-compressed table.
+    pub fn from_gzip(bytes: &[u8]) -> Result<Self, crate::Error> {
+        let text = crate::bounded::gunzip(bytes, MAX_UNPACKED_BYTES)?;
+        let text = std::str::from_utf8(&text)
+            .map_err(|_| crate::Error::msg("the airport list is not text"))?;
+        Self::parse(text)
+    }
     /// Reads the published table (tab-separated, with a header).
     pub fn parse(text: &str) -> Result<Self, crate::Error> {
         let mut lines = text.lines();
         let header: Vec<&str> = lines
             .next()
-            .ok_or("empty airport list")?
+            .ok_or_else(|| crate::Error::msg("empty airport list"))?
             .split('\t')
             .collect();
         let column = |name: &str| {
             header
                 .iter()
                 .position(|h| *h == name)
-                .ok_or_else(|| crate::Error::from(format!("airport list without {name}")))
+                .ok_or_else(|| crate::Error::msg(format!("airport list without {name}")))
         };
         let [
             kind,
@@ -114,7 +122,7 @@ impl Airports {
             });
         }
         if airports.airports.is_empty() {
-            return Err("the airport list holds no airports".into());
+            return Err(crate::Error::msg("the airport list holds no airports"));
         }
         Ok(airports)
     }
@@ -214,9 +222,7 @@ async fn download() -> Result<Airports, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Boundary)?;
     let bytes = crate::http::body(client.get(&url), MAX_BYTES).await?;
     crate::cpu::run(crate::cpu::Service::Features, move || {
-        let mut text = String::new();
-        flate2::read::GzDecoder::new(bytes.as_slice()).read_to_string(&mut text)?;
-        Airports::parse(&text)
+        Airports::from_gzip(&bytes)
     })
     .await
 }
@@ -253,11 +259,7 @@ mod tests {
     fn the_published_list_reads() {
         let path = std::env::var("GLOBECRAFT_AIRPORTS_FILE").expect("GLOBECRAFT_AIRPORTS_FILE");
         let bytes = std::fs::read(path).unwrap();
-        let mut text = String::new();
-        flate2::read::GzDecoder::new(bytes.as_slice())
-            .read_to_string(&mut text)
-            .unwrap();
-        let airports = Airports::parse(&text).unwrap();
+        let airports = Airports::from_gzip(&bytes).unwrap();
         println!("AIRPORTS {}", airports.len());
         assert!(airports.len() > 5000);
         for code in ["FRA", "EDDF", "JFK", "GRU", "SBGR", "NRT", "SYD"] {

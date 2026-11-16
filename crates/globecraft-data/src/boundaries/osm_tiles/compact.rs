@@ -96,14 +96,14 @@ pub(super) struct FilteredPlace {
 
 /// The kept part of one tile.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct Filtered {
+pub(crate) struct Filtered {
     pub(super) lines: Vec<FilteredLine>,
     pub(super) places: Vec<FilteredPlace>,
 }
 
 impl Filtered {
     /// Keeps the land borders and places of a vector tile. `None` when it is malformed.
-    pub(super) fn from_mvt(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn from_mvt(bytes: &[u8]) -> Option<Self> {
         let layers = mvt::decode(bytes, |name| {
             name == "boundary" || name == "place" || name == "water"
         })?;
@@ -210,7 +210,7 @@ impl Filtered {
         self.lines.iter().map(|l| l.points.len()).sum::<usize>() + self.places.len()
     }
 
-    pub(super) fn encode(&self) -> Vec<u8> {
+    pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = vec![FORMAT_VERSION];
         varint(self.lines.len() as u64, &mut out);
         for line in &self.lines {
@@ -246,7 +246,7 @@ impl Filtered {
     }
 
     /// `None` for data of another format version or damaged data.
-    pub(super) fn decode(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let (&version, rest) = bytes.split_first()?;
         if version != FORMAT_VERSION {
             return None;
@@ -254,7 +254,13 @@ impl Filtered {
         let mut r = Reader::new(rest);
         let count = |r: &mut Reader<'_>| usize::try_from(r.varint()?).ok();
         let byte = |r: &mut Reader<'_>| r.take(1).map(|b| b[0]);
-        let coordinate = |r: &mut Reader<'_>| Some(unzigzag(r.varint()?));
+        // Everything kept of a tile lies in it (lines are cut at its edge), so a
+        // coordinate elsewhere is damage; refusing it also keeps the sums below, and
+        // the differences `encode` writes, from overflowing.
+        let inside = |value: i32| (0..=EXTENT).contains(&value).then_some(value);
+        let step = |r: &mut Reader<'_>, from: i32| {
+            from.checked_add(unzigzag(r.varint()?)).and_then(inside)
+        };
         let mut out = Self::default();
         let lines = count(&mut r)?;
         for _ in 0..lines {
@@ -264,7 +270,7 @@ impl Filtered {
             let mut points = Vec::with_capacity(n.min(rest.len()));
             let mut last = (0, 0);
             for _ in 0..n {
-                last = (last.0 + coordinate(&mut r)?, last.1 + coordinate(&mut r)?);
+                last = (step(&mut r, last.0)?, step(&mut r, last.1)?);
                 points.push(last);
             }
             out.lines.push(FilteredLine {
@@ -276,7 +282,7 @@ impl Filtered {
         let places = count(&mut r)?;
         for _ in 0..places {
             let class = *PlaceClass::ALL.get(usize::from(byte(&mut r)?))?;
-            let (x, y) = (coordinate(&mut r)?, coordinate(&mut r)?);
+            let (x, y) = (step(&mut r, 0)?, step(&mut r, 0)?);
             let rank = byte(&mut r)?;
             let read_text =
                 |r: &mut Reader<'_>| Some(String::from_utf8_lossy(r.bytes()?).into_owned());
@@ -573,5 +579,42 @@ mod tests {
         let mut other = encoded.clone();
         other[0] = FORMAT_VERSION + 1;
         assert!(Filtered::decode(&other).is_none());
+    }
+
+    /// Found by the `compact_tile` fuzz target: coordinates are stored as differences,
+    /// and a damaged row's sums overflowed.
+    #[test]
+    fn stored_coordinates_outside_the_tile_are_damage() {
+        // One line of two points: (4096, 0), then `dx` further east.
+        let line = |dx: i32| {
+            let mut bytes = vec![FORMAT_VERSION];
+            varint(1, &mut bytes);
+            bytes.extend([2, 0]);
+            varint(2, &mut bytes);
+            for delta in [EXTENT, 0, dx, 0] {
+                varint(zigzag(delta), &mut bytes);
+            }
+            varint(0, &mut bytes);
+            bytes
+        };
+        let on_the_edge = Filtered::decode(&line(0)).unwrap();
+        assert_eq!(on_the_edge.lines[0].points, [(EXTENT, 0), (EXTENT, 0)]);
+        assert_eq!(Filtered::decode(&on_the_edge.encode()), Some(on_the_edge));
+        assert!(Filtered::decode(&line(-EXTENT)).is_some());
+        assert_eq!(Filtered::decode(&line(1)), None);
+        assert_eq!(Filtered::decode(&line(-EXTENT - 1)), None);
+        assert_eq!(Filtered::decode(&line(i32::MAX)), None);
+        assert_eq!(Filtered::decode(&line(i32::MIN)), None);
+    }
+
+    #[test]
+    fn damaged_tiles_are_refused_without_panicking() {
+        let raw = sample();
+        let encoded = Filtered::from_mvt(&raw).unwrap().encode();
+        let mut inputs = crate::test_inputs::Inputs::new(12);
+        for _ in 0..20_000 {
+            let _ = Filtered::decode(&inputs.mutate(&encoded));
+            let _ = Filtered::from_mvt(&inputs.mutate(&raw));
+        }
     }
 }

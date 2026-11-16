@@ -152,15 +152,19 @@ impl RasterTiles {
         }
     }
 
-    /// Requests the tiles the view needs and returns what is loaded for it. `view`:
-    /// latitude, longitude, altitude (km), tilt (degrees).
+    /// Requests the tiles the view needs and returns what is loaded for it.
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
-        view: (f64, f64, f64, f64),
+        view: crate::ViewQuery,
         repaint: impl Fn() + Send + Sync + Clone + 'static,
     ) -> Option<Arc<RasterSnapshot>> {
-        let (lat, lon, altitude_km, tilt_deg) = view;
+        let crate::ViewQuery {
+            latitude: lat,
+            longitude: lon,
+            altitude_km,
+            tilt_deg,
+        } = view;
         // Tiles across the view: a 256-pixel tile about every 400 screen pixels keeps
         // the overlay about as sharp as the imagery under it.
         let across = 4.0 * 256.0 / f64::from(self.tile_px);
@@ -327,24 +331,23 @@ async fn archive_tile(
 
 async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
     let client = crate::http::client(crate::http::Policy::UserData)?;
-    let address = crate::keys::fill(&url)?;
-    let bytes = crate::http::body(client.get(&address), MAX_TILE_BYTES)
+    let url = crate::keys::fill(&url)?;
+    let bytes = crate::http::body(client.get(&url), MAX_TILE_BYTES)
         .await
-        .map_err(|error| crate::keys::without_address(error, &url))?;
+        .map_err(crate::keys::redact_error)?;
     crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes)).await
 }
 
-pub(super) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
     // A WMS answers an error as XML with status 200.
     if bytes.starts_with(b"<") || bytes.starts_with(b"\xef\xbb\xbf<") {
         let text = String::from_utf8_lossy(&bytes[..bytes.len().min(400)]);
-        return Err(format!(
+        return Err(crate::Error::msg(format!(
             "the server answered with text, not an image: {}",
             text.trim()
-        )
-        .into());
+        )));
     }
-    Ok(image::load_from_memory(bytes)?.to_rgba8())
+    Ok(crate::bounded::image(bytes, crate::bounded::ImageLimit::TILE)?.into_rgba8())
 }
 
 /// Fetches one tile of a template (the form's "Test"): its size in pixels.

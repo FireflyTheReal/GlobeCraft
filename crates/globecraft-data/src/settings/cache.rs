@@ -1,6 +1,6 @@
 //! Explicit cache budgets. The imagery budgets apply when the desktop constructs its
 //! cache; the border tile budget applies at once.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 pub const MIN_CACHE_MIB: u32 = 32;
 pub const MAX_DECODED_CACHE_MIB: u32 = 2048;
@@ -15,7 +15,8 @@ pub const DEFAULT_DISK_CACHE_MIB: u32 = 1024;
 /// The old default: a saved value of exactly this was never chosen by the user and
 /// moves to the new default.
 const OLD_DEFAULT_DISK_CACHE_MIB: u64 = 128;
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CachePreferences {
     pub decoded_mib: u32,
     pub disk_mib: u32,
@@ -41,6 +42,8 @@ impl CachePreferences {
         u64::from(self.borders_mib) * BYTES_PER_MIB
     }
     pub(super) fn apply(&mut self, value: &serde_json::Value) {
+        // Any whole number is taken and brought into range (also one beyond `u32`),
+        // so these are read here and not by `lenient::apply`.
         for (key, target, min, max) in [
             (
                 "decoded_mib",

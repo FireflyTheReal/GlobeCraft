@@ -184,9 +184,15 @@ impl<T: Send + 'static> OverlayWorker<T> {
                 };
                 loop {
                     let request = {
-                        let mut state = worker.mailbox.lock().unwrap();
+                        let mut state = worker
+                            .mailbox
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         while state.pending.is_none() && !state.stopped {
-                            state = worker.wake.wait(state).unwrap();
+                            state = worker
+                                .wake
+                                .wait(state)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                         }
                         if state.stopped {
                             return;
@@ -194,7 +200,10 @@ impl<T: Send + 'static> OverlayWorker<T> {
                         state.pending.take().unwrap()
                     };
                     let finished = finish(preparer.prepare(request));
-                    let mut state = worker.mailbox.lock().unwrap();
+                    let mut state = worker
+                        .mailbox
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if state.stopped {
                         return;
                     }
@@ -206,7 +215,11 @@ impl<T: Send + 'static> OverlayWorker<T> {
         Ok(Self { shared })
     }
     pub fn submit(&self, view: OverlayView, data: Arc<BoundaryData>) {
-        self.shared.mailbox.lock().unwrap().pending = Some(OverlayInput {
+        self.shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pending = Some(OverlayInput {
             view,
             data,
             fading_out: None,
@@ -214,12 +227,21 @@ impl<T: Send + 'static> OverlayWorker<T> {
         self.shared.wake.notify_one();
     }
     pub fn take_completed(&self) -> Option<T> {
-        self.shared.mailbox.lock().unwrap().completed.take()
+        self.shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .completed
+            .take()
     }
 }
 impl<T> Drop for OverlayWorker<T> {
     fn drop(&mut self) {
-        let mut state = self.shared.mailbox.lock().unwrap();
+        let mut state = self
+            .shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.stopped = true;
         state.pending = None;
         state.completed = None;

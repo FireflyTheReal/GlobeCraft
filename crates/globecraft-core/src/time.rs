@@ -160,18 +160,16 @@ pub fn parse_iso(text: &str) -> Option<f64> {
         secs += seconds[..end].parse::<f64>().ok()?;
         rest = &seconds[end..];
     }
-    match rest {
-        "" | "Z" | "z" => Some(secs),
-        // ASCII only: the slices below cut at bytes.
-        zone if zone.len() == 6
-            && zone.is_ascii()
-            && matches!(&zone[..1], "+" | "-")
-            && &zone[3..4] == ":" =>
+    // Matched on bytes: text from a user's file may hold any character here, and slicing
+    // a string by byte position would panic inside a multi-byte one.
+    match rest.as_bytes() {
+        b"" | b"Z" | b"z" => Some(secs),
+        &[sign @ (b'+' | b'-'), h1, h2, b':', m1, m2]
+            if [h1, h2, m1, m2].iter().all(u8::is_ascii_digit) =>
         {
-            let hours: f64 = zone[1..3].parse().ok()?;
-            let minutes: f64 = zone[4..6].parse().ok()?;
-            let offset = (hours * 60.0 + minutes) * 60.0;
-            Some(if zone.starts_with('+') {
+            let two_digits = |tens: u8, ones: u8| f64::from((tens - b'0') * 10 + (ones - b'0'));
+            let offset = (two_digits(h1, h2) * 60.0 + two_digits(m1, m2)) * 60.0;
+            Some(if sign == b'+' {
                 secs - offset
             } else {
                 secs + offset
@@ -228,6 +226,22 @@ mod tests {
         assert_eq!(parse_iso("2026-11-04T09:38:00.5"), Some(WALL + 0.5));
         assert_eq!(parse_iso("yesterday"), None);
         assert_eq!(parse_iso("2026-13-01"), None);
+        assert_eq!(
+            parse_iso("2026-11-04T09:38-02:30"),
+            Some(WALL + 2.5 * HOUR_SECS)
+        );
+        // Text from a user's file: no panic on characters of several bytes, wherever they are.
+        for odd in [
+            "2026-11-04T09:38é1234",
+            "2026-11-04T09:38+1:é0",
+            "2026-11-04T09:38:é",
+            "2026-11-04T09é38",
+            "2026-11-04Té",
+            "2026-11-0é",
+            "2026-11-04T09:38+01:0x",
+        ] {
+            assert_eq!(parse_iso(odd), None, "{odd}");
+        }
         // Text after the time that is not a zone, in any script, is no date (a
         // six-byte tail of two-byte letters used to be cut inside a letter).
         assert_eq!(parse_iso("2026-11-04T09:38ééé"), None);
@@ -238,6 +252,36 @@ mod tests {
         for days in [-1000_i64, 11_016, 47_482] {
             let (y, m, d) = civil_from_days(days);
             assert_eq!(days_from_civil(y, i64::from(m), i64::from(d)), days);
+        }
+    }
+
+    #[test]
+    fn any_text_is_parsed_or_refused_without_panicking() {
+        let mut inputs = crate::test_inputs::Inputs::new(1);
+        let pieces = [
+            "0",
+            "1",
+            "2",
+            "9",
+            "-",
+            ":",
+            "T",
+            "t",
+            " ",
+            "+",
+            "Z",
+            ".",
+            "é",
+            "日",
+            "2026-11-04",
+            "T09:38",
+            ":12.5",
+            "+01:00",
+            "\u{0}",
+        ];
+        for _ in 0..50_000 {
+            let text = inputs.text(&pieces, 12);
+            let _ = parse_iso(&text);
         }
     }
 }

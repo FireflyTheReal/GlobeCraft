@@ -124,13 +124,18 @@ Rules for new state:
 
 `globecraft_core::commands` lists every action as a command: id, Fluent label/help keys,
 icon, ribbon tab, JSON-Schema parameters and reach (view, files, destructive, interface).
-`App::run(id, params)` (`apps/globecraft/src/app/commands.rs`) hands each command to the
-feature that runs it: `commands::Feature::of(id)` picks the feature from the id's first
-part, and one handler per feature implements its commands (`commands/camera.rs`,
-`places.rs`, `ruler.rs`, `files.rs`, `layers.rs`, `interface.rs`, `settings.rs`,
-`info.rs`; `run_time`, `run_flight`, `run_satellite`, `run_user_data` and `run_legend`
-beside their states). A test checks that every command of the catalogue reaches a handler
-that names it. `commands/state.rs` reports enabled/checked state (`App::command_state`)
+`App::run(id, params)` (`apps/globecraft/src/app/commands.rs`) reads the command once with
+`commands::Command::parse`: the id becomes a typed `Command`, grouped by feature
+(`Command::Camera(CameraCommand::FlyTo(FlyTo { lat, lon, .. }))`), and the JSON
+parameters become the command's own struct (`commands/params.rs`, read leniently: numbers
+also as text, text trimmed). One handler per feature matches its group
+(`commands/camera.rs`, `places.rs`, `ruler.rs`, `files.rs`, `layers.rs`, `interface.rs`,
+`settings.rs`, `info.rs`; `run_time`, `run_flight`, `run_satellite`, `run_user_data` and
+`run_legend` beside their states); a `match` must name every command of its group, so a
+command without a handler does not compile. The table in `commands/command.rs` is the only
+place that pairs an id with its variant; core tests check that it holds every catalogue
+command once and that each parameter struct has exactly the parameters of its JSON Schema
+(which stays hand-written: it is what the assistant reads). `commands/state.rs` reports enabled/checked state (`App::command_state`)
 and `commands/shortcuts.rs` owns the keyboard shortcuts. The ribbon, File menu, macOS
 native menu, shortcuts, context menu, controllers, Command Search and the assistant all
 dispatch through `App::run`. `globecraft_core::layers::MapLayer` names every toggleable layer; data's `Settings`
@@ -450,9 +455,13 @@ is available for auxiliary catalogs; it is not duplicated in the tile hot path.
 
 Satellite overview warming covers zooms 0–4 globally: 341 tiles, 85.25 MiB decoded.
 It runs while idle at 14,000 km or farther away, after visible work, with bounded
-admission. Other providers stay on demand. Cache roots resolve `LOCALAPPDATA`,
-`XDG_CACHE_HOME`, `HOME/.cache`, then the temporary directory, under
-`globecraft_tiles`. Preferences remain `settings.json` and `lang.txt`.
+admission. Other providers stay on demand. The cache folder (`paths::cache_dir`) is
+`XDG_CACHE_HOME/globecraft` when that is set, else Caches on macOS, `LOCALAPPDATA` on
+Windows and `~/.cache/globecraft` elsewhere; `migrate_cache` renames the
+`globecraft_tiles` folder of earlier versions into place once. Preferences (`settings.json`, `lang.txt`, `open-kml.json`) and the
+key files live in the configuration folder instead (`paths::config_dir`: Application
+Support on macOS, `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere), where cache
+cleaners leave them; `migrate_config` moves them out of the cache folder once.
 
 ## Units, localization and diagnostics
 

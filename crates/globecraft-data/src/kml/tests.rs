@@ -253,6 +253,16 @@ fn tree_roundtrip_preserves_distinct_folders_visibility_and_empty_groups() {
 }
 
 #[test]
+fn damaged_documents_are_refused_without_panicking() {
+    let xml = br#"<?xml version="1.0"?><kml><Document><name>Places</name><Folder><name>A &amp; B</name><Placemark><name>P</name><description><![CDATA[x < y]]></description><Point><coordinates>-46.6,-23.5,10</coordinates></Point></Placemark><Placemark><LineString><coordinates>1,2 3,4</coordinates></LineString></Placemark></Folder></Document></kml>"#;
+    let mut inputs = crate::test_inputs::Inputs::new(14);
+    for _ in 0..10_000 {
+        let damaged = inputs.mutate(xml);
+        let _ = parse_tree(&String::from_utf8_lossy(&damaged), Lang::En);
+    }
+}
+
+#[test]
 fn files_in_older_encodings_or_with_a_byte_order_mark_are_read() {
     const BODY: &str = "<kml><Placemark><name>S\u{e3}o Paulo</name><Point><coordinates>-46.6,-23.5</coordinates></Point></Placemark></kml>";
     let latin1: Vec<u8> = BODY.chars().map(|c| c as u8).collect();

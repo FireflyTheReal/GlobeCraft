@@ -468,6 +468,40 @@ mod tests {
         assert!(decode(&[0xff; 12], |_| true).is_none());
         assert_eq!(decode(&[], |_| true).map(|l| l.len()), Some(0));
     }
+
+    #[test]
+    fn damaged_tiles_are_refused_without_panicking() {
+        let tile = tile(&[
+            layer(
+                "boundary",
+                4096,
+                &[TestFeature {
+                    tags: vec![
+                        ("admin_level", TestValue::Int(2)),
+                        ("name", TestValue::Text("Fais")),
+                    ],
+                    kind: 2,
+                    parts: vec![
+                        vec![(10, 20), (30, 25), (4000, 4096)],
+                        vec![(-5, 7), (8, 9)],
+                    ],
+                }],
+            ),
+            layer(
+                "place",
+                4096,
+                &[TestFeature {
+                    tags: vec![("class", TestValue::Text("island"))],
+                    kind: 3,
+                    parts: vec![vec![(0, 0), (100, 0), (100, 100), (0, 0)]],
+                }],
+            ),
+        ]);
+        let mut inputs = crate::test_inputs::Inputs::new(11);
+        for _ in 0..50_000 {
+            let _ = decode(&inputs.mutate(&tile), |_| true);
+        }
+    }
 }
 
 /// Decodes a real tile: `GLOBECRAFT_MVT_FIXTURE=<file.pbf> cargo test -p globecraft-data
