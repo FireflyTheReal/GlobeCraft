@@ -556,3 +556,56 @@ fn buildings_screenshots() {
         }
     }
 }
+
+/// Manual probe: how the picture changes while relief loads for a fresh view.
+/// Prints, every 50 ms, how much the displayed frame differs from the one before.
+#[test]
+#[ignore = "manual: network; prints frame-to-frame change while relief loads"]
+fn relief_loading_probe() {
+    use globecraft_core::layers::MapLayer;
+    let mut h = harness(ThemePreference::Dark);
+    h.state_mut()
+        .settings
+        .set_layer_visible(MapLayer::Terrain, true);
+    let env_f64 = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+    let _ = h.state_mut().run(
+        "camera.set",
+        json!({"lat": env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(45.98),
+            "lon": env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(7.66),
+            "altitude_km": 12.0, "tilt_deg": 65.0, "heading_deg": 200.0}),
+    );
+    let started = std::time::Instant::now();
+    let mut before: Option<Vec<u8>> = None;
+    for _ in 0..240 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let app = h.state();
+        let Some(frame) = &app.frame.image else {
+            continue;
+        };
+        let sample: Vec<u8> = frame.pixels.iter().step_by(4 * 37).copied().collect();
+        let change = before
+            .as_ref()
+            .filter(|old| old.len() == sample.len())
+            .map(|old| {
+                old.iter()
+                    .zip(&sample)
+                    .map(|(a, b)| f64::from(a.abs_diff(*b)))
+                    .sum::<f64>()
+                    / sample.len() as f64
+            });
+        println!(
+            "{:5} ms  change {:6.2}  size {}x{}  relief gen {}  loading {}  fade step {}",
+            started.elapsed().as_millis(),
+            change.unwrap_or(-1.0),
+            frame.width,
+            frame.height,
+            app.tiles.cache.elevation_generation(),
+            app.tiles.cache.inflight(),
+            app.tiles
+                .cache
+                .elevation_fade_step(std::time::Duration::from_millis(40)),
+        );
+        before = Some(sample);
+    }
+}
