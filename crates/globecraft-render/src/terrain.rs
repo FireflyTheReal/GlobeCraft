@@ -568,7 +568,9 @@ pub(super) fn march(
         };
         let tile = *tile;
         let held = Held::of(loc);
-        let top_level = tile.elevation(held.tiles).top_level();
+        // The tile's own heights: all there is to it once it has grown in.
+        let elevation = tile.elevation(held.tiles);
+        let grown = tile.morph.is_none();
         let (vx, vy) = (
             anchor.duv.0 * tile.n * tile.size,
             anchor.duv.1 * tile.n * tile.size,
@@ -583,9 +585,14 @@ pub(super) fn march(
         // The coarsest block the ray is above.
         let (ix, iy) = (x as usize, y as usize);
         let mut clear = None;
-        for level in (0..=top_level.min(start_level)).rev() {
+        for level in (0..=elevation.top_level().min(start_level)).rev() {
             let (bx, by) = (ix >> level, iy >> level);
-            let top = f64::from(tile.block_top_m(held, level, bx, by)) * to_world;
+            let top = if grown {
+                elevation.block_max_m(level, bx, by)
+            } else {
+                tile.block_top_m(held, level, bx, by)
+            };
+            let top = f64::from(top) * to_world;
             if height > top {
                 clear = Some((level, bx, by, top));
                 break;
@@ -604,11 +611,19 @@ pub(super) fn march(
                 start_level = level + 1;
             }
             None => {
-                let ground = f64::from(tile.height_m(held, uv)) * to_world;
+                let ground_m = |uv: (f64, f64)| {
+                    if grown {
+                        let (x, y) = tile.texel(uv);
+                        elevation.height_m(x, y)
+                    } else {
+                        tile.height_m(held, uv)
+                    }
+                };
+                let ground = f64::from(ground_m(uv)) * to_world;
                 if height <= ground {
                     let t = refine(above, t, height - ground, |t| {
                         height_above(origin + direction * t, q)
-                            - f64::from(tile.height_m(held, anchor.uv(t))) * to_world
+                            - f64::from(ground_m(anchor.uv(t))) * to_world
                     });
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
