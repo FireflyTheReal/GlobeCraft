@@ -97,7 +97,7 @@ pub(super) enum March {
 
 /// A loaded elevation tile (by its index in the batch's `Local::dem`) and where it sits.
 #[derive(Clone, Copy)]
-struct DemTile {
+pub(super) struct Grid {
     index: usize,
     /// Tiles per side at the tile's level.
     n: f64,
@@ -107,7 +107,7 @@ struct DemTile {
     size: f64,
 }
 
-impl DemTile {
+impl Grid {
     fn elevation<'a>(&self, dem: &'a [Arc<Tile>]) -> &'a Elevation {
         dem[self.index]
             .elevation()
@@ -120,8 +120,134 @@ impl DemTile {
             (v * self.n - self.ty) * self.size,
         )
     }
+    /// The `(u, v)` of texel coordinates `(x, y)` of this tile.
+    fn uv(&self, (x, y): (f64, f64)) -> (f64, f64) {
+        (
+            (self.tx + x / self.size) / self.n,
+            (self.ty + y / self.size) / self.n,
+        )
+    }
     fn contains(&self, (x, y): (f64, f64)) -> bool {
         (0.0..self.size).contains(&x) && (0.0..self.size).contains(&y)
+    }
+    /// No bilinear height between `from` and `to` (`(u, v)` corners of a square no
+    /// wider than this tile) is above this, in metres.
+    fn top_between_m(&self, dem: &[Arc<Tile>], from: (f64, f64), to: (f64, f64)) -> f32 {
+        let elevation = self.elevation(dem);
+        let last = self.size - 1.0;
+        let (x0, y0) = self.texel(from);
+        let (x1, y1) = self.texel(to);
+        let (x0, y0) = (x0.clamp(0.0, last), y0.clamp(0.0, last));
+        let (x1, y1) = (x1.clamp(0.0, last), y1.clamp(0.0, last));
+        // Blocks at least as wide as the square: it lies in at most two by two.
+        let width = (x1 - x0).max(y1 - y0).max(1.0);
+        let level = (width.log2().ceil() as usize).min(elevation.top_level());
+        let (bx, by) = (
+            (x0 as usize >> level, x1 as usize >> level),
+            (y0 as usize >> level, y1 as usize >> level),
+        );
+        [(bx.0, by.0), (bx.1, by.0), (bx.0, by.1), (bx.1, by.1)]
+            .into_iter()
+            .map(|(bx, by)| elevation.block_max_m(level, bx, by))
+            .fold(f32::MIN, f32::max)
+    }
+}
+
+/// An elevation tile that arrived a moment ago: its relief grows from what stood
+/// there before instead of snapping to its heights.
+#[derive(Clone, Copy)]
+struct Morph {
+    /// 0 as the tile arrives to 1 when its own heights stand (`Tile::grown`).
+    grown: f32,
+    /// The coarser tile that stood in for it (its index in `Local::dem`), itself
+    /// perhaps still growing; sea level when there was none.
+    from: Option<usize>,
+}
+
+/// The elevation tile a ray is over.
+#[derive(Clone, Copy)]
+pub(super) struct DemTile {
+    grid: Grid,
+    morph: Option<Morph>,
+}
+
+impl std::ops::Deref for DemTile {
+    type Target = Grid;
+    fn deref(&self) -> &Grid {
+        &self.grid
+    }
+}
+
+/// The elevation tiles a batch holds: `placed[i]` says where `tiles[i]` sits.
+#[derive(Clone, Copy)]
+struct Held<'a> {
+    tiles: &'a [Arc<Tile>],
+    placed: &'a [DemTile],
+}
+
+impl<'a> Held<'a> {
+    fn of<F>(loc: &'a Local<'_, F>) -> Self {
+        Self {
+            tiles: &loc.dem,
+            placed: &loc.dem_placed,
+        }
+    }
+}
+
+impl DemTile {
+    /// The height at `(u, v)`, in metres: this tile's, or on the way to it from
+    /// the stand-in's.
+    fn height_m(&self, held: Held, uv: (f64, f64)) -> f32 {
+        let (x, y) = self.texel(uv);
+        let own = self.elevation(held.tiles).height_m(x, y);
+        let Some(morph) = self.morph else {
+            return own;
+        };
+        let before = morph
+            .from
+            .map_or(0.0, |from| held.placed[from].height_m(held, uv));
+        before + (own - before) * morph.grown
+    }
+    /// No height in block `(bx, by)` of `level` is above this, in metres.
+    #[inline]
+    fn block_top_m(&self, held: Held, level: usize, bx: usize, by: usize) -> f32 {
+        let own = self.elevation(held.tiles).block_max_m(level, bx, by);
+        let Some(morph) = self.morph else {
+            return own;
+        };
+        let block = (1usize << level) as f64;
+        let corner = |bx: usize, by: usize| self.uv((bx as f64 * block, by as f64 * block));
+        own.max(Self::top_before_m(
+            morph,
+            held,
+            corner(bx, by),
+            corner(bx + 1, by + 1),
+        ))
+    }
+    /// No height between `from` and `to` (`(u, v)` corners of a square inside this
+    /// tile) is above this, in metres. A growing tile's heights lie between its own
+    /// and its stand-in's, so under both tops.
+    fn top_between_m(&self, held: Held, from: (f64, f64), to: (f64, f64)) -> f32 {
+        let own = self.grid.top_between_m(held.tiles, from, to);
+        self.morph.map_or(own, |morph| {
+            own.max(Self::top_before_m(morph, held, from, to))
+        })
+    }
+    fn top_before_m(morph: Morph, held: Held, from: (f64, f64), to: (f64, f64)) -> f32 {
+        morph.from.map_or(0.0, |below| {
+            held.placed[below].top_between_m(held, from, to)
+        })
+    }
+    /// The hill shading at `uv`, on the way from the stand-in's while growing.
+    fn shade(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64) -> f32 {
+        let own = hill_shade(&self.grid, self.elevation(held.tiles), uv, up, to_world);
+        let Some(morph) = self.morph else {
+            return own;
+        };
+        let before = morph.from.map_or(SHADE_BASE as f32, |from| {
+            held.placed[from].shade(held, uv, up, to_world)
+        });
+        before + (own - before) * morph.grown
     }
 }
 
@@ -136,48 +262,66 @@ fn dem_tile(
     if !(0.0..=1.0).contains(&v) || !(0.0..1.0).contains(&u) {
         return None;
     }
-    for level in (0..=zoom.clamp(0, DEM_MAX_ZOOM)).rev() {
-        let n = (1u64 << level) as f64;
-        let tx = (u * n).floor().min(n - 1.0);
-        let ty = (v * n).floor().min(n - 1.0);
-        let key = make_key(Provider::TerrainDem, level as u8, tx as u32, ty as u32, 0);
-        if let Some(&index) = loc.dem_index.get(&key) {
-            return Some(DemTile {
-                index,
-                n,
-                tx,
-                ty,
-                size: loc.dem[index].elevation().map_or(0, Elevation::size) as f64,
-            });
-        }
-        let tile = loc
-            .map
-            .entry(key)
-            .or_insert_with(|| match (loc.lookup)(key) {
-                Lookup::Ready(tile) => LocalTile::Ready(tile),
-                Lookup::Pending => LocalTile::Pending,
-                Lookup::Absent => LocalTile::Absent(dist),
-                Lookup::Unavailable => LocalTile::Unavailable,
-            });
-        match tile {
-            LocalTile::Ready(tile) if tile.elevation().is_some() => {
-                let size = tile.elevation().map_or(0, Elevation::size) as f64;
-                loc.dem.push(tile.clone());
-                let index = loc.dem.len() - 1;
-                loc.dem_index.insert(key, index);
-                return Some(DemTile {
-                    index,
-                    n,
-                    tx,
-                    ty,
-                    size,
-                });
-            }
-            LocalTile::Ready(_) | LocalTile::Pending | LocalTile::Unavailable => {}
-            LocalTile::Absent(nearest) => *nearest = nearest.min(dist),
-        }
+    (0..=zoom.clamp(0, DEM_MAX_ZOOM))
+        .rev()
+        .find_map(|level| dem_tile_at(loc, level, (u, v), dist))
+}
+
+/// The elevation tile of `level` under `(u, v)`, when it is loaded; when it is
+/// missing, it is recorded for the downloader with screen priority `dist`.
+fn dem_tile_at(
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    level: i32,
+    (u, v): (f64, f64),
+    dist: f32,
+) -> Option<DemTile> {
+    let n = (1u64 << level) as f64;
+    let tx = (u * n).floor().min(n - 1.0);
+    let ty = (v * n).floor().min(n - 1.0);
+    let key = make_key(Provider::TerrainDem, level as u8, tx as u32, ty as u32, 0);
+    if let Some(&index) = loc.dem_index.get(&key) {
+        return Some(loc.dem_placed[index]);
     }
-    None
+    let tile = loc
+        .map
+        .entry(key)
+        .or_insert_with(|| match (loc.lookup)(key) {
+            Lookup::Ready(tile) => LocalTile::Ready(tile),
+            Lookup::Pending => LocalTile::Pending,
+            Lookup::Absent => LocalTile::Absent(dist),
+            Lookup::Unavailable => LocalTile::Unavailable,
+        });
+    let tile = match tile {
+        LocalTile::Ready(tile) if tile.elevation().is_some() => tile.clone(),
+        LocalTile::Ready(_) | LocalTile::Pending | LocalTile::Unavailable => return None,
+        LocalTile::Absent(nearest) => {
+            *nearest = nearest.min(dist);
+            return None;
+        }
+    };
+    let grown = tile.grown(loc.now);
+    let morph = (grown < 1.0).then(|| Morph {
+        grown,
+        // What a frame drew here before this tile arrived.
+        from: (0..level)
+            .rev()
+            .find_map(|level| dem_tile_at(loc, level, (u, v), dist))
+            .map(|below| below.index),
+    });
+    let placed = DemTile {
+        grid: Grid {
+            index: loc.dem.len(),
+            n,
+            tx,
+            ty,
+            size: tile.elevation().map_or(0, Elevation::size) as f64,
+        },
+        morph,
+    };
+    loc.dem.push(tile);
+    loc.dem_placed.push(placed);
+    loc.dem_index.insert(key, placed.index);
+    Some(placed)
 }
 
 /// Web Mercator texture coordinates of a surface normal, as `pixel::surface` computes them.
@@ -423,7 +567,8 @@ pub(super) fn march(
             continue;
         };
         let tile = *tile;
-        let elevation = tile.elevation(&loc.dem);
+        let held = Held::of(loc);
+        let top_level = tile.elevation(held.tiles).top_level();
         let (vx, vy) = (
             anchor.duv.0 * tile.n * tile.size,
             anchor.duv.1 * tile.n * tile.size,
@@ -438,9 +583,9 @@ pub(super) fn march(
         // The coarsest block the ray is above.
         let (ix, iy) = (x as usize, y as usize);
         let mut clear = None;
-        for level in (0..=elevation.top_level().min(start_level)).rev() {
+        for level in (0..=top_level.min(start_level)).rev() {
             let (bx, by) = (ix >> level, iy >> level);
-            let top = f64::from(elevation.block_max_m(level, bx, by)) * to_world;
+            let top = f64::from(tile.block_top_m(held, level, bx, by)) * to_world;
             if height > top {
                 clear = Some((level, bx, by, top));
                 break;
@@ -459,16 +604,15 @@ pub(super) fn march(
                 start_level = level + 1;
             }
             None => {
-                let ground = f64::from(elevation.height_m(x, y)) * to_world;
+                let ground = f64::from(tile.height_m(held, uv)) * to_world;
                 if height <= ground {
                     let t = refine(above, t, height - ground, |t| {
-                        let (x, y) = tile.texel(anchor.uv(t));
                         height_above(origin + direction * t, q)
-                            - f64::from(elevation.height_m(x, y)) * to_world
+                            - f64::from(tile.height_m(held, anchor.uv(t))) * to_world
                     });
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
-                    let shade = hill_shade(&tile, elevation, anchor.uv(t), normal, to_world);
+                    let shade = tile.shade(held, anchor.uv(t), normal, to_world);
                     return March::Hit(
                         rays::RaySample {
                             distance: t,
@@ -539,13 +683,7 @@ fn refine(above: Option<(f64, f64)>, t: f64, below: f64, clearance: impl Fn(f64)
 
 /// Brightness from the slope at `uv`, so ridges and valleys read without sunlight.
 /// 1 on flat ground.
-fn hill_shade(
-    tile: &DemTile,
-    elevation: &Elevation,
-    uv: (f64, f64),
-    up: DVec3,
-    to_world: f64,
-) -> f32 {
+fn hill_shade(tile: &Grid, elevation: &Elevation, uv: (f64, f64), up: DVec3, to_world: f64) -> f32 {
     let (x, y) = tile.texel(uv);
     let (east, north) = elevation.slopes_m(x, y);
     let latitude_cosine = (up.x * up.x + up.y * up.y).sqrt().max(MIN_LATITUDE_COSINE);
@@ -680,6 +818,62 @@ mod march_tests {
         (sample, hit.is_some())
     }
 
+    /// A 2,000 m plateau at level 5 that arrived half a fade ago, over older 400 m
+    /// ground at the coarser levels (`with_stand_in`) or over nothing.
+    fn growing_world(now: std::time::Instant, with_stand_in: bool) -> impl Fn(TileKey) -> Lookup {
+        let flat = |metres: f32| {
+            Tile::from_elevation(Elevation::from_heights(512, vec![metres; 512 * 512]))
+        };
+        let arrived = now - globecraft_data::tiles::ELEVATION_FADE / 2;
+        let new = Arc::new(flat(2_000.0).arriving(arrived));
+        let old = Arc::new(flat(400.0));
+        move |key| match crate::unkey(key) {
+            (Provider::TerrainDem, 5, ..) => Lookup::Ready(new.clone()),
+            (Provider::TerrainDem, 0..5, ..) if with_stand_in => Lookup::Ready(old.clone()),
+            _ => Lookup::Unavailable,
+        }
+    }
+
+    #[test]
+    fn arriving_relief_grows_from_what_stood_there() {
+        let geometry = EarthModel::PerfectSphere.geometry();
+        let now = std::time::Instant::now();
+        let up = globecraft_core::math::ll_to_v3(30.0, 80.0);
+        let origin = geometry.position(30.0, 80.0) + up * (10.0 / globecraft_core::EARTH_RADIUS_KM);
+        // Half grown: halfway from the stand-in's 400 m (or sea level) to 2,000 m.
+        for (with_stand_in, ground_km) in [(true, 1.2), (false, 1.0)] {
+            let lookup = growing_world(now, with_stand_in);
+            let mut loc = Local {
+                lookup: &lookup,
+                map: HashMap::<_, _, KeyBuild>::default(),
+                dem: Vec::new(),
+                dem_placed: Vec::new(),
+                dem_index: HashMap::default(),
+                now,
+            };
+            let side = up.cross(DVec3::Z).normalize();
+            // Straight down, and grazing (where the blocks' tops decide what is skipped).
+            for direction in [-up, (side - up * 0.1).normalize()] {
+                let (ray, hits) = ray_from(origin, direction, geometry);
+                let March::Hit(ground, _) = march(
+                    &ray,
+                    0.0,
+                    hits,
+                    origin,
+                    geometry,
+                    TerrainCfg::new(1.0),
+                    1e-3,
+                    0.0,
+                    &mut loc,
+                ) else {
+                    panic!("no hit on the growing ground");
+                };
+                let km = (ground.point.length() - 1.0) * globecraft_core::EARTH_RADIUS_KM;
+                assert!((km - ground_km).abs() < 0.01, "{with_stand_in}: {km}");
+            }
+        }
+    }
+
     #[test]
     fn a_ray_stops_on_the_ground_and_mountains_hide_the_floor() {
         for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
@@ -689,7 +883,9 @@ mod march_tests {
                 lookup: &lookup,
                 map: HashMap::<_, _, KeyBuild>::default(),
                 dem: Vec::new(),
+                dem_placed: Vec::new(),
                 dem_index: HashMap::default(),
+                now: std::time::Instant::now(),
             };
             let up = globecraft_core::math::ll_to_v3(30.0, 80.0);
             let origin =

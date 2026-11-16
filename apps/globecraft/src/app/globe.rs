@@ -16,6 +16,8 @@ mod ruler_input;
 
 /// A new frame of the view on screen fades in over the old one for this long
 /// (roadmap 1.6: arriving tiles and the sharp frame after motion no longer pop in).
+/// Relief growing in is drawn again this often.
+const RELIEF_FADE_STEP: Duration = Duration::from_millis(40);
 pub(super) const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
@@ -113,7 +115,17 @@ impl App {
             stars: self.layer(MapLayer::Stars),
         }
         .keys(now_unix());
-        let state = keys.state;
+        // Relief that just arrived grows in: the view is drawn again for each step
+        // of it, also at rest.
+        let relief_step = if relief {
+            self.tiles.cache.elevation_fade_step(RELIEF_FADE_STEP)
+        } else {
+            0
+        };
+        if relief_step != 0 {
+            ui.ctx().request_repaint_after(RELIEF_FADE_STEP);
+        }
+        let state = keys.state.wrapping_add(relief_step);
         let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;
         self.poll_render(presentation, ui);
