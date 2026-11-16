@@ -581,6 +581,12 @@ fn relief_loading_probe() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let app = h.state();
         let Some(frame) = &app.frame.image else {
+            println!(
+                "{:5} ms  no frame yet (renderer idle: {}, loading {})",
+                started.elapsed().as_millis(),
+                app.frame.renderer.is_idle(),
+                app.tiles.cache.inflight()
+            );
             continue;
         };
         let sample: Vec<u8> = frame.pixels.iter().step_by(4 * 37).copied().collect();
