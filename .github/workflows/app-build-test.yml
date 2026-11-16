@@ -12,6 +12,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/app-build-test.yml'
+      - '.gitattributes'
   pull_request:
     paths:
       - 'apps/**'
@@ -22,6 +23,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/app-build-test.yml'
+      - '.gitattributes'
   workflow_dispatch:
 
 permissions:
