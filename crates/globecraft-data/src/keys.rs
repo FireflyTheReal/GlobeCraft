@@ -88,13 +88,8 @@ pub fn fill(text: &str) -> Result<String, crate::Error> {
     if !text.contains("{key:") {
         return Ok(text.to_owned());
     }
-    let host = crate::network::host_of_url(text).map(|authority| {
-        authority
-            .split(':')
-            .next()
-            .unwrap_or(authority)
-            .to_ascii_lowercase()
-    });
+    // Read as the HTTP client reads it (`\` ends the host like `/`).
+    let host = globecraft_core::web_address::host(text);
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("{key:") {
@@ -257,6 +252,8 @@ mod tests {
             "https://evil.example/{key:tomtom}",
             "https://api.tomtom.com.evil.example/{key:tomtom}",
             "https://api.tomtom.com@evil.example/{key:tomtom}",
+            // The HTTP client reads `\` as `/`: this goes to evil.example.
+            "https://evil.example\\@api.tomtom.com/{key:tomtom}",
             "file:///tmp/{key:tomtom}",
             "{key:tomtom}",
         ] {

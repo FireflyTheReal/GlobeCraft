@@ -9,7 +9,7 @@ pub use buildings::BuildingMesh;
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
-    buildings::Building, roads::Road, satellites::Satellite, tiles::TileCache,
+    buildings::BuildingSnapshot, roads::Road, satellites::Satellite, tiles::TileCache,
     traffic::TrafficTiles, vessels::Vessel,
 };
 pub use poi::{PoiKey, PoiLayers, PoiShown, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
@@ -109,8 +109,9 @@ pub struct BuildingImagery {
 pub struct LiveInput {
     pub view: LiveView,
     pub roads: Option<Arc<[Road]>>,
-    pub buildings: Option<Arc<[Building]>>,
-    /// Where the sun is (unit vector), when Sunlight is on: blocks are lit by it.
+    pub buildings: Option<Arc<BuildingSnapshot>>,
+    /// Where the sun is (unit vector), when Sunlight is on: blocks are lit by it. The
+    /// app moves it in steps, so a still view keeps its blocks between them.
     pub sun: Option<glam::DVec3>,
     /// The imagery under the blocks: they take its colours.
     pub imagery: Option<BuildingImagery>,
@@ -167,17 +168,11 @@ impl LiveInput {
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
     }
-    /// The same blocks under the same light. The sun moves slowly: a step of the
-    /// light coarser than this keeps the projection.
+    /// The same blocks under the same light (the app moves the sun in steps).
     fn same_buildings(&self, other: &Self) -> bool {
-        /// About a minute of the sun's travel.
-        const SUN_STEP: f64 = 0.004;
         same(&self.buildings, &other.buildings)
             && self.imagery == other.imagery
-            && match (self.sun, other.sun) {
-                (Some(a), Some(b)) => a.distance(b) < SUN_STEP,
-                (a, b) => a.is_none() && b.is_none(),
-            }
+            && self.sun == other.sun
     }
     fn same_transport(&self, other: &Self) -> bool {
         same(&self.transport, &other.transport)

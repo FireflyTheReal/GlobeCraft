@@ -508,7 +508,7 @@ impl Archive {
             .checked_add(length.max(1) - 1)
             .filter(|_| length <= MAX_RANGE_BYTES)
             .ok_or_else(|| crate::Error::msg("corrupt PMTiles range"))?;
-        if !is_web_address(&self.url) {
+        if !crate::user_data::is_url(&self.url) {
             return file_range(self.url.clone(), offset, length).await;
         }
         let _permit = match crate::http::range_limit(self.policy) {
@@ -580,13 +580,6 @@ impl Archive {
         }
         Err(crate::Error::msg(format!("{} could not be read", self.url)))
     }
-}
-
-/// Whether an archive's address is on the web; otherwise it is a file on this
-/// computer (roadmap 1.2).
-fn is_web_address(address: &str) -> bool {
-    let lower = address.trim_start().to_ascii_lowercase();
-    lower.starts_with("https://") || lower.starts_with("http://")
 }
 
 /// Bytes `offset..offset + length` of a file on this computer (fewer at its end).

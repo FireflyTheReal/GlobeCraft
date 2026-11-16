@@ -9,7 +9,7 @@
 //! outlines), so only zoom 14 is read, and only close to the ground.
 use crate::boundaries::osm_tiles::content::TileKey;
 use crate::mvt::{self, GeomType};
-use crate::vector_tiles::{Snapshot, Source, Spec, TileFade, TileStream, View};
+use crate::vector_tiles::{Snapshot, Source, Spec, TileStream, View};
 use std::sync::Arc;
 
 /// Above this the buildings are hidden: a zoom-14 tile is 1–2.4 km wide, and higher
@@ -36,17 +36,6 @@ const OVERTURE_TILES: &str = "https://overturemaps-extras-us-west-2.s3.us-west-2
 /// The bucket's folder list is a few hundred bytes.
 const MAX_LISTING_BYTES: u64 = 64 * 1024;
 
-/// How a building's height is known.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HeightSource {
-    /// Measured or mapped in metres.
-    Given,
-    /// Its number of floors, at three metres each.
-    Floors,
-    /// Neither: two storeys.
-    Assumed,
-}
-
 /// A building, or a part of one (a tower on a podium), as a block.
 #[derive(Clone, Debug)]
 pub struct Building {
@@ -61,12 +50,9 @@ pub struct Building {
     /// Bottom and top above the ground, metres.
     pub base_m: f32,
     pub top_m: f32,
-    pub height: HeightSource,
     /// Colours mapped in OpenStreetMap, when given as `#rrggbb` or `#rgb`.
     pub roof_colour: Option<[u8; 3]>,
     pub wall_colour: Option<[u8; 3]>,
-    /// The fade of the tile it came from.
-    pub fade: TileFade,
 }
 
 /// One tile's buildings.
@@ -111,12 +97,13 @@ fn size_bytes(tile: &BuildingTile) -> usize {
     std::mem::size_of::<BuildingTile>() + buildings
 }
 
+/// The building tiles around the view, as the projection reads them.
+pub type BuildingSnapshot = Snapshot<BuildingTile>;
+
 /// The building layer.
 #[derive(Default)]
 pub struct BuildingTiles {
     stream: Option<TileStream<BuildingTile>>,
-    /// The last list: from this snapshot, these buildings.
-    merged: Option<(usize, Arc<[Building]>)>,
 }
 
 impl BuildingTiles {
@@ -150,36 +137,10 @@ impl BuildingTiles {
         self.stream.as_ref().is_some_and(TileStream::loading)
     }
 
-    /// The buildings to draw. The same list is returned while the tiles do not
+    /// The tiles to draw. The same snapshot is returned while the tiles do not
     /// change, so its projection is reused.
-    pub fn buildings(&mut self) -> Option<Arc<[Building]>> {
-        let snapshot: Option<Arc<Snapshot<BuildingTile>>> =
-            self.stream.as_ref().and_then(TileStream::shared_snapshot);
-        let key = snapshot.as_ref().map_or(0, |s| Arc::as_ptr(s) as usize);
-        if let Some((built, buildings)) = &self.merged
-            && *built == key
-        {
-            return (!buildings.is_empty()).then(|| buildings.clone());
-        }
-        let buildings: Arc<[Building]> = snapshot
-            .iter()
-            .flat_map(|snapshot| {
-                snapshot
-                    .tiles
-                    .iter()
-                    .enumerate()
-                    .map(|(index, tile)| (tile, snapshot.fade(index)))
-            })
-            .flat_map(|(tile, fade)| {
-                tile.buildings.iter().map(move |building| Building {
-                    fade,
-                    ..building.clone()
-                })
-            })
-            .collect::<Vec<_>>()
-            .into();
-        self.merged = Some((key, buildings.clone()));
-        (!buildings.is_empty()).then_some(buildings)
+    pub fn shared_snapshot(&self) -> Option<Arc<BuildingSnapshot>> {
+        self.stream.as_ref().and_then(TileStream::shared_snapshot)
     }
 }
 
@@ -360,12 +321,10 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
             {
                 continue;
             }
-            let (top_m, height) = match (number("height"), number("num_floors")) {
-                (Some(height), _) if height > 0.0 => (height, HeightSource::Given),
-                (_, Some(floors)) if floors > 0.0 => {
-                    (floors * FLOOR_HEIGHT_M, HeightSource::Floors)
-                }
-                _ => (DEFAULT_HEIGHT_M, HeightSource::Assumed),
+            let top_m = match (number("height"), number("num_floors")) {
+                (Some(height), _) if height > 0.0 => height,
+                (_, Some(floors)) if floors > 0.0 => floors * FLOOR_HEIGHT_M,
+                _ => DEFAULT_HEIGHT_M,
             };
             let base_m = number("min_height")
                 .or_else(|| number("min_floor").map(|floor| floor * FLOOR_HEIGHT_M))
@@ -417,10 +376,8 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
                     roof: triangles.clone(),
                     base_m,
                     top_m,
-                    height,
                     roof_colour,
                     wall_colour,
-                    fade: TileFade::default(),
                 });
             }
         }
@@ -484,14 +441,14 @@ mod tests {
         let shown: Vec<_> = tile
             .buildings
             .iter()
-            .map(|b| (b.base_m, b.top_m, b.height, b.roof_colour))
+            .map(|b| (b.base_m, b.top_m, b.roof_colour))
             .collect();
         assert_eq!(
             shown,
             [
-                (0.0, 42.0, HeightSource::Given, None),
-                (3.0, 15.0, HeightSource::Floors, None),
-                (0.0, 6.0, HeightSource::Assumed, Some([0xcc, 0x33, 0x33])),
+                (0.0, 42.0, None),
+                (3.0, 15.0, None),
+                (0.0, 6.0, Some([0xcc, 0x33, 0x33])),
             ]
         );
         // A square's roof is two triangles, and all its edges are walls.
@@ -561,18 +518,13 @@ mod tests {
             let bytes = std::fs::read(&path).unwrap();
             let started = std::time::Instant::now();
             let tile = decode(key, &bytes).unwrap();
-            let count =
-                |source: HeightSource| tile.buildings.iter().filter(|b| b.height == source).count();
             println!(
-                "{name}: {} blocks, {} roof triangles, {} given, {} floors, {} assumed, {:.0} KiB, {:?}",
+                "{name}: {} blocks, {} roof triangles, {:.0} KiB, {:?}",
                 tile.buildings.len(),
                 tile.buildings
                     .iter()
                     .map(|b| b.roof.len() / 3)
                     .sum::<usize>(),
-                count(HeightSource::Given),
-                count(HeightSource::Floors),
-                count(HeightSource::Assumed),
                 size_bytes(&tile) as f64 / 1024.0,
                 started.elapsed()
             );

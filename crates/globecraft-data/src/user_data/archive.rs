@@ -19,7 +19,12 @@ pub(super) enum TileArchive {
         /// Opened on first use and kept: the header and root directory.
         opened: Arc<tokio::sync::OnceCell<Archive>>,
     },
-    Mbtiles(PathBuf),
+    Mbtiles {
+        path: PathBuf,
+        /// Opened on first use and kept (opening read the schema for every tile);
+        /// dropped after an error, so a replaced file is opened again.
+        opened: Arc<std::sync::Mutex<Option<rusqlite::Connection>>>,
+    },
 }
 
 impl TileArchive {
@@ -42,7 +47,10 @@ impl TileArchive {
         }
         template
             .strip_prefix(MBTILES_PREFIX)
-            .map(|path| Self::Mbtiles(PathBuf::from(path.trim())))
+            .map(|path| Self::Mbtiles {
+                path: PathBuf::from(path.trim()),
+                opened: Arc::default(),
+            })
     }
 
     async fn archive(&self) -> Result<Option<&Archive>, crate::Error> {
@@ -52,7 +60,7 @@ impl TileArchive {
                     .get_or_try_init(|| Archive::open(url, crate::http::Policy::UserData))
                     .await?,
             )),
-            Self::Mbtiles(_) => Ok(None),
+            Self::Mbtiles { .. } => Ok(None),
         }
     }
 
@@ -61,13 +69,24 @@ impl TileArchive {
         if let Some(archive) = self.archive().await? {
             return archive.tile(key.z, key.x, key.y).await;
         }
-        let Self::Mbtiles(path) = self else {
+        let Self::Mbtiles { path, opened } = self else {
             unreachable!("PMTiles answered above")
         };
-        let path = path.clone();
-        tokio::task::spawn_blocking(move || mbtiles_tile(&open_mbtiles(&path)?, key))
-            .await
-            .map_err(|error| crate::Error::msg(error.to_string()))?
+        let (path, opened) = (path.clone(), opened.clone());
+        tokio::task::spawn_blocking(move || {
+            let mut opened = opened
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let db = match opened.take() {
+                Some(db) => db,
+                None => open_mbtiles(&path)?,
+            };
+            let tile = mbtiles_tile(&db, key)?;
+            *opened = Some(db);
+            Ok(tile)
+        })
+        .await
+        .map_err(|error| crate::Error::msg(error.to_string()))?
     }
 
     /// The zoom levels held and a tile that exists, for the Add Data form.
@@ -81,7 +100,7 @@ impl TileArchive {
             }
             return pmtiles_info(archive.zooms(), archive.center());
         }
-        let Self::Mbtiles(path) = self else {
+        let Self::Mbtiles { path, .. } = self else {
             unreachable!("PMTiles answered above")
         };
         let path = path.clone();

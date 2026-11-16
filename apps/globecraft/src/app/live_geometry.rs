@@ -10,6 +10,9 @@ use std::sync::Arc;
 
 const MIN_TRAFFIC_WIDTH_PX: usize = 160;
 const MAX_TRAFFIC_DIMENSION_PX: usize = 800;
+/// Blocks are lit by the sun of the scene time rounded to this: compared exactly, it
+/// lights them again once a minute, however often other live layers step.
+const BUILDING_SUN_STEP_SECS: f64 = 60.0;
 
 pub(super) struct LiveOverlay {
     worker: LiveWorker,
@@ -113,7 +116,9 @@ impl App {
             sun: self
                 .layer(globecraft_core::layers::MapLayer::Sunlight)
                 .then(|| {
-                    let (latitude, longitude) = globecraft_core::math::subsolar(self.scene_unix());
+                    let time = (self.scene_unix() / BUILDING_SUN_STEP_SECS).floor()
+                        * BUILDING_SUN_STEP_SECS;
+                    let (latitude, longitude) = globecraft_core::math::subsolar(time);
                     globecraft_core::math::ll_to_v3(latitude, longitude)
                 }),
             imagery: Some(self.imagery_source())

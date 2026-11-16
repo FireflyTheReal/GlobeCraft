@@ -165,6 +165,15 @@ struct Job {
 /// The width of an imagery tile, in pixels, as the services serve them.
 const IMAGERY_TILE_PX: f64 = 256.0;
 
+/// Web Mercator coordinates (0–1 across the world, `v` downward) of a point.
+fn mercator(lat: f64, lon: f64) -> (f64, f64) {
+    let lat = lat.clamp(-85.05, 85.05);
+    let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
+    let s = lat.to_radians().sin();
+    let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * std::f64::consts::PI);
+    (u, v)
+}
+
 impl TileCache {
     #[cfg(test)]
     fn with_budget(tx: tokio::sync::mpsc::Sender<TileKey>, budget: usize) -> Self {
@@ -344,10 +353,7 @@ impl TileCache {
         span_deg: f64,
         coarsest_zoom: u8,
     ) -> Option<glam::Vec4> {
-        let lat = lat.clamp(-85.05, 85.05);
-        let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
-        let s = lat.to_radians().sin();
-        let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * std::f64::consts::PI);
+        let (u, v) = mercator(lat, lon);
         // Finer levels than one whose texels the span covers `MAX_SAMPLE_STRIDE`
         // times add nothing to the average, and each level tried is a lookup.
         let finest = (Tile::MAX_SAMPLE_STRIDE * 360.0 / (span_deg * IMAGERY_TILE_PX))
@@ -377,10 +383,7 @@ impl TileCache {
         None
     }
     fn elevation_at(&self, lat: f64, lon: f64, zoom: u8, request: bool) -> Option<f32> {
-        let lat = lat.clamp(-85.05, 85.05);
-        let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
-        let s = lat.to_radians().sin();
-        let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * std::f64::consts::PI);
+        let (u, v) = mercator(lat, lon);
         for level in (0..=zoom.min(super::Provider::TerrainDem.max_zoom())).rev() {
             let n = f64::from(1u32 << level);
             let (tx, ty) = ((u * n).floor().min(n - 1.0), (v * n).floor().min(n - 1.0));

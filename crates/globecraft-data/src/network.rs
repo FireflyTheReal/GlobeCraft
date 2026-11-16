@@ -335,7 +335,8 @@ pub fn host_of_url(url: &str) -> Option<&str> {
         return None;
     };
     let rest = &url[scheme_len..];
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    // `\` ends the host too, as in the HTTP client (`globecraft_core::web_address::host`).
+    let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
     let authority = &rest[..end];
     let host = authority.rsplit('@').next().unwrap_or(authority);
     (!host.is_empty() && !host.starts_with(':') && !host.contains(char::is_whitespace))
@@ -417,6 +418,10 @@ mod tests {
         assert_eq!(host_of_url("file:///tmp/a.geojson"), None);
         assert_eq!(host_of_url("https://"), None);
         assert_eq!(host_of_url("example.org/a"), None);
+        assert_eq!(
+            host_of_url("https://evil.example\\@api.tomtom.com/a"),
+            Some("evil.example")
+        );
     }
 
     #[test]

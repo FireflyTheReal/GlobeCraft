@@ -1,7 +1,7 @@
 //! Buildings as blocks close up (roadmap 8.6); the geometry is projected by the
 //! live-layer worker (`globecraft_render::live_layers::BuildingMesh`).
 use eframe::egui;
-use globecraft_data::buildings::Building;
+use globecraft_data::buildings::BuildingSnapshot;
 use globecraft_render::live_layers::BuildingMesh;
 use std::sync::Arc;
 
@@ -9,8 +9,8 @@ use std::sync::Arc;
 pub(super) struct BuildingOverlay {
     /// Overture's building tiles.
     pub(super) tiles: globecraft_data::buildings::BuildingTiles,
-    /// The blocks drawn.
-    pub(super) current: Option<Arc<[Building]>>,
+    /// The tiles of blocks drawn.
+    pub(super) current: Option<Arc<BuildingSnapshot>>,
     /// The mesh last drawn, and what it was built from.
     drawn: Option<(Arc<BuildingMesh>, egui::Shape)>,
 }

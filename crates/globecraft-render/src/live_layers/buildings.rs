@@ -87,7 +87,7 @@ pub(super) fn project(
     imagery: Option<&TileCache>,
 ) -> BuildingMesh {
     let imagery = imagery.zip(input.imagery);
-    let Some(buildings) = &input.buildings else {
+    let Some(snapshot) = &input.buildings else {
         return BuildingMesh::default();
     };
     let view = &input.view;
@@ -98,8 +98,10 @@ pub(super) fn project(
     let visibility = TerrainVisibility::new(&view.basis, ground);
     let reach = view.rect.expand(VIEW_MARGIN_POINTS);
     // Blocks are projected on every core, a run of them per job, then joined.
-    let runs: Vec<Faces> = buildings
-        .par_chunks(BLOCKS_PER_JOB)
+    let runs: Vec<Faces> = snapshot
+        .tiles
+        .par_iter()
+        .flat_map(|tile| tile.buildings.par_chunks(BLOCKS_PER_JOB))
         .map(|run| {
             let (mut faces, mut scratch) = (Faces::default(), Scratch::default());
             for building in run {
@@ -447,8 +449,17 @@ impl Light {
 mod tests {
     use super::*;
     use globecraft_core::camera::Cam;
-    use globecraft_data::buildings::HeightSource;
+    use globecraft_data::buildings::{BuildingSnapshot, BuildingTile};
     use std::sync::Arc;
+
+    /// `buildings` as one tile.
+    fn tiles(buildings: Vec<Building>) -> Option<Arc<BuildingSnapshot>> {
+        Some(Arc::new(BuildingSnapshot {
+            tiles: vec![Arc::new(BuildingTile { buildings })],
+            zoom: 14,
+            fades: Vec::new(),
+        }))
+    }
 
     /// A block 40 m square and 30 m tall at (lat, lon), its outline anticlockwise.
     fn block_at(lat: f64, lon: f64) -> Building {
@@ -464,10 +475,8 @@ mod tests {
             roof: vec![0, 1, 2, 0, 2, 3],
             base_m: 0.0,
             top_m: 30.0,
-            height: HeightSource::Given,
             roof_colour: None,
             wall_colour: None,
-            fade: Default::default(),
         }
     }
 
@@ -482,10 +491,7 @@ mod tests {
         };
         input.view.basis = camera.basis_for_model(1.0, Default::default());
         input.view.altitude_km = camera.alt;
-        input.buildings = Some(Arc::from(vec![
-            block_at(48.0, 11.0),
-            block_at(48.001, 11.0),
-        ]));
+        input.buildings = tiles(vec![block_at(48.0, 11.0), block_at(48.001, 11.0)]);
         input
     }
 
@@ -528,7 +534,7 @@ mod tests {
         small.top_m = 6.0;
         small.wall_colour = Some([255, 0, 0]);
         small.roof_colour = Some([255, 0, 0]);
-        input.buildings = Some(Arc::from(vec![slab, small]));
+        input.buildings = tiles(vec![slab, small]);
         let mesh = project(&input, None, None);
         let red = |index: u32| {
             let [r, g, ..] = mesh.vertices[index as usize].1;
@@ -559,6 +565,23 @@ mod tests {
                 mesh.vertices[triangle[0] as usize].1
             );
         }
+    }
+
+    #[test]
+    fn blocks_are_lit_again_whenever_the_sun_steps() {
+        let mut preparer = super::super::LivePreparer::default();
+        let mut input = view(60.0, 0.0);
+        input.sun = Some(DVec3::Z);
+        let first = preparer.prepare(input.clone());
+        // Another layer's step keeps the blocks.
+        input.unix_secs += 5.0;
+        let kept = preparer.prepare(input.clone());
+        assert!(Arc::ptr_eq(&first.buildings, &kept.buildings));
+        // However small the sun's step (once compared with the request before,
+        // small steps added up without ever lighting the blocks again).
+        input.sun = Some(DVec3::new(0.0, 0.001, 1.0).normalize());
+        let lit = preparer.prepare(input);
+        assert!(!Arc::ptr_eq(&first.buildings, &lit.buildings));
     }
 
     #[test]
