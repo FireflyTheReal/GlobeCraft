@@ -34,6 +34,19 @@ impl App {
                 settings.uncap_fps,
                 settings.offline
             ),
+            {
+                let renderer = globecraft_render::backend::status();
+                format!(
+                    "Globe renderer: {}; {} frames on the GPU, {} on the CPU",
+                    match (&renderer.adapter, &renderer.note) {
+                        (Some(adapter), _) => format!("GPU, {adapter}"),
+                        (None, Some(note)) => format!("CPU ({note})"),
+                        (None, None) => "CPU".into(),
+                    },
+                    renderer.gpu_frames,
+                    renderer.cpu_frames
+                )
+            },
             format!(
                 "Language {}, world {}, basemap {}",
                 self.lang.code(),

@@ -12,8 +12,9 @@ workspace = true
 
 [features]
 default = ["gpu", "standard"]
-# Everything a release download has: all optional parts except the experimental GPU
-# renderer. Release builds use `--no-default-features --features standard`.
+# Everything a release download has: all optional parts except the GPU renderer
+# (a beta; add `gpu` here once native Windows and Linux runs are reported). Release
+# builds use `--no-default-features --features standard`.
 standard = ["updater", "assistant", "live"]
 gpu = ["globecraft-render/gpu"]
 # The self-updater; packagers that update through a package manager build without it.

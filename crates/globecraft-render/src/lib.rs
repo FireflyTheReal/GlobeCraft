@@ -1,6 +1,7 @@
 //! Globe rasterization (CPU/GPU) and background frame coordination.
 #![forbid(unsafe_code)]
 use glam::{DVec3, Vec2, Vec4};
+mod atmosphere;
 pub mod backend;
 pub mod celestial;
 pub mod diagnostics;
@@ -11,7 +12,7 @@ mod pixel;
 pub mod polar;
 mod rays;
 mod terrain;
-use pixel::{Surface, sky, surface};
+use pixel::{Surface, sky, surface, with_air};
 pub use terrain::{MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg};
 mod tuning;
 pub mod worker;
@@ -25,15 +26,14 @@ use rayon::prelude::*;
 use rays::{RAY_LANES, RayCaster};
 use std::{collections::HashMap, f64::consts::PI, sync::Arc, sync::LazyLock};
 use tuning::{
-    ATMOSPHERE_BLEND, ATMOSPHERE_COLOR, ATMOSPHERE_HEIGHT_RATIO, ATMOSPHERE_RADIUS_RATIO,
     COLOR_CHANNEL_MAX, DAY_BRIGHTNESS_RANGE, GRID_BLEND, GRID_COLOR, GRID_LINE_WIDTH_PX,
     IMAGERY_ZOOM_FADE_START, LOD_SHARPNESS_BIAS, MIN_LOD_INCIDENCE_COSINE, MIN_LOD_LATITUDE_COSINE,
     MIN_ZOOM_BLEND_FRACTION, MISSING_TILE_COLOR, NIGHT_BLUE_TINT, NIGHT_BRIGHTNESS, OPAQUE_ALPHA,
-    RGBA_CHANNELS, RIM_BLEND, RIM_COLOR, RIM_FALLOFF_POWER, ROWS_PER_TILE_BATCH, SPACE_COLOR,
-    STAR_BRIGHTNESS_DIVISOR, STAR_BRIGHTNESS_MASK, STAR_BRIGHTNESS_SHIFT, STAR_GRID_RESOLUTION,
-    STAR_MIN_BRIGHTNESS, STAR_OCCURRENCE_MODULUS, TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS,
-    TILE_FILTER_RATIO_EXONENT_MAX, TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET,
-    TWILIGHT_WIDTH, WEB_MERCATOR_MAX_LATITUDE_DEG,
+    RGBA_CHANNELS, ROWS_PER_TILE_BATCH, SPACE_COLOR, STAR_BRIGHTNESS_DIVISOR, STAR_BRIGHTNESS_MASK,
+    STAR_BRIGHTNESS_SHIFT, STAR_GRID_RESOLUTION, STAR_MIN_BRIGHTNESS, STAR_OCCURRENCE_MODULUS,
+    TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS, TILE_FILTER_RATIO_EXONENT_MAX,
+    TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET, TWILIGHT_WIDTH,
+    WEB_MERCATOR_MAX_LATITUDE_DEG,
 };
 const GRID_STEPS_DEG: [f64; 12] = [
     30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.01, 0.005, 0.001,
@@ -299,7 +299,7 @@ pub fn dominant_level(w: usize, h: usize, basis: &Basis, cfg: &RenderCfg) -> Opt
         .map(|(level, _)| level)
 }
 
-/// Grid, lighting and rim over the imagery colour of a surface pixel.
+/// Grid, lighting and the air over the imagery colour of a surface pixel.
 fn finish_surface(
     mut col: Vec4,
     surface: Surface,
@@ -314,12 +314,20 @@ fn finish_surface(
     if surface.grid {
         col = col.lerp_monotonic(GRID_COLOR, GRID_BLEND);
     }
-    col = col * (surface.shade * terrain_light) + Vec4::new(0.0, 0.0, surface.night, 0.0);
+    // Sunlight that crossed much air is orange: the ground glows at the terminator,
+    // and loses the colour again as the night's own light takes over.
+    let sunlight = surface.air.map_or(Vec4::ONE, |(air, _)| {
+        Vec4::ONE + (air.sunlight - Vec4::ONE) * (1.0 - surface.darkness)
+    });
+    col =
+        col * sunlight * (surface.shade * terrain_light) + Vec4::new(0.0, 0.0, surface.night, 0.0);
     if let (Some(lights), true) = (lights, sunlit) {
         col += lights * surface.darkness;
     }
-    col = col.lerp_monotonic(RIM_COLOR, surface.rim);
-    col
+    match surface.air {
+        Some((air, share)) => air.over(col, share),
+        None => col,
+    }
 }
 
 /// The night-lights colour under `surface`, when the layer is on and the pixel is
@@ -346,6 +354,12 @@ fn pixel_angle(h: usize, cfg: &RenderCfg) -> f64 {
     2.0 * VERTICAL_FOV_HALF_TAN * cfg.lod_scale as f64 / h as f64
 }
 
+/// The air as this frame's camera sees it, when the frame has an atmosphere.
+fn frame_air(rays: &RayCaster, cfg: &RenderCfg) -> Option<atmosphere::Frame> {
+    cfg.atmo
+        .then(|| atmosphere::Frame::new(rays.camera(), rays.camera_len_squared.sqrt(), cfg.sun))
+}
+
 /// Renders row `y`. `beams` holds where the relief march of each block of pixels may
 /// start (`terrain::beam_starts`; empty without relief).
 fn render_row<const ELLIPSOID: bool>(
@@ -354,11 +368,11 @@ fn render_row<const ELLIPSOID: bool>(
     cfg: &RenderCfg,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
     beams: &[f64],
+    air: Option<&atmosphere::Frame>,
     row: &mut [u8],
 ) {
     let (w, h) = rays.pixels();
     let cc = rays.camera_len_squared;
-    let camera_up = rays.camera_up();
     let pixel_angle = pixel_angle(h, cfg);
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
@@ -389,30 +403,42 @@ fn render_row<const ELLIPSOID: bool>(
                         loc,
                     ) {
                         terrain::March::Hit(ground, light) => shade_surface(
-                            surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
+                            with_air(
+                                surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
+                                &ground,
+                                air,
+                            ),
                             cfg,
                             cfg.rel,
                             loc,
                             light,
                         ),
                         terrain::March::Floor => shade_surface(
-                            surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                            with_air(
+                                surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                                &ray,
+                                air,
+                            ),
                             cfg,
                             cfg.rel,
                             loc,
                             1.0,
                         ),
-                        terrain::March::Miss => sky(&ray, cc, camera_up, cfg),
+                        terrain::March::Miss => sky(&ray, cc, air, cfg),
                     }
                 }
                 None if hits_surface => shade_surface(
-                    surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                    with_air(
+                        surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                        &ray,
+                        air,
+                    ),
                     cfg,
                     cfg.rel,
                     loc,
                     1.0,
                 ),
-                None => sky(&ray, cc, camera_up, cfg),
+                None => sky(&ray, cc, air, cfg),
             };
             let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
             pixel[0] = channels.x as u8;
@@ -556,6 +582,7 @@ fn render_pixels_into(
     let row_bytes = w * RGBA_CHANNELS;
     let rays = RayCaster::new(w, h, basis);
     let unit_sphere = rays.uses_unit_sphere();
+    let air = frame_air(&rays, cfg);
     let per_batch: Vec<Vec<(TileKey, Option<f32>)>> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()
@@ -591,6 +618,7 @@ fn render_pixels_into(
                         cfg,
                         &mut loc,
                         &beams,
+                        air.as_ref(),
                         row,
                     );
                 } else {
@@ -600,6 +628,7 @@ fn render_pixels_into(
                         cfg,
                         &mut loc,
                         &beams,
+                        air.as_ref(),
                         row,
                     );
                 }

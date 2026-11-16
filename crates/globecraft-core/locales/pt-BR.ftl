@@ -341,7 +341,9 @@ statusbar-cursor-elevation = Elevação: { $distance }
 
 settings-uncap-fps-toggle = FPS sem limite (requer reiniciar)
 settings-gpu-globe-toggle = Desenhar o globo na GPU (beta, requer reinício)
-settings-gpu-globe-help = Mais rápido no Apple Silicon. Vistas próximas, a grade e qualquer problema da GPU continuam usando o renderizador da CPU. Desative se o globo parecer errado.
+settings-gpu-globe-help = Mais rápido na maioria das placas de vídeo. Vistas próximas, a grade, o relevo e qualquer problema da GPU continuam usando o renderizador da CPU. Desative se o globo parecer errado.
+settings-gpu-globe-running = Em uso: { $adapter }.
+settings-gpu-globe-not-running = A CPU desenha o globo:
 settings-frame-sync-help = Por padrão, a apresentação é sincronizada com a taxa de atualização da tela. G-SYNC/FreeSync é configurado na tela e no driver gráfico.
 
 # Explorer / Visualização e novas camadas — conteúdo bilíngue

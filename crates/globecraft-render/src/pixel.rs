@@ -22,7 +22,9 @@ pub(super) struct Surface {
     pub(super) night: f32,
     /// How far into the night the pixel is: 0 by day, 1 past twilight (0 without sun).
     pub(super) darkness: f32,
-    pub(super) rim: f32,
+    /// The air between the eye and the pixel and the share of it that is drawn
+    /// (`atmosphere::ground_share`): set by `with_air` where a frame is drawn.
+    pub(super) air: Option<(atmosphere::Air, f32)>,
     /// Where the pixel is, degrees, and how much ground it covers (metres): for the
     /// polar caps, which use their own tiles (see `polar`).
     pub(super) lat: f64,
@@ -146,11 +148,6 @@ pub(super) fn surface<const ELLIPSOID: bool>(
     } else {
         (1.0, 0.0, 0.0)
     };
-    let rim = if cfg.atmo {
-        (1.0 - cosinc as f32).powi(RIM_FALLOFF_POWER) * RIM_BLEND
-    } else {
-        0.0
-    };
     Surface {
         u,
         v,
@@ -161,17 +158,43 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         shade,
         night,
         darkness,
-        rim,
+        air: None,
         lat,
         lon,
         metres_per_pixel: mpp,
     }
 }
-/// The colour of a ray that misses the Earth. `camera_up` is the camera's direction
-/// from the Earth's centre (for day and night inside the atmosphere).
-pub(super) fn sky(ray: &rays::RaySample, cc: f64, camera_up: DVec3, cfg: &RenderCfg) -> Vec4 {
+/// `surface` with the air in front of it, when the frame has an atmosphere.
+pub(super) fn with_air(
+    mut surface: Surface,
+    ray: &rays::RaySample,
+    air: Option<&atmosphere::Frame>,
+) -> Surface {
+    surface.air = air.map(|air| {
+        let view_cosine = ray.incidence as f32;
+        (
+            air.ground(
+                ray.direction,
+                (ray.distance * globecraft_core::EARTH_RADIUS_KM) as f32,
+                ray.normal,
+                view_cosine,
+            ),
+            atmosphere::ground_share(view_cosine),
+        )
+    });
+    surface
+}
+
+/// The colour of a ray that misses the Earth: the sky behind the air on its way.
+/// `cc` is the camera's distance from the centre squared and `ray.camera_dot` the
+/// ray's reach along it, both in the surface's own measure.
+pub(super) fn sky(
+    ray: &rays::RaySample,
+    cc: f64,
+    air: Option<&atmosphere::Frame>,
+    cfg: &RenderCfg,
+) -> Vec4 {
     let d = ray.direction;
-    let bb = ray.camera_dot;
     let mut col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
     let cell = (
         (d.x * STAR_GRID_RESOLUTION).floor() as i64,
@@ -185,28 +208,10 @@ pub(super) fn sky(ray: &rays::RaySample, cc: f64, camera_up: DVec3, cfg: &Render
                 / STAR_BRIGHTNESS_DIVISOR;
         col = col.max(Vec4::new(br, br, br, 0.0));
     }
-    let outer_sq = ATMOSPHERE_RADIUS_RATIO * ATMOSPHERE_RADIUS_RATIO;
-    if cfg.atmo && cc < outer_sq {
-        // Inside the atmosphere (a low, tilted camera): the sky is as bright as the
-        // air the ray crosses on its way out, most toward the horizon, less overhead,
-        // fading to space at the atmosphere's top; dark on the night side.
-        let path = -bb + (bb * bb - cc + outer_sq).max(0.0).sqrt();
-        let horizontal_path = (outer_sq - 1.0).sqrt();
-        let mut g = (path / horizontal_path).clamp(0.0, 1.0).sqrt() as f32;
-        if let Some(sun) = cfg.sun {
-            let day =
-                ((camera_up.dot(sun) + TWILIGHT_OFFSET) / TWILIGHT_WIDTH).clamp(0.0, 1.0) as f32;
-            g *= day * day * (3.0 - 2.0 * day);
-        }
-        col = col.lerp_monotonic(ATMOSPHERE_COLOR, g * ATMOSPHERE_BLEND);
-    } else if cfg.atmo && bb < 0.0 {
-        let rho = (cc - bb * bb).max(0.0).sqrt();
-        if (1.0..ATMOSPHERE_RADIUS_RATIO).contains(&rho) {
-            let g = (1.0 - (rho - 1.0) / ATMOSPHERE_HEIGHT_RATIO).powi(2) as f32;
-            col = col.lerp_monotonic(ATMOSPHERE_COLOR, g * ATMOSPHERE_BLEND);
-        }
+    match air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32)) {
+        Some(air) => air.over_sky(col),
+        None => col,
     }
-    col
 }
 
 #[cfg(test)]

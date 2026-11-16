@@ -37,10 +37,6 @@ impl RayCaster {
     pub(super) fn camera(&self) -> DVec3 {
         self.camera
     }
-    /// The camera's direction from the Earth's centre.
-    pub(super) fn camera_up(&self) -> DVec3 {
-        self.camera.normalize_or_zero()
-    }
     /// The raster's width and height in pixels.
     pub(super) fn pixels(&self) -> (usize, usize) {
         (self.width as usize, self.height as usize)

@@ -1,12 +1,17 @@
 //! Full GPU overview ray casting; bounded exact-coordinate tile lookup.
 use super::*;
 use crate::tuning;
-use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN};
-use globecraft_data::tiles::{Lookup, make_key, unkey};
+use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN, earth_model::SurfaceGeometry};
+use globecraft_data::tiles::{Lookup, Provider, make_key, unkey};
 const MIN_GPU_ALTITUDE_KM: f64 = 1000.0;
 const MAX_TRACKED_ZOOM: u8 = 10;
 const TILE_TABLE_SIZE: usize = 2048;
 const MAX_RASTER_PIXELS: usize = 2000 * 2000;
+/// How long a frame may take on the GPU before the device counts as failed. Frames
+/// take milliseconds; the slowest software adapter measured took 0.15 s.
+const FRAME_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Marks the night lights' tiles in the tile table's level word (levels are below 32).
+pub(super) const LIGHTS_TAG: u32 = 0x100;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -16,9 +21,15 @@ struct View {
     up: [f32; 4],
     forward: [f32; 4],
     sun: [f32; 4],
+    /// One over the surface's semi-axes squared, and the camera in that metric, squared.
+    shape: [f32; 4],
+    /// The semi-major axis in metres and the eccentricity squared.
+    figure: [f32; 4],
     raster: [u32; 4],
     effects: [u32; 4],
     limits: [u32; 4],
+    /// Night lights: shown, their finest level, where their needs start, tracked level.
+    lights: [u32; 4],
 }
 pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
@@ -35,6 +46,9 @@ pub(super) struct Overview {
     table: wgpu::Buffer,
     output: wgpu::Buffer,
     needs: wgpu::Buffer,
+    /// The air's tables (`atmosphere`): written once.
+    air_transmittance: wgpu::Buffer,
+    air_scattering: wgpu::Buffer,
     staging: wgpu::Buffer,
     pixels: usize,
     dependency_count: usize,
@@ -51,6 +65,16 @@ fn buffer(
         size: size as u64,
         usage,
         mapped_at_creation: false,
+    })
+}
+/// A read-only table for the shader.
+fn table(device: &wgpu::Device, label: &str, entries: &[glam::Vec4]) -> wgpu::Buffer {
+    use wgpu::util::DeviceExt;
+    let entries: Vec<[f32; 4]> = entries.iter().map(|entry| entry.to_array()).collect();
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::cast_slice(&entries),
+        usage: wgpu::BufferUsages::STORAGE,
     })
 }
 impl Overview {
@@ -86,6 +110,16 @@ impl Overview {
             ),
             output: buffer(device, "GlobeCraft overview pixels", 4, storage),
             needs: buffer(device, "GlobeCraft overview dependencies", 8, storage),
+            air_transmittance: table(
+                device,
+                "GlobeCraft air transmittance",
+                crate::atmosphere::TABLES.ground_transmittance(),
+            ),
+            air_scattering: table(
+                device,
+                "GlobeCraft air scattering",
+                crate::atmosphere::TABLES.top_scattering(),
+            ),
             staging: buffer(
                 device,
                 "GlobeCraft overview readback",
@@ -143,16 +177,24 @@ impl Overview {
             return Err(("View requires the precise CPU renderer (close altitude, exact grid, or raster limits)".into(),pixels,false));
         };
         let count = request.width * request.height;
-        let dependencies = ((1usize << (2 * (max_zoom as usize + 1))) - 1) / 3;
+        // One slot per tile of every tracked level: the base map's, then the night lights'.
+        let pyramid = |levels: u8| ((1usize << (2 * (levels as usize + 1))) - 1) / 3;
+        let base_dependencies = pyramid(max_zoom);
+        let lights_zoom = Provider::NightLights.max_zoom().min(max_zoom);
+        let dependencies =
+            base_dependencies + request.cfg.night_lights.map_or(0, |_| pyramid(lights_zoom));
         self.reserve(device, count, dependencies);
         let rotation = request.basis.rotation_from_view();
         let v4 = |vector: glam::DVec3, w| [vector.x as f32, vector.y as f32, vector.z as f32, w];
+        let (shape, figure) = figure(request.basis.model.geometry(), request.basis.c);
         let view = View {
             camera: v4(request.basis.c, request.basis.aspect_ratio() as f32),
             right: v4(rotation.x_axis, 0.0),
             up: v4(rotation.y_axis, 0.0),
             forward: v4(rotation.z_axis, 0.0),
             sun: v4(request.cfg.sun.unwrap_or_default(), 0.0),
+            shape,
+            figure,
             raster: [
                 request.width as u32,
                 request.height as u32,
@@ -171,15 +213,27 @@ impl Overview {
                 (TILE_TABLE_SIZE - 1) as u32,
                 0,
             ],
+            lights: [
+                u32::from(request.cfg.night_lights.is_some()),
+                u32::from(Provider::NightLights.max_zoom()),
+                base_dependencies as u32,
+                u32::from(lights_zoom),
+            ],
         };
         let mut table = vec![[u32::MAX; 4]; TILE_TABLE_SIZE];
         for (&key, &layer) in slots {
-            let (_, z, x, y, _) = unkey(key);
-            let mut index = tile_hash(z as u32, x, y);
+            let (provider, z, x, y, _) = unkey(key);
+            let level = u32::from(z)
+                | if provider == Provider::NightLights {
+                    LIGHTS_TAG
+                } else {
+                    0
+                };
+            let mut index = tile_hash(level, x, y);
             while table[index][0] != u32::MAX {
                 index = (index + 1) & (TILE_TABLE_SIZE - 1);
             }
-            table[index] = [z as u32, x, y, layer];
+            table[index] = [level, x, y, layer];
         }
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&view));
         queue.write_buffer(&self.table, 0, bytemuck::cast_slice(&table));
@@ -212,6 +266,14 @@ impl Overview {
                     binding: 4,
                     resource: binding(&self.needs, ((dependencies + 1) * 4) as u64),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.air_transmittance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.air_scattering.as_entire_binding(),
+                },
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -242,8 +304,19 @@ impl Overview {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        if let Err(error) = device.poll(wgpu::PollType::wait_indefinitely()) {
-            return Err((error.to_string(), pixels, true));
+        // Never wait on the driver without a limit: a device that stops answering
+        // must not stop the globe (the frame is then drawn on the CPU).
+        // shortcut: bounds the wait for the frame only, not a driver call that never
+        // returns; move GPU work to its own watched thread if such hangs are reported.
+        if let Err(error) = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(FRAME_WAIT_LIMIT),
+        }) {
+            return Err((
+                format!("GPU frame not finished within {FRAME_WAIT_LIMIT:?}: {error}"),
+                pixels,
+                true,
+            ));
         }
         if let Err(error) = rx
             .recv()
@@ -273,21 +346,27 @@ impl Overview {
                     false,
                 ));
             }
-            for z in 0..=max_zoom {
-                let start = ((1usize << (2 * z as usize)) - 1) / 3;
-                let n = 1usize << z;
-                for (i, &dist) in needs[start..start + n * n].iter().enumerate() {
-                    if dist != u32::MAX {
-                        required.push((
-                            make_key(
-                                request.cfg.provider,
-                                z,
-                                (i % n) as u32,
-                                (i / n) as u32,
-                                request.cfg.rel,
-                            ),
-                            f32::from_bits(dist),
-                        ));
+            let lights = request.cfg.night_lights.map(|edition| {
+                (
+                    Provider::NightLights,
+                    edition,
+                    lights_zoom,
+                    base_dependencies,
+                )
+            });
+            for (provider, release, levels, first) in
+                std::iter::once((request.cfg.provider, request.cfg.rel, max_zoom, 0)).chain(lights)
+            {
+                for z in 0..=levels {
+                    let start = first + pyramid(z) - (1usize << (2 * z as usize));
+                    let n = 1usize << z;
+                    for (i, &dist) in needs[start..start + n * n].iter().enumerate() {
+                        if dist != u32::MAX {
+                            required.push((
+                                make_key(provider, z, (i % n) as u32, (i / n) as u32, release),
+                                f32::from_bits(dist),
+                            ));
+                        }
                     }
                 }
             }
@@ -322,6 +401,30 @@ impl Overview {
             sampled,
         })
     }
+}
+/// The surface as the shader takes it (`View::shape`, `View::figure`): a sphere is the
+/// ellipsoid whose axes are all one.
+fn figure(geometry: SurfaceGeometry, camera: glam::DVec3) -> ([f32; 4], [f32; 4]) {
+    let q = geometry.inverse_axes_squared();
+    let (semi_major_m, eccentricity_squared) = match geometry {
+        SurfaceGeometry::Sphere { radius_km } => (radius_km * globecraft_core::METERS_PER_KM, 0.0),
+        SurfaceGeometry::Ellipsoid {
+            semi_major_km,
+            flattening,
+        } => (
+            semi_major_km * globecraft_core::METERS_PER_KM,
+            flattening * (2.0 - flattening),
+        ),
+    };
+    (
+        [
+            q.x as f32,
+            q.y as f32,
+            q.z as f32,
+            camera.dot(camera * q) as f32,
+        ],
+        [semi_major_m as f32, eccentricity_squared as f32, 0.0, 0.0],
+    )
 }
 pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
     let count = request.width.checked_mul(request.height)?;
@@ -379,10 +482,11 @@ mod tests {
         )
         .validate(&module)
         .expect("portable shader operations");
-        assert_eq!(std::mem::size_of::<View>(), 128);
-        assert_eq!(std::mem::offset_of!(View, raster), 80);
-        assert_eq!(std::mem::offset_of!(View, effects), 96);
-        assert_eq!(std::mem::offset_of!(View, limits), 112);
+        assert_eq!(std::mem::size_of::<View>(), 176);
+        assert_eq!(std::mem::offset_of!(View, lights), 160);
+        assert_eq!(std::mem::offset_of!(View, raster), 112);
+        assert_eq!(std::mem::offset_of!(View, effects), 128);
+        assert_eq!(std::mem::offset_of!(View, limits), 144);
         let shader_view = module
             .types
             .iter()
@@ -394,7 +498,7 @@ mod tests {
         };
         assert_eq!(*span as usize, std::mem::size_of::<View>());
         assert_eq!(
-            members[5].offset as usize,
+            members[7].offset as usize,
             std::mem::offset_of!(View, raster)
         );
     }

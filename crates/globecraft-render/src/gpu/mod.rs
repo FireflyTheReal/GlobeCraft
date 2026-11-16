@@ -1,4 +1,4 @@
-//! Experimental GPU sampling and shading, without egui dependencies.
+//! GPU sampling and shading of overview frames, without egui dependencies.
 mod overview;
 mod repair;
 mod shader;
@@ -35,6 +35,8 @@ pub(crate) struct GpuRenderer {
     /// Whether the adapter is a software rasterizer (allowed only on request).
     #[cfg_attr(not(test), allow(dead_code))]
     software: bool,
+    /// The adapter's name and backend, for diagnostics.
+    adapter: String,
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -44,9 +46,8 @@ pub(crate) const PARITY_SHARE_OVER_ONE: f64 = 0.001;
 /// With real imagery (the frame benchmark) the f32 level of detail also lands on the
 /// other side of the CPU's area-filter and fade thresholds along thin contours: up to
 /// this share of channels, by at most this many levels.
-#[cfg(test)]
+/// The start-up self-check holds an adapter to the same bounds.
 pub(crate) const IMAGERY_SHARE_OVER_ONE: f64 = 0.01;
-#[cfg(test)]
 pub(crate) const IMAGERY_MAX_DIFFERENCE: u8 = 16;
 
 /// Set to accept a software GPU adapter (lavapipe, WARP): for checking parity where
@@ -62,26 +63,29 @@ impl GpuRenderer {
             .expect("poll destroyed device");
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
-        // The overview shader samples one release; a swipe compare renders on the CPU.
-        // Nor do the polar caps (their tiles are in another projection).
-        if request.cfg.terrain.is_some()
-            || request.cfg.night_lights.is_some()
-            || !request.cfg.level_blend
-            || (crate::polar::under(request.cfg.provider)
-                && crate::polar::shows_polar_cap(&request.basis, request.width, request.height))
-        {
+        // Relief and the unblended screenshot levels are the CPU's. So is a surface the
+        // shader has no kernel for (it has the unit sphere and ellipsoids).
+        if request.cfg.terrain.is_some() || !request.cfg.level_blend {
             return false;
         }
         use globecraft_core::{EARTH_RADIUS_KM, earth_model::SurfaceGeometry};
         match request.basis.model.geometry() {
             SurfaceGeometry::Sphere { radius_km } if radius_km == EARTH_RADIUS_KM => {}
-            SurfaceGeometry::Sphere { .. } | SurfaceGeometry::Ellipsoid { .. } => return false,
+            SurfaceGeometry::Ellipsoid { .. } => {}
+            SurfaceGeometry::Sphere { .. } => return false,
         }
 
         overview::supported_zoom(request).is_some()
     }
+    /// A renderer whose pictures match the CPU's on this adapter (`self_check`).
     pub(crate) fn new() -> Result<Self, String> {
-        pollster::block_on(Self::initialize())
+        let mut renderer = pollster::block_on(Self::initialize())?;
+        renderer.self_check()?;
+        Ok(renderer)
+    }
+    /// The adapter's name and backend.
+    pub(crate) fn adapter(&self) -> &str {
+        &self.adapter
     }
     async fn initialize() -> Result<Self, String> {
         // Vulkan, Metal or DX12 only: wgpu's OpenGL backend lacks what this compute
@@ -164,7 +168,7 @@ impl GpuRenderer {
             return Err(error);
         }
         globecraft_data::log_line!(
-            "Experimental GPU globe rendering enabled: {} ({:?}), {} MiB tile atlas",
+            "GPU globe rendering enabled: {} ({:?}), {} MiB tile atlas",
             adapter.get_info().name,
             adapter.get_info().backend,
             layers * TILE_BYTES / (1024 * 1024)
@@ -179,7 +183,106 @@ impl GpuRenderer {
             preferred: Vec::new(),
             failure,
             software: adapter.get_info().device_type == wgpu::DeviceType::Cpu,
+            adapter: format!(
+                "{} ({:?})",
+                adapter.get_info().name,
+                adapter.get_info().backend
+            ),
         })
+    }
+
+    /// Draws one small view of a made-up tile on this adapter and on the CPU, and
+    /// refuses the adapter when the pictures differ by more than the parity tests
+    /// allow: a driver that computes wrong pixels must not draw the globe. Run once
+    /// per device, before its first frame.
+    fn self_check(&mut self) -> Result<(), String> {
+        const WIDTH: usize = 96;
+        const HEIGHT: usize = 72;
+        // A smooth pattern: f32 texel rounding then moves no channel by more than a level.
+        let pattern = image::RgbaImage::from_fn(TILE_EDGE_PX, TILE_EDGE_PX, |x, y| {
+            image::Rgba([x as u8, y as u8, ((x + y) / 2) as u8, 255])
+        });
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pattern)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .map_err(|error| format!("GPU self-check tile: {error}"))?;
+        let tile = Arc::new(
+            Tile::decode(png.get_ref()).map_err(|error| format!("GPU self-check tile: {error}"))?,
+        );
+        let provider = globecraft_data::tiles::Provider::Streets;
+        let key = globecraft_data::tiles::make_key(provider, 0, 0, 0, 0);
+        let cam = globecraft_core::camera::Cam {
+            lat: 40.0,
+            lon: 10.0,
+            heading: 25.0,
+            alt: 9000.0,
+            tilt: 0.0,
+        };
+        let request = RenderRequest {
+            width: WIDTH,
+            height: HEIGHT,
+            cam,
+            basis: cam.basis_for_model(WIDTH as f64 / HEIGHT as f64, Default::default()),
+            cfg: crate::RenderCfg {
+                sky: None,
+                provider,
+                terrain: None,
+                rel: 0,
+                grid: false,
+                grid_step: 10.0,
+                atmo: true,
+                sun: Some(globecraft_core::math::ll_to_v3(20.0, 45.0)),
+                lod_scale: 1.0,
+                level_blend: true,
+                fixed_level: None,
+                night_lights: None,
+                stars: true,
+            },
+            overlays: None,
+            aircraft: None,
+            live_layers: None,
+            presentation: 0,
+            compare: None,
+        };
+        let lookup = |wanted| {
+            if wanted == key {
+                globecraft_data::tiles::Lookup::Ready(tile.clone())
+            } else {
+                globecraft_data::tiles::Lookup::Unavailable
+            }
+        };
+        let slots = self.upload(&[(key, tile.clone())])?;
+        let frame = self
+            .overview
+            .render(
+                overview::Context {
+                    device: &self.device,
+                    queue: &self.queue,
+                    atlas: &self.view,
+                },
+                &request,
+                &slots,
+                &lookup,
+                Vec::new(),
+            )
+            .map_err(|(error, _, _)| format!("GPU self-check: {error}"))?;
+        let (expected, _, _) = crate::render_pixels_into(
+            WIDTH,
+            HEIGHT,
+            0..HEIGHT,
+            &request.basis,
+            &request.cfg,
+            &lookup,
+            Vec::new(),
+        );
+        parity(&frame.view.pixels, &expected).map_err(|(over_one, largest)| {
+            format!(
+                "GPU self-check: {} draws {over_one} of {} colour channels more than one level from the CPU renderer (largest difference {largest})",
+                self.adapter,
+                expected.len()
+            )
+        })?;
+        Ok(())
     }
 
     fn upload(&mut self, tiles: &[(TileKey, Arc<Tile>)]) -> Result<HashMap<TileKey, u32>, String> {
@@ -276,9 +379,13 @@ impl GpuRenderer {
         let Some(max_zoom) = overview::supported_zoom(request) else {
             return Err(("View requires precise CPU rendering".into(), buffer, false));
         };
+        let lights = request.cfg.night_lights.map_or_else(Vec::new, |edition| {
+            cache.ready_tiles(globecraft_data::tiles::Provider::NightLights, edition)
+        });
         let tiles: Vec<_> = cache
             .ready_tiles(request.cfg.provider, request.cfg.rel)
             .into_iter()
+            .chain(lights)
             .filter(|(key, _)| globecraft_data::tiles::unkey(*key).1 <= max_zoom)
             .collect();
         let ready: HashMap<_, _> = tiles.iter().map(|(key, _)| (*key, ())).collect();
@@ -358,6 +465,22 @@ impl GpuRenderer {
         }
         unreachable!("nonzero bounded GPU residency passes")
     }
+}
+/// Whether a GPU picture matches the CPU's within the bounds real imagery is held to;
+/// else how many channels are more than one level off, and the largest difference.
+fn parity(gpu: &[u8], cpu: &[u8]) -> Result<(), (usize, u8)> {
+    let (mut over_one, mut largest) = (0usize, 0u8);
+    for difference in gpu.iter().zip(cpu).map(|(gpu, cpu)| gpu.abs_diff(*cpu)) {
+        over_one += usize::from(difference > 1);
+        largest = largest.max(difference);
+    }
+    if gpu.len() != cpu.len()
+        || over_one as f64 >= cpu.len() as f64 * IMAGERY_SHARE_OVER_ONE
+        || largest > IMAGERY_MAX_DIFFERENCE
+    {
+        return Err((over_one, largest));
+    }
+    Ok(())
 }
 fn binding(buffer: &wgpu::Buffer, size: u64) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Buffer(wgpu::BufferBinding {

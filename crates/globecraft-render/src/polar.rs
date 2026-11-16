@@ -7,8 +7,8 @@
 //! satellite imagery. A picture of each cap is built into the app (about 1.6 km a
 //! pixel, from the same sources): it shows at once, before and between the streamed
 //! tiles, so a fast zoom never shows a gap; the tiles stream only for the levels finer
-//! than it. The caps render on the CPU: a view that shows one is not given to the GPU
-//! path.
+//! than it. The caps render on the CPU: the GPU path leaves their pixels to its
+//! precise CPU repair.
 use crate::{Local, pixel::Surface, tuning::LOD_SHARPNESS_BIAS};
 use emath::{Pos2, Rect};
 use glam::Vec4;

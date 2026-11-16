@@ -15,6 +15,10 @@ const BENCH_FRAMES: usize = 200;
 const BENCH_ROUNDS: usize = 5;
 const FIXTURE_TILE_SIZE_PX: u32 = 256;
 
+/// How long the fixture tiles may take to load from the isolated disk cache: slow
+/// runner disks (Windows) need more than the 20 s a laptop does.
+const FIXTURE_LOAD_LIMIT: Duration = Duration::from_secs(120);
+
 struct FixtureCache {
     root: PathBuf,
 }
@@ -136,7 +140,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         .any(|&key| !matches!(cache.lookup(key), Lookup::Ready(_)))
     {
         assert!(
-            started.elapsed() < Duration::from_secs(20),
+            started.elapsed() < FIXTURE_LOAD_LIMIT,
             "fixture tiles must load from isolated disk cache"
         );
         // Elevation tiles are not part of the overview warmup: ask for them.
@@ -253,7 +257,7 @@ fn warm_gpu_frame_time() {
             .iter()
             .any(|&key| !matches!(cache.lookup(key), Lookup::Ready(_)))
     {
-        assert!(started.elapsed() < Duration::from_secs(20));
+        assert!(started.elapsed() < FIXTURE_LOAD_LIMIT);
         std::thread::sleep(Duration::from_millis(1));
     }
     let mut gpu = crate::gpu::GpuRenderer::new().unwrap();
@@ -269,7 +273,8 @@ fn warm_gpu_frame_time() {
             width: w,
             height: h,
             cam,
-            basis: cam.basis(w as f64 / h as f64),
+            // The app's default Earth model (WGS 84).
+            basis: cam.basis_for_model(w as f64 / h as f64, Default::default()),
             cfg: RenderCfg {
                 sky: None,
                 provider: Provider::Satellite,
@@ -349,8 +354,8 @@ fn warm_gpu_frame_time() {
                         }
                         shown += 1;
                         let (x, y) = (i / 4 % w, i / 4 / w);
-                        let ray = rays.cast_model::<false>(x, y)[0];
-                        let surface = crate::pixel::surface::<false>(
+                        let ray = rays.cast(x, y)[0];
+                        let surface = crate::pixel::surface::<true>(
                             x,
                             y,
                             w,
@@ -464,7 +469,7 @@ fn warm_gpu_frame_time() {
     {
         cache.prioritize_view(&detail);
         assert!(
-            started.elapsed() < Duration::from_secs(20),
+            started.elapsed() < FIXTURE_LOAD_LIMIT,
             "isolated detail loading"
         );
         std::thread::sleep(Duration::from_millis(1));
@@ -482,7 +487,7 @@ fn warm_gpu_frame_time() {
             width: 2000,
             height: 1488,
             cam,
-            basis: cam.basis(2000.0 / 1488.0),
+            basis: cam.basis_for_model(2000.0 / 1488.0, Default::default()),
             cfg: RenderCfg {
                 sky: None,
                 provider: Provider::Satellite,

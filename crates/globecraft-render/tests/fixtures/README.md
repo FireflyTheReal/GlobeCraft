@@ -26,6 +26,17 @@ build output. Do not overwrite them to accommodate an unexplained failure.
 For an intentional rendering change, review the image difference and update
 fixtures separately with the source commit, camera/configuration and rationale.
 
+## The air (2026-11-15)
+
+`atmosphere.rgba`, `grid-sun.rgba`, `loaded.rgba` and every `batches/*.rgba` were
+recorded again when the physically based air (`src/atmosphere.rs`, roadmap 8.3)
+replaced the blue rim and the halo: every pixel with the atmosphere on changed, as
+intended (a thin limb that follows the sun, haze toward the limb, orange sunlight at
+the terminator). Recorded on Linux x86-64 with `GLOBECRAFT_RECORD_FIXTURES=1 cargo
+test -p globecraft-render raster_matches_regression_fixtures` and `… ray_batches`,
+cameras and configurations unchanged; the pictures were compared before and after by
+eye. `plain.rgba` (atmosphere off) and the `.misses` files are the originals.
+
 ## Ray-batching boundary fixtures
 
 The additional `batches/` snapshots were captured from GlobeCraft commit

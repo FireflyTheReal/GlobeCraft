@@ -232,11 +232,33 @@ impl App {
         );
         ui.weak(lg.text("settings-frame-sync-help"));
         if globecraft_render::backend::GPU_BY_DEFAULT {
-            ui.checkbox(
-                &mut self.settings.gpu_globe,
-                lg.text("settings-gpu-globe-toggle"),
-            )
-            .on_hover_text(lg.text("settings-gpu-globe-help"));
+            let toggle = ui
+                .checkbox(
+                    &mut self.settings.gpu_globe,
+                    lg.text("settings-gpu-globe-toggle"),
+                )
+                .on_hover_text(lg.text("settings-gpu-globe-help"));
+            // Asking again clears the marker a crashed start left (see `FrameRenderer`).
+            if toggle.changed()
+                && self.settings.gpu_globe
+                && let Err(error) = std::fs::remove_file(globecraft_data::gpu_start_marker())
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                self.status = format!("Unable to clear the GPU start marker: {error}");
+            }
+            let status = globecraft_render::backend::status();
+            if let Some(adapter) = &status.adapter {
+                ui.weak(lg.format(
+                    "settings-gpu-globe-running",
+                    &[("adapter", adapter.as_str().into())],
+                ));
+            } else if let Some(note) = &status.note {
+                // The reason is a diagnostic, in English.
+                ui.weak(format!(
+                    "{} {note}",
+                    lg.text("settings-gpu-globe-not-running")
+                ));
+            }
         }
     }
     pub(super) fn settings_files(&mut self, ui: &mut egui::Ui) {

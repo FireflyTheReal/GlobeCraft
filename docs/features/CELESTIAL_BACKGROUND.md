@@ -34,7 +34,8 @@ SOFA/sofars notices are included and readable in Settings → Globe.
 Realistic mode fades faint sky near the daytime surface between solar altitudes
 −18° and −6°, returning to full visibility by 100 km altitude. **Cinematic sky**
 explicitly bypasses this attenuation. This is a simple visibility policy, not a
-new atmospheric scattering model. Existing atmosphere still composites in front.
+new atmospheric scattering model. The air (`atmosphere`, roadmap 8.3) composites in
+front: it dims the sky behind it and puts the stars out where its own glow is bright.
 
 Data decodes one optional image on its bounded CPU service and wakes the UI on
 success/failure. Encoded input is limited to 8 MiB; decoded dimensions are fixed
@@ -42,7 +43,7 @@ and decoder allocation is limited to 64 MiB. One shared RGB image retains 24 MiB
 transient decoder allocations and compressed binary bytes are additional. Sky
 assets do not enter imagery MBTiles or its 128 MiB disk target.
 
-Render samples on CPU; experimental GPU rendering uses the same exact CPU sky
+Render samples on CPU; GPU rendering uses the same exact CPU sky
 repair after readback. No GPU sky texture/upload or device-specific compression
 is required. Sky/cinematic/clock keys reject stale presentation results. CPU
 fallback/device-loss behavior is retained. This is not a claim that every GPU or

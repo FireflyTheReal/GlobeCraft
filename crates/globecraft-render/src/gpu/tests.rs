@@ -20,6 +20,17 @@ fn gpu_overview_matches_cpu() {
         .write_to(&mut bytes, image::ImageFormat::Png)
         .unwrap();
     let tile = Arc::new(Tile::decode(bytes.get_ref()).unwrap());
+    // The night lights' tile: another pattern, so a mixed-up lookup shows.
+    let image = image::RgbaImage::from_fn(256, 256, |x, y| {
+        image::Rgba([(x / 2 + y / 2) as u8, 255 - y as u8, 255 - x as u8, 255])
+    });
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let lights_tile = Arc::new(Tile::decode(bytes.get_ref()).unwrap());
+    const LIGHTS_EDITION: u16 = 1;
+    let lights_key = make_key(Provider::NightLights, 0, 0, 0, LIGHTS_EDITION);
     let (w, h) = (65, 49);
     // The GPU matches the CPU within one level per channel almost everywhere: its f32
     // trigonometry moves a few texel lookups on the test pattern's sharp edges. The
@@ -29,14 +40,21 @@ fn gpu_overview_matches_cpu() {
     let software = gpu.software;
     let (mut channels, mut over_one, mut total_error, mut fallbacks) =
         (0usize, 0usize, 0u64, 0usize);
-    for provider in Provider::basemaps() {
+    use globecraft_core::earth_model::EarthModel;
+    for (provider, model) in
+        Provider::basemaps().flat_map(|provider| EarthModel::ALL.map(|model| (provider, model)))
+    {
         for (lat, lon, alt) in [
             (-15.0, -50.0, 14000.0),
             (89.9, 179.9, 1000.0),
             (-89.9, -179.9, 14000.0),
             (0.0, 180.0, 30000.0),
+            // The polar caps' edge and a mid-latitude view, where the ellipsoid's
+            // normal leans furthest from the sphere's.
+            (78.0, 15.0, 5000.0),
+            (45.0, 9.0, 2500.0),
         ] {
-            for enabled in [false, true] {
+            for (enabled, lights) in [(false, false), (true, false), (false, true), (true, true)] {
                 let cam = Cam {
                     lat,
                     lon,
@@ -48,7 +66,7 @@ fn gpu_overview_matches_cpu() {
                     width: w,
                     height: h,
                     cam,
-                    basis: cam.basis(w as f64 / h as f64),
+                    basis: cam.basis_for_model(w as f64 / h as f64, model),
                     cfg: crate::RenderCfg {
                         sky: enabled.then(|| {
                             crate::celestial::SkyBackdrop::new(
@@ -70,7 +88,7 @@ fn gpu_overview_matches_cpu() {
                         lod_scale: 1.0,
                         level_blend: true,
                         fixed_level: None,
-                        night_lights: None,
+                        night_lights: lights.then_some(LIGHTS_EDITION),
                         stars: true,
                     },
                     overlays: None,
@@ -83,7 +101,7 @@ fn gpu_overview_matches_cpu() {
                     let key = make_key(provider, 0, 0, 0, 7);
                     let slots = gpu
                         .upload(&if loaded {
-                            vec![(key, tile.clone())]
+                            vec![(key, tile.clone()), (lights_key, lights_tile.clone())]
                         } else {
                             Vec::new()
                         })
@@ -91,7 +109,9 @@ fn gpu_overview_matches_cpu() {
                     let lookup = |k| {
                         if loaded && k == key {
                             Lookup::Ready(tile.clone())
-                        } else if pending && k == key {
+                        } else if loaded && k == lights_key {
+                            Lookup::Ready(lights_tile.clone())
+                        } else if pending && (k == key || k == lights_key) {
                             Lookup::Pending
                         } else {
                             Lookup::Absent
@@ -113,7 +133,9 @@ fn gpu_overview_matches_cpu() {
                     let frame = match rendered {
                         Ok(frame) => frame.view,
                         Err((error, _, _)) if software => {
-                            println!("FALLBACK {provider:?} ({lat},{lon}) alt={alt}: {error}");
+                            println!(
+                                "FALLBACK {provider:?} {model:?} ({lat},{lon}) alt={alt}: {error}"
+                            );
                             fallbacks += 1;
                             continue;
                         }
@@ -143,7 +165,7 @@ fn gpu_overview_matches_cpu() {
                             .map(|(i, _)| ((i / 4) % w, (i / 4) / w))
                             .collect();
                         println!(
-                            "DIFF {provider:?} ({lat},{lon}) alt={alt} enabled={enabled} loaded={loaded} pending={pending}: {} channels >1, max {max}, at {pixels:?}",
+                            "DIFF {provider:?} {model:?} ({lat},{lon}) alt={alt} enabled={enabled} lights={lights} loaded={loaded} pending={pending}: {} channels >1, max {max}, at {pixels:?}",
                             diffs.len()
                         );
                     }
@@ -239,14 +261,13 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
         compare: None,
     };
     assert!(GpuRenderer::supports(&request));
+    // The default Earth model and a view of a pole are the GPU's too.
+    request.cam.lat = 80.0;
     request.basis = request.cam.basis_for_model(
         request.width as f64 / request.height as f64,
         globecraft_core::earth_model::EarthModel::Wgs84,
     );
-    assert!(!GpuRenderer::supports(&request));
-    request.basis = request
-        .cam
-        .basis(request.width as f64 / request.height as f64);
+    assert!(GpuRenderer::supports(&request));
     request.cam.alt = 0.15;
     assert!(!GpuRenderer::supports(&request));
     request.cam.alt = 14000.0;
@@ -299,4 +320,21 @@ fn motion_and_idle_frames_choose_the_same_level() {
     let motion = super::overview::supported_zoom(&request(800, 500, 0.4));
     assert!(idle.is_some());
     assert_eq!(idle, motion);
+}
+
+#[test]
+fn the_self_check_accepts_rounding_and_refuses_wrong_pictures() {
+    let cpu = vec![100u8; 4000];
+    let mut gpu = cpu.clone();
+    gpu[..2000].fill(101);
+    assert_eq!(parity(&gpu, &cpu), Ok(()), "one level is rounding");
+    // A few channels two levels off are imagery contours; many are a wrong picture.
+    gpu[..39].fill(102);
+    assert_eq!(parity(&gpu, &cpu), Ok(()));
+    gpu[..40].fill(102);
+    assert_eq!(parity(&gpu, &cpu), Err((40, 2)));
+    let mut gpu = cpu.clone();
+    gpu[7] = 100 + IMAGERY_MAX_DIFFERENCE + 1;
+    assert_eq!(parity(&gpu, &cpu), Err((1, IMAGERY_MAX_DIFFERENCE + 1)));
+    assert!(parity(&cpu[..8], &cpu).is_err(), "a short picture");
 }

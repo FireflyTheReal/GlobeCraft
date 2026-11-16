@@ -1,10 +1,11 @@
-# Experimental GPU globe renderer
+# GPU globe renderer (beta)
 
-All GPU globe rendering is **experimental**, on every platform. CPU rendering
-remains the default; published release downloads exclude the experimental GPU
-backend. Source builds with the `gpu` feature include a wgpu 30 compute renderer
-alongside the CPU renderer.
-The experimental renderer ray-casts the overview globe, calculates Mercator coordinates and LOD, samples
+Builds with the `gpu` feature (on by default when building from source) include a
+wgpu 30 compute renderer alongside the CPU renderer and use it for overview frames
+on every platform, unless it is turned off in Settings → Graphics. Published release
+downloads still exclude it (`--features standard`): add `gpu` to `standard` once
+native Windows and Linux runs are reported.
+The GPU renderer ray-casts the overview globe, calculates Mercator coordinates and LOD, samples
 imagery, blends zoom levels, and applies sunlight and atmosphere on the GPU.
 The render crate owns it; the egui presentation backend stays in the app.
 The desktop uses eframe's wgpu presentation independently of globe
@@ -19,41 +20,64 @@ coordinator, never on the UI thread.
 
 ## Selection and fallback
 
-On Apple Silicon the GPU renderer is a beta and on by default (`auto`), since
-2026-11-01: on an M1 (Metal) the parity test matched the CPU with no channel more
-than one level off at 512×384 and 2000×1488, and warm 2000×1488 frames took 14 ms
-against 40 ms on the CPU. Settings → Graphics → "Draw the globe on the GPU" turns it
-off (read at startup). Everywhere else CPU rendering stays the default while
-reported Ubuntu GPU freezes remain under investigation, and GPU rendering is
-experimental and opt-in. `GLOBECRAFT_RENDERER` overrides both.
+The GPU renderer is on by default (`auto`) wherever it is built in, since 2026-11-15.
+Before that it was on only on Apple Silicon, and in practice never ran: it refused
+the WGS 84 ellipsoid (the default Earth model) and every view of a polar cap under
+satellite imagery. Settings → Graphics → "Draw the globe on the GPU" turns it off
+(read at startup) and shows the adapter in use, or why the CPU draws instead.
+`GLOBECRAFT_RENDERER` overrides the setting.
 
-`GLOBECRAFT_RENDERER=auto` opts into experimental GPU rendering for supported
-views with at least 262,144 pixels; small frames retain CPU rendering because
-complete GPU/CPU timings were similar at 512×384 on the baseline adapter.
-`GLOBECRAFT_RENDERER=gpu` also tries GPU rendering for small supported frames.
-`GLOBECRAFT_RENDERER=cpu` skips experimental globe GPU initialization.
+`GLOBECRAFT_RENDERER=auto` uses the GPU for supported views with at least 262,144
+pixels; small frames keep CPU rendering because complete GPU/CPU timings were similar
+at 512×384 on the baseline adapter. `GLOBECRAFT_RENDERER=gpu` also uses it for small
+supported frames. `GLOBECRAFT_RENDERER=cpu` never creates a GPU device.
 
-GPU rendering currently requires altitude of at least 1,000 km, no geographic
-grid, at most 4 million pixels, and a checked LOD bound of zoom 10 or lower.
-Close views and exact grid rendering use the double-precision CPU
-renderer. Both backends retain all providers, historical releases, effects,
-overlays and screenshots. Camera operations, picking and overlay projection
-remain double precision. GPU sky, narrow horizon and tile-seam strips are repaired
-using the shared precise CPU calculations, retaining deterministic stars and
-avoiding floating-point changes in tile-edge selection.
+GPU rendering requires an altitude of at least 1,000 km, no geographic grid, no
+relief, the screen's level blending (not the sharper screenshot modes), at most
+4 million pixels, and a checked LOD bound of zoom 10 or lower. Close views and exact
+grid rendering use the double-precision CPU renderer. Within that range it draws both
+Earth models (a sphere is the ellipsoid whose axes are all one), every provider and
+historical release, sunlight, the air in front of the ground (`atmosphere`: two small
+read-only tables, the transmittance table's ground row and the scattering table's top
+layer, and the same sums as the CPU) and night lights (their tiles share the atlas and
+the tile table, with their own block of tile needs). Camera operations,
+picking and overlay projection remain double precision. The sky, a narrow horizon
+strip, tile-seam strips and the polar caps (latitudes past 83° under satellite
+imagery, which have their own projection, tiles and colour matching) are left by the
+shader and drawn by the shared precise CPU calculations ("repair"), retaining
+deterministic stars and avoiding floating-point changes in tile-edge selection. A
+view that is mostly polar cap is therefore mostly CPU work.
 
-Adapter selection and device creation are fallible. Required limits and shader
-validation are checked before use. Initialization failure selects CPU rendering
-with an English diagnostic; it does not repeatedly retry every frame. Device
-loss, uncaptured GPU errors and failed readback disable that device for the
-session and render the affected frame on the CPU. Rust panics from GPU initialization
-or rendering are caught at the optional backend boundary so they cannot terminate
-the frame coordinator. This does not recover a native driver crash or a blocked
-driver call. Restarting permits another
-initialization attempt. An oversized tile working set or unusual tile dimensions
-uses CPU rendering for that view, preserving the general sampler.
+Four guards make an untested adapter safe to try:
 
-For a desktop build without experimental GPU globe rendering:
+- **Self-check.** Before its first frame each device draws one small view of a
+  made-up tile, and so does the CPU; the adapter is refused when more than 1 % of
+  the colour channels differ by more than one level, or any by more than 16 (the
+  bounds the frame benchmark holds real imagery to). A driver that computes wrong
+  pixels does not draw the globe.
+- **Start marker.** The file `gpu-start` in the settings folder is written before
+  the device is created and removed after its first frame, or after a start that
+  failed cleanly. A crash or forced quit in between leaves it, and the next start
+  keeps to the CPU instead of crashing again. Turning the setting off and on, or a
+  new GlobeCraft version, allows another try. Not used when `GLOBECRAFT_RENDERER`
+  is set.
+- **Bounded wait.** A frame the device does not finish within 5 s counts as a device
+  failure. This does not cover a driver call that never returns.
+- **Failure and replacement.** Device loss, uncaptured GPU errors, a failed
+  readback or a frame that never finished drop that device and draw the frame on the
+  CPU. Two seconds later a new device is created (a driver restart or a laptop
+  waking up), at most three times per session; then the CPU draws until GlobeCraft
+  restarts. Rust panics from GPU initialization or rendering are caught at the
+  backend boundary so they cannot stop the frame coordinator. A native driver crash
+  is not recoverable in-process; the start marker covers the one at start.
+
+Initialization failure selects CPU rendering with an English diagnostic and is not
+retried. An oversized tile working set or unusual tile dimensions uses CPU rendering
+for that view, preserving the general sampler. Help → diagnostics reports the
+renderer, the adapter or the reason, and how many frames each renderer drew: a GPU
+that is "on" but draws no frames shows there.
+
+For a desktop build without GPU globe rendering:
 
 ```sh
 cargo build -p globecraft --no-default-features --features standard --locked
@@ -87,6 +111,9 @@ limits. Precise CPU repair contributes its dependencies too. Compact dependency 
 
 No network or SQLite operation runs in a shader or on the UI thread.
 
+The dependency buffer holds the base map's zoom pyramid and, when night lights show,
+theirs after it (to their zoom 8 at most).
+
 Completed RGBA is read back to the app preparation callback, texture
 upload and immutable screenshot snapshot. Consequently this is genuine GPU
 rasterization, but **not a zero-copy GPU presentation path**. UI texture upload,
@@ -106,8 +133,9 @@ cargo test -p globecraft-render gpu_overview_matches_cpu --locked -- --ignored -
 RAYON_NUM_THREADS=8 cargo test -p globecraft-render warm_gpu_frame_time --locked -- --ignored --nocapture --test-threads=1
 ```
 
-The first exercises every provider, both hemispheres/poles, dateline, sunlight,
-atmosphere, loaded/pending/missing imagery, tile coverage and device-loss reporting.
+The first exercises every provider on both Earth models, both hemispheres/poles, the
+polar caps' edge, the dateline, sunlight, atmosphere, night lights,
+loaded/pending/missing imagery, tile coverage and device-loss reporting.
 The second uses isolated warm 256×256 fixture tiles and compares complete frames,
 including upload, GPU wait/readback, sky/precision repair and tile dependencies.
 It excludes egui presentation, overlays and live services. Always report image
@@ -115,6 +143,21 @@ error statistics together with timings; initialization and the first upload are
 excluded from warm medians. Release validation on Windows and Linux remains separate from local macOS checks. The benchmark also loads 597 decoded tiles and rotates across
 three hemispheric views to check that exceeding the atlas in the RAM cache does
 not unnecessarily disable GPU rendering. See the [native CPU baseline](../PERFORMANCE_BASELINE.md).
+
+`gpu_device_loss_publishes_a_cpu_frame` (also explicit) destroys a device and checks
+that the CPU draws that frame and that a new device takes over after the delay.
+
+## Parity after the default-view fix (2026-11-15)
+
+Software Vulkan (lavapipe/llvmpipe, Linux), so the timings say nothing about a GPU:
+
+- Parity test, 576 frames of 65×49: 7.3 million channels, mean error 0.0001 levels,
+  none more than one level off, tile dependencies equal to the CPU's.
+- Frame benchmark with the default Earth model (WGS 84) and warm satellite imagery:
+  512×384 no channel more than one level off; 2000×1488 one channel in 11.9 million
+  two levels off; the 597-tile residency views at most one channel two levels off.
+- Before the fix the parity test failed on the same adapter (mean error 0.54, 1.15 %
+  of channels over one level): the CPU drew the polar caps and the shader did not.
 
 ## Local measurement (2026-10-13)
 
