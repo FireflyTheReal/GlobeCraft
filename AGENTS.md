@@ -195,11 +195,14 @@ User instructions and the requested scope take precedence over these defaults.
   Share an ID only when the meaning and usage match, not just the displayed text.
   See `docs/LOCALIZATION.md` for fallback, fixtures and contributor examples.
 
-- GPU globe rendering is a beta on Apple Silicon and experimental everywhere else.
-  Refer to it that way in user-facing documentation and enablement diagnostics.
-  GPU acceleration is optional: the CPU renderer remains available. Apple Silicon
-  builds use `auto` unless Settings → Graphics turns it off (`gpu_globe`); elsewhere
-  selection is opt-in. `GLOBECRAFT_RENDERER=auto|gpu|cpu` overrides both. Keep adapter initialization,
+- GPU globe rendering is a beta. Refer to it that way in user-facing documentation
+  and enablement diagnostics. GPU acceleration is optional: the CPU renderer remains
+  available. Builds with the `gpu` feature use `auto` on every platform unless
+  Settings → Graphics turns it off (`gpu_globe`); release downloads leave the feature
+  out until native Windows and Linux runs are reported. Each device passes the
+  self-check against the CPU picture before its first frame, and the `gpu-start`
+  marker keeps a start that crashed from repeating. `GLOBECRAFT_RENDERER=auto|gpu|cpu`
+  overrides both. Keep adapter initialization,
   texture uploads, compute dispatch, waits and readback on the frame coordinator.
   Retain a CPU fallback on initialization/readback/device errors. Close and exact-grid
   views use the double-precision CPU path; GPU sky/horizon/tile seams use precise
