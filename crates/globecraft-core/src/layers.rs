@@ -22,6 +22,8 @@ pub enum MapLayer {
     Vessels,
     Satellites,
     Roads,
+    /// Buildings as blocks close up (Overture Maps: OpenStreetMap, Microsoft, Google).
+    Buildings,
     Traffic,
     /// City lights at night (NASA Black Marble), on the night side with Sunlight.
     NightLights,
@@ -83,7 +85,7 @@ impl LayerGroup {
 }
 
 impl MapLayer {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::CountryBorders,
         Self::StateBorders,
         Self::PlaceLabels,
@@ -103,6 +105,7 @@ impl MapLayer {
         Self::Vessels,
         Self::Satellites,
         Self::Roads,
+        Self::Buildings,
         Self::Traffic,
         Self::NightLights,
         Self::Railways,
@@ -138,6 +141,7 @@ impl MapLayer {
             Self::Vessels => "vessels",
             Self::Satellites => "satellites",
             Self::Roads => "roads",
+            Self::Buildings => "buildings",
             Self::Traffic => "traffic",
             Self::NightLights => "night_lights",
             Self::Railways => "railways",
@@ -177,6 +181,7 @@ impl MapLayer {
             Self::Vessels => "layers-vessels-toggle",
             Self::Satellites => "layers-satellites-toggle",
             Self::Roads => "layers-roads-toggle",
+            Self::Buildings => "layers-buildings-toggle",
             Self::Traffic => "layers-traffic-toggle",
             Self::NightLights => "layers-night-lights-toggle",
             Self::Railways => "layers-railways-toggle",
@@ -210,6 +215,7 @@ impl MapLayer {
             Self::Vessels => "ship",
             Self::Satellites => "satellite",
             Self::Roads => "road",
+            Self::Buildings => "building",
             Self::Traffic => "traffic",
             Self::NightLights => "moon",
             Self::Railways => "railway",
@@ -242,9 +248,12 @@ impl MapLayer {
             | Self::MilkyWay => LayerGroup::Sky,
             Self::Radar | Self::Clouds | Self::Aurora => LayerGroup::Weather,
             Self::Flights | Self::Vessels | Self::Satellites => LayerGroup::LiveObjects,
-            Self::Roads | Self::Traffic | Self::Railways | Self::Ferries | Self::Airports => {
-                LayerGroup::Transport
-            }
+            Self::Roads
+            | Self::Buildings
+            | Self::Traffic
+            | Self::Railways
+            | Self::Ferries
+            | Self::Airports => LayerGroup::Transport,
         }
     }
 
@@ -267,6 +276,7 @@ impl MapLayer {
                 | Self::Vessels
                 | Self::Satellites
                 | Self::Roads
+                | Self::Buildings
                 | Self::Traffic
                 | Self::Terrain
         )

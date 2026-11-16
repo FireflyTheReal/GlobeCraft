@@ -24,6 +24,7 @@ mod antarctica;
 #[cfg(feature = "assistant")]
 mod assistant;
 mod borders;
+mod buildings;
 mod cache;
 mod chrome;
 mod commands;
@@ -553,6 +554,7 @@ impl eframe::App for App {
                 rail_or_airports: self.layer(MapLayer::Railways) || self.layer(MapLayer::Airports),
                 poi: self.poi_layers().any(),
                 roads: self.layer(MapLayer::Roads),
+                buildings: self.layer(MapLayer::Buildings),
             },
         );
         let scene = self.imagery_time();
@@ -582,6 +584,7 @@ impl eframe::App for App {
             && (self.layer(MapLayer::Vessels)
                 || self.layer(MapLayer::Satellites)
                 || self.layer(MapLayer::Roads)
+                || self.layer(MapLayer::Buildings)
                 || self.layer(MapLayer::Traffic)
                 || self.layer(MapLayer::Aurora)
                 || self.user_layers_refresh())

@@ -553,6 +553,7 @@ layers-satellites-toggle = Satélites (órbitas CelesTrak, estimadas)
 layers-traffic-toggle = Congestionamento real (TomTom; chave opcional)
 layers-traffic-key = Chave de API TomTom (não é salva)
 layers-roads-toggle = Estradas (OSM)
+layers-buildings-toggle = Edifícios
 layers-railways-toggle = Ferrovias, metrôs e bondes (OSM)
 layers-ferries-toggle = Rotas de balsa (OSM)
 layers-airports-toggle = Aeroportos (OSM)
@@ -565,7 +566,9 @@ transport-loading-status = Carregando…
 transport-error-status = Dados do mapa indisponíveis: { $error }
 
 roads-zoom-help = Aproxime para exibir estradas (até { $altitude } de altitude)
+buildings-zoom-help = Os edifícios aparecem abaixo de { $altitude }.
 roads-legend = Cinza = trânsito desconhecido; vermelho = em obras (não é engarrafamento)
+buildings-legend = Blocos do Overture Maps: OpenStreetMap e, depois, contornos da Microsoft e do Google. As alturas são mapeadas, contadas em andares ou presumidas (dois pavimentos).
 
 vessels-loading-status = Carregando navios AIS mundiais…
 vessels-world-status = { $count } navios • OpenSeaFeed mundial • cobertura parcial, observações até 90 min
@@ -1248,6 +1251,7 @@ ribbon-layer-flights = Aviões
 ribbon-layer-vessels = Navios
 ribbon-layer-satellites = Satélites
 ribbon-layer-roads = Estradas
+ribbon-layer-buildings = Edifícios
 ribbon-layer-railways = Ferrovias
 ribbon-layer-ferries = Balsas
 ribbon-layer-airports = Aeroportos

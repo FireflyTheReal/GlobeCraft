@@ -357,6 +357,7 @@ impl App {
             aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
                 .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
             live_layers: (self.layer(MapLayer::Roads)
+                || self.layer(MapLayer::Buildings)
                 || self.layer(MapLayer::Traffic)
                 || self.layer(MapLayer::Vessels)
                 || self.layer(MapLayer::Satellites)

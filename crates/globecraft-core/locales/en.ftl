@@ -553,6 +553,7 @@ layers-satellites-toggle = Satellites (predicted CelesTrak orbits)
 layers-traffic-toggle = Live congestion (TomTom; optional key)
 layers-traffic-key = TomTom API key (not stored)
 layers-roads-toggle = Roads (OSM)
+layers-buildings-toggle = Buildings
 layers-railways-toggle = Railways, subways and trams (OSM)
 layers-ferries-toggle = Ferry routes (OSM)
 layers-airports-toggle = Airports (OSM)
@@ -565,7 +566,9 @@ transport-loading-status = Loading…
 transport-error-status = Map data not available: { $error }
 
 roads-zoom-help = Zoom in for roads (below { $altitude } altitude)
+buildings-zoom-help = Buildings show below { $altitude }.
 roads-legend = Gray = traffic unknown; red = under construction (NOT a traffic jam)
+buildings-legend = Blocks from Overture Maps: OpenStreetMap, then Microsoft and Google footprints. Heights are mapped, counted in floors, or assumed (two storeys).
 
 vessels-loading-status = Loading worldwide AIS ships…
 vessels-world-status = { $count } vessels • worldwide OpenSeaFeed • partial reception, reports up to 90 min old
@@ -1248,6 +1251,7 @@ ribbon-layer-flights = Aircraft
 ribbon-layer-vessels = Ships
 ribbon-layer-satellites = Satellites
 ribbon-layer-roads = Roads
+ribbon-layer-buildings = Buildings
 ribbon-layer-railways = Railways
 ribbon-layer-ferries = Ferries
 ribbon-layer-airports = Airports

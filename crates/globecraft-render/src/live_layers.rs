@@ -1,13 +1,16 @@
-//! Geographic preparation for roads, AIS, predicted satellites and traffic.
+//! Geographic preparation for roads, buildings, AIS, predicted satellites and traffic.
+mod buildings;
 mod poi;
 mod transport;
 mod worker;
 use crate::motion;
 use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility};
+pub use buildings::BuildingMesh;
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
-    roads::Road, satellites::Satellite, tiles::TileCache, traffic::TrafficTiles, vessels::Vessel,
+    buildings::Building, roads::Road, satellites::Satellite, tiles::TileCache,
+    traffic::TrafficTiles, vessels::Vessel,
 };
 pub use poi::{PoiKey, PoiLayers, PoiShown, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
 use std::sync::Arc;
@@ -96,6 +99,9 @@ impl LiveView {
 pub struct LiveInput {
     pub view: LiveView,
     pub roads: Option<Arc<[Road]>>,
+    pub buildings: Option<Arc<[Building]>>,
+    /// Where the sun is (unit vector), when Sunlight is on: blocks are lit by it.
+    pub sun: Option<glam::DVec3>,
     pub vessels: Option<Arc<[Vessel]>>,
     pub satellites: Option<Arc<[Satellite]>>,
     pub traffic: Option<Arc<TrafficTiles>>,
@@ -129,6 +135,7 @@ impl LiveInput {
             && self.transport_layers == other.transport_layers
             && self.poi_layers == other.poi_layers
             && self.roads.is_some() == other.roads.is_some()
+            && self.buildings.is_some() == other.buildings.is_some()
             && self.vessels.is_some() == other.vessels.is_some()
             && self.satellites.is_some() == other.satellites.is_some()
             && self.satellite_heights == other.satellite_heights
@@ -140,12 +147,24 @@ impl LiveInput {
         self.view == other.view
             && self.same_transport(other)
             && same(&self.roads, &other.roads)
+            && self.same_buildings(other)
             && same(&self.vessels, &other.vessels)
             && same(&self.satellites, &other.satellites)
             && self.satellite_heights == other.satellite_heights
             && same(&self.traffic, &other.traffic)
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
+    }
+    /// The same blocks under the same light. The sun moves slowly: a step of the
+    /// light coarser than this keeps the projection.
+    fn same_buildings(&self, other: &Self) -> bool {
+        /// About a minute of the sun's travel.
+        const SUN_STEP: f64 = 0.004;
+        same(&self.buildings, &other.buildings)
+            && match (self.sun, other.sun) {
+                (Some(a), Some(b)) => a.distance(b) < SUN_STEP,
+                (a, b) => a.is_none() && b.is_none(),
+            }
     }
     fn same_transport(&self, other: &Self) -> bool {
         same(&self.transport, &other.transport)
@@ -193,6 +212,7 @@ pub struct ProjectedSatellite {
 pub struct LiveGeometry {
     pub input: LiveInput,
     pub roads: Arc<Vec<ProjectedRoad>>,
+    pub buildings: Arc<BuildingMesh>,
     pub vessels: Arc<Vec<ProjectedVessel>>,
     pub satellites: Arc<Vec<ProjectedSatellite>>,
     pub traffic: Option<Arc<Vec<u8>>>,
@@ -239,6 +259,10 @@ impl LivePreparer {
             .filter(|old| same(&old.input.roads, &input.roads))
             .map(|old| old.roads.clone())
             .unwrap_or_else(|| Arc::new(project_roads(&input, ground)));
+        let buildings = on_ground
+            .filter(|old| old.input.same_buildings(&input))
+            .map(|old| old.buildings.clone())
+            .unwrap_or_else(|| Arc::new(buildings::project(&input, ground)));
         let vessels = previous
             .filter(|old| {
                 same(&old.input.vessels, &input.vessels) && old.input.same_vessel_time(&input)
@@ -277,6 +301,7 @@ impl LivePreparer {
         let geometry = Arc::new(LiveGeometry {
             input,
             roads,
+            buildings,
             vessels,
             satellites,
             traffic,

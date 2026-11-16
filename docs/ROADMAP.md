@@ -310,7 +310,7 @@ and timeline (H) and the point-layer engine (I).
 | 8.3 | ~~Atmosphere v2: physically based scattering (Bruneton-style precomputed tables), with sunset colours following the real sun~~ | M–L | **Done 2026-11-15.** `globecraft-render` `atmosphere`: single scattering by air (Rayleigh), haze (Mie) and ozone absorption, from a transmittance and a four-dimensional scattering table computed once at first use (Bruneton's 2017 parameters; a fraction of a second). The limb is a thin blue line by day, red at the terminator and dark at night; distant ground and relief fade into haze; the sky inside the air (below 100 km) has its day colour, its sunset and its night, and the stars go out by day. It replaces the blue rim and the 7 % halo, which ignored the sun. From space the ground uses the table's top layer and the shader does the same sums (parity on lavapipe: no channel more than one level off); inside the air each frame narrows the tables to the camera's height and sun once. Looking straight down only 30 % of the air is drawn (the imagery is already corrected for it), rising to all of it at the limb. Cost on the CPU: about 7 % more at 2000×1488 from 6,500 km; close tilted views read more of the table (measured +30 to +55 ms for 0.7 MP on two slow cores). Judged by eye on stills with real imagery (`atmosphere_stills`). Open: light scattered more than once is left out (dusk is a little dark and blue); the Mac has not shown it yet |
 | 8.4 | ~~Day/night: night lights (3.2), a terminator glow, city lights fading in at dusk~~ | S after 3.2 | **Done 2026-11-15** with 8.3: sunlight that crossed much air turns the ground orange toward the terminator (the transmittance table's ground row, against noon so that daytime imagery is unchanged) and fades to the night's own light; the lights already came in with the dusk (3.2). On both renderers |
 | 8.5 | Ocean specular highlight and a simple wave normal map from a water mask | M | Cheap realism |
-| 8.6 | 3D buildings: extrude Overture footprints (`BLD-04`) near the camera on the GPU path; a flat "footprints" overlay first | XL | Pre-bake per metro or use PMTiles footprints (`BLD-01`) |
+| 8.6 | 3D buildings: extrude Overture footprints (`BLD-04`) near the camera on the GPU path; a flat "footprints" overlay first | XL | Pre-bake per metro or use PMTiles footprints (`BLD-01`). **Source chosen 2026-11-16: Overture's own PMTiles** (`overturemaps-extras-us-west-2/tiles/<release>/buildings.pmtiles`, 180 GB, zoom 5–14, layers `building` and `building_part` with `height`, `min_height`, `num_floors`, `roof_shape`, `roof_color`, `facade_color`; ODbL). It merges OSM (first), Microsoft's and Google's machine-traced footprints, Esri community maps and national data, so it beats either OSM or Microsoft alone. One zoom-14 tile measured: New York 90 % with a height, São Paulo 93 %, Munich 9 % (49 % a floor count), Tokyo 5 %, Lagos 0 % (19 % floors; 42 % of shapes from Google); 140–880 KiB each, gzip. Zoom 13 and coarser carry shapes only. Overture keeps only the last two or three releases, so the app lists the bucket (`?list-type=2&prefix=tiles/`) and reads the newest. **First version 2026-11-16 (branch `feat/buildings`):** a Buildings layer (Transport group, off by default, below 4 km) streams zoom 14 through the vector-tile stream and its disk cache; footprints are cut to their tile so pieces meet without false walls, roofs are triangulated with courtyards (`earcut`), heights come from `height`, else floors × 3 m, else two storeys; building parts replace their building. The live-layer worker projects walls and roofs on every core into one mesh, sun-shaded (dusk dims them; without Sunlight they are lit from the north-west), drawn far to near over the globe picture, with walls turned away, blocks behind ridges and blocks under 1.5 points left out; mapped OSM colours are toned halfway to the defaults. Measured on two slow cores (release): Munich old town 16 ms per projection at 800 m tilted (44,000 blocks), São Paulo 59 ms (179,000). Open: faces are ordered by their middles (a long wall can cover a nearer roof); tiles pop in without a fade; roofs are flat (`roof_shape` unused); no textures; on the GPU path (8.2 covers only the overview) a depth buffer would remove the ordering limit |
 | 8.7 | Imagery colour correction: match Esri, Wayback and Topo brightness at zoom transitions (no visible seams between providers) | S–M | |
 | 8.8 | Frame pacing: decouple overlay preparation from raster publication further, and measure 120 Hz behaviour on ProMotion displays | M | |
 | 8.9 | Offline packs: "Download this region" (imagery, DEM and borders to MBTiles) for travel and field work | M | Respect provider prefetch policies; OSM stays on demand |
@@ -672,5 +672,37 @@ the app already has.
   satellites' shells as faint rings at 20,000 km.
 - **Earthquakes** (USGS live feed) drawn at their depth under the surface in a tilted
   view.
+
+## From the user (2026-11-16), for later
+
+Two reference pictures in the user's `globe` folder, their file names as the brief:
+
+- **Timeline like ArcGIS Map Viewer's, not only Worldview's** (6.3, H). Worldview's
+  bar (`Timeline-reference.png`): the date as three spinners (year, month, day), a step
+  size ("1 DAY") with back and forward arrows and "jump to latest", ticks along a
+  scrollable range, and a movie button. Map Viewer's slider
+  (`Timeline-reference-better-"arcgis.com:apps:mapviewer"…png`) adds what ours lacks:
+  **an interval with two handles** (start and end, "show data within interval"), play
+  and step buttons beside it, the range's ends as dates, and a settings dialog ("Map
+  time options": the slider's mode, start and end points, time intervals, playback
+  speed). The interval is what timed points (the window of H) and dated imagery need
+  to be shown together.
+- **Layers from ArcGIS Living Atlas** (2.1 "ArcGIS REST", 2.8 catalogue search). The
+  same picture shows Map Viewer's Add layer → Living Atlas: a searchable list of
+  imagery and feature layers with thumbnails and an Add button (e.g. NASA's True Color
+  Corrected Reflectance for MODIS Terra/Aqua and VIIRS NOAA-20/Suomi NPP, published by
+  "NASA ArcGIS Online"). Living Atlas is searchable without a key through the ArcGIS
+  Online sharing API (`/sharing/rest/search`); its image services are ArcGIS REST
+  `ImageServer`/`MapServer` tiles, the adapter 2.1 lists. Content marked as
+  subscriber or premium needs an ArcGIS account and is left out.
+- **Ozone** (link given: NOAA's ozonewatch maps,
+  <https://ozonewatch.gsfc.nasa.gov/ozone_maps/images/noaa/>). Those are 348×348
+  south-polar JPEGs (`OZONE_D2026-11-13_G^348X348.IOMPS_PN20_V20_MGEOS5FP_LSH.JPG`),
+  daily, without coordinates: good as a reference for the ozone hole's look, not as
+  a layer. The layer to build is GIBS's daily global total-column ozone
+  (`OMPS_Ozone_Total_Column`, Suomi NPP OMPS, GoogleMapsCompatible_Level6, read checked
+  2026-11-16), which the existing GIBS adapter and the time dimension can show as
+  is; the polar view (3.5) then shows the hole. NOAA's area and minimum statistics
+  (`to3areas_2026_toms+omi+omps.txt`) could label it.
 
 The previous v0.2.0 delivery plan is preserved in `docs/releases/v0.2.0.md`.

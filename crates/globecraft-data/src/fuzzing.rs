@@ -135,13 +135,15 @@ pub fn pmtiles_tile_id(z: u8, x: u32, y: u32) {
 }
 
 /// A Mapbox vector tile, through the generic decoder and every layer built on it
-/// (borders and places, close-up place names, roads, transport, places of interest).
+/// (borders and places, close-up place names, roads, buildings, transport, places of
+/// interest).
 pub fn vector_tile(data: &[u8]) {
     let (key, bytes) = tile_key(data);
     let _ = crate::mvt::decode(bytes, |_| true);
     let _ = crate::poi::decode(key, bytes);
     let _ = crate::transport::decode(key, bytes);
     let _ = crate::roads::tiles::decode(key, bytes);
+    let _ = crate::buildings::decode(key, bytes);
     let _ = crate::boundaries::place_names::decode(key, bytes);
     if let Some(kept) = crate::boundaries::osm_tiles::compact::Filtered::from_mvt(bytes) {
         // What is kept of a tile is stored and must read back as it was.

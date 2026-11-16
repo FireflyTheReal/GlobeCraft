@@ -155,6 +155,15 @@ pub static SERVICES: &[Service] = &[
         limit: RequestLimit::OnDemand,
     },
     Service {
+        id: "overture-buildings",
+        name: "Overture Maps buildings",
+        name_key: None,
+        category: Category::MapData,
+        hosts: &["overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com"],
+        user_agent: Some(BOUNDARY_USER_AGENT),
+        limit: RequestLimit::OnDemand,
+    },
+    Service {
         id: "nominatim",
         name: "OpenStreetMap Nominatim",
         name_key: None,

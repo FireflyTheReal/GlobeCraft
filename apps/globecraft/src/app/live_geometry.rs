@@ -109,6 +109,13 @@ impl App {
                 ground: self.frame.renderer.displayed_ground(self.overlay_ground()),
             },
             roads: self.map_data.roads.current.clone(),
+            buildings: self.map_data.buildings.current.clone(),
+            sun: self
+                .layer(globecraft_core::layers::MapLayer::Sunlight)
+                .then(|| {
+                    let (latitude, longitude) = globecraft_core::math::subsolar(self.scene_unix());
+                    globecraft_core::math::ll_to_v3(latitude, longitude)
+                }),
             vessels: self
                 .layer(globecraft_core::layers::MapLayer::Vessels)
                 .then(|| self.live.vessels.shared_snapshot())
@@ -192,6 +199,8 @@ mod tests {
                 ground: None,
             },
             roads: None,
+            buildings: None,
+            sun: None,
             vessels: None,
             satellites: None,
             traffic: None,
@@ -252,6 +261,8 @@ mod tests {
                 ground: None,
             },
             roads: None,
+            buildings: None,
+            sun: None,
             vessels: None,
             satellites: None,
             traffic: None,

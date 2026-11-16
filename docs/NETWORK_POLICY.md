@@ -17,6 +17,7 @@ instead of keeping its own copy, so a new tile source appears there automaticall
 | When | What is contacted |
 | --- | --- |
 | The globe is visible | The selected basemap's tile host; OpenStreetMap vectors for borders and names come from GlobeCraft's map-data release on GitHub |
+| Buildings are on and the camera is below 4 km | Overture Maps' tile bucket on Amazon S3: its folder list once, to find the newest monthly release, then that release's `buildings.pmtiles` |
 | The user searches | Nominatim for results; Photon for suggestions while typing |
 | A live layer is on | Its provider: OpenSky/ADSB.lol, OpenSeaFeed/Digitraffic, NOAA SWPC, CelesTrak, RainViewer, Matt Eason's clouds or TomTom |
 | The user opens historical imagery | Esri Wayback's tile service and its release list |

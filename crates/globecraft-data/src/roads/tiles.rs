@@ -23,6 +23,7 @@ const NAME_MATCH_UNITS: f64 = 6.0;
 
 static SPEC: Spec<RoadTile> = Spec {
     set: "roads",
+    source: crate::vector_tiles::Source::Manifest,
     bands: &["roads13", "roads14"],
     min_zoom: 4,
     max_zoom: 14,

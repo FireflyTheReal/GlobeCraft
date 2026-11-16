@@ -40,6 +40,7 @@ the app shows the matching attribution on screen while a source is in use.
 | [OpenMapTiles](https://openmaptiles.org/) schema, served by [OpenFreeMap](https://openfreemap.org/) | Vector tiles carrying those borders and names | OpenMapTiles CC BY 4.0; OpenFreeMap free service, attribution shown in the app |
 | [Natural Earth](https://www.naturalearthdata.com/) | Countries and major cities (1:110m, bundled), shown before the first tile arrives and used to find the country under the camera; Antarctica's land and ice shelves (1:50m), which the time zone workflow divides into the continent's time sectors | Public domain |
 | [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) | Time zones (from OpenStreetMap), simplified by the time zone workflow | ODbL |
+| [Overture Maps Foundation](https://docs.overturemaps.org/attribution/) buildings: OpenStreetMap contributors, Microsoft ML Building Footprints, Google Open Buildings, Esri Community Maps and national sources | The Buildings layer: outlines, heights and floor counts, streamed from Overture's PMTiles | ODbL; attribution shown in the app |
 
 ## Search
 

@@ -649,6 +649,8 @@ mod tests {
                 ground: None,
             },
             roads: None,
+            buildings: None,
+            sun: None,
             vessels: Some(vec![ship; 100].into()),
             satellites: None,
             traffic: None,

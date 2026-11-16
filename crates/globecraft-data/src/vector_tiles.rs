@@ -30,7 +30,7 @@ pub fn set_disk_cache_limit(bytes: u64) {
 }
 
 /// The vector sets cached on disk.
-const DISK_SETS: [&str; 4] = ["transport", "roads", "poi", "places"];
+const DISK_SETS: [&str; 5] = ["transport", "roads", "poi", "places", "buildings"];
 
 fn disk_path(set: &str) -> std::path::PathBuf {
     crate::paths::cache_dir().join(format!("map_data_{set}.sqlite"))
@@ -62,10 +62,20 @@ const TEMPLATE_RETRY: Duration = Duration::from_secs(60);
 /// allocator's overhead.
 pub(crate) const MAX_VECTOR_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Where a set's archives are found.
+#[derive(Clone, Copy)]
+pub(crate) enum Source {
+    /// GlobeCraft's map-data manifest (`crate::map_data`).
+    Manifest,
+    /// Overture Maps' newest published tiles of this theme (`crate::buildings::overture`).
+    Overture(&'static str),
+}
+
 /// How one set is streamed.
 pub(crate) struct Spec<T> {
-    /// The manifest entry.
+    /// The manifest entry, and the name of the set's disk cache.
     pub(crate) set: &'static str,
+    pub(crate) source: Source,
     /// Further entries holding more zooms of the same set (see
     /// `map_data::banded_template`).
     pub(crate) bands: &'static [&'static str],
@@ -293,7 +303,12 @@ impl<T: Send + Sync + 'static> TileStream<T> {
                 shared.template_loading = true;
                 let (state, disk) = (self.shared.clone(), self.disk.clone());
                 runtime.spawn(async move {
-                    let result = crate::map_data::banded_template(spec.set, spec.bands).await;
+                    let result = match spec.source {
+                        Source::Manifest => {
+                            crate::map_data::banded_template(spec.set, spec.bands).await
+                        }
+                        Source::Overture(theme) => crate::buildings::overture(theme).await,
+                    };
                     // Offline, the set last read still shows what the disk holds.
                     let result = match result {
                         Ok(template) => {
@@ -699,6 +714,7 @@ mod tests {
     /// A tile's content in the test set: the bytes it was decoded from.
     static TEST_SPEC: Spec<Vec<u8>> = Spec {
         set: "test",
+        source: Source::Manifest,
         bands: &[],
         min_zoom: 4,
         max_zoom: 10,

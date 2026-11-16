@@ -649,6 +649,7 @@ impl App {
         self.user_layers
             .draw_rasters(painter, &display_basis, rect, &self.settings.user_layers);
         let live_geometry = if self.layer(MapLayer::Roads)
+            || self.layer(MapLayer::Buildings)
             || self.layer(MapLayer::Traffic)
             || self.layer(MapLayer::Vessels)
             || self.layer(MapLayer::Satellites)
@@ -722,6 +723,12 @@ impl App {
                 &taken,
             );
             taken.add(self.map_data.roads.placed());
+        }
+        // Blocks over the roads they stand beside.
+        if self.layer(MapLayer::Buildings)
+            && let Some(geometry) = &live_geometry
+        {
+            self.map_data.buildings.draw(painter, &geometry.buildings);
         }
         if self.layer(MapLayer::Traffic)
             && let Some(geometry) = &live_geometry
@@ -1029,3 +1036,6 @@ impl App {
 
 /// The credit for the border tiles' sources (names, so never translated).
 pub(super) const OSM_TILES_CREDIT: &str = "OpenFreeMap © OpenMapTiles Data from OpenStreetMap";
+/// The building layer's sources, as Overture asks (ODbL).
+pub(super) const BUILDINGS_CREDIT: &str =
+    "Buildings © OpenStreetMap contributors, Overture Maps Foundation (ODbL)";
