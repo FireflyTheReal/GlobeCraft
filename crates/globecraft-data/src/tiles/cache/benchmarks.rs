@@ -26,6 +26,7 @@ fn cached_hit_throughput() {
                 h: BENCH_TILE_SIZE_PX,
                 px: vec![128; BENCH_TILE_SIZE_PX * BENCH_TILE_SIZE_PX * 4],
                 elevation: None,
+                arrived: None,
             }),
         );
     }

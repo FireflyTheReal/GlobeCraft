@@ -167,8 +167,7 @@ pub(in crate::terrain) fn clear_distance(
             let (tx, ty) = (bx / per_tile, by / per_tile);
             let slot = (tx - tiles_x.0) + 2 * (ty - tiles_y.0);
             under[slot].map(|held| {
-                held.elevation(&loc.dem)
-                    .block_max_m(level, bx % per_tile, by % per_tile)
+                held.block_top_m(super::Held::of(loc), level, bx % per_tile, by % per_tile)
             })
         };
         // The coarsest blocks (at most two by two) that hold the whole footprint and

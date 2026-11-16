@@ -165,8 +165,34 @@ pub struct Tile {
     px: Vec<u8>, // RGBA
     /// Elevation tiles keep heights and block maxima instead of colour (`px` empty).
     elevation: Option<Elevation>,
+    /// When the cache took an elevation tile in: its relief grows from what stood
+    /// there before (`grown`). Tiles made directly (fixtures) are fully grown.
+    arrived: Option<std::time::Instant>,
 }
+
+/// An elevation tile's relief grows in over this long instead of snapping to its
+/// heights when it arrives (the ground jumped while relief loaded: user, 2026-11-16).
+pub const ELEVATION_FADE: std::time::Duration = std::time::Duration::from_millis(400);
+
 impl Tile {
+    /// How far this elevation tile's relief has grown in at `now`: 0 as it arrives,
+    /// 1 from `ELEVATION_FADE` later, eased.
+    pub fn grown(&self, now: std::time::Instant) -> f32 {
+        let Some(arrived) = self.arrived else {
+            return 1.0;
+        };
+        let age =
+            now.saturating_duration_since(arrived).as_secs_f32() / ELEVATION_FADE.as_secs_f32();
+        let age = age.min(1.0);
+        age * age * (3.0 - 2.0 * age)
+    }
+    /// This tile as arriving at `at`, when it holds elevation.
+    pub fn arriving(mut self, at: std::time::Instant) -> Self {
+        if self.elevation.is_some() {
+            self.arrived = Some(at);
+        }
+        self
+    }
     /// Decodes a Terrarium elevation tile into heights and block maxima.
     pub fn decode_elevation(bytes: &[u8]) -> Result<Self, crate::Error> {
         let img = crate::bounded::image(bytes, crate::bounded::ImageLimit::TILE)?.into_rgba8();
@@ -179,6 +205,7 @@ impl Tile {
             h,
             px: Vec::new(),
             elevation: Some(elevation),
+            arrived: None,
         })
     }
     /// An elevation tile from prepared heights (fixtures and benchmarks).
@@ -188,6 +215,7 @@ impl Tile {
             h: elevation.size(),
             px: Vec::new(),
             elevation: Some(elevation),
+            arrived: None,
         }
     }
     /// Heights and block maxima, for elevation tiles.
@@ -206,6 +234,7 @@ impl Tile {
             h: img.height() as usize,
             px: img.into_raw(),
             elevation: None,
+            arrived: None,
         })
     }
 
@@ -343,6 +372,7 @@ mod sampling_tests {
                 255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 128, 255, 255, 255, 64,
             ],
             elevation: None,
+            arrived: None,
         };
         assert_eq!(tile.sample(0.25, 0.25, 1.0), Vec4::new(1.0, 0.0, 0.0, 0.0));
         assert_eq!(tile.sample(0.75, 0.25, 1.0), Vec4::new(0.0, 1.0, 0.0, 0.0));
@@ -360,6 +390,7 @@ mod sampling_tests {
                 0, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 10, 10, 10, 255,
             ],
             elevation: None,
+            arrived: None,
         };
         // Between texel 1 (red) and texel 2 (blue), level weights/lane zero.
         assert_eq!(tile.sample(0.5, 0.5, 1.0), Vec4::new(0.5, 0.0, 0.5, 0.0));
@@ -376,6 +407,7 @@ mod sampling_tests {
                 0, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 10, 10, 10, 255,
             ],
             elevation: None,
+            arrived: None,
         };
         assert_eq!(tile.sample(0.5, 0.5, 2.0), Vec4::new(0.5, 0.0, 0.5, 0.0));
     }
@@ -399,6 +431,7 @@ mod sampling_tests {
             h: 1,
             px,
             elevation: None,
+            arrived: None,
         };
         let bilinear = tile.sample(0.53, 0.5, 1.0);
         let area = tile.sample(0.53, 0.5, 4.0);

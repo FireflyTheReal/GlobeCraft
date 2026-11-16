@@ -136,7 +136,9 @@ fn local_tile_lookup_is_deduplicated_and_keeps_the_nearest_miss() {
         lookup: &lookup,
         map: HashMap::default(),
         dem: Vec::new(),
+        dem_placed: Vec::new(),
         dem_index: HashMap::default(),
+        now: std::time::Instant::now(),
     };
     for dist in [100.0, 80.0, 40.0, 30.0, 50.0] {
         assert!(loc.tile_color(1, dist, 0.0, 0.0, 1.0).is_none());

@@ -121,6 +121,8 @@ pub struct TileCache {
     generation: AtomicU64,
     /// Like `generation`, for elevation tiles only: what raises overlays onto the relief.
     elevation_generation: AtomicU64,
+    /// When the last elevation tile arrived.
+    elevation_arrived: Mutex<Option<Instant>>,
     inflight: AtomicUsize,
     /// Benchmarks only: every tile comes from `{base}/{provider}/{z}/{x}/{y}/{release}`.
     fixture_source: Option<Arc<str>>,
@@ -217,6 +219,7 @@ impl TileCache {
             tx,
             generation: AtomicU64::new(0),
             elevation_generation: AtomicU64::new(0),
+            elevation_arrived: Mutex::new(None),
             inflight: AtomicUsize::new(0),
             fixture_source: None,
             reserved: Mutex::new(HashSet::default()),
@@ -740,7 +743,8 @@ impl TileCache {
         let unavailable = matches!(result, Err(TileFailure::Unavailable));
         let admitted = match result {
             Ok(tile) if tile.bytes() <= self.budget => {
-                self.ready.insert(key, Arc::new(tile));
+                self.ready
+                    .insert(key, Arc::new(tile.arriving(Instant::now())));
                 true
             }
             _ => {
@@ -781,6 +785,10 @@ impl TileCache {
         self.generation.fetch_add(1, Ordering::Relaxed);
         if admitted && unkey(key).0 == super::Provider::TerrainDem {
             self.elevation_generation.fetch_add(1, Ordering::Relaxed);
+            *self
+                .elevation_arrived
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
         }
     }
     /// Waits up to `limit` for tile writes to the disk cache to finish (a quit that
@@ -798,6 +806,21 @@ impl TileCache {
     /// Changes whenever a tile request finishes, including failures.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+    /// While relief is growing in (`ELEVATION_FADE` after an elevation tile arrived):
+    /// a step number that changes every `step`, so a view at rest is drawn again
+    /// for each; zero once all relief has grown.
+    pub fn elevation_fade_step(&self, step: Duration) -> u64 {
+        let arrived = *self
+            .elevation_arrived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        arrived
+            .map(|arrived| arrived.elapsed())
+            .filter(|&age| age < super::ELEVATION_FADE + step)
+            .map_or(0, |age| {
+                1 + (age.as_millis() / step.as_millis().max(1)) as u64
+            })
     }
     /// Changes whenever an elevation tile arrives. Overlays raised onto the relief
     /// follow this one: imagery tiles arriving (most of them) do not move them, and

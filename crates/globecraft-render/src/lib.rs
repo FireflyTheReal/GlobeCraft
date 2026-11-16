@@ -92,8 +92,12 @@ struct Local<'a, F> {
     /// Elevation tiles the batch's rays use, held once so a ray refers to them by
     /// index: cloning the shared tile handle per ray made threads contend.
     dem: Vec<Arc<Tile>>,
+    /// Where each tile of `dem` sits, and how far its relief has grown in.
+    dem_placed: Vec<terrain::DemTile>,
     /// Where each held elevation tile is in `dem`.
     dem_index: HashMap<TileKey, usize, KeyBuild>,
+    /// The frame's time: relief that arrived a moment before it is still growing.
+    now: std::time::Instant,
 }
 enum LocalTile {
     Ready(Arc<Tile>),
@@ -583,6 +587,7 @@ fn render_pixels_into(
     let rays = RayCaster::new(w, h, basis);
     let unit_sphere = rays.uses_unit_sphere();
     let air = frame_air(&rays, cfg);
+    let now = std::time::Instant::now();
     let per_batch: Vec<Vec<(TileKey, Option<f32>)>> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()
@@ -593,7 +598,9 @@ fn render_pixels_into(
                 lookup,
                 map: HashMap::default(),
                 dem: Vec::new(),
+                dem_placed: Vec::new(),
                 dem_index: HashMap::default(),
+                now,
             };
             let batch_first = first_row + batch * ROWS_PER_TILE_BATCH;
             let batch_rows = batch_first..batch_first + rows.len() / row_bytes;

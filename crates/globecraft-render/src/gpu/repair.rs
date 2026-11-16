@@ -11,6 +11,7 @@ pub(super) fn pixels(
 ) -> Vec<(TileKey, Option<f32>)> {
     let rays = crate::rays::RayCaster::new(request.width, request.height, &request.basis);
     let air = crate::frame_air(&rays, &request.cfg);
+    let now = std::time::Instant::now();
     let batches: Vec<_> = pixels
         .par_chunks_mut(request.width * 4 * tuning::ROWS_PER_TILE_BATCH)
         .enumerate()
@@ -19,7 +20,9 @@ pub(super) fn pixels(
                 lookup,
                 map: HashMap::default(),
                 dem: Vec::new(),
+                dem_placed: Vec::new(),
                 dem_index: HashMap::default(),
+                now,
             };
             for (offset, row) in rows.chunks_mut(request.width * 4).enumerate() {
                 let y = batch * tuning::ROWS_PER_TILE_BATCH + offset;
