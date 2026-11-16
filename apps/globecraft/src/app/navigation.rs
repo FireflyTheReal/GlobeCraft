@@ -179,8 +179,10 @@ const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
 const GROUND_EASE_SECS: f64 = 0.25;
 /// Below this the eased height snaps to the target and stops asking for frames.
 const GROUND_SETTLED_KM: f64 = 0.0005;
-/// A tilted camera stays at least this high above the terrain beneath it.
-const MIN_GROUND_CLEARANCE_KM: f64 = 0.15;
+/// A tilted camera stays at least this high above the terrain beneath it: enough
+/// not to look through a slope (150 m until 2026-11-16, which kept the camera out
+/// of valleys).
+const MIN_GROUND_CLEARANCE_KM: f64 = 0.01;
 /// Steepest tilt considered when backing away (cos 80°), so the step stays finite.
 const MIN_RISE_PER_KM: f64 = 0.17;
 

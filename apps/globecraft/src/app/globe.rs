@@ -20,6 +20,8 @@ const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
 const DRAG_TILT_DEG_PER_POINT: f64 = 0.25;
+/// A turn-or-tilt drag is one or the other once it has gone this far.
+const TURN_DRAG_DECIDED_POINTS: f32 = 6.0;
 /// Shift+scroll (a laptop's two-finger scroll) tilts the view.
 const SCROLL_TILT_DEG_PER_POINT: f64 = 0.15;
 /// Shift+Up and Shift+Down tilt the view.
@@ -386,18 +388,39 @@ impl App {
             && (resp.dragged_by(PointerButton::Secondary)
                 || (resp.dragged_by(PointerButton::Primary) && shift))
         {
-            let drag = ui.input(|i| i.pointer.delta());
+            let mut drag = ui.input(|i| i.pointer.delta());
             let sensitivity = self.settings.navigation.rotation_sensitivity;
-            self.cam.heading = wrap_lon(
-                self.cam.heading - drag.x as f64 * DRAG_HEADING_DEG_PER_POINT * sensitivity,
-            );
-            // Up and down tilt: dragging up leans the view toward the horizon.
-            if self.explorer.on_earth() {
-                self.cam.tilt_zooming_out(
+            // Sideways turns, up and down tilts (up leans the view toward the
+            // horizon): the drag does the one it set out to do.
+            let state = self.motion.turn_drag.get_or_insert_default();
+            let tilts = match state.tilts {
+                Some(tilts) => Some(tilts),
+                None => {
+                    state.travelled += drag;
+                    (state.travelled.length() >= TURN_DRAG_DECIDED_POINTS).then(|| {
+                        // What it did while undecided is done now.
+                        drag = state.travelled;
+                        let tilts = self.explorer.on_earth()
+                            && state.travelled.y.abs() > state.travelled.x.abs();
+                        state.tilts = Some(tilts);
+                        tilts
+                    })
+                }
+            };
+            match tilts {
+                Some(true) => self.cam.tilt_zooming_out(
                     self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
-                );
+                ),
+                Some(false) => {
+                    self.cam.heading = wrap_lon(
+                        self.cam.heading - drag.x as f64 * DRAG_HEADING_DEG_PER_POINT * sensitivity,
+                    );
+                }
+                None => {}
             }
             interacting = true;
+        } else {
+            self.motion.turn_drag = None;
         }
         if resp.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta);

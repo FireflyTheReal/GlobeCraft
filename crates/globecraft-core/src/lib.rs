@@ -32,7 +32,8 @@ pub const METERS_PER_KM: f64 = 1000.0;
 pub const EARTH_RADIUS_M: f64 = EARTH_RADIUS_KM * METERS_PER_KM;
 /// Tangent of half the 45-degree vertical field of view: tan(22.5 degrees).
 pub const VERTICAL_FOV_HALF_TAN: f64 = 0.414_213_562_373_095_1;
-pub const MIN_CAMERA_ALTITUDE_KM: f64 = 0.15;
+/// Close enough to stand among the buildings (150 m until 2026-11-16).
+pub const MIN_CAMERA_ALTITUDE_KM: f64 = 0.03;
 /// Far enough to see the navigation satellites (about 20,000 km up) all round the globe.
 pub const MAX_CAMERA_ALTITUDE_KM: f64 = 50_000.0;
 /// Approximation used for screen/grid distances; keep separate from search's 111.2 km/degree.

@@ -227,7 +227,8 @@ fn batch_references() -> [BatchReference; 6] {
                 lat: 89.9,
                 lon: -179.9,
                 heading: -20.0,
-                alt: globecraft_core::MIN_CAMERA_ALTITUDE_KM,
+                // The closest distance when the fixture was recorded.
+                alt: 0.15,
                 tilt: 0.0,
             },
         },
