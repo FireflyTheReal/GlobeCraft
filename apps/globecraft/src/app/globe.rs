@@ -16,7 +16,7 @@ mod ruler_input;
 
 /// A new frame of the view on screen fades in over the old one for this long
 /// (roadmap 1.6: arriving tiles and the sharp frame after motion no longer pop in).
-const FRAME_FADE: Duration = Duration::from_millis(250);
+pub(super) const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
 const DRAG_TILT_DEG_PER_POINT: f64 = 0.25;

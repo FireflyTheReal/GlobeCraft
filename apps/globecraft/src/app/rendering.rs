@@ -447,7 +447,17 @@ impl App {
             frame.request.cam,
             frame.request.overlays.as_ref().map(|input| input.view.rect),
         );
-        if same_view {
+        let fading = self.frame.fade_from.is_some()
+            && self
+                .frame
+                .fade_started
+                .is_some_and(|started| started.elapsed() < super::globe::FRAME_FADE);
+        if same_view && fading {
+            // A fade under way goes on from the same picture toward this newer
+            // one. Starting over from the half-shown picture showed the rest of it
+            // at once: while relief and imagery loaded, a frame every tenth of a
+            // second, each one popped in (user, 2026-11-16).
+        } else if same_view {
             std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
             self.frame.fade_started = Some(std::time::Instant::now());
         } else {
