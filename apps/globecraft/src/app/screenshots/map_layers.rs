@@ -516,6 +516,7 @@ fn buildings_screenshots() {
         ("12-buildings-tilt", 0.8, 60.0, 20.0, false),
         ("12-buildings-tilt-low", 0.35, 72.0, 200.0, false),
         ("12-buildings-sun", 0.8, 60.0, 20.0, true),
+        ("12-buildings-street", 0.03, 78.0, 200.0, false),
     ] {
         h.state_mut()
             .settings
