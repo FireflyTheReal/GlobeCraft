@@ -270,6 +270,7 @@ fn replay(
         fixed_level: None,
         night_lights: None,
         stars: true,
+        sky_behind: false,
     };
     let hole = hole_rgba(&config(1.0));
     let used = Mutex::new(HashSet::<TileKey>::new());

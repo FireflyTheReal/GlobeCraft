@@ -141,7 +141,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "fly",
         Explore,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.15..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"},"tilt_deg":{"type":"number","description":"View tilt from straight down, 0..80; default keeps the current tilt"}},"required":["lat","lon"]}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.03..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"},"tilt_deg":{"type":"number","description":"View tilt from straight down, 0..82; default keeps the current tilt"}},"required":["lat","lon"]}"#
     ),
     command!(
         "camera.set",
@@ -149,7 +149,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "goto_xy",
         Explore,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"},"tilt_deg":{"type":"number","description":"0 (straight down) .. 80"}}}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"},"tilt_deg":{"type":"number","description":"0 (straight down) .. 82"}}}"#
     ),
     command!(
         "search.place",
@@ -197,7 +197,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "terrain",
         Explore,
         View,
-        r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..80 (less close to the ground)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
+        r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..82 (less close to the ground and far out)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
     ),
     command!(
         "camera.topDown",

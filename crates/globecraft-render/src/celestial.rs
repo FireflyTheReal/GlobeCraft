@@ -30,6 +30,18 @@ impl SkyBackdrop {
             visibility: visibility(camera, sun, cinematic),
         })
     }
+    /// The picture, how bright it shows (0 to 1) and the direction, fixed to the
+    /// Earth, a point of it (0 to 1 across and down) shows: for drawing the sky
+    /// elsewhere (the app's full-resolution sky layer).
+    pub fn image(&self) -> &Arc<SkyImage> {
+        &self.image
+    }
+    pub fn visibility(&self) -> f32 {
+        self.visibility
+    }
+    pub fn uv(&self, earth_fixed: DVec3) -> glam::DVec2 {
+        equatorial_uv(self.frame.direction(earth_fixed))
+    }
     pub(super) fn sample(&self, earth_fixed: DVec3) -> Vec4 {
         let uv = equatorial_uv(self.frame.direction(earth_fixed));
         bilinear(self.image.pixels(), uv.x, uv.y) * self.visibility

@@ -107,7 +107,11 @@ impl App {
             && self.time.speed() == 0.0
             && relief_step == 0;
         let render_aspect = (viewport.width() / viewport.height()) as f64;
-        let motion_scale = self.settings.motion_resolution;
+        let motion_scale = if relief {
+            self.settings.motion_resolution_relief
+        } else {
+            self.settings.motion_resolution
+        };
         let (w, h) =
             globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief, motion_scale);
         let keys = globecraft_render::view::RasterView {
@@ -289,6 +293,9 @@ impl App {
             .filter(|&progress| progress < 1.0);
         if fade.is_none() {
             self.frame.fade_started = None;
+        }
+        if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
+            self.frame.sky_layer.draw(ui.ctx(), &painter, rect, sky);
         }
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         if let (Some(progress), Some(from)) = (fade, &self.frame.fade_from) {

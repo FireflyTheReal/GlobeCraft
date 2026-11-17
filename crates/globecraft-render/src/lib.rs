@@ -13,6 +13,7 @@ pub mod polar;
 mod rays;
 mod terrain;
 use pixel::{Surface, sky, surface, with_air};
+pub use pixel::{space_color, stars};
 pub use terrain::{
     MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg, relief_fade,
 };
@@ -30,8 +31,8 @@ use std::{collections::HashMap, f64::consts::PI, sync::Arc, sync::LazyLock};
 use tuning::{
     COLOR_CHANNEL_MAX, DAY_BRIGHTNESS_RANGE, GRID_BLEND, GRID_COLOR, GRID_LINE_WIDTH_PX,
     IMAGERY_ZOOM_FADE_START, LOD_SHARPNESS_BIAS, MIN_LOD_INCIDENCE_COSINE, MIN_LOD_LATITUDE_COSINE,
-    MIN_ZOOM_BLEND_FRACTION, MISSING_TILE_COLOR, NIGHT_BLUE_TINT, NIGHT_BRIGHTNESS, OPAQUE_ALPHA,
-    RGBA_CHANNELS, ROWS_PER_TILE_BATCH, SPACE_COLOR, STAR_BRIGHTNESS_DIVISOR, STAR_BRIGHTNESS_MASK,
+    MIN_ZOOM_BLEND_FRACTION, MISSING_TILE_COLOR, NIGHT_BLUE_TINT, NIGHT_BRIGHTNESS, RGBA_CHANNELS,
+    ROWS_PER_TILE_BATCH, SPACE_COLOR, STAR_BRIGHTNESS_DIVISOR, STAR_BRIGHTNESS_MASK,
     STAR_BRIGHTNESS_SHIFT, STAR_GRID_RESOLUTION, STAR_MIN_BRIGHTNESS, STAR_OCCURRENCE_MODULUS,
     TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS, TILE_FILTER_RATIO_EXONENT_MAX,
     TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET, TWILIGHT_WIDTH,
@@ -86,6 +87,11 @@ pub struct RenderCfg {
     pub night_lights: Option<u16>,
     /// Point stars in the sky (over the Milky Way when it shows).
     pub stars: bool,
+    /// The sky is drawn behind the frame at full resolution (the app's sky layer):
+    /// sky pixels carry only the air's glow, as premultiplied colour over it, and are
+    /// otherwise transparent. Motion frames render at a fraction of the size, which
+    /// blurred the stars and the Milky Way and made stars blink (user, 2026-11-17).
+    pub sky_behind: bool,
 }
 
 struct Local<'a, F> {
@@ -391,6 +397,7 @@ fn render_row<const ELLIPSOID: bool>(
             let disc = ray.discriminant;
             let hits_surface = disc >= 0.0 && bb < 0.0;
             let geometry = rays.model_geometry();
+            let mut alpha = 1.0;
             let col = match cfg.terrain {
                 // Relief: the ray is marched through the elevation model, which can
                 // also stand above the horizon where the ellipsoid is missed.
@@ -430,7 +437,11 @@ fn render_row<const ELLIPSOID: bool>(
                             loc,
                             1.0,
                         ),
-                        terrain::March::Miss => sky(&ray, cc, air, cfg, h),
+                        terrain::March::Miss => {
+                            let sky = sky(&ray, cc, air, cfg);
+                            alpha = sky.w;
+                            sky
+                        }
                     }
                 }
                 None if hits_surface => shade_surface(
@@ -444,13 +455,17 @@ fn render_row<const ELLIPSOID: bool>(
                     loc,
                     1.0,
                 ),
-                None => sky(&ray, cc, air, cfg, h),
+                None => {
+                    let sky = sky(&ray, cc, air, cfg);
+                    alpha = sky.w;
+                    sky
+                }
             };
             let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
             pixel[0] = channels.x as u8;
             pixel[1] = channels.y as u8;
             pixel[2] = channels.z as u8;
-            pixel[3] = OPAQUE_ALPHA;
+            pixel[3] = (alpha * COLOR_CHANNEL_MAX) as u8;
         }
     }
 }

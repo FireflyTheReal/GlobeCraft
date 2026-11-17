@@ -9,14 +9,14 @@ Parameters are a JSON object; none is required unless marked.
 
 | Command | Name | What it does | Parameters | Assistant |
 | --- | --- | --- | --- | --- |
-| `camera.flyTo` | Fly To | Fly the camera to a latitude and longitude, optionally at an altitude and heading. | `altitude_km` (number): Camera altitude above the surface in km (0.15..40000); default keeps the current altitude<br>`heading_deg` (number): View heading clockwise from north<br>`lat` (number), required: Latitude in degrees, -90..90<br>`lon` (number), required: Longitude in degrees, -180..180<br>`tilt_deg` (number): View tilt from straight down, 0..80; default keeps the current tilt | yes |
-| `camera.set` | Go To XY | Move the camera instantly; parameters left out keep their current value. | `altitude_km` (number)<br>`heading_deg` (number)<br>`lat` (number)<br>`lon` (number)<br>`tilt_deg` (number): 0 (straight down) .. 80 | yes |
+| `camera.flyTo` | Fly To | Fly the camera to a latitude and longitude, optionally at an altitude and heading. | `altitude_km` (number): Camera altitude above the surface in km (0.03..40000); default keeps the current altitude<br>`heading_deg` (number): View heading clockwise from north<br>`lat` (number), required: Latitude in degrees, -90..90<br>`lon` (number), required: Longitude in degrees, -180..180<br>`tilt_deg` (number): View tilt from straight down, 0..82; default keeps the current tilt | yes |
+| `camera.set` | Go To XY | Move the camera instantly; parameters left out keep their current value. | `altitude_km` (number)<br>`heading_deg` (number)<br>`lat` (number)<br>`lon` (number)<br>`tilt_deg` (number): 0 (straight down) .. 82 | yes |
 | `search.place` | Find Place | Search for a place, an address or coordinates (OpenStreetMap Nominatim) and fly to the best result. | `fly` (boolean): Fly to the best result when it arrives (default true)<br>`query` (string), required: A place name, an address, or coordinates such as 48.85, 2.35 | yes |
 | `search.clear` | Clear Search Results | Remove the last search's results from Places and empty the search box. | — | yes |
 | `camera.zoomIn` | Zoom In | Move the camera closer to the surface. | — | yes |
 | `camera.zoomOut` | Zoom Out | Move the camera away from the surface. | — | yes |
 | `camera.resetNorth` | North Up | Turn the view so north points up (N). | — | yes |
-| `camera.tilt` | Tilt | Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down). Close to the ground the camera backs off as far as the tilt needs. | `step` (number): Degrees to add to the current tilt<br>`tilt_deg` (number): Tilt from straight down, 0..80 (less close to the ground) | yes |
+| `camera.tilt` | Tilt | Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down). Close to the ground the camera backs off as far as the tilt needs. | `step` (number): Degrees to add to the current tilt<br>`tilt_deg` (number): Tilt from straight down, 0..82 (less close to the ground and far out) | yes |
 | `camera.topDown` | Top-Down View | Look straight down again (U). | — | yes |
 | `camera.globalView` | Global View | Fly out until the whole globe is in view. | — | yes |
 | `camera.autoRotate` | Auto-Rotate | Slowly spin the globe. | `on` (boolean): Omit to toggle | yes |

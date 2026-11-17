@@ -615,3 +615,37 @@ fn relief_loading_probe() {
         before = Some(sample);
     }
 }
+
+/// Space behind the globe (the sky layer): the stars and the limb's glow at rest,
+/// then mid-flight, where the frame renders at a fraction of the size but the stars
+/// must stay sharp and in place. Manual.
+#[test]
+#[ignore = "manual: renders the stars at rest and while the camera flies"]
+fn sky_layer_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "stars", "visible": true}))
+        .expect("stars");
+    app.run(
+        "camera.set",
+        json!({"lat": 30.0, "lon": 10.0, "altitude_km": 9000.0, "tilt_deg": 45.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "30-sky-at-rest");
+    h.state_mut()
+        .run(
+            "camera.flyTo",
+            json!({"lat": 30.0, "lon": 40.0, "altitude_km": 9000.0}),
+        )
+        .expect("fly");
+    for _ in 0..3 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    save(&mut h, &dir, "31-sky-in-flight");
+}

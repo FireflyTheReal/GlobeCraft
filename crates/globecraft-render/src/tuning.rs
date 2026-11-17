@@ -58,4 +58,3 @@ pub(super) const STAR_BRIGHTNESS_SHIFT: u32 = 20;
 pub(super) const STAR_BRIGHTNESS_MASK: u64 = 255;
 pub(super) const RGBA_CHANNELS: usize = 4;
 pub(super) const COLOR_CHANNEL_MAX: f32 = 255.0;
-pub(super) const OPAQUE_ALPHA: u8 = 255;

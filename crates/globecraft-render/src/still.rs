@@ -230,6 +230,7 @@ mod tests {
             fixed_level: None,
             night_lights: None,
             stars: true,
+            sky_behind: false,
         };
         (basis, cfg)
     }

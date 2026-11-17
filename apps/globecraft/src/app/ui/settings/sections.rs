@@ -232,22 +232,18 @@ impl App {
         );
         ui.weak(lg.text("settings-frame-sync-help"));
         ui.add_space(8.0);
-        let mut automatic = self.settings.motion_resolution.is_none();
-        if ui
-            .checkbox(&mut automatic, lg.text("settings-motion-resolution-auto"))
-            .on_hover_text(lg.text("settings-motion-resolution-help"))
-            .changed()
-        {
-            self.settings.motion_resolution = (!automatic).then_some(1.0);
-        }
-        if let Some(scale) = &mut self.settings.motion_resolution {
-            ui.add(
-                egui::Slider::new(scale, globecraft_render::view::MIN_MOTION_SCALE..=1.0)
-                    .text(lg.text("settings-motion-resolution"))
-                    .custom_formatter(|value, _| format!("{:.0} %", value * 100.0)),
-            )
-            .on_hover_text(lg.text("settings-motion-resolution-help"));
-        }
+        motion_resolution(
+            ui,
+            lg,
+            &mut self.settings.motion_resolution,
+            "settings-motion-resolution",
+        );
+        motion_resolution(
+            ui,
+            lg,
+            &mut self.settings.motion_resolution_relief,
+            "settings-motion-resolution-relief",
+        );
         if globecraft_render::backend::GPU_BY_DEFAULT {
             let toggle = ui
                 .checkbox(
@@ -534,5 +530,27 @@ impl App {
             }
         });
         ui.weak(lg.text("settings-startup-help"));
+    }
+}
+
+/// A share of the full resolution for moving frames: automatic (`None`) or set.
+/// `key` names its strings (`…-auto`, `…-help`).
+fn motion_resolution(ui: &mut egui::Ui, lg: Lang, setting: &mut Option<f32>, key: &str) {
+    let (auto_key, help_key) = (format!("{key}-auto"), format!("{key}-help"));
+    let mut automatic = setting.is_none();
+    if ui
+        .checkbox(&mut automatic, lg.text(&auto_key))
+        .on_hover_text(lg.text(&help_key))
+        .changed()
+    {
+        *setting = (!automatic).then_some(1.0);
+    }
+    if let Some(scale) = setting {
+        ui.add(
+            egui::Slider::new(scale, globecraft_render::view::MIN_MOTION_SCALE..=1.0)
+                .text(lg.text(key))
+                .custom_formatter(|value, _| format!("{:.0} %", value * 100.0)),
+        )
+        .on_hover_text(lg.text(&help_key));
     }
 }

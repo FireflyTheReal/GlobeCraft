@@ -102,6 +102,7 @@ impl App {
             fixed_level: None,
             night_lights: None,
             stars: false,
+            sky_behind: false,
         };
         let tiles = globecraft_render::diagnostics::view_tiles(w, h, basis, &cfg, rect);
         let mut counts = [0usize; 4];

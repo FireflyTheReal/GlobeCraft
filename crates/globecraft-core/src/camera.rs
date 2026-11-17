@@ -10,8 +10,6 @@ use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dcamera::rh};
 const PROJECTION_DEPTH_EPSILON: f64 = 1e-9;
 const ROTATION_AXIS_EPSILON: f64 = 1e-13;
 const MIN_PAN_LATITUDE_COSINE: f64 = 0.05;
-/// `slide_target` treats views tilted further than this (cos 80°) as tilted this far.
-const MIN_SLIDE_COS: f64 = 0.17;
 /// Pans that start or end closer to a pole than this follow great circles, and
 /// from here to `POLE_HELD_LATITUDE_DEG` north stays up less and less.
 const POLE_PAN_LATITUDE_DEG: f64 = 60.0;
@@ -214,7 +212,12 @@ impl Basis {
 }
 
 /// The steepest tilt, near the ground: the horizon stays in view.
-pub const MAX_TILT_DEG: f64 = 80.0;
+/// 80° until 2026-11-17 (the user asked for two degrees more).
+pub const MAX_TILT_DEG: f64 = 82.0;
+/// Zooming out past this altitude levels the view: the tilt allowed eases to straight
+/// down at `LEVEL_VIEW_ALTITUDE_KM`, as in Bing Maps (user, 2026-11-17).
+const TILT_EASES_FROM_ALTITUDE_KM: f64 = 6_000.0;
+const LEVEL_VIEW_ALTITUDE_KM: f64 = 15_000.0;
 /// A tilted camera keeps at least this height above the ground point: eye level.
 /// It was 300 m, which pushed the camera away on every tilt close up (user,
 /// 2026-11-16); the app keeps the camera above the relief itself.
@@ -222,10 +225,19 @@ const MIN_TILTED_HEIGHT_KM: f64 = 0.002;
 
 impl Cam {
     /// The steepest tilt at this distance: `MAX_TILT_DEG`, less when the camera would
-    /// otherwise come closer to the ground than `MIN_TILTED_HEIGHT_KM`.
+    /// otherwise come closer to the ground than `MIN_TILTED_HEIGHT_KM`, and less far
+    /// out, down to none at `LEVEL_VIEW_ALTITUDE_KM` (zooming out levels the view).
     pub fn max_tilt(&self) -> f64 {
         let height_ratio = (MIN_TILTED_HEIGHT_KM / self.alt.max(MIN_TILTED_HEIGHT_KM)).min(1.0);
-        height_ratio.acos().to_degrees().min(MAX_TILT_DEG)
+        let far = ((self.alt - TILT_EASES_FROM_ALTITUDE_KM)
+            / (LEVEL_VIEW_ALTITUDE_KM - TILT_EASES_FROM_ALTITUDE_KM))
+            .clamp(0.0, 1.0);
+        let far_limit = MAX_TILT_DEG * (1.0 - far * far * (3.0 - 2.0 * far));
+        height_ratio
+            .acos()
+            .to_degrees()
+            .min(MAX_TILT_DEG)
+            .min(far_limit)
     }
     /// Sets the tilt, kept between straight down and `max_tilt`.
     pub fn set_tilt(&mut self, degrees: f64) {
@@ -259,7 +271,7 @@ impl Cam {
     pub fn slide_target(&mut self, rise_km: f64) -> f64 {
         let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
         // Steeper views move the target far along the ground for a little height.
-        let cos_t = t.cos().max(MIN_SLIDE_COS);
+        let cos_t = t.cos();
         let rise_km = rise_km.min((self.alt - MIN_CAMERA_ALTITUDE_KM).max(0.0) * cos_t);
         let along_km = rise_km / cos_t;
         self.alt -= along_km;
@@ -553,6 +565,31 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    #[test]
+    fn zooming_far_out_levels_the_view() {
+        let mut cam = Cam {
+            lat: 46.5,
+            lon: 10.7,
+            heading: 0.0,
+            alt: 5_000.0,
+            tilt: 60.0,
+        };
+        cam.set_tilt(MAX_TILT_DEG);
+        assert_eq!(cam.tilt, MAX_TILT_DEG);
+        // Halfway between 6,000 and 15,000 km: half the steepest tilt at most.
+        cam.alt = (TILT_EASES_FROM_ALTITUDE_KM + LEVEL_VIEW_ALTITUDE_KM) / 2.0;
+        cam.zoom(1.0);
+        assert!((cam.tilt - MAX_TILT_DEG / 2.0).abs() < 1e-9, "{}", cam.tilt);
+        while cam.alt < LEVEL_VIEW_ALTITUDE_KM {
+            cam.zoom(1.25);
+        }
+        assert_eq!(cam.tilt, 0.0);
+        // Coming back in leaves it level, as Bing Maps does.
+        cam.alt = 5_000.0;
+        cam.zoom(1.0);
+        assert_eq!(cam.tilt, 0.0);
+    }
 
     #[test]
     fn sliding_the_target_keeps_the_eye_and_the_line_of_sight() {

@@ -12,6 +12,8 @@ pub(super) struct FrameState {
     /// it (a new frame of the same view: tiles arrived, or the view came to rest).
     pub(super) fade_from: Option<egui::TextureHandle>,
     pub(super) fade_started: Option<Instant>,
+    /// Space behind the frame, at the screen's full resolution.
+    pub(super) sky_layer: super::sky_layer::SkyLayer,
     /// The frame on screen as pixels.
     pub(super) image: Option<Frame>,
     /// The state key of the view the last frame was asked for; 0 asks for a new one.
@@ -48,6 +50,7 @@ impl FrameState {
             texture: None,
             fade_from: None,
             fade_started: None,
+            sky_layer: Default::default(),
             image: None,
             last_state: 0,
             wake: render_wake::RenderWakeup::default(),

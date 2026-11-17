@@ -340,9 +340,12 @@ statusbar-cursor-elevation = Elevation: { $distance }
 
 
 settings-uncap-fps-toggle = Uncap FPS (restart required)
-settings-motion-resolution-auto = Lighter frames while moving (automatic)
-settings-motion-resolution = Resolution while moving
-settings-motion-resolution-help = While the view moves or relief loads, frames render at a share of the full resolution, so they come quickly. Automatic uses 40 %, or 28 % with relief. 100 % is sharpest and slowest.
+settings-motion-resolution-auto = Lighter frames while moving, flat view (automatic)
+settings-motion-resolution = Resolution while moving, flat view
+settings-motion-resolution-help = While the view moves, frames render at a share of the full resolution, so they come quickly. Automatic uses 40 %. 100 % is sharpest and slowest.
+settings-motion-resolution-relief-auto = Lighter frames while moving, 3D terrain (automatic)
+settings-motion-resolution-relief = Resolution while moving, 3D terrain
+settings-motion-resolution-relief-help = With 3D terrain on, while the view moves or terrain loads, frames render at a share of the full resolution. Automatic uses 28 %. 100 % is sharpest and slowest.
 settings-gpu-globe-toggle = Draw the globe on the GPU (beta, restart required)
 settings-gpu-globe-help = Faster on most graphics cards. Close views, the grid, relief and any GPU problem still use the CPU renderer. Turn this off if the globe looks wrong.
 settings-gpu-globe-running = In use: { $adapter }.

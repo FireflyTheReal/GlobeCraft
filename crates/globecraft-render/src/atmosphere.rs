@@ -96,6 +96,18 @@ impl Air {
         let linear = colour * colour * self.transmitted * (dark * dark) + glow;
         linear.sqrt()
     }
+    /// [`Self::over_sky`] for a sky drawn behind the frame: the glow as premultiplied
+    /// colour and, as alpha, how much of the sky it hides. The two add up as drawn,
+    /// not in linear light, and the air's tint of the stars is left out: close
+    /// enough where it shows, at the limb's thin glow.
+    pub(crate) fn behind(self) -> Vec4 {
+        let glow = tone(self.scattered * EXPOSURE);
+        let dark = 1.0 - glow.max_element();
+        let through = self.transmitted.truncate().element_sum() / 3.0;
+        glow.truncate()
+            .powf(0.5)
+            .extend(1.0 - through.sqrt() * dark * dark)
+    }
     /// `colour` (as drawn, 0 to 1) seen through this air, with `share` of the air
     /// counted. Light adds up in linear terms: the screen's colours are squared,
     /// dimmed, the scattered light is added, and the root is taken again.
@@ -1059,6 +1071,7 @@ mod tests {
                 fixed_level: None,
                 night_lights: sun.map(|_| 0),
                 stars: true,
+                sky_behind: false,
             };
             let basis = cam.basis_for_model(w as f64 / h as f64, Default::default());
             let (pixels, _, _) =

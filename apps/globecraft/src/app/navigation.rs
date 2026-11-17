@@ -187,8 +187,9 @@ const GROUND_SETTLED_KM: f64 = 0.0005;
 /// not to look through a slope (150 m until 2026-11-16, which kept the camera out
 /// of valleys).
 const MIN_GROUND_CLEARANCE_KM: f64 = 0.01;
-/// Steepest tilt considered when backing away (cos 80°), so the step stays finite.
-const MIN_RISE_PER_KM: f64 = 0.17;
+/// Steepest tilt considered when backing away (cos 82°, `MAX_TILT_DEG`), so the step
+/// stays finite.
+const MIN_RISE_PER_KM: f64 = 0.139;
 
 /// See [`App::ground_source`].
 pub(super) struct GroundSource {

@@ -57,17 +57,12 @@ pub(super) fn pixels(
                                 &mut local,
                                 1.0,
                             )
+                            .with_w(1.0)
                         } else {
-                            crate::sky(
-                                &ray,
-                                rays.camera_len_squared,
-                                air.as_ref(),
-                                &request.cfg,
-                                rays.pixels().1,
-                            )
+                            crate::sky(&ray, rays.camera_len_squared, air.as_ref(), &request.cfg)
                         };
                         let color = color.clamp(glam::Vec4::ZERO, glam::Vec4::ONE) * 255.0;
-                        *pixel = [color.x as u8, color.y as u8, color.z as u8, 255];
+                        *pixel = [color.x as u8, color.y as u8, color.z as u8, color.w as u8];
                     }
                 }
             }

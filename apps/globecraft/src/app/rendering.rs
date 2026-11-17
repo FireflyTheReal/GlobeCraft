@@ -39,6 +39,8 @@ pub(super) struct Renderer {
     /// with a frame never matched it while tiles streamed in and lines flickered.
     displayed_ground: Option<Option<globecraft_render::overlays::OverlayGround>>,
     pub(super) displayed_sky: bool,
+    /// The space the displayed frame leaves to the sky layer, if it leaves it.
+    pub(super) displayed_sky_behind: Option<super::sky_layer::SkyBehind>,
     pub(super) displayed_credits: String,
     waiting: Vec<globecraft_data::tiles::TileKey>,
     required: Vec<globecraft_data::tiles::TileKey>,
@@ -130,7 +132,7 @@ impl Renderer {
                     let _prepare = globecraft_data::profiling::Span::new("frame.prepare");
                     #[cfg(feature = "profiling")]
                     let conversion = globecraft_data::profiling::Span::new("frame.convert");
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                    let image = egui::ColorImage::from_rgba_premultiplied(
                         [request.width, request.height],
                         pixels,
                     );
@@ -168,7 +170,7 @@ impl Renderer {
                         .and_then(|_| compare_out.lock().ok()?.take())
                         .map(|(width, height, rel, pixels)| {
                             let image =
-                                egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels);
+                                egui::ColorImage::from_rgba_premultiplied([width, height], &pixels);
                             (image, rel)
                         });
                     PreparedFrame {
@@ -193,6 +195,7 @@ impl Renderer {
             displayed_grid_step: None,
             displayed_ground: None,
             displayed_sky: false,
+            displayed_sky_behind: None,
             displayed_credits: String::new(),
             waiting: Vec::new(),
             required: Vec::new(),
@@ -314,6 +317,8 @@ impl App {
             night_lights: (self.layer(MapLayer::NightLights) && self.explorer.on_earth())
                 .then(|| self.night_lights_edition()),
             stars: self.layer(MapLayer::Stars),
+            // The sky layer draws space at full resolution behind the frame.
+            sky_behind: true,
         }
     }
 
@@ -503,6 +508,13 @@ impl App {
             .grid
             .then_some(frame.request.cfg.grid_step);
         self.frame.renderer.displayed_sky = frame.request.cfg.sky.is_some();
+        let cfg = &frame.request.cfg;
+        self.frame.renderer.displayed_sky_behind =
+            cfg.sky_behind.then(|| super::sky_layer::SkyBehind {
+                basis: frame.request.basis,
+                backdrop: cfg.sky.clone(),
+                stars: cfg.stars,
+            });
         self.frame.renderer.displayed_credits = frame
             .request
             .cfg

@@ -185,46 +185,105 @@ pub(super) fn with_air(
     surface
 }
 
-/// The colour of a ray that misses the Earth: the sky behind the air on its way.
-/// `cc` is the camera's distance from the centre squared and `ray.camera_dot` the
-/// ray's reach along it, both in the surface's own measure.
+/// The colour of a ray that misses the Earth: the sky behind the air on its way,
+/// with alpha in `w`. `cc` is the camera's distance from the centre squared and
+/// `ray.camera_dot` the ray's reach along it, both in the surface's own measure.
 pub(super) fn sky(
     ray: &rays::RaySample,
     cc: f64,
     air: Option<&atmosphere::Frame>,
     cfg: &RenderCfg,
-    raster_height: usize,
 ) -> Vec4 {
     let d = ray.direction;
+    let air = air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32));
+    if cfg.sky_behind {
+        return air.map_or(Vec4::ZERO, atmosphere::Air::behind);
+    }
     let mut col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
-    if cfg.stars {
-        let br = if cfg.lod_scale < 1.0 {
-            star_across_pixel(d, raster_height)
-        } else {
-            star(d)
-        };
-        if let Some(br) = br {
-            col = col.max(Vec4::new(br, br, br, 0.0));
-        }
+    if cfg.stars
+        && let Some(br) = star(d)
+    {
+        col = col.max(Vec4::new(br, br, br, 0.0));
     }
-    match air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32)) {
-        Some(air) => air.over_sky(col),
-        None => col,
-    }
+    air.map_or(col, |air| air.over_sky(col)).with_w(1.0)
 }
 
-/// The brightest star four rays across the pixel around `d` meet, in a raster
-/// `raster_height` pixels tall. A motion frame's pixel is wider than a star's cell,
-/// so its one ray met a star in one frame and missed it in the next: the stars
-/// flickered while the view moved (user, 2026-11-16).
-fn star_across_pixel(d: DVec3, raster_height: usize) -> Option<f32> {
-    let quarter = 0.5 * VERTICAL_FOV_HALF_TAN / raster_height as f64;
-    let across = d.any_orthonormal_vector();
-    let up = d.cross(across);
-    [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
-        .into_iter()
-        .filter_map(|(x, y)| star(d + (across * x + up * y) * quarter))
-        .reduce(f32::max)
+/// Space without the air (0 to 1 as drawn), for a sky drawn behind the frame.
+pub fn space_color() -> [f32; 3] {
+    SPACE_COLOR.truncate().to_array()
+}
+
+/// Every star of [`star`] as its direction, fixed to the Earth, and brightness: the
+/// stars of one cell each, for drawing them elsewhere (the app's sky layer).
+pub fn stars() -> &'static [(DVec3, f32)] {
+    static STARS: std::sync::OnceLock<Vec<(DVec3, f32)>> = std::sync::OnceLock::new();
+    STARS.get_or_init(|| {
+        let r = STAR_GRID_RESOLUTION;
+        let n = r as i64;
+        let mut stars = Vec::new();
+        // The cells the unit sphere passes through: for each column of them, the
+        // heights where the sphere is, above and below the equator.
+        for i in -n..n {
+            for j in -n..n {
+                let near = |a: i64| {
+                    let (lo, hi) = (a as f64, a as f64 + 1.0);
+                    if lo <= 0.0 && hi >= 0.0 {
+                        0.0
+                    } else {
+                        lo.abs().min(hi.abs())
+                    }
+                };
+                let far = |a: i64| (a as f64).abs().max((a as f64 + 1.0).abs());
+                let (near2, far2) = (
+                    near(i).powi(2) + near(j).powi(2),
+                    far(i).powi(2) + far(j).powi(2),
+                );
+                if near2 > r * r {
+                    continue;
+                }
+                let top = (r * r - near2).sqrt();
+                let bottom = (r * r - far2).max(0.0).sqrt();
+                let ks = (bottom.floor() as i64..=top.floor() as i64)
+                    .chain((-top).floor() as i64..=(-bottom).floor() as i64);
+                for k in ks {
+                    let corner = DVec3::new(i as f64, j as f64, k as f64);
+                    if let Some(br) = star((corner + 0.5) / r)
+                        && let Some(centre) = patch_centre(corner, r)
+                    {
+                        stars.push((centre, br));
+                    }
+                }
+            }
+        }
+        stars.sort_unstable_by(|a, b| a.0.to_array().partial_cmp(&b.0.to_array()).unwrap());
+        stars.dedup_by(|a, b| a.0 == b.0);
+        stars
+    })
+}
+
+/// Roughly the middle of where the unit sphere passes through the star cell at
+/// `corner` (in cells of `1 / r`): of sample directions that land in the cell, the
+/// one nearest their mean, so it lands in the cell too (a mean of a thin, curved
+/// sliver can fall outside it). `None` where the sphere barely grazes the cell,
+/// so rays almost never meet its star.
+fn patch_centre(corner: DVec3, r: f64) -> Option<DVec3> {
+    const SAMPLES: u32 = 6;
+    let hits: Vec<DVec3> = (0..SAMPLES.pow(3))
+        .map(|n| {
+            let at = DVec3::new(
+                f64::from(n % SAMPLES),
+                f64::from(n / SAMPLES % SAMPLES),
+                f64::from(n / SAMPLES / SAMPLES),
+            );
+            ((corner + (at + 0.5) / f64::from(SAMPLES)) / r).normalize()
+        })
+        .filter(|d| (d * r).floor() == corner)
+        .collect();
+    let mean: DVec3 = hits.iter().sum();
+    hits.into_iter().min_by(|a, b| {
+        a.distance_squared(mean.normalize())
+            .total_cmp(&b.distance_squared(mean.normalize()))
+    })
 }
 
 /// The brightness of the star in direction `d`'s cell of the sky, if it has one.
@@ -247,28 +306,12 @@ mod tests {
     use globecraft_core::{camera::Cam, earth_model::EarthModel};
 
     #[test]
-    fn a_motion_pixel_shows_its_star_wherever_the_star_lies_in_it() {
-        // A star near straight up, where the cells lie square to the view.
-        let cell = 1.0 / STAR_GRID_RESOLUTION;
-        let centre = (0..200)
-            .flat_map(|x| (0..200).map(move |y| (x, y)))
-            .map(|(x, y)| {
-                DVec3::new(x as f64 + 0.5, y as f64 + 0.5, STAR_GRID_RESOLUTION + 0.5) * cell
-            })
-            .find(|&d| star(d).is_some())
-            .expect("a star among 40,000 cells");
-        // A motion raster whose pixels are 1.8 cells wide: the star's cell is in
-        // the pixel whenever the pixel's centre is within 0.8 cells of it.
-        let height = (2.0 * VERTICAL_FOV_HALF_TAN * STAR_GRID_RESOLUTION / 1.8) as usize;
-        let mut missed_by_one_ray = 0;
-        for x in -4..=4 {
-            for y in -4..=4 {
-                let offset = DVec3::new(f64::from(x), f64::from(y), 0.0) * 0.2 * cell;
-                assert!(star_across_pixel(centre + offset, height).is_some());
-                missed_by_one_ray += usize::from(star(centre + offset).is_none());
-            }
-        }
-        assert!(missed_by_one_ray > 0, "one ray would do");
+    fn the_star_list_holds_the_stars_the_rays_meet() {
+        let stars = stars();
+        // About 1 in 1,400 of the ~15 million cells the sphere passes through.
+        assert!((8_000..14_000).contains(&stars.len()), "{}", stars.len());
+        assert!(stars.iter().all(|&(d, br)| star(d) == Some(br)));
+        assert!(stars.iter().all(|(d, _)| (d.length() - 1.0).abs() < 1e-12));
     }
 
     #[test]
@@ -303,6 +346,7 @@ mod tests {
                 fixed_level: None,
                 night_lights: None,
                 stars: true,
+                sky_behind: false,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -342,6 +386,7 @@ mod tests {
             fixed_level: None,
             night_lights: None,
             stars: true,
+            sky_behind: false,
         };
         for latitude in [
             -90.0_f64,
@@ -399,6 +444,7 @@ mod tests {
             fixed_level: None,
             night_lights: None,
             stars: true,
+            sky_behind: false,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

@@ -96,9 +96,12 @@ pub struct Settings {
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
-    /// The resolution a moving view renders at, as a share of the full one (0.2–1);
-    /// `None` chooses by the view (0.4, or 0.28 with relief).
+    /// The resolution a moving view without relief renders at, as a share of the full
+    /// one (0.2–1); `None`: automatic (0.4).
     pub motion_resolution: Option<f32>,
+    /// The same for a view with 3D relief (it also applies while relief grows in);
+    /// `None`: automatic (0.28).
+    pub motion_resolution_relief: Option<f32>,
     pub grid_numbers: bool,
     pub hide_navigation_controls: bool,
     /// Camera altitude (km) below which state/province lines and their names
@@ -177,6 +180,7 @@ impl Default for Settings {
             keys_in_keychain: false,
             gpu_globe: true,
             motion_resolution: None,
+            motion_resolution_relief: None,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
@@ -829,6 +833,7 @@ mod tests {
             keys_in_keychain: false,
             gpu_globe: true,
             motion_resolution: None,
+            motion_resolution_relief: None,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
