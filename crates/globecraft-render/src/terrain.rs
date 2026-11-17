@@ -60,8 +60,6 @@ const BLOCK_EXIT_TEXELS: f64 = 1e-3;
 const MAX_NUDGE: f64 = 1e-8;
 /// Elevation tiles are 512 texels across (Mapterhorn).
 const DEM_TILE_TEXELS: f64 = 512.0;
-/// The elevation zoom is chosen again once the distance grew by this factor.
-const ZOOM_RECHECK_RATIO: f64 = 1.2;
 /// Linear steps between exact measurements, in texels.
 const REANCHOR_TEXELS: f64 = 48.0;
 /// Secant refinements of a hit between the last point above and the first below.
@@ -255,6 +253,41 @@ impl DemTile {
             own.max(Self::top_before_m(morph, held, from, to))
         })
     }
+    /// `top_between_m` when the square lies inside this tile; `None` otherwise.
+    fn top_within_m(&self, held: Held, from: (f64, f64), to: (f64, f64)) -> Option<f32> {
+        let inside =
+            |(x, y): (f64, f64)| (0.0..=self.size).contains(&x) && (0.0..=self.size).contains(&y);
+        (inside(self.texel(from)) && inside(self.texel(to)))
+            .then(|| self.top_between_m(held, from, to))
+    }
+    /// No height of this tile is above this over block `(x, y)` of `level` of the next
+    /// finer level's elevation pyramid, numbered across that whole level: the same
+    /// ground is one block of the level below here (half a texel at level 0). `None`
+    /// when this tile is not of the next coarser level, or the block is not in it.
+    fn top_over_finer_m(
+        &self,
+        held: Held,
+        finer: i32,
+        level: usize,
+        (x, y): (usize, usize),
+    ) -> Option<f32> {
+        if self.level() != finer - 1 {
+            return None;
+        }
+        let (level, x, y) = if level == 0 {
+            (0, x / 2, y / 2)
+        } else {
+            (level - 1, x, y)
+        };
+        let per_tile = (self.size as usize) >> level;
+        let (x0, y0) = (self.tx as usize * per_tile, self.ty as usize * per_tile);
+        ((x0..x0 + per_tile).contains(&x) && (y0..y0 + per_tile).contains(&y))
+            .then(|| self.block_top_m(held, level, x - x0, y - y0))
+    }
+    /// The tile's level.
+    fn level(&self) -> i32 {
+        self.n.log2().round() as i32
+    }
     fn top_before_m(morph: Morph, held: Held, from: (f64, f64), to: (f64, f64)) -> f32 {
         morph.from.map_or(0.0, |below| {
             held.placed[below].top_between_m(held, from, to)
@@ -435,32 +468,78 @@ impl Anchor {
     }
 }
 
-/// The elevation zoom for distance `t` and the distance it holds until. Chosen once per
-/// band of a fixed geometric grid (bands `ZOOM_RECHECK_RATIO` long, at the band's
-/// start), so a march started part-way (`beam`) picks the same levels as one started
-/// at the camera.
-fn zoom_band(t: f64, pixel_angle: f64, latitude_cosine: f64) -> (i32, f64) {
-    let band = (t.max(MIN_BAND_START) / MIN_BAND_START)
-        .ln()
-        .div_euclid(ZOOM_RECHECK_RATIO.ln());
-    let start = MIN_BAND_START * ZOOM_RECHECK_RATIO.powf(band);
-    (
-        dem_zoom(start, pixel_angle, latitude_cosine, DEM_TILE_TEXELS),
-        start * ZOOM_RECHECK_RATIO,
-    )
+/// The elevation level along a ray and how far its own heights stand: 0 where it
+/// takes over from the next coarser level, 1 from `HEIGHT_BLEND_LEVELS` levels on.
+/// Heights blend between the two levels by it, so they change with the zoom instead of
+/// at once where the level changes (user, 2026-11-17). The zoom falls with the
+/// logarithm of the distance, so where each level starts, blends and ends is worked
+/// out once per level; the march asks at every step.
+pub(super) struct ZoomTrack {
+    level: i32,
+    /// A distance and its exact zoom, which the others follow from.
+    t0: f64,
+    zoom0: f64,
+    /// The level holds from `nearest` to `until`, blending from `blend_from` on.
+    nearest: f64,
+    blend_from: f64,
+    until: f64,
 }
 
-/// The first band of `zoom_band` (world units, about 6 mm).
-const MIN_BAND_START: f64 = 1e-9;
-
-/// The elevation zoom for a point `t` away: texels of about `DEM_PIXELS_PER_TEXEL`
-/// pixels, given the angle per pixel `pixel_angle`.
-fn dem_zoom(t: f64, pixel_angle: f64, latitude_cosine: f64, tile_texels: f64) -> i32 {
-    (dem_zoom_exact(t, pixel_angle, latitude_cosine, tile_texels).floor() as i32)
-        .clamp(0, DEM_MAX_ZOOM)
+impl ZoomTrack {
+    pub(super) fn new() -> Self {
+        Self {
+            level: 0,
+            t0: 0.0,
+            zoom0: 0.0,
+            nearest: f64::INFINITY,
+            blend_from: 0.0,
+            until: f64::NEG_INFINITY,
+        }
+    }
+    /// The level for a point `t` away and its weight (see the type).
+    pub(super) fn at(&mut self, t: f64, pixel_angle: f64, latitude_cosine: f64) -> (i32, f64) {
+        if !(self.nearest..=self.until).contains(&t) {
+            let zoom = dem_zoom_exact(t, pixel_angle, latitude_cosine, DEM_TILE_TEXELS);
+            let level = (zoom.floor() as i32).clamp(0, DEM_MAX_ZOOM);
+            // The distance at which the zoom is `z`.
+            let at = |z: f64| t * (zoom - z).exp2();
+            *self = Self {
+                level,
+                t0: t,
+                zoom0: zoom,
+                nearest: if level == DEM_MAX_ZOOM {
+                    0.0
+                } else {
+                    at(f64::from(level + 1))
+                },
+                blend_from: at(f64::from(level) + HEIGHT_BLEND_LEVELS),
+                until: if level == 0 {
+                    f64::INFINITY
+                } else {
+                    at(f64::from(level))
+                },
+            };
+        }
+        if t < self.blend_from {
+            return (self.level, 1.0);
+        }
+        let zoom = self.zoom0 - (t / self.t0).log2();
+        (
+            self.level,
+            ((zoom - f64::from(self.level)) / HEIGHT_BLEND_LEVELS).clamp(0.0, 1.0),
+        )
+    }
 }
 
-/// `dem_zoom` before it is rounded down to a level.
+/// How much of a level's zoom range its heights take to grow out of the coarser
+/// level's: over the zoom of about 15 % more distance. Blending over the whole level
+/// made relief frames twice as slow; 0.3 cost 12–21 % in tilted views, 0.15 4–12 %
+/// (`terrain_views`, 2026-11-17).
+const HEIGHT_BLEND_LEVELS: f64 = 0.2;
+
+/// The elevation zoom for a point `t` away, before it is rounded down to a level:
+/// texels of about `DEM_PIXELS_PER_TEXEL` pixels, given the angle per pixel
+/// `pixel_angle`.
 fn dem_zoom_exact(t: f64, pixel_angle: f64, latitude_cosine: f64, tile_texels: f64) -> f64 {
     let metres_per_pixel = (t * EARTH_RADIUS_M * pixel_angle).max(0.01);
     let texel_m = metres_per_pixel * DEM_PIXELS_PER_TEXEL;
@@ -550,7 +629,10 @@ pub(super) fn march(
     let mut current: Option<DemTile> = None;
     let mut looked_up: Option<i32> = None;
     let mut anchor = Anchor::at(geometry, origin, direction, t);
-    let (mut zoom, mut zoom_until) = (0, f64::NEG_INFINITY);
+    // The next coarser level's tile under the ray, which the heights blend from.
+    // Looked up once a blend needs it (`Some(None)`: there is none).
+    let mut coarser: Option<Option<DemTile>> = None;
+    let mut levels = ZoomTrack::new();
     // The march may climb one level coarser per step (the classic max-mipmap walk).
     let mut start_level = usize::MAX;
     for _ in 0..MAX_MARCH_STEPS {
@@ -564,9 +646,7 @@ pub(super) fn march(
         if height <= 0.0 {
             break;
         }
-        if t > zoom_until {
-            (zoom, zoom_until) = zoom_band(t, pixel_angle, anchor.latitude_cosine);
-        }
+        let (zoom, weight) = levels.at(t, pixel_angle, anchor.latitude_cosine);
         let mut uv = anchor.uv(t);
         // Keep the tile while it covers the point and the wanted zoom holds (it may be
         // a coarser stand-in for a missing tile); look again otherwise.
@@ -580,7 +660,15 @@ pub(super) fn march(
             current = dem_tile(loc, zoom, uv, dist);
             looked_up = current.is_some().then_some(zoom);
             start_level = usize::MAX;
+            coarser = None;
         }
+        // A stand-in for a missing level shows its own heights.
+        let blend = if weight < 1.0 && zoom > 0 && current.is_some_and(|tile| tile.level() == zoom)
+        {
+            *coarser.get_or_insert_with(|| dem_tile(loc, zoom - 1, uv, dist))
+        } else {
+            None
+        };
         let Some(tile) = current.as_ref() else {
             // No elevation here yet: flat at sea level until this zoom's tile area ends.
             let n = (1u64 << zoom) as f64;
@@ -613,11 +701,30 @@ pub(super) fn march(
         let mut clear = None;
         for level in (0..=elevation.top_level().min(start_level)).rev() {
             let (bx, by) = (ix >> level, iy >> level);
-            let top = if grown {
+            let mut top = if grown {
                 elevation.block_max_m(level, bx, by)
             } else {
                 tile.block_top_m(held, level, bx, by)
             };
+            // Blended heights lie under both levels' tops.
+            if let Some(coarser) = blend
+                && height > f64::from(top) * to_world
+            {
+                let per_tile = (tile.size as usize) >> level;
+                let whole = (
+                    tile.tx as usize * per_tile + bx,
+                    tile.ty as usize * per_tile + by,
+                );
+                let coarse = coarser
+                    .top_over_finer_m(held, tile.level(), level, whole)
+                    .or_else(|| {
+                        let block = (1usize << level) as f64;
+                        let corner =
+                            |bx: usize, by: usize| tile.uv((bx as f64 * block, by as f64 * block));
+                        coarser.top_within_m(held, corner(bx, by), corner(bx + 1, by + 1))
+                    });
+                top = top.max(coarse.unwrap_or(f32::MAX));
+            }
             let top = f64::from(top) * to_world;
             if height > top {
                 clear = Some((level, bx, by, top));
@@ -637,13 +744,20 @@ pub(super) fn march(
                 start_level = level + 1;
             }
             None => {
-                let ground_m = |uv: (f64, f64)| {
+                let own_m = |uv: (f64, f64)| {
                     if grown {
                         let (x, y) = tile.texel(uv);
                         elevation.height_m(x, y)
                     } else {
                         tile.height_m(held, uv)
                     }
+                };
+                let ground_m = |uv: (f64, f64)| match blend {
+                    Some(coarser) => {
+                        let from = coarser.height_m(held, uv);
+                        from + (own_m(uv) - from) * weight as f32
+                    }
+                    None => own_m(uv),
                 };
                 let ground = f64::from(ground_m(uv)) * to_world;
                 if height <= ground {
@@ -971,6 +1085,72 @@ mod march_tests {
         assert!(
             (half - (flat_shade + full) / 2.0).abs() < 0.2 * difference,
             "{half} {full}"
+        );
+    }
+
+    #[test]
+    fn heights_come_in_with_the_zoom_instead_of_at_the_level_change() {
+        // Level 5 stands 2,000 m high; the coarser levels lie at sea level.
+        let high = Arc::new(Tile::from_elevation(Elevation::from_heights(
+            512,
+            vec![2000.0; 512 * 512],
+        )));
+        let flat = Arc::new(Tile::from_elevation(Elevation::from_heights(
+            512,
+            vec![0.0; 512 * 512],
+        )));
+        let lookup = move |key| match crate::unkey(key) {
+            (Provider::TerrainDem, 5, ..) => Lookup::Ready(high.clone()),
+            (Provider::TerrainDem, 0..5, ..) => Lookup::Ready(flat.clone()),
+            _ => Lookup::Unavailable,
+        };
+        let geometry = EarthModel::PerfectSphere.geometry();
+        let up = globecraft_core::math::ll_to_v3(30.0, 80.0);
+        let origin = geometry.position(30.0, 80.0) + up * (60.0 / globecraft_core::EARTH_RADIUS_KM);
+        let ground_m_at = |zoom: f64| {
+            let mut loc = Local {
+                lookup: &lookup,
+                map: HashMap::<_, _, KeyBuild>::default(),
+                dem: Vec::new(),
+                dem_placed: Vec::new(),
+                dem_index: HashMap::default(),
+                now: std::time::Instant::now(),
+            };
+            let (ray, hits) = ray_from(origin, -up, geometry);
+            // The pixel angle that puts the ground (about 60 km away) at `zoom`.
+            let t = 60.0 / globecraft_core::EARTH_RADIUS_KM;
+            let latitude_cosine = 30f64.to_radians().cos();
+            let pixel_angle = 2.0 * PI * latitude_cosine
+                / (DEM_TILE_TEXELS * t * DEM_PIXELS_PER_TEXEL * zoom.exp2());
+            match march(
+                &ray,
+                0.0,
+                hits,
+                origin,
+                geometry,
+                TerrainCfg::new(1.0, 1.0),
+                pixel_angle,
+                0.0,
+                &mut loc,
+            ) {
+                March::Hit(hit, _) => 60_000.0 - hit.distance * globecraft_core::EARTH_RADIUS_M,
+                March::Floor => 0.0,
+                March::Miss => panic!("the ray misses the globe"),
+            }
+        };
+        // Just past the change to level 5: nearly sea level still (it was 2,000 m at
+        // once); half way through the blend, half of it; past it, all of it.
+        let half = HEIGHT_BLEND_LEVELS / 2.0;
+        assert!(ground_m_at(4.98) < 20.0, "{}", ground_m_at(4.98));
+        assert!(ground_m_at(5.01) < 150.0, "{}", ground_m_at(5.01));
+        let middle = ground_m_at(5.0 + half);
+        // Well between: the hit is a little nearer than 60 km, where the zoom is
+        // higher, so somewhat over half.
+        assert!((500.0..1600.0).contains(&middle), "{middle}");
+        assert!(
+            (ground_m_at(5.5) - 2000.0).abs() < 20.0,
+            "{}",
+            ground_m_at(5.5)
         );
     }
 
