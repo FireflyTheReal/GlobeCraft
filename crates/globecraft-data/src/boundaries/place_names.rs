@@ -26,6 +26,7 @@ static SPEC: Spec<PlaceTile> = Spec {
     max_zoom: 14,
     skip_zoom: None,
     tiles_across_view: TILES_ACROSS_VIEW,
+    min_radius_km: 0.0,
     max_tiles: 64,
     max_floor_tiles: 64,
     max_cached_tiles: 400,

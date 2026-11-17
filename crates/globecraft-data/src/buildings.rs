@@ -17,6 +17,9 @@ use std::sync::Arc;
 pub const MAX_ALTITUDE_KM: f64 = 6.0;
 /// The level read: the only one with heights.
 const ZOOM: u8 = 14;
+/// Building tiles are wanted at least this far around the view (km), however low
+/// the camera: about two tiles of level 14 in mid-latitudes.
+const MIN_RADIUS_KM: f64 = 2.5;
 /// A storey, for a building whose height is given only as a number of floors.
 const FLOOR_HEIGHT_M: f32 = 3.0;
 /// A building with neither a height nor floors: two storeys.
@@ -69,6 +72,9 @@ static SPEC: Spec<BuildingTile> = Spec {
     max_zoom: ZOOM,
     skip_zoom: None,
     tiles_across_view: 3.0,
+    // Low down the view's own area holds a tile or two; the blocks around stay
+    // loaded instead of fading away (user, 2026-11-17: below about 700 m).
+    min_radius_km: MIN_RADIUS_KM,
     // The view's tiles nearest first; at 6 km a straight-down view needs about 36
     // in mid-latitudes, and city tiles are large.
     max_tiles: 36,
@@ -399,6 +405,35 @@ mod tests {
     fn square(x: i32, y: i32, size: i32) -> Vec<(i32, i32)> {
         // Clockwise on screen (y down): an outer ring.
         vec![(x, y), (x + size, y), (x + size, y + size), (x, y + size)]
+    }
+
+    #[test]
+    fn the_blocks_around_stay_wanted_low_down() {
+        // 300 m over Munich, tilted: the view's own area is a few hundred metres, but
+        // the tiles 2 km around are wanted (at least five by five there).
+        let view = crate::vector_tiles::View {
+            at: crate::ViewQuery {
+                latitude: 48.137,
+                longitude: 11.575,
+                altitude_km: 0.3,
+                tilt_deg: 70.0,
+                heading_deg: 0.0,
+            },
+            floor: ZOOM,
+        };
+        let (zoom, tiles) = crate::vector_tiles::wanted(&SPEC, view);
+        assert_eq!(zoom, ZOOM);
+        assert!(tiles.len() >= 9, "{} tiles", tiles.len());
+        let here = TileKey::at(ZOOM, 48.137, 11.575);
+        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let next = (i64::from(here.x) + dx, i64::from(here.y) + dy);
+            assert!(
+                tiles
+                    .iter()
+                    .any(|t| (i64::from(t.x), i64::from(t.y)) == next),
+                "the tile beside, {dx},{dy}"
+            );
+        }
     }
 
     #[test]

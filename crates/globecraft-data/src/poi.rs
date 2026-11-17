@@ -18,6 +18,7 @@ static SPEC: Spec<PoiTile> = Spec {
     max_zoom: 14,
     skip_zoom: None,
     tiles_across_view: 3.0,
+    min_radius_km: 0.0,
     max_tiles: 64,
     max_floor_tiles: 64,
     max_cached_tiles: 600,

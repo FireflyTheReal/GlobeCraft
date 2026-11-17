@@ -27,6 +27,7 @@ static SPEC: Spec<TransportTile> = Spec {
     skip_zoom: Some(13),
     // Finer than borders: rail lines are drawn at every level.
     tiles_across_view: 3.0,
+    min_radius_km: 0.0,
     max_tiles: 64,
     max_floor_tiles: 200,
     max_cached_tiles: 600,

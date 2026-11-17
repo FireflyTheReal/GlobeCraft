@@ -8,7 +8,7 @@ use super::content::{MAX_MERCATOR_LAT, TileKey};
 pub(super) const MAX_ZOOM: u8 = 12;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
 const EARTH_RADIUS_KM: f64 = 6_371.0;
-const KM_PER_DEGREE: f64 = 111.32;
+pub(crate) const KM_PER_DEGREE: f64 = 111.32;
 /// Ground width shown per kilometre of camera altitude, for the default field of view
 /// (as in `municipal::topology`).
 const VIEW_WIDTH_PER_ALTITUDE: f64 = 1.5;

@@ -9,7 +9,7 @@
 //! cache's, in Settings -> Cache). A tile on disk shows at once; one of an older
 //! build of the set shows too and is downloaded again.
 use crate::boundaries::osm_tiles::content::TileKey;
-use crate::boundaries::osm_tiles::pick::{around, ideal_zoom, seen_disc};
+use crate::boundaries::osm_tiles::pick::{KM_PER_DEGREE, around, ideal_zoom, seen_disc};
 use crate::boundaries::osm_tiles::store::DiskStore;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,6 +86,9 @@ pub(crate) struct Spec<T> {
     /// finer one lacks, or whose data is too thinned out to show.
     pub(crate) skip_zoom: Option<u8>,
     pub(crate) tiles_across_view: f64,
+    /// The view's area reaches at least this far (km) from its centre, however low
+    /// the camera.
+    pub(crate) min_radius_km: f64,
     /// More tiles than this go one level up instead.
     pub(crate) max_tiles: usize,
     /// The most tiles taken to stay at a caller's floor level.
@@ -594,6 +597,7 @@ pub(crate) fn wanted<T>(spec: &Spec<T>, view: View) -> (u8, Vec<TileKey>) {
         zoom += 1;
     }
     let ((latitude, longitude), radius) = seen_disc(view.at);
+    let radius = radius.max(spec.min_radius_km / KM_PER_DEGREE);
     loop {
         let tiles = around(zoom, latitude, longitude, radius);
         let limit = if zoom <= floor {
@@ -720,6 +724,7 @@ mod tests {
         max_zoom: 10,
         skip_zoom: None,
         tiles_across_view: 3.0,
+        min_radius_km: 0.0,
         max_tiles: 64,
         max_floor_tiles: 64,
         max_cached_tiles: 600,
