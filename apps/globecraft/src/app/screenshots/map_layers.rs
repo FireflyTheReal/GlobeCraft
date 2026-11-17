@@ -752,4 +752,14 @@ fn pivot_over_mountains_probe() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         print(&h, "zoom in");
     }
+    // Turning (as the ring does): the turn's centre must stay where it is.
+    h.state_mut().cam.tilt = 75.0;
+    for _ in 0..30 {
+        h.state_mut().cam.heading += 4.0;
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        print(&h, "turn");
+    }
+    settle(&mut h, 2.0);
+    print(&h, "after");
 }

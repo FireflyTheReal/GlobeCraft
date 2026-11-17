@@ -212,8 +212,8 @@ impl Basis {
 }
 
 /// The steepest tilt, near the ground: the horizon stays in view.
-/// 80° until 2026-11-17 (the user asked for two degrees more).
-pub const MAX_TILT_DEG: f64 = 82.0;
+/// 80° until 2026-11-17, then 82°, then 85° (the user's asks the same day).
+pub const MAX_TILT_DEG: f64 = 85.0;
 /// Zooming out past this altitude levels the view: the tilt allowed eases to straight
 /// down at `LEVEL_VIEW_ALTITUDE_KM`, as in Bing Maps (user, 2026-11-17).
 const TILT_EASES_FROM_ALTITUDE_KM: f64 = 6_000.0;
@@ -291,7 +291,7 @@ impl Cam {
     /// ground under the point and moving the point there never settled over a steep
     /// slope, and the point jumped kilometres along the line of sight from frame to
     /// frame, which jiggled the view and threw the zoom (user's recordings,
-    /// 2026-11-17). `None` when the line meets no known ground.
+    /// 2026-11-17). `None` when the line meets no known ground, or meets it at once.
     pub fn sight_hit(
         &self,
         ground_km: f64,
@@ -324,10 +324,10 @@ impl Cam {
                 clear = Some(s);
                 continue;
             }
-            // The eye itself is under the ground: as close as the camera may come.
-            let Some(mut clear) = clear else {
-                return Some(near * cos_t);
-            };
+            // Ground right at the eye (it backed away from a slope as it turned): the
+            // point stays. Moved up to the eye, it left the camera 30 m from its
+            // centre, where zooming barely moved (2026-11-17).
+            let mut clear = clear?;
             let mut under = s;
             for _ in 0..REFINEMENTS {
                 let middle = 0.5 * (clear + under);

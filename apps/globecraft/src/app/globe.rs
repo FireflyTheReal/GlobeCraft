@@ -439,6 +439,8 @@ impl App {
             let d =
                 ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
             self.motion.fly = None;
+            self.motion.glide = None;
+            self.motion.last_drag = Some(super::motion::DragKind::Pan);
             if self.explorer.on_earth() {
                 self.pan(d.x as f64, d.y as f64, rect.height());
             } else {
@@ -468,6 +470,14 @@ impl App {
                     })
                 }
             };
+            self.motion.glide = None;
+            self.motion.last_drag = tilts.map(|tilts| {
+                if tilts {
+                    super::motion::DragKind::Tilt
+                } else {
+                    super::motion::DragKind::Turn
+                }
+            });
             match tilts {
                 Some(true) => self.cam.tilt_zooming_out(
                     self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
@@ -482,6 +492,7 @@ impl App {
             interacting = true;
         } else {
             self.motion.turn_drag = None;
+            interacting |= self.glide(ui, resp, rect);
         }
         if resp.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
@@ -1125,3 +1136,43 @@ pub(super) const OSM_TILES_CREDIT: &str = "OpenFreeMap © OpenMapTiles Data from
 /// The building layer's sources, as Overture asks (ODbL).
 pub(super) const BUILDINGS_CREDIT: &str =
     "Buildings © OpenStreetMap contributors, Overture Maps Foundation (ODbL)";
+
+impl App {
+    /// Starts the view coasting when a drag is let go while still moving, and moves
+    /// it on while it coasts: whether it moved. A press, a scroll or a flight stops it.
+    fn glide(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect) -> bool {
+        let turn_deg_per_point =
+            DRAG_HEADING_DEG_PER_POINT * self.settings.navigation.rotation_sensitivity;
+        if resp.drag_stopped() {
+            let pan_sensitivity = self.settings.navigation.pan_sensitivity as f32;
+            let velocity = ui.input(|i| i.pointer.velocity());
+            self.motion.glide = self.motion.last_drag.take().and_then(|kind| {
+                let velocity = if kind == super::motion::DragKind::Pan {
+                    velocity * pan_sensitivity
+                } else {
+                    velocity
+                };
+                super::motion::Glide::after(kind, velocity, turn_deg_per_point)
+            });
+        }
+        let pressed =
+            ui.input(|i| i.pointer.any_pressed() || i.smooth_scroll_delta != egui::Vec2::ZERO);
+        if pressed || self.motion.fly.is_some() || !self.explorer.on_earth() {
+            self.motion.glide = None;
+        }
+        let Some(glide) = self.motion.glide else {
+            return false;
+        };
+        let dt = super::frame_timing::animation_delta_secs(ui) as f32;
+        let (moved, next) = glide.step(dt, turn_deg_per_point);
+        match moved {
+            super::motion::Glide::Pan(d) => self.pan(d.x as f64, d.y as f64, rect.height()),
+            super::motion::Glide::Turn(degrees) => {
+                self.cam.heading = wrap_lon(self.cam.heading + degrees);
+            }
+        }
+        self.motion.glide = next;
+        ui.ctx().request_repaint();
+        true
+    }
+}

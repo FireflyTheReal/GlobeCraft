@@ -602,6 +602,8 @@ fn terrain_views() {
         ("tilt-16km", 16.0, 70.0, 0.0),
         ("tilt-52km", 52.0, 75.0, 0.0),
         ("tilt-6km", 6.0, 72.0, 30.0),
+        ("tilt82-3km", 3.0, 82.0, 30.0),
+        ("tilt85-3km", 3.0, 85.0, 30.0),
     ] {
         if std::env::var("PROBE_VIEW").is_ok_and(|only| only != name) {
             continue;

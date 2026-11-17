@@ -161,7 +161,22 @@ impl App {
         } else {
             -self.motion.ground_km
         };
-        if rise.abs() > GROUND_SETTLED_KM {
+        // While the heading or tilt changes the view turns about the looked-at point:
+        // moving it onto a ridge that came between swung the camera about (user's
+        // recording, 2026-11-17). It is placed again once they hold.
+        let orbit = (self.cam.heading, self.cam.tilt);
+        if orbit != self.motion.orbit_seen {
+            self.motion.orbit_seen = orbit;
+            self.motion.orbit_changed = Some(Instant::now());
+        }
+        let orbiting = self
+            .motion
+            .orbit_changed
+            .is_some_and(|changed| changed.elapsed() < ORBIT_HOLD)
+            && self.terrain_active();
+        if orbiting {
+            ctx.request_repaint_after(ORBIT_HOLD);
+        } else if rise.abs() > GROUND_SETTLED_KM {
             self.motion.ground_km += self.cam.slide_target(rise);
             ctx.request_repaint();
         } else if !self.terrain_active() {
@@ -191,15 +206,18 @@ impl App {
 
 const METERS_PER_KM: f64 = 1000.0;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
+/// After the heading or tilt last changed, the looked-at point stays put this long: a
+/// turning drag that pauses for a frame is still turning.
+const ORBIT_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
 /// The looked-at point moves only when it is off the ground by more than this.
 const GROUND_SETTLED_KM: f64 = 0.0005;
 /// A tilted camera stays at least this high above the terrain beneath it: enough
 /// not to look through a slope (150 m until 2026-11-16, which kept the camera out
 /// of valleys).
 const MIN_GROUND_CLEARANCE_KM: f64 = 0.01;
-/// Steepest tilt considered when backing away (cos 82°, `MAX_TILT_DEG`), so the step
+/// Steepest tilt considered when backing away (cos 85°, `MAX_TILT_DEG`), so the step
 /// stays finite.
-const MIN_RISE_PER_KM: f64 = 0.139;
+const MIN_RISE_PER_KM: f64 = 0.087;
 
 /// See [`App::ground_source`].
 pub(super) struct GroundSource {

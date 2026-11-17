@@ -26,8 +26,10 @@ const DETAIL_TILES_ACROSS_VIEW: f64 = 4.0;
 /// a tilted camera sees farther than straight down.
 const RADIUS_PER_ALTITUDE: f64 = 1.0;
 /// Rays steeper than this from straight down reach far toward the horizon; the
-/// tilted area stops there (the horizon limit applies as well).
-const TILTED_REACH_MAX_RAD: f64 = 1.45;
+/// tilted area stops there (the horizon limit applies as well). About 86°: a degree
+/// past the steepest tilt (`MAX_TILT_DEG`, 85°), or the point looked at would lie
+/// beyond the area (1.45, 83°, until the tilt went past it on 2026-11-17).
+const TILTED_REACH_MAX_RAD: f64 = 1.5;
 /// The widest window [`seen_disc`] covers the bottom corners of (width over height).
 const WIDEST_ASPECT: f64 = 2.2;
 /// [`seen_disc`] reaches this much farther than the screen's edges, so tiles at the
@@ -227,6 +229,10 @@ mod tests {
         assert!(radius < 0.6 * around_centre, "{radius} {around_centre}");
         assert!(latitude + radius > 48.0 + 0.9 * around_centre * 0.8);
         assert!(latitude - radius < 48.0, "the looked-at point stays inside");
+        assert!(
+            TILTED_REACH_MAX_RAD > globecraft_core::camera::MAX_TILT_DEG.to_radians(),
+            "the steepest view's looked-at point is inside its area"
+        );
         // The bottom corners of a wide window are inside too (2 km away at 65°, the
         // camera is 0.85 km up; the bottom edge 0.77 km ahead of the point below it,
         // the corners about 0.96 km to each side).
