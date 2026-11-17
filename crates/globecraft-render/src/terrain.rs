@@ -215,6 +215,12 @@ struct Morph {
     from: Option<usize>,
 }
 
+/// How many growing tiles down a tile's heights follow (its stand-in, and that
+/// one's): below, a tile's own heights stand. Only a jump to a new place, every
+/// level arriving at once, makes longer chains; followed all the way down at every
+/// step, a frame there took minutes instead of a second (2026-11-17).
+const MORPH_DEPTH: u8 = 2;
+
 /// The elevation tile a ray is over.
 #[derive(Clone, Copy)]
 pub(super) struct DemTile {
@@ -246,24 +252,32 @@ impl<'a> Held<'a> {
 }
 
 impl DemTile {
+    /// The growth this tile shows at `depth` down a chain of growing tiles: none
+    /// from `MORPH_DEPTH` on.
+    fn morph_at(&self, depth: u8) -> Option<Morph> {
+        self.morph.filter(|_| depth < MORPH_DEPTH)
+    }
     /// The height at `(u, v)`, in metres: this tile's, or on the way to it from
     /// the stand-in's.
     fn height_m(&self, held: Held, uv: (f64, f64)) -> f32 {
+        self.height_at(held, uv, 0)
+    }
+    fn height_at(&self, held: Held, uv: (f64, f64), depth: u8) -> f32 {
         let (x, y) = self.texel(uv);
         let own = self.elevation(held.tiles).height_m(x, y);
-        let Some(morph) = self.morph else {
+        let Some(morph) = self.morph_at(depth) else {
             return own;
         };
         let before = morph
             .from
-            .map_or(0.0, |from| held.placed[from].height_m(held, uv));
+            .map_or(0.0, |from| held.placed[from].height_at(held, uv, depth + 1));
         before + (own - before) * morph.grown
     }
     /// No height in block `(bx, by)` of `level` is above this, in metres.
     #[inline]
     fn block_top_m(&self, held: Held, level: usize, bx: usize, by: usize) -> f32 {
         let own = self.elevation(held.tiles).block_max_m(level, bx, by);
-        let Some(morph) = self.morph else {
+        let Some(morph) = self.morph_at(0) else {
             return own;
         };
         let block = (1usize << level) as f64;
@@ -273,15 +287,19 @@ impl DemTile {
             held,
             corner(bx, by),
             corner(bx + 1, by + 1),
+            0,
         ))
     }
     /// No height between `from` and `to` (`(u, v)` corners of a square inside this
     /// tile) is above this, in metres. A growing tile's heights lie between its own
     /// and its stand-in's, so under both tops.
     fn top_between_m(&self, held: Held, from: (f64, f64), to: (f64, f64)) -> f32 {
+        self.top_between_at(held, from, to, 0)
+    }
+    fn top_between_at(&self, held: Held, from: (f64, f64), to: (f64, f64), depth: u8) -> f32 {
         let own = self.grid.top_between_m(held.tiles, from, to);
-        self.morph.map_or(own, |morph| {
-            own.max(Self::top_before_m(morph, held, from, to))
+        self.morph_at(depth).map_or(own, |morph| {
+            own.max(Self::top_before_m(morph, held, from, to, depth))
         })
     }
     /// `top_between_m` when the square lies inside this tile; `None` otherwise.
@@ -319,19 +337,22 @@ impl DemTile {
     fn level(&self) -> i32 {
         self.n.log2().round() as i32
     }
-    fn top_before_m(morph: Morph, held: Held, from: (f64, f64), to: (f64, f64)) -> f32 {
+    fn top_before_m(morph: Morph, held: Held, from: (f64, f64), to: (f64, f64), depth: u8) -> f32 {
         morph.from.map_or(0.0, |below| {
-            held.placed[below].top_between_m(held, from, to)
+            held.placed[below].top_between_at(held, from, to, depth + 1)
         })
     }
     /// The hill shading at `uv`, on the way from the stand-in's while growing.
     fn shade(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64) -> f32 {
+        self.shade_at(held, uv, up, to_world, 0)
+    }
+    fn shade_at(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64, depth: u8) -> f32 {
         let own = hill_shade(&self.grid, self.elevation(held.tiles), uv, up, to_world);
-        let Some(morph) = self.morph else {
+        let Some(morph) = self.morph_at(depth) else {
             return own;
         };
         let before = morph.from.map_or(SHADE_BASE as f32, |from| {
-            held.placed[from].shade(held, uv, up, to_world)
+            held.placed[from].shade_at(held, uv, up, to_world, depth + 1)
         });
         before + (own - before) * morph.grown
     }

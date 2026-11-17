@@ -149,15 +149,30 @@ impl App {
         let rise = if self.terrain_active() {
             // Asks for the elevation tile under the point; the search only reads
             // what is loaded, so it does not request tiles all along the line.
-            let _ = ground_km(self, self.cam.lat, self.cam.lon, zoom);
+            let under_point = ground_km(self, self.cam.lat, self.cam.lon, zoom);
             let cache = &self.tiles.cache;
-            self.cam
-                .sight_hit(self.motion.ground_km, |lat, lon| {
-                    cache
-                        .loaded_elevation_m(lat, lon, zoom)
-                        .map(|metres| f64::from(metres) / METERS_PER_KM * exaggeration)
-                })
-                .unwrap_or(0.0)
+            let hit = self.cam.sight_hit(self.motion.ground_km, |lat, lon| {
+                cache
+                    .loaded_elevation_m(lat, lon, zoom)
+                    .map(|metres| f64::from(metres) / METERS_PER_KM * exaggeration)
+            });
+            // The point inside the ground where it stands, by more than a finer tile
+            // changes it: a jump to a mountain (search, a flight, a link) leaves it
+            // at sea level and the camera inside the rock, where the view stayed
+            // black; finer tiles arriving there raise the ground under it again. It
+            // goes straight up onto the ground, the camera with it.
+            let buried = under_point.filter(|ground| {
+                *ground > self.motion.ground_km + BURIED_KM + self.cam.alt * BURIED_PER_KM
+            });
+            match (buried, hit) {
+                (Some(ground), _) => {
+                    self.motion.ground_km = ground;
+                    ctx.request_repaint();
+                    0.0
+                }
+                (None, Some(rise)) => rise,
+                (None, None) => 0.0,
+            }
         } else {
             -self.motion.ground_km
         };
@@ -206,6 +221,11 @@ impl App {
 
 const METERS_PER_KM: f64 = 1000.0;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
+/// The looked-at point lies this far inside the ground (km, plus `BURIED_PER_KM`
+/// of the camera's distance) before it is lifted straight out rather than slid
+/// along the line of sight: more than a finer elevation tile changes it.
+const BURIED_KM: f64 = 0.02;
+const BURIED_PER_KM: f64 = 0.02;
 /// After the heading or tilt last changed, the looked-at point stays put this long: a
 /// turning drag that pauses for a frame is still turning.
 const ORBIT_HOLD: std::time::Duration = std::time::Duration::from_millis(250);

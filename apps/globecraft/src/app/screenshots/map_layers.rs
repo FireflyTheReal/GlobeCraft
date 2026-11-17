@@ -763,3 +763,45 @@ fn pivot_over_mountains_probe() {
     settle(&mut h, 2.0);
     print(&h, "after");
 }
+
+/// A jump onto Everest's flank, 500 m from the face: every elevation level arrives
+/// at once and grows in, and the looked-at point starts at sea level inside the
+/// mountain. The first frame must come within seconds and the camera stay where it
+/// was put (it took half a minute and ended inside the rock, 2026-11-17). Prints
+/// the camera each second (`PROBE_SECONDS`, 25). Manual (network).
+#[test]
+#[ignore = "manual: a jump onto Everest, its first frame and its camera"]
+fn mountain_jump_probe() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "terrain", "visible": true}))
+        .expect("terrain");
+    app.run(
+        "camera.set",
+        json!({"lat": 28.0025, "lon": 86.9389, "altitude_km": 0.5, "tilt_deg": 75.0, "heading_deg": 210.0}),
+    )
+    .expect("camera");
+    let seconds: u32 = std::env::var("PROBE_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(25);
+    for second in 0..seconds {
+        settle(&mut h, 1.0);
+        let app = h.state();
+        println!(
+            "{second:2} s: lat {:.5} lon {:.5} alt {:.3} km tilt {:.1} point {:.3} km, frame {}, idle {}",
+            app.cam.lat,
+            app.cam.lon,
+            app.cam.alt,
+            app.cam.tilt,
+            app.motion.ground_km,
+            app.frame.image.is_some(),
+            app.frame.renderer.is_idle()
+        );
+    }
+    save(&mut h, &dir, "40-mountain-jump");
+}

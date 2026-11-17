@@ -587,13 +587,23 @@ fn terrain_views() {
             return Lookup::Unavailable;
         }
         let mut tiles = tiles.lock().unwrap();
-        let tile = tiles.entry(key).or_insert_with(|| {
-            if provider == Provider::TerrainDem {
-                probe_dem_tile(z, x, y)
-            } else {
-                probe_image_tile(z, x, y)
-            }
-        });
+        let tile =
+            tiles.entry(key).or_insert_with(|| {
+                if provider == Provider::TerrainDem {
+                    // PROBE_GROWING: every level is arriving, growing in throughout (a
+                    // jump to a new place).
+                    if std::env::var_os("PROBE_GROWING").is_some() {
+                        let tile = Arc::try_unwrap(probe_dem_tile(z, x, y)).ok().unwrap();
+                        Arc::new(tile.arriving(
+                            std::time::Instant::now() + std::time::Duration::from_secs(3600),
+                        ))
+                    } else {
+                        probe_dem_tile(z, x, y)
+                    }
+                } else {
+                    probe_image_tile(z, x, y)
+                }
+            });
         Lookup::Ready(tile.clone())
     };
     let (width, height) = (960, 600);
