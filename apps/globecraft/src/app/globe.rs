@@ -126,7 +126,12 @@ impl App {
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
             terrain: relief,
-            terrain_exaggeration: self.relief_exaggeration(),
+            // The setting, not the height relief is drawn at: that one changes with the
+            // altitude (`relief_fade`), and this key is also the presentation key, so
+            // every frame finished while zooming through the fade was thrown away as
+            // out of date and the view froze there (user, 2026-11-17). The altitude is
+            // in the key already.
+            terrain_exaggeration: self.settings.layers.terrain_exaggeration,
             ground_km: self.motion.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
             night_lights: self
@@ -336,9 +341,15 @@ impl App {
                 .filter(|(_, shown)| *shown == compare_release(self)),
         ) {
             let x = rect.left() + rect.width() * compare.split;
-            painter
-                .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max))
-                .image(texture.id(), rect, whole, Color32::WHITE);
+            let right =
+                painter.with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max));
+            // Its sky is left to the sky layer too: drawn straight over the main
+            // frame, the air's glow of both added up right of the split.
+            if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
+                right.rect_filled(rect, 0.0, Color32::BLACK);
+                self.frame.sky_layer.draw(ui.ctx(), &right, rect, sky);
+            }
+            right.image(texture.id(), rect, whole, Color32::WHITE);
         }
         if !self.explorer.on_earth() {
             painter.rect_filled(rect, 0.0, Color32::BLACK);

@@ -649,3 +649,65 @@ fn sky_layer_screenshots() {
     }
     save(&mut h, &dir, "31-sky-in-flight");
 }
+
+/// Zooms in by mouse wheel from 230 km to under 90 km and prints how long each UI
+/// step takes and how many frames arrive per altitude band. Manual (network).
+#[test]
+#[ignore = "manual: times zooming through 230–90 km"]
+fn zoom_lag_probe() {
+    let mut h = harness(ThemePreference::Dark);
+    if std::env::var_os("PROBE_TERRAIN").is_some() {
+        h.state_mut()
+            .run("layer.show", json!({"layer": "terrain", "visible": true}))
+            .expect("terrain");
+    }
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": 46.6, "lon": 6.5, "altitude_km": 230.0, "tilt_deg": 0.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 8.0);
+    let centre = egui::pos2(900.0, 550.0);
+    h.event(egui::Event::PointerMoved(centre));
+    let mut bands: std::collections::BTreeMap<i64, (u32, f64, f64, u32)> = Default::default();
+    let mut last_frame = h
+        .state()
+        .frame
+        .image
+        .as_ref()
+        .map(|f| Arc::as_ptr(&f.pixels));
+    let started = std::time::Instant::now();
+    while h.state().cam.alt > 90.0 && started.elapsed().as_secs() < 120 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 4.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        let t = std::time::Instant::now();
+        h.step();
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+        let app = h.state();
+        let frame = app.frame.image.as_ref().map(|f| Arc::as_ptr(&f.pixels));
+        let band = (app.cam.alt / 10.0).floor() as i64 * 10;
+        let entry = bands.entry(band).or_default();
+        entry.0 += 1;
+        entry.1 += ms;
+        entry.2 = entry.2.max(ms);
+        entry.3 += u32::from(frame != last_frame);
+        last_frame = frame;
+    }
+    for (band, (steps, total, max, frames)) in bands.iter().rev() {
+        println!(
+            "{band:4} km: {steps:3} steps, {:6.1} ms mean, {max:6.1} ms max, {frames} frames",
+            total / f64::from(*steps)
+        );
+    }
+    let app = h.state();
+    println!(
+        "end: lat {:.4} lon {:.4} alt {:.1} ground {:.3}",
+        app.cam.lat, app.cam.lon, app.cam.alt, app.motion.ground_km
+    );
+}
