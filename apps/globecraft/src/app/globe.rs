@@ -299,12 +299,30 @@ impl App {
         }
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         if let (Some(progress), Some(from)) = (fade, &self.frame.fade_from) {
-            painter.image(from.id(), rect, whole, Color32::WHITE);
             ui.ctx().request_repaint();
             if let Some(tex) = &self.frame.texture {
                 // Eased, so the change starts and ends gently.
                 let alpha = progress * progress * (3.0 - 2.0 * progress);
-                painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
+                // old × (1 − alpha) + new × alpha, with the sky behind seen through
+                // what the two leave open. Drawn one over the other, both frames'
+                // glow over the sky layer added up and the air flashed at every
+                // fade (user, 2026-11-17).
+                let (old, new) = ((255.0 * (1.0 - alpha)) as u8, (255.0 * alpha) as u8);
+                painter.image(
+                    from.id(),
+                    rect,
+                    whole,
+                    Color32::from_rgba_premultiplied(old, old, old, 255),
+                );
+                // Alpha 0: added on top, it hides nothing.
+                painter.image(
+                    tex.id(),
+                    rect,
+                    whole,
+                    Color32::from_rgba_premultiplied(new, new, new, 0),
+                );
+            } else {
+                painter.image(from.id(), rect, whole, Color32::WHITE);
             }
         } else if let Some(tex) = &self.frame.texture {
             painter.image(tex.id(), rect, whole, Color32::WHITE);

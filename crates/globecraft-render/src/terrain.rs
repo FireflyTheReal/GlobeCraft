@@ -23,11 +23,13 @@ mod beam;
 
 /// Terrain is drawn below this camera altitude. From `TERRAIN_FADE_FROM_KM` up it
 /// flattens with the altitude (`relief_fade`), so it is gone here: switched off at
-/// once at 150 km, a tilted view of the Alps lost its relief in one frame (user's
-/// recording, 2026-11-17).
-pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 300.0;
+/// once, a tilted view of the Alps lost its relief in one frame (user's recording,
+/// 2026-11-17). 300 km for a day: relief frames cost four to five flat ones at any
+/// height, and from 150 km up that bought relief one barely sees (user: "ultra
+/// laggy around 200 km").
+pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 150.0;
 /// Below this camera altitude relief stands at its full height.
-const TERRAIN_FADE_FROM_KM: f64 = 150.0;
+const TERRAIN_FADE_FROM_KM: f64 = 100.0;
 
 /// The share of its height relief stands at for a camera `altitude_km` high: 1 up to
 /// `TERRAIN_FADE_FROM_KM`, easing to 0 at `TERRAIN_MAX_ALTITUDE_KM`.
