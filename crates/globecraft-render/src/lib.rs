@@ -16,6 +16,7 @@ use pixel::{Surface, sky, surface, with_air};
 pub use pixel::{space_color, stars};
 pub use terrain::{
     MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg, relief_fade,
+    relief_max_altitude_km,
 };
 mod tuning;
 pub mod worker;

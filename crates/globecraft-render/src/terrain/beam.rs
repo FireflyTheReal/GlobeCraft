@@ -102,6 +102,7 @@ pub(in crate::terrain) fn clear_distance(
             break;
         }
         let (zoom, weight) = levels.at(t, pixel_angle, anchor.latitude_cosine);
+        let weight = if terrain.smooth { weight } else { 1.0 };
         let mut uv = anchor.uv(t);
         let reuse = looked_up == Some(zoom)
             && current

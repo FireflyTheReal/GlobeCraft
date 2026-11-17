@@ -621,6 +621,10 @@ fn terrain_views() {
         cfg.sky = None;
         cfg.atmo = true;
         cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+        // PROBE_SHARP: without smoothing (Settings › Graphics).
+        if std::env::var_os("PROBE_SHARP").is_some() {
+            cfg.terrain = cfg.terrain.map(crate::TerrainCfg::without_smoothing);
+        }
         // Warm the tile map, then time: the fastest of a few runs, as the machine's
         // other work only ever adds time.
         let (mut pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
@@ -790,7 +794,7 @@ fn relief_switch_on_probe() {
             lat: 30.3,
             lon: 79.8,
             heading: 0.0,
-            alt: 149.9,
+            alt: 199.9,
             tilt,
         }
         .basis_for_model(
@@ -803,8 +807,8 @@ fn relief_switch_on_probe() {
         let flat = render_pixels_tracked(width, height, &basis, &cfg, &lookup).0;
         for fade in [
             0.0,
-            crate::relief_fade(149.9),
-            crate::relief_fade(140.0),
+            crate::relief_fade(199.9, true),
+            crate::relief_fade(180.0, true),
             1.0,
         ] {
             cfg.terrain = Some(crate::TerrainCfg::new(1.0, fade));

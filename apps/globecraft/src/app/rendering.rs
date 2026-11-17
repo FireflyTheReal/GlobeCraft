@@ -301,10 +301,16 @@ impl App {
             sky,
             provider: prov,
             terrain: self.terrain_active().then(|| {
-                globecraft_render::TerrainCfg::new(
+                let smooth = self.settings.smooth_relief;
+                let relief = globecraft_render::TerrainCfg::new(
                     self.settings.layers.terrain_exaggeration,
-                    globecraft_render::relief_fade(self.cam.alt),
-                )
+                    globecraft_render::relief_fade(self.cam.alt, smooth),
+                );
+                if smooth {
+                    relief
+                } else {
+                    relief.without_smoothing()
+                }
             }),
             rel,
             grid: self.layer(MapLayer::Grid),

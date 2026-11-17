@@ -89,7 +89,7 @@ impl App {
         let relief = self.terrain_active();
         // Relief that just arrived grows in: the view is drawn again for each step
         // of it, also at rest.
-        let relief_step = if relief {
+        let relief_step = if relief && self.settings.smooth_relief {
             self.tiles.cache.elevation_fade_step(RELIEF_FADE_STEP)
         } else {
             0
@@ -132,6 +132,7 @@ impl App {
             // out of date and the view froze there (user, 2026-11-17). The altitude is
             // in the key already.
             terrain_exaggeration: self.settings.layers.terrain_exaggeration,
+            smooth_relief: self.settings.smooth_relief,
             ground_km: self.motion.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
             night_lights: self

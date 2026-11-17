@@ -244,6 +244,11 @@ impl App {
             &mut self.settings.motion_resolution_relief,
             "settings-motion-resolution-relief",
         );
+        ui.checkbox(
+            &mut self.settings.smooth_relief,
+            lg.text("settings-smooth-relief-toggle"),
+        )
+        .on_hover_text(lg.text("settings-smooth-relief-help"));
         if globecraft_render::backend::GPU_BY_DEFAULT {
             let toggle = ui
                 .checkbox(

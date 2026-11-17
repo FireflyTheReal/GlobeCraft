@@ -102,6 +102,10 @@ pub struct Settings {
     /// The same for a view with 3D relief (it also applies while relief grows in);
     /// `None`: automatic (0.28).
     pub motion_resolution_relief: Option<f32>,
+    /// 3D terrain changes smoothly: heights and shading blend between detail
+    /// levels, arriving tiles grow in, and relief fades out from 100 to 200 km. Off:
+    /// each shows at once and relief stops at 150 km, for speed.
+    pub smooth_relief: bool,
     pub grid_numbers: bool,
     pub hide_navigation_controls: bool,
     /// Camera altitude (km) below which state/province lines and their names
@@ -181,6 +185,7 @@ impl Default for Settings {
             gpu_globe: true,
             motion_resolution: None,
             motion_resolution_relief: None,
+            smooth_relief: true,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
@@ -834,6 +839,7 @@ mod tests {
             gpu_globe: true,
             motion_resolution: None,
             motion_resolution_relief: None,
+            smooth_relief: true,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,

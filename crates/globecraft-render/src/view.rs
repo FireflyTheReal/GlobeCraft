@@ -77,6 +77,8 @@ pub struct RasterView {
     pub atmosphere: bool,
     pub terrain: bool,
     pub terrain_exaggeration: f32,
+    /// `TerrainCfg::without_smoothing` when false.
+    pub smooth_relief: bool,
     /// The terrain height the camera looks at (km), part of the camera position.
     pub ground_km: f64,
     pub sunlight: bool,
@@ -111,7 +113,7 @@ impl RasterView {
             (
                 self.atmosphere,
                 self.terrain,
-                self.terrain_exaggeration.to_bits(),
+                (self.terrain_exaggeration.to_bits(), self.smooth_relief),
                 sun_key,
                 self.release_index,
                 self.sky,
@@ -140,7 +142,7 @@ impl RasterView {
             self.grid,
             self.atmosphere,
             self.terrain,
-            self.terrain_exaggeration.to_bits(),
+            (self.terrain_exaggeration.to_bits(), self.smooth_relief),
             sun_key,
             (self.model.code(), self.sky),
         )
@@ -176,6 +178,7 @@ mod tests {
             atmosphere: false,
             terrain: false,
             terrain_exaggeration: 1.0,
+            smooth_relief: true,
             ground_km: 0.0,
             sunlight: false,
             sky: false,
@@ -218,6 +221,7 @@ mod tests {
             atmosphere: true,
             terrain: false,
             terrain_exaggeration: 1.0,
+            smooth_relief: true,
             ground_km: 0.0,
             sunlight: true,
             sky: false,
@@ -273,6 +277,7 @@ mod tests {
             sky: false,
             terrain: false,
             terrain_exaggeration: 1.0,
+            smooth_relief: true,
             ground_km: 0.0,
             night_lights: None,
             stars: true,

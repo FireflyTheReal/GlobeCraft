@@ -117,13 +117,14 @@ impl App {
         self.settings.layers.terrain_exaggeration.clamp(
             globecraft_render::MIN_EXAGGERATION,
             globecraft_render::MAX_EXAGGERATION,
-        ) * globecraft_render::relief_fade(self.cam.alt)
+        ) * globecraft_render::relief_fade(self.cam.alt, self.settings.smooth_relief)
     }
 
     /// Whether relief is drawn for the current view.
     pub(super) fn terrain_active(&self) -> bool {
         self.layer(MapLayer::Terrain)
-            && self.cam.alt <= globecraft_render::TERRAIN_MAX_ALTITUDE_KM
+            && self.cam.alt
+                <= globecraft_render::relief_max_altitude_km(self.settings.smooth_relief)
             && self.explorer.on_earth()
             && !self.flat_earth.open
     }

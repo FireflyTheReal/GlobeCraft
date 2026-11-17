@@ -24,16 +24,36 @@ mod beam;
 /// Terrain is drawn below this camera altitude. From `TERRAIN_FADE_FROM_KM` up it
 /// flattens with the altitude (`relief_fade`), so it is gone here: switched off at
 /// once, a tilted view of the Alps lost its relief in one frame (user's recording,
-/// 2026-11-17). 300 km for a day: relief frames cost four to five flat ones at any
-/// height, and from 150 km up that bought relief one barely sees (user: "ultra
-/// laggy around 200 km").
-pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 150.0;
+/// 2026-11-17). 300 km made 150–300 km "ultra laggy" (mostly frames thrown away,
+/// since fixed; relief frames also cost four to five flat ones); 150 km faded too
+/// quickly, 200 km is nicer (user, 2026-11-17).
+pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 200.0;
 /// Below this camera altitude relief stands at its full height.
 const TERRAIN_FADE_FROM_KM: f64 = 100.0;
+/// Without smoothing (`TerrainCfg::without_smoothing`), relief stands at its full
+/// height below this altitude and is off above it: the cheapest relief.
+const SHARP_RELIEF_MAX_ALTITUDE_KM: f64 = 150.0;
+
+/// The highest camera altitude relief is drawn at, with or without smoothing.
+pub fn relief_max_altitude_km(smooth: bool) -> f64 {
+    if smooth {
+        TERRAIN_MAX_ALTITUDE_KM
+    } else {
+        SHARP_RELIEF_MAX_ALTITUDE_KM
+    }
+}
 
 /// The share of its height relief stands at for a camera `altitude_km` high: 1 up to
-/// `TERRAIN_FADE_FROM_KM`, easing to 0 at `TERRAIN_MAX_ALTITUDE_KM`.
-pub fn relief_fade(altitude_km: f64) -> f32 {
+/// `TERRAIN_FADE_FROM_KM`, easing to 0 at `TERRAIN_MAX_ALTITUDE_KM`; without
+/// smoothing, 1 below `SHARP_RELIEF_MAX_ALTITUDE_KM` and 0 above.
+pub fn relief_fade(altitude_km: f64, smooth: bool) -> f32 {
+    if !smooth {
+        return if altitude_km <= SHARP_RELIEF_MAX_ALTITUDE_KM {
+            1.0
+        } else {
+            0.0
+        };
+    }
     let t = ((altitude_km - TERRAIN_FADE_FROM_KM)
         / (TERRAIN_MAX_ALTITUDE_KM - TERRAIN_FADE_FROM_KM))
         .clamp(0.0, 1.0);
@@ -90,6 +110,9 @@ pub struct TerrainCfg {
     /// `relief_fade`: the hill shading fades with the heights, or the view darkened
     /// and the shading appeared at once where relief switched on (user, 2026-11-17).
     fade: f32,
+    /// Heights and shading blend between elevation levels, and arriving tiles grow
+    /// in; off, each level and tile shows at once (Settings › Graphics, for speed).
+    smooth: bool,
 }
 
 impl TerrainCfg {
@@ -100,6 +123,14 @@ impl TerrainCfg {
             exaggeration: f64::from(exaggeration.clamp(MIN_EXAGGERATION, MAX_EXAGGERATION))
                 * f64::from(fade.clamp(0.0, 1.0)),
             fade: fade.clamp(0.0, 1.0),
+            smooth: true,
+        }
+    }
+    /// This relief without blending between levels or growing tiles in: faster.
+    pub fn without_smoothing(self) -> Self {
+        Self {
+            smooth: false,
+            ..self
         }
     }
 }
@@ -647,6 +678,7 @@ pub(super) fn march(
             break;
         }
         let (zoom, weight) = levels.at(t, pixel_angle, anchor.latitude_cosine);
+        let weight = if terrain.smooth { weight } else { 1.0 };
         let mut uv = anchor.uv(t);
         // Keep the tile while it covers the point and the wanted zoom holds (it may be
         // a coarser stand-in for a missing tile); look again otherwise.
@@ -684,7 +716,7 @@ pub(super) fn march(
         let held = Held::of(loc);
         // The tile's own heights: all there is to it once it has grown in.
         let elevation = tile.elevation(held.tiles);
-        let grown = tile.morph.is_none();
+        let grown = !terrain.smooth || tile.morph.is_none();
         let (vx, vy) = (
             anchor.duv.0 * tile.n * tile.size,
             anchor.duv.1 * tile.n * tile.size,
@@ -768,7 +800,11 @@ pub(super) fn march(
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
                     let uv = anchor.uv(t);
-                    let mut shade = tile.shade(held, uv, normal, to_world);
+                    let mut shade = if grown {
+                        hill_shade(&tile.grid, elevation, uv, normal, to_world)
+                    } else {
+                        tile.shade(held, uv, normal, to_world)
+                    };
                     // A finer level steepens the slopes, so the shading darkened at
                     // once where the level changed, all over the view as it zoomed
                     // (user's recording, 2026-11-17). It comes in with the zoom
@@ -780,6 +816,7 @@ pub(super) fn march(
                             - f64::from(level))
                         .clamp(0.0, 1.0) as f32;
                     if toward < 1.0
+                        && terrain.smooth
                         && level > 0
                         && let Some(coarser) = dem_tile(loc, level - 1, uv, dist)
                     {
@@ -914,9 +951,11 @@ mod tests {
             TerrainCfg::new(MIN_EXAGGERATION, 1.0)
         );
         // Relief flattens smoothly toward the altitude it stops at.
-        assert_eq!(relief_fade(TERRAIN_FADE_FROM_KM), 1.0);
-        assert_eq!(relief_fade(TERRAIN_MAX_ALTITUDE_KM), 0.0);
-        let mid = relief_fade((TERRAIN_FADE_FROM_KM + TERRAIN_MAX_ALTITUDE_KM) / 2.0);
+        assert_eq!(relief_fade(TERRAIN_FADE_FROM_KM, true), 1.0);
+        assert_eq!(relief_fade(TERRAIN_MAX_ALTITUDE_KM, true), 0.0);
+        assert_eq!(relief_fade(SHARP_RELIEF_MAX_ALTITUDE_KM, false), 1.0);
+        assert_eq!(relief_fade(SHARP_RELIEF_MAX_ALTITUDE_KM + 1.0, false), 0.0);
+        let mid = relief_fade((TERRAIN_FADE_FROM_KM + TERRAIN_MAX_ALTITUDE_KM) / 2.0, true);
         assert!((mid - 0.5).abs() < 1e-6);
         assert_eq!(
             TerrainCfg::new(2.0, 0.5).exaggeration,
@@ -1107,7 +1146,7 @@ mod march_tests {
         let geometry = EarthModel::PerfectSphere.geometry();
         let up = globecraft_core::math::ll_to_v3(30.0, 80.0);
         let origin = geometry.position(30.0, 80.0) + up * (60.0 / globecraft_core::EARTH_RADIUS_KM);
-        let ground_m_at = |zoom: f64| {
+        let ground_at = |zoom: f64, relief: TerrainCfg| {
             let mut loc = Local {
                 lookup: &lookup,
                 map: HashMap::<_, _, KeyBuild>::default(),
@@ -1128,7 +1167,7 @@ mod march_tests {
                 hits,
                 origin,
                 geometry,
-                TerrainCfg::new(1.0, 1.0),
+                relief,
                 pixel_angle,
                 0.0,
                 &mut loc,
@@ -1138,6 +1177,10 @@ mod march_tests {
                 March::Miss => panic!("the ray misses the globe"),
             }
         };
+        let ground_m_at = |zoom: f64| ground_at(zoom, TerrainCfg::new(1.0, 1.0));
+        // Without smoothing, level 5 stands at once.
+        let sharp = ground_at(5.01, TerrainCfg::new(1.0, 1.0).without_smoothing());
+        assert!((sharp - 2000.0).abs() < 20.0, "{sharp}");
         // Just past the change to level 5: nearly sea level still (it was 2,000 m at
         // once); half way through the blend, half of it; past it, all of it.
         let half = HEIGHT_BLEND_LEVELS / 2.0;
