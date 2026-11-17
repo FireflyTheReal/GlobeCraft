@@ -764,3 +764,70 @@ fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
     let centre = (height / 2 * width + width / 2) * RGBA_CHANNELS;
     assert!(plain[centre].abs_diff(250) <= 2 && plain[centre + 2].abs_diff(120) <= 2);
 }
+
+#[test]
+#[ignore = "manual: how much the picture changes where relief switches on"]
+fn relief_switch_on_probe() {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    let dir = std::path::PathBuf::from(std::env::var("GLOBECRAFT_PROBE_DIR").unwrap());
+    let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = unkey(key);
+        let mut tiles = tiles.lock().unwrap();
+        let tile = tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                probe_dem_tile(z, x, y)
+            } else {
+                probe_image_tile(z, x, y)
+            }
+        });
+        Lookup::Ready(tile.clone())
+    };
+    let (width, height) = (960, 600);
+    for tilt in [0.0, 60.0] {
+        let basis = Cam {
+            lat: 30.3,
+            lon: 79.8,
+            heading: 0.0,
+            alt: 149.9,
+            tilt,
+        }
+        .basis_for_model(
+            width as f64 / height as f64,
+            globecraft_core::earth_model::EarthModel::Wgs84,
+        );
+        let mut cfg = batch_reference_config(Provider::Satellite);
+        cfg.sky = None;
+        cfg.atmo = true;
+        let flat = render_pixels_tracked(width, height, &basis, &cfg, &lookup).0;
+        for fade in [
+            0.0,
+            crate::relief_fade(149.9),
+            crate::relief_fade(140.0),
+            1.0,
+        ] {
+            cfg.terrain = Some(crate::TerrainCfg::new(1.0, fade));
+            let relief = render_pixels_tracked(width, height, &basis, &cfg, &lookup).0;
+            let diff: Vec<u32> = flat
+                .iter()
+                .zip(&relief)
+                .map(|(a, b)| u32::from(a.abs_diff(*b)))
+                .collect();
+            let mean = diff.iter().sum::<u32>() as f64 / diff.len() as f64;
+            let big = diff.iter().filter(|d| **d > 8).count() as f64 / diff.len() as f64;
+            println!(
+                "tilt {tilt} fade {fade:.4}: mean diff {mean:.2}, {:.1} % channels off by >8",
+                big * 100.0
+            );
+            image::RgbaImage::from_raw(width as u32, height as u32, relief)
+                .unwrap()
+                .save(dir.join(format!("switch-{tilt}-{fade:.6}.png")))
+                .unwrap();
+        }
+        image::RgbaImage::from_raw(width as u32, height as u32, flat)
+            .unwrap()
+            .save(dir.join(format!("switch-{tilt}-flat.png")))
+            .unwrap();
+    }
+}

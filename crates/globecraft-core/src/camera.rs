@@ -284,6 +284,62 @@ impl Cam {
             .clamp(-MAX_CAMERA_LATITUDE_DEG, MAX_CAMERA_LATITUDE_DEG);
         rise_km
     }
+    /// How far [`Self::slide_target`] must raise the looked-at point (km; negative:
+    /// lower it) for it to lie where the line of sight first meets the ground, now
+    /// that it is `ground_km` high. `ground` gives the ground's height (km) at a place,
+    /// `None` where it is not known. Searched from the eye outward: measuring the
+    /// ground under the point and moving the point there never settled over a steep
+    /// slope, and the point jumped kilometres along the line of sight from frame to
+    /// frame, which jiggled the view and threw the zoom (user's recordings,
+    /// 2026-11-17). `None` when the line meets no known ground.
+    pub fn sight_hit(
+        &self,
+        ground_km: f64,
+        ground: impl Fn(f64, f64) -> Option<f64>,
+    ) -> Option<f64> {
+        /// Even steps from the eye out, then halvings between the last two.
+        const STEPS: usize = 128;
+        const REFINEMENTS: usize = 20;
+        /// How far past the looked-at point the line is followed, in distances.
+        const BEYOND: f64 = 2.0;
+        let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
+        let (cos_t, sin_t) = (t.cos(), t.sin());
+        // Height over the ground `s` km from the point toward the eye (negative:
+        // beyond it). The line is straight; the Earth curves away below it.
+        let above = |s: f64| {
+            let x = s * sin_t;
+            let (lat, lon) = crate::math::destination(self.lat, self.lon, self.heading + 180.0, x);
+            ground(lat, lon)
+                .map(|g| ground_km + s * cos_t + x * x / (2.0 * crate::EARTH_RADIUS_KM) - g)
+        };
+        let near = (self.alt - MIN_CAMERA_ALTITUDE_KM).max(0.0);
+        let far = -BEYOND * self.alt;
+        let mut clear: Option<f64> = None;
+        for step in 0..=STEPS {
+            let s = near + (far - near) * step as f64 / STEPS as f64;
+            let Some(height) = above(s) else {
+                continue;
+            };
+            if height > 0.0 {
+                clear = Some(s);
+                continue;
+            }
+            // The eye itself is under the ground: as close as the camera may come.
+            let Some(mut clear) = clear else {
+                return Some(near * cos_t);
+            };
+            let mut under = s;
+            for _ in 0..REFINEMENTS {
+                let middle = 0.5 * (clear + under);
+                match above(middle) {
+                    Some(height) if height > 0.0 => clear = middle,
+                    _ => under = middle,
+                }
+            }
+            return Some(0.5 * (clear + under) * cos_t);
+        }
+        None
+    }
     /// Keeps the tilt within `max_tilt` after the distance changed.
     pub fn clamp_tilt(&mut self) {
         /// Rounding in `max_tilt` at the zoom limit must not nibble at the tilt.
@@ -589,6 +645,51 @@ mod tests {
         cam.alt = 5_000.0;
         cam.zoom(1.0);
         assert_eq!(cam.tilt, 0.0);
+    }
+
+    #[test]
+    fn the_looked_at_point_lands_where_the_line_of_sight_meets_the_ground_and_stays() {
+        // A ridge running east–west 3 km north of the point, 1.5 km high, over
+        // ground 0.2 km high; the camera looks north at it from the south.
+        let ridge = |lat: f64, _lon: f64| {
+            let north_km = (lat - 46.5) * 111.2;
+            Some(0.2 + 1.3 * (-((north_km - 3.0) / 0.8).powi(2)).exp())
+        };
+        for tilt in [0.0, 50.0, 75.0] {
+            let mut cam = Cam {
+                lat: 46.5,
+                lon: 10.7,
+                heading: 0.0,
+                alt: 8.0,
+                tilt,
+            };
+            let mut ground_km = 0.0;
+            for _ in 0..3 {
+                let rise = cam
+                    .sight_hit(ground_km, ridge)
+                    .expect("the line meets the ground");
+                ground_km += cam.slide_target(rise);
+            }
+            let here = ridge(cam.lat, cam.lon).unwrap();
+            assert!(
+                (ground_km - here).abs() < 0.01,
+                "tilt {tilt}: {ground_km} km over {here} km"
+            );
+            // Settled: asked again, it stays.
+            let again = cam.sight_hit(ground_km, ridge).unwrap();
+            assert!(again.abs() < 0.002, "tilt {tilt}: moves {again} km more");
+        }
+        // Looking past the ridge's crest would be looking through it: the point is
+        // on its near face, not on the flat beyond.
+        let cam = Cam {
+            lat: 46.5 + 4.0 / 111.2,
+            lon: 10.7,
+            heading: 0.0,
+            alt: 8.0,
+            tilt: 75.0,
+        };
+        let rise = cam.sight_hit(0.2, ridge).unwrap();
+        assert!(rise > 0.3, "the ridge in front is found first: {rise}");
     }
 
     #[test]

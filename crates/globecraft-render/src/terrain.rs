@@ -89,6 +89,9 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerrainCfg {
     exaggeration: f64,
+    /// `relief_fade`: the hill shading fades with the heights, or the view darkened
+    /// and the shading appeared at once where relief switched on (user, 2026-11-17).
+    fade: f32,
 }
 
 impl TerrainCfg {
@@ -98,6 +101,7 @@ impl TerrainCfg {
         Self {
             exaggeration: f64::from(exaggeration.clamp(MIN_EXAGGERATION, MAX_EXAGGERATION))
                 * f64::from(fade.clamp(0.0, 1.0)),
+            fade: fade.clamp(0.0, 1.0),
         }
     }
 }
@@ -669,6 +673,8 @@ pub(super) fn march(
                         let before = coarser.shade(held, uv, normal, to_world);
                         shade = before + (shade - before) * toward;
                     }
+                    // Flat ground shades darker than the flat globe (`SHADE_BASE`).
+                    let shade = 1.0 + (shade - 1.0) * terrain.fade;
                     return March::Hit(
                         rays::RaySample {
                             distance: t,
@@ -798,7 +804,10 @@ mod tests {
         assert_eq!(relief_fade(TERRAIN_MAX_ALTITUDE_KM), 0.0);
         let mid = relief_fade((TERRAIN_FADE_FROM_KM + TERRAIN_MAX_ALTITUDE_KM) / 2.0);
         assert!((mid - 0.5).abs() < 1e-6);
-        assert_eq!(TerrainCfg::new(2.0, 0.5), TerrainCfg::new(1.0, 1.0));
+        assert_eq!(
+            TerrainCfg::new(2.0, 0.5).exaggeration,
+            TerrainCfg::new(1.0, 1.0).exaggeration
+        );
     }
 
     #[test]

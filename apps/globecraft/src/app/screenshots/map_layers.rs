@@ -711,3 +711,45 @@ fn zoom_lag_probe() {
         app.cam.lat, app.cam.lon, app.cam.alt, app.motion.ground_km
     );
 }
+
+/// Over steep relief, close and tilted (the user's recordings of 2026-11-17): the
+/// looked-at point must settle and stay, and wheel zooming must bring the camera
+/// steadily closer. Prints the camera each step. Manual (network).
+#[test]
+#[ignore = "manual: the looked-at point over mountains, at rest and while zooming"]
+fn pivot_over_mountains_probe() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "terrain", "visible": true}))
+        .expect("terrain");
+    app.run(
+        "camera.set",
+        json!({"lat": 30.18, "lon": 80.17, "altitude_km": 3.0, "tilt_deg": 70.0, "heading_deg": 354.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 15.0);
+    let print = |h: &Harness<'static, App>, what: &str| {
+        let app = h.state();
+        println!(
+            "{what:8} lat {:.5} lon {:.5} alt {:7.3} km, point {:6.3} km high",
+            app.cam.lat, app.cam.lon, app.cam.alt, app.motion.ground_km
+        );
+    };
+    for _ in 0..10 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        print(&h, "rest");
+    }
+    h.event(egui::Event::PointerMoved(egui::pos2(900.0, 550.0)));
+    for _ in 0..20 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 4.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        print(&h, "zoom in");
+    }
+}

@@ -143,19 +143,28 @@ impl App {
         let zoom = (EARTH_CIRCUMFERENCE_KM / self.cam.alt.max(0.05))
             .log2()
             .clamp(0.0, 15.0) as u8;
-        let wanted = if self.terrain_active() {
-            ground_km(self, self.cam.lat, self.cam.lon, zoom).unwrap_or(self.motion.ground_km)
+        // The looked-at point moves along the line of sight onto the first ground
+        // the line meets, so the picture stays still; off relief, back to sea level.
+        let rise = if self.terrain_active() {
+            // Asks for the elevation tile under the point; the search only reads
+            // what is loaded, so it does not request tiles all along the line.
+            let _ = ground_km(self, self.cam.lat, self.cam.lon, zoom);
+            let cache = &self.tiles.cache;
+            self.cam
+                .sight_hit(self.motion.ground_km, |lat, lon| {
+                    cache
+                        .loaded_elevation_m(lat, lon, zoom)
+                        .map(|metres| f64::from(metres) / METERS_PER_KM * exaggeration)
+                })
+                .unwrap_or(0.0)
         } else {
-            0.0
+            -self.motion.ground_km
         };
-        // The looked-at point follows the ground along the line of sight, so the
-        // picture stays still; the next frame measures the ground at its new place.
-        let gap = wanted - self.motion.ground_km;
-        if gap.abs() > GROUND_SETTLED_KM {
-            self.motion.ground_km += self.cam.slide_target(gap);
+        if rise.abs() > GROUND_SETTLED_KM {
+            self.motion.ground_km += self.cam.slide_target(rise);
             ctx.request_repaint();
-        } else {
-            self.motion.ground_km = wanted;
+        } else if !self.terrain_active() {
+            self.motion.ground_km = 0.0;
         }
         if !self.terrain_active() || self.cam.tilt <= 0.0 {
             return;
@@ -181,7 +190,7 @@ impl App {
 
 const METERS_PER_KM: f64 = 1000.0;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
-/// Below this the eased height snaps to the target and stops asking for frames.
+/// The looked-at point moves only when it is off the ground by more than this.
 const GROUND_SETTLED_KM: f64 = 0.0005;
 /// A tilted camera stays at least this high above the terrain beneath it: enough
 /// not to look through a slope (150 m until 2026-11-16, which kept the camera out
