@@ -434,12 +434,16 @@ const MIN_BAND_START: f64 = 1e-9;
 /// The elevation zoom for a point `t` away: texels of about `DEM_PIXELS_PER_TEXEL`
 /// pixels, given the angle per pixel `pixel_angle`.
 fn dem_zoom(t: f64, pixel_angle: f64, latitude_cosine: f64, tile_texels: f64) -> i32 {
+    (dem_zoom_exact(t, pixel_angle, latitude_cosine, tile_texels).floor() as i32)
+        .clamp(0, DEM_MAX_ZOOM)
+}
+
+/// `dem_zoom` before it is rounded down to a level.
+fn dem_zoom_exact(t: f64, pixel_angle: f64, latitude_cosine: f64, tile_texels: f64) -> f64 {
     let metres_per_pixel = (t * EARTH_RADIUS_M * pixel_angle).max(0.01);
     let texel_m = metres_per_pixel * DEM_PIXELS_PER_TEXEL;
-    let zoom = (2.0 * PI * EARTH_RADIUS_M * latitude_cosine.max(MIN_LATITUDE_COSINE)
-        / (tile_texels * texel_m))
-        .log2();
-    (zoom.floor() as i32).clamp(0, DEM_MAX_ZOOM)
+    (2.0 * PI * EARTH_RADIUS_M * latitude_cosine.max(MIN_LATITUDE_COSINE) / (tile_texels * texel_m))
+        .log2()
 }
 
 /// Where the rays of each block of pixels in rows `rows` may start their march: for
@@ -627,7 +631,26 @@ pub(super) fn march(
                     });
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
-                    let shade = tile.shade(held, anchor.uv(t), normal, to_world);
+                    let uv = anchor.uv(t);
+                    let mut shade = tile.shade(held, uv, normal, to_world);
+                    // A finer level steepens the slopes, so the shading darkened at
+                    // once where the level changed, all over the view as it zoomed
+                    // (user's recording, 2026-11-17). It comes in with the zoom
+                    // instead: from the next coarser level's at the change to this
+                    // level's one level on.
+                    let level = tile.n.log2().round() as i32;
+                    let toward =
+                        (dem_zoom_exact(t, pixel_angle, anchor.latitude_cosine, DEM_TILE_TEXELS)
+                            - f64::from(level))
+                        .clamp(0.0, 1.0) as f32;
+                    if toward < 1.0
+                        && level > 0
+                        && let Some(coarser) = dem_tile(loc, level - 1, uv, dist)
+                    {
+                        let held = Held::of(loc);
+                        let before = coarser.shade(held, uv, normal, to_world);
+                        shade = before + (shade - before) * toward;
+                    }
                     return March::Hit(
                         rays::RaySample {
                             distance: t,
@@ -847,6 +870,69 @@ mod march_tests {
             (Provider::TerrainDem, 0..5, ..) if with_stand_in => Lookup::Ready(old.clone()),
             _ => Lookup::Unavailable,
         }
+    }
+
+    #[test]
+    fn shading_comes_in_with_the_zoom_instead_of_at_the_level_change() {
+        // Level 5 slopes steeply east; the coarser levels are flat.
+        let ramp: Vec<f32> = (0..512 * 512).map(|i| (i % 16) as f32 * 400.0).collect();
+        let fine = Arc::new(Tile::from_elevation(Elevation::from_heights(512, ramp)));
+        let flat = Arc::new(Tile::from_elevation(Elevation::from_heights(
+            512,
+            vec![0.0; 512 * 512],
+        )));
+        let lookup = move |key| match crate::unkey(key) {
+            (Provider::TerrainDem, 5, ..) => Lookup::Ready(fine.clone()),
+            (Provider::TerrainDem, 0..5, ..) => Lookup::Ready(flat.clone()),
+            _ => Lookup::Unavailable,
+        };
+        let geometry = EarthModel::PerfectSphere.geometry();
+        let up = globecraft_core::math::ll_to_v3(30.0, 80.0);
+        let origin = geometry.position(30.0, 80.0) + up * (60.0 / globecraft_core::EARTH_RADIUS_KM);
+        let shade_at = |zoom: f64| {
+            let mut loc = Local {
+                lookup: &lookup,
+                map: HashMap::<_, _, KeyBuild>::default(),
+                dem: Vec::new(),
+                dem_placed: Vec::new(),
+                dem_index: HashMap::default(),
+                now: std::time::Instant::now(),
+            };
+            let (ray, hits) = ray_from(origin, -up, geometry);
+            // The pixel angle that puts the ground at `zoom`.
+            let t = 60.0 / globecraft_core::EARTH_RADIUS_KM;
+            let latitude_cosine = 30f64.to_radians().cos();
+            let pixel_angle = 2.0 * PI * latitude_cosine
+                / (DEM_TILE_TEXELS * t * DEM_PIXELS_PER_TEXEL * zoom.exp2());
+            let March::Hit(_, shade) = march(
+                &ray,
+                0.0,
+                hits,
+                origin,
+                geometry,
+                TerrainCfg::new(1.0),
+                pixel_angle,
+                0.0,
+                &mut loc,
+            ) else {
+                panic!("no hit");
+            };
+            shade
+        };
+        let flat_shade = SHADE_BASE as f32;
+        let full = shade_at(6.5);
+        let difference = (full - flat_shade).abs();
+        assert!(difference > 0.04, "level 5 shades differently: {full}");
+        // Just past the change to level 5: still nearly the flat level's shading
+        // (it was level 5's at once).
+        let start = shade_at(5.02);
+        assert!((start - flat_shade).abs() < 0.2 * difference, "{start}");
+        // Half a level on: half of the way to level 5's.
+        let half = shade_at(5.5);
+        assert!(
+            (half - (flat_shade + full) / 2.0).abs() < 0.2 * difference,
+            "{half} {full}"
+        );
     }
 
     #[test]

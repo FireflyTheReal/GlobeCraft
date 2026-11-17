@@ -9,22 +9,29 @@ const ACTIVE_RENDER_SCALE: f32 = 0.4;
 /// flat frame, so motion frames are smaller (about half the pixels of
 /// `ACTIVE_RENDER_SCALE`); the full-resolution frame follows once the view rests.
 const ACTIVE_RELIEF_RENDER_SCALE: f32 = 0.28;
+/// The lowest motion scale a setting may choose.
+pub const MIN_MOTION_SCALE: f32 = 0.2;
 const MIN_RENDER_WIDTH_PX: usize = 64;
 const MAX_RENDER_WIDTH_PX: usize = 2000;
 const MIN_RENDER_HEIGHT_PX: usize = 32;
 pub const SCENE_TIME_UPDATE_INTERVAL_SECS: f64 = 60.0;
 /// The raster for a viewport: full resolution at rest, smaller while moving (smaller
 /// still with `relief`, 3D terrain on screen).
+/// The raster for a view `size_points` large. A moving view (`idle` false) renders
+/// at `motion_scale` of the full size, or by default at a scale for its kind of
+/// view (lower with relief, which costs most).
 pub fn raster_size(
     size_points: Vec2,
     pixels_per_point: f32,
     idle: bool,
     relief: bool,
+    motion_scale: Option<f32>,
 ) -> (usize, usize) {
-    let scale = match (idle, relief) {
-        (true, _) => IDLE_RENDER_SCALE,
-        (false, false) => ACTIVE_RENDER_SCALE,
-        (false, true) => ACTIVE_RELIEF_RENDER_SCALE,
+    let scale = match (idle, relief, motion_scale) {
+        (true, ..) => IDLE_RENDER_SCALE,
+        (false, _, Some(scale)) => scale.clamp(MIN_MOTION_SCALE, IDLE_RENDER_SCALE),
+        (false, false, None) => ACTIVE_RENDER_SCALE,
+        (false, true, None) => ACTIVE_RELIEF_RENDER_SCALE,
     };
     let width = ((size_points.x * pixels_per_point * scale) as usize)
         .clamp(MIN_RENDER_WIDTH_PX, MAX_RENDER_WIDTH_PX);
@@ -42,9 +49,15 @@ pub fn raster_size(
 /// are capped at `MAX_RENDER_WIDTH_PX`, so on a large Retina window (3660 px) the
 /// idle raster is 2000 px while the motion raster (1464 px) is not capped. Using the
 /// nominal 0.4 there put motion frames almost a full level finer than idle frames.
-pub fn render_scale(size_points: Vec2, pixels_per_point: f32, idle: bool, relief: bool) -> f32 {
-    let (width, _) = raster_size(size_points, pixels_per_point, idle, relief);
-    let (idle_width, _) = raster_size(size_points, pixels_per_point, true, relief);
+pub fn render_scale(
+    size_points: Vec2,
+    pixels_per_point: f32,
+    idle: bool,
+    relief: bool,
+    motion_scale: Option<f32>,
+) -> f32 {
+    let (width, _) = raster_size(size_points, pixels_per_point, idle, relief, motion_scale);
+    let (idle_width, _) = raster_size(size_points, pixels_per_point, true, relief, None);
     width as f32 / idle_width as f32
 }
 #[derive(Clone)]
@@ -274,6 +287,20 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_motion_resolution_sets_the_moving_raster_and_keeps_the_level() {
+        let size = Vec2::new(1280.0, 800.0);
+        for (scale, width) in [(Some(1.0), 1280), (Some(0.28), 358), (Some(0.05), 256)] {
+            assert_eq!(raster_size(size, 1.0, false, true, scale).0, width);
+            // Still at rest: the full size.
+            assert_eq!(raster_size(size, 1.0, true, true, scale).0, 1280);
+            let (_, height) = raster_size(size, 1.0, false, true, scale);
+            let density = render_scale(size, 1.0, false, true, scale) / height as f32;
+            let idle = 1.0 / raster_size(size, 1.0, true, true, None).1 as f32;
+            assert!((density / idle).log2().abs() < 0.02, "{scale:?}");
+        }
+    }
+
+    #[test]
     fn motion_and_idle_frames_choose_the_same_level_even_when_the_idle_raster_is_capped() {
         // `pixel::surface` picks the level from `render_scale / raster height`.
         for (size, ppp) in [
@@ -283,8 +310,8 @@ mod tests {
         ] {
             for relief in [false, true] {
                 let density = |idle| {
-                    let (_, height) = raster_size(size, ppp, idle, relief);
-                    render_scale(size, ppp, idle, relief) / height as f32
+                    let (_, height) = raster_size(size, ppp, idle, relief, None);
+                    render_scale(size, ppp, idle, relief, None) / height as f32
                 };
                 let (idle, motion) = (density(true), density(false));
                 assert!(
@@ -295,7 +322,7 @@ mod tests {
             }
         }
         assert_eq!(
-            render_scale(Vec2::new(1280.0, 800.0), 1.0, true, false),
+            render_scale(Vec2::new(1280.0, 800.0), 1.0, true, false, None),
             1.0
         );
     }
@@ -303,19 +330,19 @@ mod tests {
     #[test]
     fn interaction_resolution_and_size_limits_are_preserved() {
         assert_eq!(
-            raster_size(Vec2::new(1280.0, 800.0), 1.0, true, false),
+            raster_size(Vec2::new(1280.0, 800.0), 1.0, true, false, None),
             (1280, 800)
         );
         assert_eq!(
-            raster_size(Vec2::new(1280.0, 800.0), 1.0, false, false),
+            raster_size(Vec2::new(1280.0, 800.0), 1.0, false, false, None),
             (512, 320)
         );
         assert_eq!(
-            raster_size(Vec2::new(1280.0, 800.0), 1.0, false, true),
+            raster_size(Vec2::new(1280.0, 800.0), 1.0, false, true, None),
             (358, 223)
         );
         assert_eq!(
-            raster_size(Vec2::new(4000.0, 2000.0), 2.0, true, true),
+            raster_size(Vec2::new(4000.0, 2000.0), 2.0, true, true, None),
             (2000, 1000)
         );
     }

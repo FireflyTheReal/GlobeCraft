@@ -107,7 +107,9 @@ impl App {
             && self.time.speed() == 0.0
             && relief_step == 0;
         let render_aspect = (viewport.width() / viewport.height()) as f64;
-        let (w, h) = globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief);
+        let motion_scale = self.settings.motion_resolution;
+        let (w, h) =
+            globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief, motion_scale);
         let keys = globecraft_render::view::RasterView {
             camera: self.cam,
             model: self.active_earth_model(),
@@ -239,8 +241,13 @@ impl App {
         );
         match outcome {
             WakeOutcome::Submit => {
-                let lod_scale =
-                    globecraft_render::view::render_scale(viewport.size(), ppp, idle, relief);
+                let lod_scale = globecraft_render::view::render_scale(
+                    viewport.size(),
+                    ppp,
+                    idle,
+                    relief,
+                    motion_scale,
+                );
                 self.request_render(
                     RenderSize {
                         width: w,
