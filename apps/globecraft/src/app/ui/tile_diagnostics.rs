@@ -81,6 +81,7 @@ impl App {
             painter.ctx().pixels_per_point(),
             true,
             false,
+            None,
         );
         let provider = self.effective_provider();
         let cfg = globecraft_render::RenderCfg {

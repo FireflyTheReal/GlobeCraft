@@ -340,6 +340,9 @@ statusbar-cursor-elevation = Elevação: { $distance }
 
 
 settings-uncap-fps-toggle = FPS sem limite (requer reiniciar)
+settings-motion-resolution-auto = Quadros mais leves em movimento (automático)
+settings-motion-resolution = Resolução em movimento
+settings-motion-resolution-help = Enquanto a vista se move ou o relevo carrega, os quadros são renderizados a uma parte da resolução total, para chegarem depressa. O automático usa 40 %, ou 28 % com relevo. 100 % é o mais nítido e o mais lento.
 settings-gpu-globe-toggle = Desenhar o globo na GPU (beta, requer reinício)
 settings-gpu-globe-help = Mais rápido na maioria das placas de vídeo. Vistas próximas, a grade, o relevo e qualquer problema da GPU continuam usando o renderizador da CPU. Desative se o globo parecer errado.
 settings-gpu-globe-running = Em uso: { $adapter }.

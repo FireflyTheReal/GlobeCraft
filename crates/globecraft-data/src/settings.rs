@@ -96,6 +96,9 @@ pub struct Settings {
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
+    /// The resolution a moving view renders at, as a share of the full one (0.2–1);
+    /// `None` chooses by the view (0.4, or 0.28 with relief).
+    pub motion_resolution: Option<f32>,
     pub grid_numbers: bool,
     pub hide_navigation_controls: bool,
     /// Camera altitude (km) below which state/province lines and their names
@@ -173,6 +176,7 @@ impl Default for Settings {
             offline: false,
             keys_in_keychain: false,
             gpu_globe: true,
+            motion_resolution: None,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
@@ -824,6 +828,7 @@ mod tests {
             offline: false,
             keys_in_keychain: false,
             gpu_globe: true,
+            motion_resolution: None,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
