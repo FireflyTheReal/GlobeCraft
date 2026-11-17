@@ -618,7 +618,7 @@ fn terrain_views() {
         let mut cfg = batch_reference_config(Provider::Satellite);
         cfg.sky = None;
         cfg.atmo = true;
-        cfg.terrain = Some(crate::TerrainCfg::new(1.0));
+        cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
         // Warm the tile map, then time: the fastest of a few runs, as the machine's
         // other work only ever adds time.
         let (mut pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);

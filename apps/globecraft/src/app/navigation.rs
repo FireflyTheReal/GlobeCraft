@@ -95,7 +95,7 @@ impl App {
     pub(super) fn overlay_ground(&self) -> Option<globecraft_render::overlays::OverlayGround> {
         self.terrain_active()
             .then(|| globecraft_render::overlays::OverlayGround {
-                exaggeration: self.settings.layers.terrain_exaggeration,
+                exaggeration: self.relief_exaggeration(),
                 generation: self.tiles.cache.elevation_generation(),
             })
     }
@@ -111,6 +111,15 @@ impl App {
         }
     }
 
+    /// The vertical exaggeration relief is drawn with: the setting's, flattened as
+    /// the camera rises toward `TERRAIN_MAX_ALTITUDE_KM`.
+    pub(super) fn relief_exaggeration(&self) -> f32 {
+        self.settings.layers.terrain_exaggeration.clamp(
+            globecraft_render::MIN_EXAGGERATION,
+            globecraft_render::MAX_EXAGGERATION,
+        ) * globecraft_render::relief_fade(self.cam.alt)
+    }
+
     /// Whether relief is drawn for the current view.
     pub(super) fn terrain_active(&self) -> bool {
         self.layer(MapLayer::Terrain)
@@ -119,13 +128,10 @@ impl App {
             && !self.flat_earth.open
     }
 
-    /// Eases the looked-at ground height toward the terrain under the view centre, and
-    /// keeps a tilted camera above the terrain beneath it.
+    /// Moves the looked-at point onto the terrain under the view centre, and keeps a
+    /// tilted camera above the terrain beneath it.
     pub(super) fn follow_ground(&mut self, ctx: &eframe::egui::Context) {
-        let exaggeration = f64::from(self.settings.layers.terrain_exaggeration.clamp(
-            globecraft_render::MIN_EXAGGERATION,
-            globecraft_render::MAX_EXAGGERATION,
-        ));
+        let exaggeration = f64::from(self.relief_exaggeration());
         let ground_km = |app: &Self, lat: f64, lon: f64, zoom: u8| {
             app.tiles
                 .cache
@@ -142,11 +148,11 @@ impl App {
         } else {
             0.0
         };
-        let dt = super::frame_timing::animation_delta_secs(ctx);
-        let ease = 1.0 - (-dt / GROUND_EASE_SECS).exp();
+        // The looked-at point follows the ground along the line of sight, so the
+        // picture stays still; the next frame measures the ground at its new place.
         let gap = wanted - self.motion.ground_km;
         if gap.abs() > GROUND_SETTLED_KM {
-            self.motion.ground_km += gap * ease;
+            self.motion.ground_km += self.cam.slide_target(gap);
             ctx.request_repaint();
         } else {
             self.motion.ground_km = wanted;
@@ -175,8 +181,6 @@ impl App {
 
 const METERS_PER_KM: f64 = 1000.0;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
-/// The looked-at height follows a new elevation value over about this time.
-const GROUND_EASE_SECS: f64 = 0.25;
 /// Below this the eased height snaps to the target and stops asking for frames.
 const GROUND_SETTLED_KM: f64 = 0.0005;
 /// A tilted camera stays at least this high above the terrain beneath it: enough

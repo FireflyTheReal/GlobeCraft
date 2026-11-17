@@ -21,8 +21,22 @@ use std::sync::Arc;
 
 mod beam;
 
-/// Terrain is drawn below this camera altitude; above it relief is smaller than a pixel.
-pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 150.0;
+/// Terrain is drawn below this camera altitude. From `TERRAIN_FADE_FROM_KM` up it
+/// flattens with the altitude (`relief_fade`), so it is gone here: switched off at
+/// once at 150 km, a tilted view of the Alps lost its relief in one frame (user's
+/// recording, 2026-11-17).
+pub const TERRAIN_MAX_ALTITUDE_KM: f64 = 300.0;
+/// Below this camera altitude relief stands at its full height.
+const TERRAIN_FADE_FROM_KM: f64 = 150.0;
+
+/// The share of its height relief stands at for a camera `altitude_km` high: 1 up to
+/// `TERRAIN_FADE_FROM_KM`, easing to 0 at `TERRAIN_MAX_ALTITUDE_KM`.
+pub fn relief_fade(altitude_km: f64) -> f32 {
+    let t = ((altitude_km - TERRAIN_FADE_FROM_KM)
+        / (TERRAIN_MAX_ALTITUDE_KM - TERRAIN_FADE_FROM_KM))
+        .clamp(0.0, 1.0);
+    (1.0 - t * t * (3.0 - 2.0 * t)) as f32
+}
 /// Accepted vertical exaggeration.
 pub const MIN_EXAGGERATION: f32 = 0.5;
 pub const MAX_EXAGGERATION: f32 = 3.0;
@@ -76,10 +90,12 @@ pub struct TerrainCfg {
 }
 
 impl TerrainCfg {
-    /// Relief with the given vertical exaggeration, clamped to the accepted range.
-    pub fn new(exaggeration: f32) -> Self {
+    /// Relief with the given vertical exaggeration (clamped to the accepted range),
+    /// flattened by `fade` (0–1, `relief_fade`).
+    pub fn new(exaggeration: f32, fade: f32) -> Self {
         Self {
-            exaggeration: f64::from(exaggeration.clamp(MIN_EXAGGERATION, MAX_EXAGGERATION)),
+            exaggeration: f64::from(exaggeration.clamp(MIN_EXAGGERATION, MAX_EXAGGERATION))
+                * f64::from(fade.clamp(0.0, 1.0)),
         }
     }
 }
@@ -767,8 +783,20 @@ mod tests {
 
     #[test]
     fn exaggeration_is_clamped() {
-        assert_eq!(TerrainCfg::new(10.0), TerrainCfg::new(MAX_EXAGGERATION));
-        assert_eq!(TerrainCfg::new(0.0), TerrainCfg::new(MIN_EXAGGERATION));
+        assert_eq!(
+            TerrainCfg::new(10.0, 1.0),
+            TerrainCfg::new(MAX_EXAGGERATION, 1.0)
+        );
+        assert_eq!(
+            TerrainCfg::new(0.0, 1.0),
+            TerrainCfg::new(MIN_EXAGGERATION, 1.0)
+        );
+        // Relief flattens smoothly toward the altitude it stops at.
+        assert_eq!(relief_fade(TERRAIN_FADE_FROM_KM), 1.0);
+        assert_eq!(relief_fade(TERRAIN_MAX_ALTITUDE_KM), 0.0);
+        let mid = relief_fade((TERRAIN_FADE_FROM_KM + TERRAIN_MAX_ALTITUDE_KM) / 2.0);
+        assert!((mid - 0.5).abs() < 1e-6);
+        assert_eq!(TerrainCfg::new(2.0, 0.5), TerrainCfg::new(1.0, 1.0));
     }
 
     #[test]
@@ -910,7 +938,7 @@ mod march_tests {
                 hits,
                 origin,
                 geometry,
-                TerrainCfg::new(1.0),
+                TerrainCfg::new(1.0, 1.0),
                 pixel_angle,
                 0.0,
                 &mut loc,
@@ -962,7 +990,7 @@ mod march_tests {
                     hits,
                     origin,
                     geometry,
-                    TerrainCfg::new(1.0),
+                    TerrainCfg::new(1.0, 1.0),
                     1e-3,
                     0.0,
                     &mut loc,
@@ -998,7 +1026,7 @@ mod march_tests {
                 hits,
                 origin,
                 geometry,
-                TerrainCfg::new(1.0),
+                TerrainCfg::new(1.0, 1.0),
                 1e-3,
                 0.0,
                 &mut loc,
@@ -1014,7 +1042,7 @@ mod march_tests {
             let (ray, hits) = ray_from(origin, grazing, geometry);
             assert!(hits);
             assert!(matches!(
-                march(&ray, 0.0, hits, origin, geometry, TerrainCfg::new(1.0), 1e-3, 0.0, &mut loc),
+                march(&ray, 0.0, hits, origin, geometry, TerrainCfg::new(1.0, 1.0), 1e-3, 0.0, &mut loc),
                 March::Hit(ground, _) if ground.distance < ray.distance * 0.9
             ));
             // One that clears the plateau over the curve sees past it: sky.
@@ -1027,7 +1055,7 @@ mod march_tests {
                     hits,
                     origin,
                     geometry,
-                    TerrainCfg::new(1.0),
+                    TerrainCfg::new(1.0, 1.0),
                     1e-3,
                     0.0,
                     &mut loc
@@ -1043,7 +1071,7 @@ mod march_tests {
                     hits,
                     origin,
                     geometry,
-                    TerrainCfg::new(1.0),
+                    TerrainCfg::new(1.0, 1.0),
                     1e-3,
                     0.0,
                     &mut loc

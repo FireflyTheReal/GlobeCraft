@@ -13,7 +13,9 @@ pub mod polar;
 mod rays;
 mod terrain;
 use pixel::{Surface, sky, surface, with_air};
-pub use terrain::{MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg};
+pub use terrain::{
+    MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg, relief_fade,
+};
 mod tuning;
 pub mod worker;
 pub mod zoom_out;

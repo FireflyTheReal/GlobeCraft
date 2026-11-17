@@ -10,6 +10,8 @@ use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dcamera::rh};
 const PROJECTION_DEPTH_EPSILON: f64 = 1e-9;
 const ROTATION_AXIS_EPSILON: f64 = 1e-13;
 const MIN_PAN_LATITUDE_COSINE: f64 = 0.05;
+/// `slide_target` treats views tilted further than this (cos 80°) as tilted this far.
+const MIN_SLIDE_COS: f64 = 0.17;
 /// Pans that start or end closer to a pole than this follow great circles, and
 /// from here to `POLE_HELD_LATITUDE_DEG` north stays up less and less.
 const POLE_PAN_LATITUDE_DEG: f64 = 60.0;
@@ -246,6 +248,29 @@ impl Cam {
             self.alt = needed.min(MAX_CAMERA_ALTITUDE_KM);
         }
         self.tilt = tilt.min(self.max_tilt());
+    }
+    /// Moves the looked-at point `rise_km` up along the line of sight, keeping the
+    /// eye where it is: when the ground under the view centre turns out higher or
+    /// lower (finer relief arrived, or a pan moved the centre over a slope), the view
+    /// stays still instead of the camera moving with its target. Easing the target
+    /// up and down moved the whole picture after every stop (user's recording,
+    /// 2026-11-17). Returns the rise made, less when the camera reached its closest
+    /// distance.
+    pub fn slide_target(&mut self, rise_km: f64) -> f64 {
+        let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
+        // Steeper views move the target far along the ground for a little height.
+        let cos_t = t.cos().max(MIN_SLIDE_COS);
+        let rise_km = rise_km.min((self.alt - MIN_CAMERA_ALTITUDE_KM).max(0.0) * cos_t);
+        let along_km = rise_km / cos_t;
+        self.alt -= along_km;
+        // Toward the camera when it rises: back against the heading.
+        let back_km = along_km * t.sin();
+        (self.lat, self.lon) =
+            crate::math::destination(self.lat, self.lon, self.heading + 180.0, back_km);
+        self.lat = self
+            .lat
+            .clamp(-MAX_CAMERA_LATITUDE_DEG, MAX_CAMERA_LATITUDE_DEG);
+        rise_km
     }
     /// Keeps the tilt within `max_tilt` after the distance changed.
     pub fn clamp_tilt(&mut self) {
@@ -528,6 +553,41 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    #[test]
+    fn sliding_the_target_keeps_the_eye_and_the_line_of_sight() {
+        for tilt in [0.0, 45.0, 75.0] {
+            let mut cam = Cam {
+                lat: 46.5,
+                lon: 10.7,
+                heading: 30.0,
+                alt: 5.0,
+                tilt,
+            };
+            let before = cam.basis_over_ground(1.5, EarthModel::Wgs84, 1.2);
+            let rise = cam.slide_target(0.6);
+            assert_eq!(rise, 0.6);
+            let after = cam.basis_over_ground(1.5, EarthModel::Wgs84, 1.2 + rise);
+            let moved_m = (after.c - before.c).length() * EARTH_RADIUS_KM * 1000.0;
+            // The step is taken on the flat: over 2 km along the ground (75°) the
+            // curve leaves a few metres, a thousandth of the distance.
+            assert!(moved_m < 10.0, "tilt {tilt}: the eye moved {moved_m} m");
+            let forward = |basis: &Basis| basis.world_from_view * DVec3::NEG_Z;
+            let turned = forward(&before).angle_between(forward(&after)).to_degrees();
+            assert!(turned < 0.05, "tilt {tilt}: the view turned {turned}°");
+        }
+        // It stops at the closest distance.
+        let mut cam = Cam {
+            lat: 46.5,
+            lon: 10.7,
+            heading: 0.0,
+            alt: 0.5,
+            tilt: 0.0,
+        };
+        let rise = cam.slide_target(2.0);
+        assert!((cam.alt - MIN_CAMERA_ALTITUDE_KM).abs() < 1e-12);
+        assert!((rise - (0.5 - MIN_CAMERA_ALTITUDE_KM)).abs() < 1e-12);
+    }
 
     /// Dragging sideways at 86° moves the globe with the hand: the pole, in view
     /// above the centre, goes along by about the drag. Stepping in longitude left

@@ -122,7 +122,7 @@ impl App {
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
             terrain: relief,
-            terrain_exaggeration: self.settings.layers.terrain_exaggeration,
+            terrain_exaggeration: self.relief_exaggeration(),
             ground_km: self.motion.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
             night_lights: self

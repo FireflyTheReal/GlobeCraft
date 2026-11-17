@@ -162,7 +162,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
     let config = RenderCfg {
         sky: None,
         provider: Provider::Satellite,
-        terrain: terrain.then(|| TerrainCfg::new(1.5)),
+        terrain: terrain.then(|| TerrainCfg::new(1.5, 1.0)),
         rel: 0,
         grid: true,
         grid_step: 10.0,

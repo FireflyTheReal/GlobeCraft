@@ -258,7 +258,7 @@ fn replay(
         // GLOBECRAFT_REPLAY_TERRAIN=1 adds relief, as the app draws it below 150 km.
         terrain: std::env::var("GLOBECRAFT_REPLAY_TERRAIN")
             .is_ok()
-            .then(|| crate::TerrainCfg::new(1.0))
+            .then(|| crate::TerrainCfg::new(1.0, 1.0))
             .filter(|_| cam_alt.get() <= crate::TERRAIN_MAX_ALTITUDE_KM),
         rel: 0,
         grid: false,

@@ -298,7 +298,10 @@ impl App {
             sky,
             provider: prov,
             terrain: self.terrain_active().then(|| {
-                globecraft_render::TerrainCfg::new(self.settings.layers.terrain_exaggeration)
+                globecraft_render::TerrainCfg::new(
+                    self.settings.layers.terrain_exaggeration,
+                    globecraft_render::relief_fade(self.cam.alt),
+                )
             }),
             rel,
             grid: self.layer(MapLayer::Grid),
