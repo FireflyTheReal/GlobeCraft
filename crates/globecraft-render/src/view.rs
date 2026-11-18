@@ -86,8 +86,8 @@ pub struct RasterView {
     pub stars: bool,
     pub sky: bool,
     /// The clouds as the frame draws them from below: the layer's opacity (bits)
-    /// and which map, when shown.
-    pub clouds: Option<(u32, usize)>,
+    /// and which map (the live maps' generation), when shown.
+    pub clouds: Option<(u32, u64)>,
 }
 pub struct ViewKeys {
     pub state: u64,

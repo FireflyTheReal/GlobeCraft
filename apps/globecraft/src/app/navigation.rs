@@ -122,7 +122,11 @@ impl App {
     pub(super) fn cloud_light(&self) -> globecraft_render::clouds::CloudLight {
         use globecraft_render::clouds::CloudLight;
         if self.layer(MapLayer::Sunlight) {
-            let (lat, lon) = globecraft_core::math::subsolar(self.scene_unix());
+            // The sun in the frame's steps of time, so that a still view keeps its
+            // cloud mesh (`LiveMaps::draw_clouds`).
+            let step = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
+            let (lat, lon) =
+                globecraft_core::math::subsolar((self.scene_unix() / step).floor() * step);
             CloudLight::Sun(globecraft_core::math::ll_to_v3(lat, lon))
         } else if self.layer(MapLayer::NightLights) {
             CloudLight::Night

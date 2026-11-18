@@ -30,7 +30,11 @@ pub(super) async fn download_clouds() -> Result<CloudMap, crate::Error> {
     tokio::task::spawn_blocking(move || {
         let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?;
         let (width, height) = (image.width(), image.height());
-        let alpha: Vec<u8> = image.into_rgba8().pixels().map(|pixel| pixel[3]).collect();
+        let alpha: Vec<u8> = image
+            .into_luma_alpha8()
+            .pixels()
+            .map(|pixel| pixel[1])
+            .collect();
         let full = GrayImage::from_raw(width, height, alpha)
             .ok_or_else(|| crate::Error::msg("cloud image has an unexpected size"))?;
         let mut levels = vec![full];

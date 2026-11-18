@@ -6,7 +6,7 @@ Repository: https://github.com/matteason/live-cloud-maps
 The clouds are drawn as a layer 8 km above the ground (`globecraft_render::clouds`),
 from the full 8192 × 4096 map (with 4096- and 2048-wide levels for views from far
 out), lit like the globe: white by day, faint blue-grey at night. From above the
-app draws them over the frame and they fade out between 30 and 12 km; from below
+app draws them over the frame and they fade out between 20 and 8.5 km; from below
 (under 8 km) the renderer draws them into the sky, where relief hides them.
 **Required source attribution:** Contains modified EUMETSAT data
 

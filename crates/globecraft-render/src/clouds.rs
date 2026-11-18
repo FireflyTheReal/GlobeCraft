@@ -20,10 +20,10 @@ use std::sync::Arc;
 pub const CLOUD_LAYER_KM: f64 = 8.0;
 /// How opaque the thickest cloud is drawn, before the layer's own opacity.
 pub const CLOUD_OPACITY: f32 = 0.78;
-/// Close to the layer the clouds fade out: from none at this height of the eye above
-/// the surface to all at the second. Below them the camera would be inside a layer
-/// one texel (about 5 km) coarse, and mountains would show through.
-const CLOUD_FADE_KM: (f64, f64) = (12.0, 30.0);
+/// Close to the layer the clouds seen from above fade out: from none at this height
+/// of the eye above the surface to all at the second. It meets the view from below
+/// (`BELOW_FADE_KM`), so that there are clouds at every height.
+const CLOUD_FADE_KM: (f64, f64) = (8.5, 20.0);
 /// Toward the layer's horizon the clouds thin out: from none where the line of sight
 /// meets the layer at this cosine down to all from the second. Seen edge-on they are
 /// haze, and the mesh's last cells, cut where the line of sight misses the layer,
@@ -125,9 +125,12 @@ pub fn cloud_shell(
             opacity: (facing * facing * (3.0 - 2.0 * facing)) as f32,
         })
     };
-    let corners = (0..=rows)
-        .flat_map(|row| (0..=columns).map(move |column| (column, row)))
-        .map(|(column, row)| {
+    // Some 30,000 lines of sight for a large window: 7.5 ms on one thread.
+    use rayon::prelude::*;
+    let corners = (0..(rows + 1) * (columns + 1))
+        .into_par_iter()
+        .map(|index| {
+            let (column, row) = (index % (columns + 1), index / (columns + 1));
             corner(Pos2::new(
                 rect.min.x + rect.width() * column as f32 / columns as f32,
                 rect.min.y + rect.height() * row as f32 / rows as f32,
@@ -174,8 +177,8 @@ pub struct CloudsCfg {
 
 /// Below the layer the clouds fade in: from none with the eye this far under it (km)
 /// to all at the second, so that they do not appear at once as the camera comes down
-/// through them.
-const BELOW_FADE_KM: (f64, f64) = (0.0, 2.0);
+/// through them. Above it, the view from above fades in (`CLOUD_FADE_KM`).
+const BELOW_FADE_KM: (f64, f64) = (0.0, 1.0);
 /// Seen from below, distant clouds fade into the sky: by e every this many km.
 const BELOW_HAZE_KM: f64 = 150.0;
 /// The underside of thick cloud is grey: the thickest is this much darker.
@@ -318,10 +321,10 @@ mod tests {
                 CloudLight::Even,
             )
         };
-        assert!(shell(10.0).is_none());
-        let half = shell(21.0).unwrap().fade;
+        assert!(shell(8.0).is_none());
+        let half = shell(14.25).unwrap().fade;
         assert!(0.3 < half && half < 0.7, "{half}");
-        assert_eq!(shell(40.0).unwrap().fade, 1.0);
+        assert_eq!(shell(25.0).unwrap().fade, 1.0);
     }
 
     #[test]
