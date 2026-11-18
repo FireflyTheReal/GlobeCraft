@@ -48,13 +48,7 @@ pub(super) const NIGHT_BRIGHTNESS: f32 = 0.10;
 pub(super) const DAY_BRIGHTNESS_RANGE: f32 = 0.90;
 pub(super) const NIGHT_BLUE_TINT: f32 = 0.015;
 // Surface rim and atmospheric shell.
-// Deterministic star field and 8-bit RGBA output.
+// Space and 8-bit RGBA output.
 pub(super) const SPACE_COLOR: Vec4 = Vec4::new(0.0, 0.0, 0.015, 0.0);
-pub(super) const STAR_GRID_RESOLUTION: f64 = 900.0;
-pub(super) const STAR_OCCURRENCE_MODULUS: u64 = 1400;
-pub(super) const STAR_MIN_BRIGHTNESS: f32 = 0.45;
-pub(super) const STAR_BRIGHTNESS_DIVISOR: f32 = 480.0;
-pub(super) const STAR_BRIGHTNESS_SHIFT: u32 = 20;
-pub(super) const STAR_BRIGHTNESS_MASK: u64 = 255;
 pub(super) const RGBA_CHANNELS: usize = 4;
 pub(super) const COLOR_CHANNEL_MAX: f32 = 255.0;

@@ -510,7 +510,7 @@ mod native_fallback_tests {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: None,
-                stars: true,
+                stars: None,
                 sky_behind: false,
             },
             overlays: None,

@@ -269,7 +269,7 @@ fn replay(
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
         sky_behind: false,
     };
     let hole = hole_rgba(&config(1.0));

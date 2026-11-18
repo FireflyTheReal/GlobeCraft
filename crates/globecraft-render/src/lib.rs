@@ -11,9 +11,10 @@ pub mod overlays;
 mod pixel;
 pub mod polar;
 mod rays;
+pub mod stars;
 mod terrain;
+pub use pixel::space_color;
 use pixel::{Surface, sky, surface, with_air};
-pub use pixel::{space_color, stars};
 pub use terrain::{
     MAX_EXAGGERATION, MIN_EXAGGERATION, TERRAIN_MAX_ALTITUDE_KM, TerrainCfg, relief_fade,
     relief_max_altitude_km,
@@ -33,11 +34,9 @@ use tuning::{
     COLOR_CHANNEL_MAX, DAY_BRIGHTNESS_RANGE, GRID_BLEND, GRID_COLOR, GRID_LINE_WIDTH_PX,
     IMAGERY_ZOOM_FADE_START, LOD_SHARPNESS_BIAS, MIN_LOD_INCIDENCE_COSINE, MIN_LOD_LATITUDE_COSINE,
     MIN_ZOOM_BLEND_FRACTION, MISSING_TILE_COLOR, NIGHT_BLUE_TINT, NIGHT_BRIGHTNESS, RGBA_CHANNELS,
-    ROWS_PER_TILE_BATCH, SPACE_COLOR, STAR_BRIGHTNESS_DIVISOR, STAR_BRIGHTNESS_MASK,
-    STAR_BRIGHTNESS_SHIFT, STAR_GRID_RESOLUTION, STAR_MIN_BRIGHTNESS, STAR_OCCURRENCE_MODULUS,
-    TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS, TILE_FILTER_RATIO_EXONENT_MAX,
-    TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET, TWILIGHT_WIDTH,
-    WEB_MERCATOR_MAX_LATITUDE_DEG,
+    ROWS_PER_TILE_BATCH, SPACE_COLOR, TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS,
+    TILE_FILTER_RATIO_EXONENT_MAX, TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET,
+    TWILIGHT_WIDTH, WEB_MERCATOR_MAX_LATITUDE_DEG,
 };
 const GRID_STEPS_DEG: [f64; 12] = [
     30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.01, 0.005, 0.001,
@@ -84,8 +83,9 @@ pub struct RenderCfg {
     pub fixed_level: Option<i32>,
     /// Night lights, by the edition of their tiles (see `TileSource::editions`).
     pub night_lights: Option<u16>,
-    /// Point stars in the sky (over the Milky Way when it shows).
-    pub stars: bool,
+    /// The stars, at this moment of the sky. They are drawn behind the frame: on
+    /// screen by the app's sky layer, in screenshots by `still` (`stars::paint_behind`).
+    pub stars: Option<globecraft_core::celestial::CelestialFrame>,
     /// The sky is drawn behind the frame at full resolution (the app's sky layer):
     /// sky pixels carry only the air's glow, as premultiplied colour over it, and are
     /// otherwise transparent. Motion frames render at a fraction of the size, which

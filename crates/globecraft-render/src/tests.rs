@@ -60,7 +60,7 @@ fn raster_matches_regression_fixtures() {
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
         sky_behind: false,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
@@ -237,7 +237,7 @@ fn batch_references() -> [BatchReference; 6] {
         },
     ]
 }
-fn batch_reference_config(provider: Provider) -> RenderCfg {
+pub(crate) fn batch_reference_config(provider: Provider) -> RenderCfg {
     RenderCfg {
         sky: None,
         provider,
@@ -251,7 +251,7 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
         sky_behind: false,
     }
 }

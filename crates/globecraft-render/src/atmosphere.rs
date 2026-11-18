@@ -1092,7 +1092,7 @@ mod tests {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: sun.map(|_| 0),
-                stars: true,
+                stars: None,
                 sky_behind: false,
             };
             let basis = cam.basis_for_model(w as f64 / h as f64, Default::default());

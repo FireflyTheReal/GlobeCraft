@@ -102,3 +102,13 @@ pole camera whose base is the single level-0 tile), and the small
 fixture `.misses` files on disk here remain the state after the LOD-policy regen
 above; regenerating under the area filter produced byte-identical misses for
 every case, verifying request behavior is unchanged.
+
+## Stars leave the frame (2026-11-18)
+
+The made-up stars (one per 1/900-radian cell, fixed to the Earth) were removed from
+the renderer: the catalogue stars are drawn behind the frame instead
+(`stars::paint_behind`, the app's sky layer), and `RenderCfg::stars` became the
+sky's moment. The batch references were rendered with the old stars on; only
+`odd-satellite.rgba` showed any, and exactly its 2 star pixels changed to space
+when regenerated (`GLOBECRAFT_RECORD_FIXTURES=1 cargo test -p globecraft-render
+ray_batches`). Every other fixture is byte-identical.

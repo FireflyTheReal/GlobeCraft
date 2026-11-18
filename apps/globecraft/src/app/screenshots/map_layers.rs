@@ -648,6 +648,34 @@ fn sky_layer_screenshots() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     save(&mut h, &dir, "31-sky-in-flight");
+    // Night lights without the sun: the night side everywhere, as with the sun on.
+    let app = h.state_mut();
+    for (layer, visible) in [("night_lights", true), ("sunlight", false)] {
+        app.run("layer.show", json!({"layer": layer, "visible": visible}))
+            .expect(layer);
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": 40.0, "lon": 0.0, "altitude_km": 9000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "32-night-lights-without-sun");
+    h.state_mut()
+        .run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "33-night-lights-with-sun");
+    // The sun beside the Earth: the camera 12° off the point opposite it.
+    let (lat, lon) = globecraft_core::math::subsolar(h.state_mut().scene_unix());
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": -lat + 12.0, "lon": lon + 180.0, "altitude_km": 40000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "34-sun-beside-the-earth");
 }
 
 /// Zooms in by mouse wheel from 230 km to under 90 km and prints how long each UI

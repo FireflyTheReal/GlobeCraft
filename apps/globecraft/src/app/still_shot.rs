@@ -53,8 +53,8 @@ impl App {
         let basis = self.view_basis(aspect);
         let mut cfg = globecraft_render::RenderCfg {
             level_blend: quality.level_blend(),
-            // A screenshot draws its own stars and Milky Way.
-            sky_behind: false,
+            // Behind each strip, as the sky layer does on screen (`render_still`).
+            sky_behind: true,
             ..self.frame_config(width, height, 1.0)
         };
         // One tile tier for the whole picture (the one most of it would use), so no

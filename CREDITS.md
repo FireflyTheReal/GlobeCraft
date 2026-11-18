@@ -30,6 +30,7 @@ the app shows the matching attribution on screen while a source is in use.
 | [Mapterhorn](https://mapterhorn.com/) | 3D terrain elevation | See the Mapterhorn attribution page (Copernicus DEM and national elevation models) |
 | [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) | Night lights layer (VIIRS Black Marble 2016); the polar caps past the Web Mercator limit (the Arctic: Blue Marble with shaded relief and bathymetry, EPSG:3413; the Antarctic: MODIS Terra true colour of 21 December 2025, EPSG:3031), streamed and, at about 1.6 km a pixel, built into the app (`crates/globecraft-render/assets/polar/`) | NASA imagery is not copyrighted; credit NASA Earth Observatory / GIBS |
 | [NASA SVS 4851](https://svs.gsfc.nasa.gov/4851/) — NASA/Goddard Space Flight Center Scientific Visualization Studio | Milky Way background (bundled, reduced) | NASA media guidelines; see [assets/sky/README.md](assets/sky/README.md) |
+| [Yale Bright Star Catalogue, 5th revised edition](http://tdc-www.harvard.edu/catalogs/bsc5.html) — Hoffleit & Warren, Yale University Observatory; copy by the Harvard-Smithsonian CfA Telescope Data Center | The 9,096 naked-eye stars (bundled, reduced) | Freely distributed by its compilers and NASA HEASARC / CDS; see [crates/globecraft-render/assets/stars/README.md](crates/globecraft-render/assets/stars/README.md) |
 | NASA/GSFC/Arizona State University, LRO Camera (LROC) | Moon colour map (bundled, 2k) | NASA media guidelines |
 
 ## Borders and place names

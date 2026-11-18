@@ -276,9 +276,10 @@ impl App {
             None
         };
         let (prov, rel) = self.imagery_source();
+        // The sky turns in steps of this interval (a frame key holds it).
+        let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
+        let time = (self.scene_unix() / interval).floor() * interval;
         let sky = if let Some(image) = self.sky.image.clone().filter(|_| self.sky_ready()) {
-            let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-            let time = (self.scene_unix() / interval).floor() * interval;
             let (latitude, longitude) = subsolar(time);
             match globecraft_render::celestial::SkyBackdrop::new(
                 image,
@@ -322,7 +323,10 @@ impl App {
             fixed_level: None,
             night_lights: (self.layer(MapLayer::NightLights) && self.explorer.on_earth())
                 .then(|| self.night_lights_edition()),
-            stars: self.layer(MapLayer::Stars),
+            stars: self
+                .layer(MapLayer::Stars)
+                .then(|| globecraft_core::celestial::CelestialFrame::at_unix(time).ok())
+                .flatten(),
             // The sky layer draws space at full resolution behind the frame.
             sky_behind: true,
         }
@@ -520,6 +524,7 @@ impl App {
                 basis: frame.request.basis,
                 backdrop: cfg.sky.clone(),
                 stars: cfg.stars,
+                sun: cfg.sun,
             });
         self.frame.renderer.displayed_credits = frame
             .request

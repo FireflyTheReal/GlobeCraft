@@ -1,11 +1,11 @@
 //! Space behind the globe's frame, drawn at the screen's full resolution: the Milky
-//! Way and the stars. Frames render at a fraction of the size while the view moves,
+//! Way, the stars and the sun. Frames render at a fraction of the size while the view moves,
 //! which blurred them and made the stars blink; they and the Milky Way must always
 //! show at full resolution (user, 2026-11-17). The frame leaves its sky transparent
 //! but for the air's glow (`RenderCfg::sky_behind`).
 use eframe::egui::{self, Color32, Mesh, Painter, Pos2, Rect, TextureHandle, TextureOptions};
 use glam::{DVec2, DVec3};
-use globecraft_core::{VERTICAL_FOV_HALF_TAN, camera::Basis};
+use globecraft_core::{camera::Basis, celestial::CelestialFrame};
 use globecraft_data::sky::SkyImage;
 use globecraft_render::celestial::SkyBackdrop;
 use std::sync::Arc;
@@ -13,19 +13,16 @@ use std::sync::Arc;
 /// Cell size of the Milky Way's mesh, in points. The picture is mapped straight
 /// across each cell, which stays well under a pixel off at this size.
 const MESH_STEP_POINTS: f32 = 12.0;
-/// How wide a star shows, in radians: its cell of the sky is 1/900 radians across
-/// (the renderer's star grid), and the sphere crosses on average about two thirds of
-/// a cell's area.
-const STAR_SIZE_RAD: f64 = 0.82 / 900.0;
-/// Stars this far outside the picture (in points) are left out.
-const STAR_MARGIN_POINTS: f32 = 4.0;
 
 /// The sky the displayed frame leaves to this layer, seen with that frame's camera.
 #[derive(Clone)]
 pub(super) struct SkyBehind {
     pub(super) basis: Basis,
     pub(super) backdrop: Option<SkyBackdrop>,
-    pub(super) stars: bool,
+    /// The stars at this moment of the sky, when shown.
+    pub(super) stars: Option<CelestialFrame>,
+    /// Toward the sun (Earth-fixed), with Sunlight on.
+    pub(super) sun: Option<DVec3>,
 }
 
 #[derive(Default)]
@@ -49,8 +46,11 @@ impl SkyLayer {
                 painter.rect_filled(rect, 0.0, Color32::from_rgb(r, g, b))
             }
         };
-        if sky.stars {
-            painter.add(stars(rect, &sky.basis, ctx.pixels_per_point()));
+        if let Some(frame) = sky.stars {
+            painter.add(stars(rect, &sky.basis, frame, ctx.pixels_per_point()));
+        }
+        if let Some(sun) = sky.sun {
+            painter.add(sun_glow(rect, &sky.basis, sun));
         }
     }
 
@@ -123,41 +123,68 @@ impl SkyLayer {
 
 /// The stars as whole-pixel squares: a star smaller than a pixel lights one pixel
 /// with its light spread over it, so none blinks as the view moves.
-fn stars(rect: Rect, basis: &Basis, pixels_per_point: f32) -> Mesh {
-    let view_from_world = basis.rotation_from_view().transpose();
-    let (tan_x, tan_y) = (
-        VERTICAL_FOV_HALF_TAN * basis.aspect_ratio(),
-        VERTICAL_FOV_HALF_TAN,
+fn stars(rect: Rect, basis: &Basis, frame: CelestialFrame, pixels_per_point: f32) -> Mesh {
+    let scale = f64::from(pixels_per_point);
+    let (width, height) = (
+        f64::from(rect.width()) * scale,
+        f64::from(rect.height()) * scale,
     );
-    let pixels_per_radian = f64::from(rect.height() * pixels_per_point) * 0.5 / tan_y;
-    let size = STAR_SIZE_RAD * pixels_per_radian;
-    let side = size.round().max(1.0);
-    let light = ((size / side).powi(2)).min(1.0) as f32;
-    let shown = rect.expand(STAR_MARGIN_POINTS);
     let mut mesh = Mesh::default();
-    for &(direction, brightness) in globecraft_render::stars() {
-        let local: DVec3 = view_from_world * direction;
-        if local.z >= 0.0 {
-            continue; // behind the camera
-        }
-        let (x, y) = (local.x / -local.z / tan_x, local.y / -local.z / tan_y);
-        let centre = Pos2::new(
-            rect.center().x + (x * f64::from(rect.width()) * 0.5) as f32,
-            rect.center().y - (y * f64::from(rect.height()) * 0.5) as f32,
-        );
-        if !shown.contains(centre) {
-            continue;
-        }
-        let corner =
-            (centre.to_vec2() * pixels_per_point - egui::Vec2::splat(side as f32 * 0.5)).round();
+    for dot in globecraft_render::stars::seen(basis, frame, width, height, scale) {
+        let side = dot.size.round().max(1.0);
+        let spread = (dot.size / side).powi(2).min(1.0);
+        let corner = (rect.min.to_vec2() * pixels_per_point + dot.centre.to_vec2()
+            - egui::Vec2::splat(side * 0.5))
+        .round();
         let square = Rect::from_min_size(
             (corner / pixels_per_point).to_pos2(),
-            egui::Vec2::splat(side as f32 / pixels_per_point),
+            egui::Vec2::splat(side / pixels_per_point),
         );
-        let level = (brightness * light).clamp(0.0, 1.0) * 255.0;
+        let [r, g, b] = dot
+            .light
+            .map(|c| ((c * spread).clamp(0.0, 1.0) * 255.0) as u8);
         // Alpha 0: the star's light adds to the Milky Way behind it.
-        let colour = Color32::from_rgba_premultiplied(level as u8, level as u8, level as u8, 0);
-        mesh.add_colored_rect(square, colour);
+        mesh.add_colored_rect(square, Color32::from_rgba_premultiplied(r, g, b, 0));
+    }
+    mesh
+}
+
+/// The angles from the sun's centre (radians) where its glow's rings are drawn: its
+/// light (`stars::sun_light`) runs straight between them.
+const SUN_RING_ANGLES_RAD: [f64; 11] = [
+    0.0, 0.0046, 0.0047, 0.008, 0.014, 0.025, 0.045, 0.08, 0.15, 0.27, 0.45,
+];
+/// Segments around each ring.
+const SUN_RING_SEGMENTS: usize = 48;
+
+/// The sun's disc and glow, as rings of light added to the sky behind.
+fn sun_glow(rect: Rect, basis: &Basis, sun: DVec3) -> Mesh {
+    use globecraft_render::stars::{SUN_COLOUR, sun_light, sun_seen};
+    let mut mesh = Mesh::default();
+    let (width, height) = (f64::from(rect.width()), f64::from(rect.height()));
+    let Some((centre, per_radian)) = sun_seen(basis, sun, width, height) else {
+        return mesh;
+    };
+    let centre = rect.min + centre.to_vec2();
+    for (ring, &angle) in SUN_RING_ANGLES_RAD.iter().enumerate() {
+        let level = sun_light(angle);
+        let [r, g, b] = SUN_COLOUR.map(|c| (c * level * 255.0) as u8);
+        // Alpha 0: the light adds to what is behind.
+        let colour = Color32::from_rgba_premultiplied(r, g, b, 0);
+        let radius = (angle.tan() * per_radian) as f32;
+        for segment in 0..SUN_RING_SEGMENTS {
+            let turn = segment as f32 / SUN_RING_SEGMENTS as f32 * std::f32::consts::TAU;
+            mesh.colored_vertex(centre + radius * egui::vec2(turn.cos(), turn.sin()), colour);
+            if ring > 0 {
+                let (here, next) = (segment as u32, ((segment + 1) % SUN_RING_SEGMENTS) as u32);
+                let (inner, outer) = (
+                    ((ring - 1) * SUN_RING_SEGMENTS) as u32,
+                    (ring * SUN_RING_SEGMENTS) as u32,
+                );
+                mesh.add_triangle(inner + here, outer + here, outer + next);
+                mesh.add_triangle(inner + here, outer + next, inner + next);
+            }
+        }
     }
     mesh
 }
@@ -168,7 +195,36 @@ mod tests {
     use globecraft_core::camera::Cam;
 
     #[test]
-    fn a_star_lands_where_its_ray_leaves_the_camera() {
+    fn the_sun_shows_where_it_stands_and_not_behind_the_camera() {
+        let cam = Cam {
+            lat: 0.0,
+            lon: 0.0,
+            alt: 20_000.0,
+            heading: 0.0,
+            tilt: 0.0,
+        };
+        let basis = cam.basis(1.6);
+        let rect = Rect::from_min_size(Pos2::new(10.0, 20.0), egui::vec2(800.0, 500.0));
+        // Behind the camera (over lon 0), nothing; beyond the Earth (lon 180), in the
+        // middle of the picture, brightest there.
+        assert!(sun_glow(rect, &basis, DVec3::X).vertices.is_empty());
+        let mesh = sun_glow(rect, &basis, -DVec3::X);
+        assert_eq!(
+            mesh.vertices.len(),
+            SUN_RING_ANGLES_RAD.len() * SUN_RING_SEGMENTS
+        );
+        let middle = mesh.vertices[0];
+        assert!(middle.pos.distance(rect.center()) < 0.01);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|v| v.color.r() <= middle.color.r())
+        );
+        assert_eq!(mesh.vertices.last().unwrap().color.r(), 0);
+    }
+
+    #[test]
+    fn stars_land_on_whole_pixels_where_the_catalogue_puts_them() {
         let cam = Cam {
             lat: 10.0,
             lon: 20.0,
@@ -177,18 +233,21 @@ mod tests {
             tilt: 0.0,
         };
         let basis = cam.basis(1.6);
-        let rect = Rect::from_min_size(Pos2::new(10.0, 20.0), egui::vec2(1600.0, 1000.0));
-        let mesh = stars(rect, &basis, 1.0);
-        assert!(!mesh.vertices.is_empty(), "some stars are in view");
-        for square in mesh.vertices.chunks(4) {
-            let centre = (square[0].pos + square[2].pos.to_vec2()) / 2.0;
-            let ray = basis.ray(rect, centre);
-            let nearest = globecraft_render::stars()
-                .iter()
-                .map(|(d, _)| d.angle_between(ray))
-                .fold(f64::MAX, f64::min);
-            // Within a pixel, about 0.03° here.
-            assert!(nearest < 1.0e-3, "{nearest}");
+        let frame = CelestialFrame::at_unix(1_763_000_000.0).unwrap();
+        let rect = Rect::from_min_size(Pos2::new(10.0, 20.0), egui::vec2(800.0, 500.0));
+        let scale = 2.0;
+        let mesh = stars(rect, &basis, frame, scale);
+        let dots = globecraft_render::stars::seen(&basis, frame, 1600.0, 1000.0, 2.0);
+        assert!(!dots.is_empty(), "some stars are in view");
+        assert_eq!(mesh.vertices.len(), dots.len() * 4);
+        for (square, dot) in mesh.vertices.chunks(4).zip(&dots) {
+            // Corners on whole pixels, the middle within half a pixel of the star.
+            let corner = square[0].pos.to_vec2() * scale;
+            assert_eq!(corner, corner.round());
+            let middle =
+                Rect::from_points(&square.iter().map(|v| v.pos).collect::<Vec<_>>()).center();
+            let star = rect.min + dot.centre.to_vec2() / scale;
+            assert!((middle - star).abs().max_elem() * scale <= 0.5 + 1e-3);
         }
     }
 }
