@@ -412,6 +412,7 @@ live-radar-age = Radar de chuva: observação de aproximadamente { $minutes } mi
 live-radar-loading = Radar de chuva: carregando dados do RainViewer…
 sidebar-cloud-source = Dados de nuvens: Matt Eason / EUMETSAT
 sidebar-radar-source = Dados de radar: RainViewer
+glint-credit = Reflexo do sol: Matt Eason · Live Cloud Maps · Contém dados modificados da EUMETSAT
 live-cloud-credit = Matt Eason · Live Cloud Maps · Contém dados modificados da EUMETSAT
 live-radar-credit = Radar de precipitação: RainViewer (rainviewer.com)
 

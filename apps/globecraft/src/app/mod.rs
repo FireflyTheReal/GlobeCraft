@@ -684,6 +684,8 @@ impl eframe::App for App {
             &self.runtime,
             self.layer(MapLayer::Clouds),
             self.layer(MapLayer::Radar),
+            // The sun's glint on the water.
+            self.layer(MapLayer::Sunlight) && self.explorer.on_earth(),
         );
         profile_checkpoint!(watchdog, "ui.slow.boundary");
         let earth_visible = self.earth_shown();

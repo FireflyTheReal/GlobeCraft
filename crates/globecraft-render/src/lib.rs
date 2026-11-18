@@ -95,6 +95,8 @@ pub struct RenderCfg {
     /// The clouds, drawn into the sky when the camera is below their layer (above it
     /// the app draws them over the frame).
     pub clouds: Option<clouds::CloudsCfg>,
+    /// How much the water shines (`LiveMaps::water`): with the sun, its glint.
+    pub glint: Option<Arc<image::GrayImage>>,
 }
 
 impl RenderCfg {
@@ -336,8 +338,9 @@ fn finish_surface(
     let sunlight = surface.air.map_or(Vec4::ONE, |(air, _)| {
         Vec4::ONE + (air.sunlight - Vec4::ONE) * (1.0 - surface.darkness)
     });
-    col =
-        col * sunlight * (surface.shade * terrain_light) + Vec4::new(0.0, 0.0, surface.night, 0.0);
+    col = col * sunlight * (surface.shade * terrain_light)
+        + Vec4::new(0.0, 0.0, surface.night, 0.0)
+        + sunlight * Vec4::new(surface.glint, surface.glint, surface.glint, 0.0);
     // The lights glow where it is dark: the night side, or everywhere without the sun.
     if let Some(lights) = lights {
         col += lights * surface.darkness;

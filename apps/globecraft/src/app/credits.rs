@@ -63,6 +63,10 @@ impl App {
         if self.layer(MapLayer::NightLights) {
             credits.push(self.night_lights_credit(lg));
         }
+        // The sun's glint comes from Matt Eason's water map (EUMETSAT data).
+        if earth && self.layer(MapLayer::Sunlight) && self.live.maps.water_map().is_some() {
+            credits.push(lg.text("glint-credit").to_owned());
+        }
         // The polar caps show NASA's imagery past the Mercator limit.
         if earth
             && globecraft_render::polar::under(self.effective_provider())

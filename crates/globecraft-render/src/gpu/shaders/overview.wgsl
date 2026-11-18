@@ -3,12 +3,12 @@
 struct View {
     camera: vec4<f32>,
     right: vec4<f32>, up: vec4<f32>, forward: vec4<f32>,
-    sun: vec4<f32>,
+    sun: vec4<f32>, // toward the sun; w: the glint on (1) or off (0)
     shape: vec4<f32>, // 1 / the surface's semi-axes squared; the camera in that metric, squared
     figure: vec4<f32>, // semi-major axis (m), eccentricity squared, unused
     raster: vec4<u32>, // width, height, imagery, provider max zoom
     effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, reserved
-    limits: vec4<u32>, // tracked max zoom, dependency count, table mask, unused
+    limits: vec4<u32>, // tracked max zoom, dependency count, table mask, water map width
     lights: vec4<u32>, // night lights shown, their max zoom, where their needs start, tracked max zoom
 }
 @group(0) @binding(0) var<uniform> view: View;
@@ -20,6 +20,30 @@ struct View {
 // angle, and the sunlight scattered along rays entering from space.
 @group(0) @binding(5) var<storage, read> air_transmittance: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read> air_scattering: array<vec4<f32>>;
+// The water map for the sun's glint (`sun::glint`), bytes packed four to a word.
+@group(0) @binding(7) var<storage, read> water: array<u32>;
+const GLINT_STRENGTH: f32 = __GLINT_STRENGTH__;
+const GLINT_SHININESS: f32 = __GLINT_SHININESS__;
+const GLINT_MIN_HIGHLIGHT: f32 = __GLINT_MIN_HIGHLIGHT__;
+fn water_texel(x: i32, y: i32) -> f32 {
+    let width = i32(view.limits.w);
+    let index = u32(y * width + ((x % width) + width) % width);
+    return f32((water[index / 4u] >> ((index % 4u) * 8u)) & 255u) / 255.0;
+}
+// As the CPU's `clouds::sample`: between the four nearest texels, east-west around.
+fn water_at(lat_deg: f32, lon_deg: f32) -> f32 {
+    let width = f32(view.limits.w);
+    let height = width * 0.5;
+    let x = (lon_deg + 180.0) / 360.0 * width - 0.5;
+    let y = clamp((90.0 - lat_deg) / 180.0 * height - 0.5, 0.0, height - 1.0);
+    let x0 = floor(x); let y0 = floor(y);
+    let fx = x - x0; let fy = y - y0;
+    let ix = i32(x0); let iy = i32(y0);
+    let below = min(iy + 1, i32(height) - 1);
+    let top = water_texel(ix, iy) * (1.0 - fx) + water_texel(ix + 1, iy) * fx;
+    let bottom = water_texel(ix, below) * (1.0 - fx) + water_texel(ix + 1, below) * fx;
+    return top * (1.0 - fy) + bottom * fy;
+}
 const FOV_HALF_TAN: f32 = __FOV__;
 const EARTH_RADIUS_M: f32 = __RADIUS__;
 const MERCATOR_LIMIT_DEG: f32 = __MERCATOR__;
@@ -306,7 +330,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         glow = air_scattered(up,mu_s,nu);
     }
-    color = color*sunlight*shade + vec3<f32>(0.0,0.0,night);
+    // The sun's glint off the water (`sun::glint`), lit as the ground is.
+    var glint = 0.0;
+    if sunlit && view.sun.w > 0.0 && dot(normal,view.sun.xyz) > 0.0 {
+        let half = normalize(view.sun.xyz - dir);
+        let highlight = pow(max(dot(normal,half),0.0), GLINT_SHININESS);
+        if highlight >= GLINT_MIN_HIGHLIGHT {
+            glint = water_at(degrees(lat), degrees(lon)) * GLINT_STRENGTH * highlight;
+        }
+    }
+    color = color*sunlight*shade + vec3<f32>(0.0,0.0,night) + sunlight*glint;
     if lights.w > 0.0 { color += lights.rgb*darkness; }
     if airy {
         let grazing = (1.0-incidence)*(1.0-incidence);

@@ -20,6 +20,7 @@ instead of keeping its own copy, so a new tile source appears there automaticall
 | Buildings are on and the camera is below 4 km | Overture Maps' tile bucket on Amazon S3: its folder list once, to find the newest monthly release, then that release's `buildings.pmtiles` |
 | The user searches | Nominatim for results; Photon for suggestions while typing |
 | A live layer is on | Its provider: OpenSky/ADSB.lol, OpenSeaFeed/Digitraffic, NOAA SWPC, CelesTrak, RainViewer, Matt Eason's clouds or TomTom |
+| Sunlight is on (live builds) | Matt Eason's water map, for the sun's glint on the sea |
 | The user opens historical imagery | Esri Wayback's tile service and its release list |
 | A release build checks for updates | GitHub's release API and asset hosts (one check at startup; disabled for development builds and installs the updater cannot replace) |
 | The user adds a layer with an address | That address; local files never leave the computer |
@@ -78,7 +79,7 @@ the authority; `CREDITS.md` links to them.
 | NOAA SWPC aurora | `services.swpc.noaa.gov` | normally one request every 10 min | `GlobeCraft/<version> (aurora forecast; NOAA SWPC)` |
 | CelesTrak | `celestrak.org` | normally one request every 6 h | `GlobeCraft/<version> (satellite orbits; CelesTrak)` |
 | RainViewer | `api.rainviewer.com`, `tilecache.rainviewer.com` | normally one request every 10 min for the metadata, then visible radar tiles | `GlobeCraft/<version> (radar viewer)` |
-| Live Cloud Maps (Matt Eason, EUMETSAT) | `clouds.matteason.co.uk` | normally one request every 3 h | `GlobeCraft/<version> (attribution: Matt Eason, EUMETSAT)` |
+| Live Cloud Maps (Matt Eason, EUMETSAT) | `clouds.matteason.co.uk` | normally one request every 3 h for the clouds, and one for the water map while Sunlight is on | `GlobeCraft/<version> (attribution: Matt Eason, EUMETSAT)` |
 | TomTom Traffic | `api.tomtom.com` | normally one request every 2 min; camera movement may request a new tile grid sooner | `GlobeCraft/<version> (traffic; TomTom)` |
 | GlobeCraft updates | `api.github.com`, `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | once per session | `self-update/<crate version>` from the updater library |
 

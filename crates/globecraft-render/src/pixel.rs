@@ -21,6 +21,8 @@ pub(super) struct Surface {
     pub(super) lat: f64,
     pub(super) lon: f64,
     pub(super) metres_per_pixel: f64,
+    /// The sun's glint off the water there (0 to 1, `sun::glint`).
+    pub(super) glint: f32,
 }
 pub(super) fn surface<const ELLIPSOID: bool>(
     x: usize,
@@ -155,6 +157,12 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         lat,
         lon,
         metres_per_pixel: mpp,
+        glint: match (cfg.sun, &cfg.glint) {
+            (Some(sun), Some(water)) => {
+                crate::sun::glint(water, lat, lon, ray.direction, ray.normal, sun)
+            }
+            _ => 0.0,
+        },
     }
 }
 /// `surface` with the air in front of it, when the frame has an atmosphere.
@@ -258,6 +266,7 @@ mod tests {
                 stars: None,
                 sky_behind: false,
                 clouds: None,
+                glint: None,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -299,6 +308,7 @@ mod tests {
             stars: None,
             sky_behind: false,
             clouds: None,
+            glint: None,
         };
         for latitude in [
             -90.0_f64,
@@ -358,6 +368,7 @@ mod tests {
             stars: None,
             sky_behind: false,
             clouds: None,
+            glint: None,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

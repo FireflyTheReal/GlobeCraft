@@ -104,6 +104,7 @@ impl App {
             stars: None,
             sky_behind: false,
             clouds: None,
+            glint: None,
         };
         let tiles = globecraft_render::diagnostics::view_tiles(w, h, basis, &cfg, rect);
         let mut counts = [0usize; 4];

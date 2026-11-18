@@ -49,6 +49,10 @@ pub(super) struct Overview {
     /// The air's tables (`atmosphere`): written once.
     air_transmittance: wgpu::Buffer,
     air_scattering: wgpu::Buffer,
+    /// The water map for the sun's glint (bytes packed four to a word), and the map
+    /// it holds.
+    water: wgpu::Buffer,
+    water_for: Option<std::sync::Arc<image::GrayImage>>,
     staging: wgpu::Buffer,
     pixels: usize,
     dependency_count: usize,
@@ -120,6 +124,8 @@ impl Overview {
                 "GlobeCraft air scattering",
                 crate::atmosphere::TABLES.top_scattering(),
             ),
+            water: buffer(device, "GlobeCraft water", 4, wgpu::BufferUsages::STORAGE),
+            water_for: None,
             staging: buffer(
                 device,
                 "GlobeCraft overview readback",
@@ -184,6 +190,29 @@ impl Overview {
         let dependencies =
             base_dependencies + request.cfg.night_lights.map_or(0, |_| pyramid(lights_zoom));
         self.reserve(device, count, dependencies);
+        // The water map for the sun's glint, uploaded when it changes. The source is
+        // twice as wide as high; the shader counts on it.
+        let water = request
+            .cfg
+            .glint
+            .as_ref()
+            .filter(|water| request.cfg.sun.is_some() && water.width() == 2 * water.height());
+        if let Some(water) = water
+            && !self
+                .water_for
+                .as_ref()
+                .is_some_and(|held| std::sync::Arc::ptr_eq(held, water))
+        {
+            use wgpu::util::DeviceExt;
+            let mut bytes = water.as_raw().clone();
+            bytes.resize(bytes.len().next_multiple_of(4), 0);
+            self.water = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("GlobeCraft water"),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            self.water_for = Some(water.clone());
+        }
         let rotation = request.basis.rotation_from_view();
         let v4 = |vector: glam::DVec3, w| [vector.x as f32, vector.y as f32, vector.z as f32, w];
         let (shape, figure) = figure(request.basis.model.geometry(), request.basis.c);
@@ -192,7 +221,10 @@ impl Overview {
             right: v4(rotation.x_axis, 0.0),
             up: v4(rotation.y_axis, 0.0),
             forward: v4(rotation.z_axis, 0.0),
-            sun: v4(request.cfg.sun.unwrap_or_default(), 0.0),
+            sun: v4(
+                request.cfg.sun.unwrap_or_default(),
+                if water.is_some() { 1.0 } else { 0.0 },
+            ),
             shape,
             figure,
             raster: [
@@ -211,7 +243,7 @@ impl Overview {
                 max_zoom as u32,
                 dependencies as u32,
                 (TILE_TABLE_SIZE - 1) as u32,
-                0,
+                water.map_or(0, |water| water.width()),
             ],
             lights: [
                 u32::from(request.cfg.night_lights.is_some()),
@@ -273,6 +305,10 @@ impl Overview {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: self.air_scattering.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.water.as_entire_binding(),
                 },
             ],
         });

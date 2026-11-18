@@ -695,6 +695,17 @@ fn sky_layer_screenshots() {
     .expect("camera");
     settle(&mut h, 6.0);
     save(&mut h, &dir, "34-sun-beside-the-earth");
+    // The sun's glint on the water, over the point under the sun and from aside.
+    for (offset, name) in [(0.0, "34b-glint-under-the-sun"), (35.0, "34c-glint-aside")] {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": lat, "lon": lon + offset, "altitude_km": 12000.0, "tilt_deg": 0.0}),
+            )
+            .expect("camera");
+        settle(&mut h, 30.0);
+        save(&mut h, &dir, name);
+    }
     // The cloud layer 8 km up: by day and night from afar, then close and tilted.
     let app = h.state_mut();
     app.run("layer.show", json!({"layer": "clouds", "visible": true}))

@@ -1095,6 +1095,7 @@ mod tests {
                 stars: None,
                 sky_behind: false,
                 clouds: None,
+                glint: None,
             };
             let basis = cam.basis_for_model(w as f64 / h as f64, Default::default());
             let (pixels, _, _) =

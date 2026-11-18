@@ -144,6 +144,8 @@ impl App {
             clouds: self
                 .frame_clouds()
                 .map(|clouds| (clouds.opacity.to_bits(), self.live.maps.generation())),
+            glint: (self.layer(MapLayer::Sunlight) && self.live.maps.water_map().is_some())
+                .then(|| self.live.maps.generation()),
         }
         .keys(now_unix());
         let state = keys.state.wrapping_add(relief_step);

@@ -33,11 +33,16 @@ mod tests {
             vessels.update(&runtime, true, || {});
             satellites.update(&runtime, true, || {});
             aurora.update(&runtime, true, || {});
-            maps.update(&runtime, true, true, || {});
+            maps.update(&runtime, true, true, true, || {});
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(vessels.snapshot().is_empty() && satellites.snapshot().is_empty());
-        assert!(aurora.grid().is_none() && maps.cloud().is_none() && maps.radar().is_none());
+        assert!(
+            aurora.grid().is_none()
+                && maps.cloud().is_none()
+                && maps.radar().is_none()
+                && maps.water().is_none()
+        );
         let after = (
             vessels.status(lang),
             satellites.status(lang),

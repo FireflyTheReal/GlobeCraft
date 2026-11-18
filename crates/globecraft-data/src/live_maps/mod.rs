@@ -12,7 +12,7 @@ pub const RADAR_BANDS: [(f32, [u8; 3]); 5] = [
     (38.0, [255, 145, 0]),
     (47.0, [240, 35, 30]),
 ];
-use download::{download_clouds, download_radar};
+use download::{download_clouds, download_radar, download_water};
 use std::{
     sync::mpsc,
     time::{Duration, Instant},
@@ -32,115 +32,151 @@ struct RadarFrame {
     time: i64,
 }
 
+/// One image fetched again and again: the last one loaded, the download under way,
+/// when it was last asked for and why it last failed.
+struct Feed<T> {
+    value: Option<T>,
+    receiver: Option<mpsc::Receiver<Result<T, crate::Error>>>,
+    attempt: Option<Instant>,
+    error: Option<String>,
+}
+
+impl<T> Default for Feed<T> {
+    fn default() -> Self {
+        Self {
+            value: None,
+            receiver: None,
+            attempt: None,
+            error: None,
+        }
+    }
+}
+
+impl<T: Send + 'static> Feed<T> {
+    /// Takes in a finished download; whether a new value came.
+    fn receive(&mut self, interrupted: &str) -> bool {
+        let Some(receiver) = &self.receiver else {
+            return false;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => Err(crate::Error::msg(interrupted)),
+        };
+        self.receiver = None;
+        match result {
+            Ok(value) => {
+                self.value = Some(value);
+                self.error = None;
+                true
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// Starts `download` when it is `wanted` and due: `interval` after the last load,
+    /// sooner after a failure.
+    fn refresh<F>(
+        &mut self,
+        wanted: bool,
+        interval: Duration,
+        runtime: &crate::runtime::ServiceRuntime,
+        repaint: &Arc<impl Fn() + Send + Sync + 'static>,
+        download: impl FnOnce() -> F,
+    ) where
+        F: std::future::Future<Output = Result<T, crate::Error>> + Send + 'static,
+    {
+        let loaded = self.value.is_some() && self.error.is_none();
+        if !(crate::live::ENABLED
+            && wanted
+            && self.receiver.is_none()
+            && refresh_due(self.attempt, loaded, interval))
+        {
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        self.receiver = Some(receiver);
+        self.attempt = Some(Instant::now());
+        let (repaint, download) = (repaint.clone(), download());
+        runtime.spawn(async move {
+            let _ = sender.send(download.await);
+            repaint();
+        });
+    }
+
+    /// The status line: `failed` with the error (and `cached` while an older image
+    /// stays), `loaded` or `loading`.
+    fn status(&self, lang: Lang, failed: &str, loaded: String, loading: &str) -> String {
+        if let Some(error) = &self.error {
+            let cached = if self.value.is_some() {
+                lang.text("live-cached-image")
+            } else {
+                ""
+            };
+            format!("{}{cached}: {error}", lang.text(failed))
+        } else if self.value.is_some() {
+            loaded
+        } else {
+            lang.text(loading).to_owned()
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct LiveMaps {
-    cloud: Option<Arc<CloudMap>>,
-    radar: Option<RgbaImage>,
-    cloud_rx: Option<mpsc::Receiver<Result<CloudMap, crate::Error>>>,
-    radar_rx: Option<mpsc::Receiver<Result<RadarFrame, crate::Error>>>,
-    cloud_attempt: Option<Instant>,
-    radar_attempt: Option<Instant>,
-    cloud_error: Option<String>,
-    radar_error: Option<String>,
-    radar_frame_time: Option<i64>,
+    cloud: Feed<Arc<CloudMap>>,
+    radar: Feed<RadarFrame>,
+    water: Feed<Arc<GrayImage>>,
     generation: u64,
 }
 impl LiveMaps {
+    /// Takes in finished downloads and starts the ones due: the clouds and the radar
+    /// while their layers show, the water's shine while `water` (the sun's glint).
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
         clouds: bool,
         radar: bool,
+        water: bool,
         repaint: impl Fn() + Send + Sync + 'static,
     ) {
-        let repaint = std::sync::Arc::new(repaint);
-        if let Some(rx) = &self.cloud_rx {
-            match rx.try_recv() {
-                Ok(Ok(map)) => {
-                    self.cloud = Some(Arc::new(map));
-                    self.cloud_error = None;
-                    self.cloud_rx = None;
-                    self.generation += 1;
-                    repaint();
-                }
-                Ok(Err(err)) => {
-                    self.cloud_error = Some(err.to_string());
-                    self.cloud_rx = None;
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.cloud_error = Some("Cloud download interrupted".into());
-                    self.cloud_rx = None;
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
+        let repaint = Arc::new(repaint);
+        let arrived = [
+            self.cloud.receive("Cloud download interrupted"),
+            self.radar.receive("Radar download interrupted"),
+            self.water.receive("Water map download interrupted"),
+        ];
+        if arrived.contains(&true) {
+            self.generation += 1;
+            repaint();
         }
-        if let Some(rx) = &self.radar_rx {
-            match rx.try_recv() {
-                Ok(Ok(frame)) => {
-                    self.radar_frame_time = Some(frame.time);
-                    self.radar = Some(frame.image);
-                    self.radar_error = None;
-                    self.radar_rx = None;
-                    self.generation += 1;
-                    repaint();
-                }
-                Ok(Err(err)) => {
-                    self.radar_error = Some(err.to_string());
-                    self.radar_rx = None;
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.radar_error = Some("Radar download interrupted".into());
-                    self.radar_rx = None;
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        if crate::live::ENABLED
-            && clouds
-            && self.cloud_rx.is_none()
-            && refresh_due(
-                self.cloud_attempt,
-                self.cloud.is_some() && self.cloud_error.is_none(),
-                CLOUD_INTERVAL,
-            )
-        {
-            let (tx, rx) = mpsc::channel();
-            self.cloud_rx = Some(rx);
-            self.cloud_attempt = Some(Instant::now());
-            let repaint = repaint.clone();
-            runtime.spawn(async move {
-                let result = download_clouds().await;
-                let _ = tx.send(result);
-                repaint();
+        self.cloud
+            .refresh(clouds, CLOUD_INTERVAL, runtime, &repaint, || async {
+                download_clouds().await.map(Arc::new)
             });
-        }
-        if crate::live::ENABLED
-            && radar
-            && self.radar_rx.is_none()
-            && refresh_due(
-                self.radar_attempt,
-                self.radar.is_some() && self.radar_error.is_none(),
-                RADAR_INTERVAL,
-            )
-        {
-            let (tx, rx) = mpsc::channel();
-            self.radar_rx = Some(rx);
-            self.radar_attempt = Some(Instant::now());
-            let repaint = repaint.clone();
-            runtime.spawn(async move {
-                let result = download_radar().await;
-                let _ = tx.send(result);
-                repaint();
+        self.radar
+            .refresh(radar, RADAR_INTERVAL, runtime, &repaint, download_radar);
+        // The water's shine is the clouds' companion: as often, from the same source.
+        self.water
+            .refresh(water, CLOUD_INTERVAL, runtime, &repaint, || async {
+                download_water().await.map(Arc::new)
             });
-        }
     }
 
     /// The cloud map; a new download is a new `Arc`.
     pub fn cloud(&self) -> Option<&Arc<CloudMap>> {
-        self.cloud.as_ref()
+        self.cloud.value.as_ref()
     }
     pub fn radar(&self) -> Option<&RgbaImage> {
-        self.radar.as_ref()
+        self.radar.value.as_ref().map(|frame| &frame.image)
+    }
+    /// How much the water shines (0 to 255; land and cloud dark), equirectangular from
+    /// 180° W, north up.
+    pub fn water(&self) -> Option<&Arc<GrayImage>> {
+        self.water.value.as_ref()
     }
     pub fn generation(&self) -> u64 {
         self.generation
@@ -148,39 +184,29 @@ impl LiveMaps {
     pub fn status(&self, clouds: bool, radar: bool, lang: Lang) -> String {
         let mut lines = Vec::new();
         if clouds {
-            if let Some(err) = &self.cloud_error {
-                let failed = lang.text("live-clouds-failed");
-                let cached = if self.cloud.is_some() {
-                    lang.text("live-cached-image")
-                } else {
-                    ""
-                };
-                lines.push(format!("{failed}{cached}: {err}"));
-            } else if self.cloud.is_some() {
-                lines.push(lang.text("live-clouds-ok").to_owned());
-            } else {
-                lines.push(lang.text("live-clouds-loading").to_owned());
-            }
+            lines.push(self.cloud.status(
+                lang,
+                "live-clouds-failed",
+                lang.text("live-clouds-ok").to_owned(),
+                "live-clouds-loading",
+            ));
         }
         if radar {
-            if let Some(err) = &self.radar_error {
-                let failed = lang.text("live-radar-failed");
-                let cached = if self.radar.is_some() {
-                    lang.text("live-cached-image")
-                } else {
-                    ""
-                };
-                lines.push(format!("{failed}{cached}: {err}"));
-            } else if self.radar.is_some() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64;
-                let age = (now - self.radar_frame_time.unwrap_or(now)).max(0) / 60;
-                lines.push(lang.format("live-radar-age", &[("minutes", age.to_string().into())]));
-            } else {
-                lines.push(lang.text("live-radar-loading").to_owned());
-            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let age = self
+                .radar
+                .value
+                .as_ref()
+                .map_or(0, |frame| (now - frame.time).max(0) / 60);
+            lines.push(self.radar.status(
+                lang,
+                "live-radar-failed",
+                lang.format("live-radar-age", &[("minutes", age.to_string().into())]),
+                "live-radar-loading",
+            ));
         }
         lines.join("\n")
     }

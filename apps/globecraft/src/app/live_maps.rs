@@ -119,10 +119,12 @@ impl LiveMaps {
         runtime: &globecraft_data::runtime::ServiceRuntime,
         clouds: bool,
         radar: bool,
+        water: bool,
     ) {
         let wake = ctx.clone();
-        self.service
-            .update(runtime, clouds, radar, move || wake.request_repaint());
+        self.service.update(runtime, clouds, radar, water, move || {
+            wake.request_repaint()
+        });
         if clouds || radar {
             ctx.request_repaint_after(Duration::from_secs(60));
         }
@@ -297,6 +299,11 @@ impl LiveMaps {
     /// Raised by every new cloud or radar image.
     pub fn generation(&self) -> u64 {
         self.service.generation()
+    }
+
+    /// How much the water shines, for the sun's glint, once loaded.
+    pub fn water_map(&self) -> Option<Arc<image::GrayImage>> {
+        self.service.water().cloned()
     }
 
     /// The cloud map, once loaded.

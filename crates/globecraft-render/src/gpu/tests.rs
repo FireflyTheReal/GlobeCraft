@@ -6,6 +6,10 @@ use globecraft_data::tiles::{Lookup, Provider, make_key};
 #[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
 fn gpu_overview_matches_cpu() {
     let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    // Water in stripes of 10° of longitude, shining more toward the east of each.
+    let water = Arc::new(image::GrayImage::from_fn(360, 180, |x, _| {
+        image::Luma([((x % 20) * 12) as u8])
+    }));
     let sky_image = Arc::new(
         globecraft_data::sky::SkyImage::decode(include_bytes!(
             "../../../../assets/sky/milkyway-2020-4k-sdr.jpg"
@@ -53,6 +57,8 @@ fn gpu_overview_matches_cpu() {
             // normal leans furthest from the sphere's.
             (78.0, 15.0, 5000.0),
             (45.0, 9.0, 2500.0),
+            // Under the sun: its glint off the water.
+            (20.0, 45.0, 8000.0),
         ] {
             for (enabled, lights) in [(false, false), (true, false), (false, true), (true, true)] {
                 let cam = Cam {
@@ -92,6 +98,7 @@ fn gpu_overview_matches_cpu() {
                         stars: None,
                         sky_behind: false,
                         clouds: None,
+                        glint: enabled.then(|| water.clone()),
                     },
                     overlays: None,
                     aircraft: None,
@@ -257,6 +264,7 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
             stars: None,
             sky_behind: false,
             clouds: None,
+            glint: None,
         },
         overlays: None,
         aircraft: None,
@@ -314,6 +322,7 @@ fn motion_and_idle_frames_choose_the_same_level() {
             stars: None,
             sky_behind: false,
             clouds: None,
+            glint: None,
         },
         overlays: None,
         aircraft: None,

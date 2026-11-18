@@ -13,6 +13,11 @@ them into the sky, where relief hides them. Aircraft on the far side of the laye
 fade behind thick cloud. The aurora is a layer just above the clouds (10.5 km): over
 them from above, behind them (with the stars, behind the frame) from below.
 
+With Sunlight on, the same service's water map
+(https://clouds.matteason.co.uk/images/4096x2048/specular.jpg: the sea bright, land
+and cloud dark) gives the sun's glint on the water, on the CPU and the GPU alike
+(`globecraft_render::sun::glint`).
+
 **Required source attribution:** Contains modified EUMETSAT data
 
 The provider publishes eight updates per day (one every three hours), depending on upstream satellite data availability.

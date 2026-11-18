@@ -330,6 +330,7 @@ impl App {
             // The sky layer draws space at full resolution behind the frame.
             sky_behind: true,
             clouds: self.frame_clouds(),
+            glint: sun.and_then(|_| self.live.maps.water_map()),
         }
     }
 

@@ -412,6 +412,7 @@ live-radar-age = Rain radar: observation approximately { $minutes } min old
 live-radar-loading = Rain radar: loading RainViewer data…
 sidebar-cloud-source = Cloud data: Matt Eason / EUMETSAT
 sidebar-radar-source = Radar data: RainViewer
+glint-credit = Sun glint: Matt Eason · Live Cloud Maps · Contains modified EUMETSAT data
 live-cloud-credit = Matt Eason · Live Cloud Maps · Contains modified EUMETSAT data
 live-radar-credit = Precipitation radar: RainViewer (rainviewer.com)
 

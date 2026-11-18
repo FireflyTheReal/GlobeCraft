@@ -2,6 +2,11 @@
 use super::{CloudMap, RadarFrame};
 use image::{GrayImage, RgbaImage, imageops::FilterType};
 const CLOUD_SOURCE: &str = "https://clouds.matteason.co.uk/images/8192x4096/clouds-alpha.png";
+/// The same service's map of how much the sea shines: water bright, land and cloud
+/// dark (it follows the clouds). Its 4096-wide edition: a texel is 10 km.
+const WATER_SOURCE: &str = "https://clouds.matteason.co.uk/images/4096x2048/specular.jpg";
+/// The 4096 × 2048 JPEG is about 1.1 MB.
+const WATER_IMAGE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const RADAR_API: &str = "https://api.rainviewer.com/public/weather-maps.json";
 const TILE_ZOOM: usize = 2;
 const TILE_SIZE: u32 = 512;
@@ -17,12 +22,7 @@ const CLOUD_LEVELS: usize = 3;
 pub(super) async fn download_clouds() -> Result<CloudMap, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Cloud)?;
     // Cache bust by 3-hour slots; URL remains the requested source image.
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / (3 * 60 * 60);
-    let url = format!("{CLOUD_SOURCE}?slot={epoch}");
+    let url = format!("{CLOUD_SOURCE}?slot={}", three_hour_slot());
     let bytes = crate::http::body(client.get(url), CLOUD_IMAGE_MAX_BYTES).await?;
     // Decode off the UI thread. The clouds are their opacity (the image's alpha; its
     // grey is near white throughout): one channel at full size, 32 MB, and the
@@ -51,6 +51,26 @@ pub(super) async fn download_clouds() -> Result<CloudMap, crate::Error> {
         Ok(CloudMap { levels })
     })
     .await?
+}
+
+/// The water's shine (see `WATER_SOURCE`), one channel.
+pub(super) async fn download_water() -> Result<GrayImage, crate::Error> {
+    let client = crate::http::client(crate::http::Policy::Cloud)?;
+    let url = format!("{WATER_SOURCE}?slot={}", three_hour_slot());
+    let bytes = crate::http::body(client.get(url), WATER_IMAGE_MAX_BYTES).await?;
+    tokio::task::spawn_blocking(move || {
+        Ok(crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?.into_luma8())
+    })
+    .await?
+}
+
+/// The current 3-hour slot since 1970, to bust caches with the source's refresh.
+fn three_hour_slot() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / (3 * 60 * 60)
 }
 
 pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {

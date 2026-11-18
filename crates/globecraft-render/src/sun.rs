@@ -22,6 +22,35 @@ const SUN_GLOW_REACH_RAD: f64 = 0.45;
 /// and red as the air between grows and takes first blue, then green.
 const SUN_BRIGHTNESS: f32 = 8.0;
 
+/// The water's glint: its shine (0 to 1, `LiveMaps::water`) times a highlight around
+/// the sun's mirror image, broad as the waves make it (Blinn's half-vector form).
+pub(crate) const GLINT_STRENGTH: f32 = 0.5;
+pub(crate) const GLINT_SHININESS: f32 = 60.0;
+/// A highlight fainter than this is left out (it would not show; it saves a lookup).
+pub(crate) const GLINT_MIN_HIGHLIGHT: f32 = 1e-4;
+
+/// The sun's glint (0 to 1) off the water at a place, seen along `direction` where
+/// the surface's normal is `normal`.
+pub(crate) fn glint(
+    water: &image::GrayImage,
+    lat: f64,
+    lon: f64,
+    direction: DVec3,
+    normal: DVec3,
+    sun: DVec3,
+) -> f32 {
+    if normal.dot(sun) <= 0.0 {
+        return 0.0;
+    }
+    let half = (sun - direction).normalize();
+    let facing = normal.dot(half).max(0.0) as f32;
+    let highlight = facing.powf(GLINT_SHININESS);
+    if highlight < GLINT_MIN_HIGHLIGHT {
+        return 0.0;
+    }
+    crate::clouds::sample(water, lat, lon) * GLINT_STRENGTH * highlight
+}
+
 /// The sun's light `angle` radians from its centre (0 to 1): its disc, then its glow.
 fn sun_light(angle: f64) -> f32 {
     if angle <= SUN_RADIUS_RAD {
@@ -62,6 +91,23 @@ mod tests {
         assert!(sun_light(0.02) < 0.5);
         assert!(sun_light(SUN_GLOW_REACH_RAD - 1e-6) < 0.01);
         assert_eq!(sun_light(SUN_GLOW_REACH_RAD), 0.0);
+    }
+
+    #[test]
+    fn the_glint_shines_where_the_sun_is_mirrored_and_only_on_water() {
+        let water = image::GrayImage::from_fn(360, 180, |x, _| {
+            image::Luma([if x < 180 { 255 } else { 0 }])
+        });
+        // Looking straight down at the equator with the sun overhead: full glint on the
+        // water (west), none on land (east), none with the sun to the side.
+        let (normal, down) = (DVec3::X, -DVec3::X);
+        let full = glint(&water, 0.0, -10.0, down, normal, DVec3::X);
+        assert!((full - GLINT_STRENGTH).abs() < 1e-3, "{full}");
+        assert_eq!(glint(&water, 0.0, 10.0, down, normal, DVec3::X), 0.0);
+        let aside = DVec3::new(0.6, 0.8, 0.0);
+        assert!(glint(&water, 0.0, -10.0, down, normal, aside) < 0.01);
+        // Below the horizon there is none.
+        assert_eq!(glint(&water, 0.0, -10.0, down, normal, -DVec3::X), 0.0);
     }
 
     #[test]

@@ -316,8 +316,9 @@ pub fn seen_through(clouds: &CloudsCfg, basis: &Basis, lat: f64, lon: f64, km: f
     1.0 - density * CLOUD_OPACITY * clouds.opacity * fade
 }
 
-/// The cloud map's opacity (0 to 1) at a place, between its four nearest texels.
-fn sample(map: &image::GrayImage, lat: f64, lon: f64) -> f32 {
+/// An equirectangular map's value (0 to 1) at a place, between its four nearest
+/// texels.
+pub(crate) fn sample(map: &image::GrayImage, lat: f64, lon: f64) -> f32 {
     let (width, height) = (map.width() as f64, map.height() as f64);
     let x = (lon + 180.0) / 360.0 * width - 0.5;
     let y = ((90.0 - lat) / 180.0 * height - 0.5).clamp(0.0, height - 1.0);
