@@ -37,6 +37,7 @@ pub(super) fn source() -> String {
         ("AIR_EXPOSURE", air::EXPOSURE),
         ("AIR_NADIR_SHARE", air::NADIR_HAZE_SHARE),
         ("AIR_UNLIT_SUN", air::UNLIT_SUN_COSINE),
+        ("AIR_NIGHT_SUN", air::NIGHT_SUN_COSINE),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{value:?}"));
     }

@@ -145,6 +145,8 @@ pub(super) fn surface<const ELLIPSOID: bool>(
             NIGHT_BLUE_TINT * (1.0 - k),
             1.0 - k,
         )
+    } else if cfg.night_everywhere() {
+        (NIGHT_BRIGHTNESS, NIGHT_BLUE_TINT, 1.0)
     } else {
         (1.0, 0.0, 0.0)
     };

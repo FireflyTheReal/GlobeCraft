@@ -69,6 +69,9 @@ pub(crate) const NADIR_HAZE_SHARE: f32 = 0.3;
 /// Without a sun (the globe lit everywhere) the air is lit as by a sun this high
 /// (cosine of its zenith angle), at right angles to the view.
 pub(crate) const UNLIT_SUN_COSINE: f32 = 0.8;
+/// With the night lights and no sun the whole globe is night: the air is lit as by
+/// a sun straight below, that is not at all.
+pub(crate) const NIGHT_SUN_COSINE: f32 = -1.0;
 
 fn horizon_km() -> f32 {
     (TOP_KM * TOP_KM - GROUND_KM * GROUND_KM).sqrt()
@@ -499,7 +502,13 @@ impl Tables {
     /// cosines between the view and the vertical (`view_cosine`), the sun and the
     /// vertical, and the view direction and the sun. The GPU shader does the same
     /// sums on the same numbers (`ground_transmittance`, `top_scattering`).
-    pub(crate) fn ground_from_space(&self, view_cosine: f32, sun: Option<(f32, f32)>) -> Air {
+    /// Without a sun the air is lit as by one whose cosine is `unlit` everywhere.
+    pub(crate) fn ground_from_space(
+        &self,
+        view_cosine: f32,
+        sun: Option<(f32, f32)>,
+        unlit: f32,
+    ) -> Air {
         let horizon = self.horizon;
         // From the ground up the view ray to the top of the air.
         let d = horizon * horizon
@@ -519,7 +528,7 @@ impl Tables {
         let (mu_s, nu) = match sun {
             // The sun's cosine where the ray enters the air.
             Some((mu_s, nu)) => (((GROUND_KM * mu_s - d * nu) / TOP_KM).clamp(-1.0, 1.0), nu),
-            None => (UNLIT_SUN_COSINE, -view_cosine * UNLIT_SUN_COSINE),
+            None => (unlit, -view_cosine * unlit),
         };
         let views = SCATTERING_VIEWS / 2;
         let (view, view_step) = cell((views - 1) as f32 * (1.0 - way), views);
@@ -618,7 +627,7 @@ pub(crate) struct Frame {
     radius_km: f32,
     up: glam::DVec3,
     /// Where the sun is and its cosine at the camera; without it the air is lit
-    /// evenly (`UNLIT_SUN_COSINE`).
+    /// evenly (`UNLIT_SUN_COSINE`), or not at all at night (`NIGHT_SUN_COSINE`).
     sun: Option<glam::DVec3>,
     sun_cosine: f32,
     inside: Option<Inside>,
@@ -641,11 +650,22 @@ const SEA_LEVEL_SLACK_KM: f32 = 0.01;
 impl Frame {
     /// `radius` is the camera's distance from the centre in Earth radii, in the
     /// surface's own measure (so that it is right over an ellipsoid's poles too).
-    pub(crate) fn new(camera: glam::DVec3, radius: f64, sun: Option<glam::DVec3>) -> Self {
+    /// Without a `sun`, `night` leaves the air unlit instead of evenly lit.
+    pub(crate) fn new(
+        camera: glam::DVec3,
+        radius: f64,
+        sun: Option<glam::DVec3>,
+        night: bool,
+    ) -> Self {
         let tables: &'static Tables = &TABLES;
         let radius_km = (radius as f32 * GROUND_KM).max(GROUND_KM);
         let up = camera.normalize_or_zero();
-        let sun_cosine = sun.map_or(UNLIT_SUN_COSINE, |sun| up.dot(sun) as f32);
+        let unlit = if night {
+            NIGHT_SUN_COSINE
+        } else {
+            UNLIT_SUN_COSINE
+        };
+        let sun_cosine = sun.map_or(unlit, |sun| up.dot(sun) as f32);
         let inside = (radius_km < TOP_KM).then(|| {
             let rho = (radius_km * radius_km - GROUND_KM * GROUND_KM)
                 .max(0.0)
@@ -740,7 +760,7 @@ impl Frame {
                     nu,
                 )
             }
-            None => (UNLIT_SUN_COSINE, mu_top * UNLIT_SUN_COSINE),
+            None => (self.sun_cosine, mu_top * self.sun_cosine),
         };
         Some(Air {
             scattered: radiance(self.tables.scattering(TOP_KM, mu_top, mu_s, nu, false), nu),
@@ -762,7 +782,9 @@ impl Frame {
             let sun = self
                 .sun
                 .map(|sun| (normal.dot(sun) as f32, direction.dot(sun) as f32));
-            return self.tables.ground_from_space(view_cosine, sun);
+            return self
+                .tables
+                .ground_from_space(view_cosine, sun, self.sun_cosine);
         };
         let (tables, r) = (self.tables, self.radius_km);
         let mu = direction.dot(self.up) as f32;
@@ -872,7 +894,7 @@ mod tests {
     fn frame(height_km: f32, sun_cosine: f64) -> Frame {
         let radius = f64::from(1.0 + height_km / GROUND_KM);
         let sun = DVec3::new((1.0 - sun_cosine * sun_cosine).sqrt(), 0.0, sun_cosine);
-        Frame::new(DVec3::new(0.0, 0.0, radius), radius, Some(sun))
+        Frame::new(DVec3::new(0.0, 0.0, radius), radius, Some(sun), false)
     }
     /// A direction `mu` from the vertical, turned toward the sun's side.
     fn toward_sun(mu: f64) -> DVec3 {

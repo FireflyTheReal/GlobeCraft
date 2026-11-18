@@ -82,8 +82,6 @@ pub struct RenderCfg {
     /// within one of it, so a screenshot shows no seams between tile tiers (user,
     /// 2026-10-26). Pixels further off (a tilted view's far field) keep their own.
     pub fixed_level: Option<i32>,
-    /// City lights (NASA Black Marble): added on the night side when the sun is
-    /// shown, the whole surface otherwise.
     /// Night lights, by the edition of their tiles (see `TileSource::editions`).
     pub night_lights: Option<u16>,
     /// Point stars in the sky (over the Milky Way when it shows).
@@ -93,6 +91,15 @@ pub struct RenderCfg {
     /// otherwise transparent. Motion frames render at a fraction of the size, which
     /// blurred the stars and the Milky Way and made stars blink (user, 2026-11-17).
     pub sky_behind: bool,
+}
+
+impl RenderCfg {
+    /// Night lights without the sun: the whole globe is drawn as the night side is
+    /// with it, dark ground and air. It used to show the lights over a lit globe
+    /// under evenly lit air, unlike the night side (user, 2026-11-18).
+    pub fn night_everywhere(&self) -> bool {
+        self.sun.is_none() && self.night_lights.is_some()
+    }
 }
 
 struct Local<'a, F> {
@@ -226,7 +233,6 @@ fn shade_surface(
             surface,
             terrain_light,
             night_lights(loc, cfg, &surface),
-            cfg.sun.is_some(),
         );
     }
     let (mut col, _) = sample_chain(loc, cfg.provider, rel, surface.z0, &surface);
@@ -254,7 +260,6 @@ fn shade_surface(
         surface,
         terrain_light,
         night_lights(loc, cfg, &surface),
-        cfg.sun.is_some(),
     )
 }
 
@@ -318,12 +323,7 @@ fn finish_surface(
     surface: Surface,
     terrain_light: f32,
     lights: Option<Vec4>,
-    sunlit: bool,
 ) -> Vec4 {
-    // Without the sun the lights are the picture; with it they glow where it is dark.
-    if let (Some(lights), false) = (lights, sunlit) {
-        col = lights;
-    }
     if surface.grid {
         col = col.lerp_monotonic(GRID_COLOR, GRID_BLEND);
     }
@@ -334,7 +334,8 @@ fn finish_surface(
     });
     col =
         col * sunlight * (surface.shade * terrain_light) + Vec4::new(0.0, 0.0, surface.night, 0.0);
-    if let (Some(lights), true) = (lights, sunlit) {
+    // The lights glow where it is dark: the night side, or everywhere without the sun.
+    if let Some(lights) = lights {
         col += lights * surface.darkness;
     }
     match surface.air {
@@ -351,13 +352,32 @@ fn night_lights(
     surface: &Surface,
 ) -> Option<Vec4> {
     let edition = cfg.night_lights?;
-    if cfg.sun.is_some() && surface.darkness < MIN_NIGHT_LIGHTS_DARKNESS {
+    if surface.darkness < MIN_NIGHT_LIGHTS_DARKNESS {
         return None;
     }
     let level = natural_level(surface).min(i32::from(Provider::NightLights.max_zoom()));
     let (col, found) = sample_chain(loc, Provider::NightLights, edition, level, surface);
-    (found >= 0).then_some(col)
+    let lights = (found >= 0).then_some(col);
+    // Past the Mercator limit the tiles end and the day imagery showed through as a
+    // disc (user, 2026-11-18). There are no lights there: the tiles' own colour at
+    // their edge takes over, as the day imagery's polar caps do.
+    let cap = polar::cap_weight(surface.lat);
+    if cap <= 0.0 {
+        return lights;
+    }
+    let [r, g, b] = if surface.lat > 0.0 {
+        NIGHT_LIGHTS_NORTH_EDGE
+    } else {
+        NIGHT_LIGHTS_SOUTH_EDGE
+    };
+    let edge = Vec4::new(r, g, b, COLOR_CHANNEL_MAX) / COLOR_CHANNEL_MAX;
+    Some(lights.map_or(edge, |lights| lights.lerp(edge, cap)))
 }
+
+/// Black Marble's mean colour along its last rows of tiles (both editions, measured
+/// 2026-11-18): dark sea toward the north pole, moonlit ice toward the south.
+const NIGHT_LIGHTS_NORTH_EDGE: [f32; 3] = [4.0, 5.0, 15.0];
+const NIGHT_LIGHTS_SOUTH_EDGE: [f32; 3] = [43.0, 51.0, 85.0];
 
 /// Below this darkness (twilight's bright end) the lights are not sampled at all.
 const MIN_NIGHT_LIGHTS_DARKNESS: f32 = 0.01;
@@ -369,8 +389,10 @@ fn pixel_angle(h: usize, cfg: &RenderCfg) -> f64 {
 
 /// The air as this frame's camera sees it, when the frame has an atmosphere.
 fn frame_air(rays: &RayCaster, cfg: &RenderCfg) -> Option<atmosphere::Frame> {
-    cfg.atmo
-        .then(|| atmosphere::Frame::new(rays.camera(), rays.camera_len_squared.sqrt(), cfg.sun))
+    cfg.atmo.then(|| {
+        let (camera, radius) = (rays.camera(), rays.camera_len_squared.sqrt());
+        atmosphere::Frame::new(camera, radius, cfg.sun, cfg.night_everywhere())
+    })
 }
 
 /// Renders row `y`. `beams` holds where the relief march of each block of pixels may

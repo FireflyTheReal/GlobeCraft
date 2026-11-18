@@ -738,7 +738,7 @@ fn a_fixed_level_shows_one_tile_tier_across_the_picture() {
 }
 
 #[test]
-fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
+fn night_lights_glow_on_the_night_side_and_everywhere_without_sun() {
     let (ground, lights) = (solid_tile([90, 110, 70]), solid_tile([250, 220, 120]));
     let lookup = |key: TileKey| {
         if unkey(key).0 == Provider::NightLights {
@@ -773,12 +773,67 @@ fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
     cfg.night_lights = None;
     let (day, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
     assert_eq!(day_lit, day);
-    // Without the sun the lights are the surface.
+    // Without the sun it is night everywhere, ground and air drawn as the night side
+    // is (they differed, user 2026-11-18).
+    cfg.night_lights = Some(0);
+    for atmo in [false, true] {
+        cfg.atmo = atmo;
+        cfg.sun = Some(-ll_to_v3(cam.lat, cam.lon));
+        let (night_side, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        cfg.sun = None;
+        let (everywhere, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        let most = night_side
+            .iter()
+            .zip(&everywhere)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(most <= 2, "atmosphere {atmo}: {most}");
+    }
+}
+
+#[test]
+fn night_lights_cover_the_poles_where_their_tiles_end() {
+    let (ground, lights) = (solid_tile([90, 110, 70]), solid_tile([250, 220, 120]));
+    let lookup = |key: TileKey| {
+        if unkey(key).0 == Provider::NightLights {
+            Lookup::Ready(lights.clone())
+        } else {
+            Lookup::Ready(ground.clone())
+        }
+    };
+    let (width, height) = (64, 48);
+    let mut cfg = batch_reference_config(Provider::Satellite);
+    cfg.atmo = false;
+    cfg.sky = None;
     cfg.sun = None;
     cfg.night_lights = Some(0);
-    let (plain, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    // Every meridian meets at the pole: the grid would cover it.
+    cfg.grid = false;
     let centre = (height / 2 * width + width / 2) * RGBA_CHANNELS;
-    assert!(plain[centre].abs_diff(250) <= 2 && plain[centre + 2].abs_diff(120) <= 2);
+    // Over each pole the lights add their edge colour, not the day imagery (green).
+    for (lat, edge) in [(89.9, [4, 5, 15]), (-89.9, [43, 51, 85])] {
+        let cam = Cam {
+            lat,
+            lon: 30.0,
+            heading: 0.0,
+            alt: 300.0,
+            tilt: 0.0,
+        };
+        let basis = cam.basis(width as f64 / height as f64);
+        cfg.night_lights = Some(0);
+        let (pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        // The same night without the lights: the ground's own share.
+        cfg.night_lights = None;
+        cfg.sun = Some(-ll_to_v3(lat, 30.0));
+        let (dark, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        cfg.sun = None;
+        let pole: Vec<u8> = (centre..centre + 3).map(|i| pixels[i] - dark[i]).collect();
+        assert!(
+            pole.iter().zip(edge).all(|(&c, e)| c.abs_diff(e) <= 2),
+            "{lat}: {pole:?}"
+        );
+    }
 }
 
 #[test]

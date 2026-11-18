@@ -66,6 +66,7 @@ const HAZE_BLUE: f32 = __HAZE_BLUE__;
 const AIR_EXPOSURE: f32 = __AIR_EXPOSURE__;
 const AIR_NADIR_SHARE: f32 = __AIR_NADIR_SHARE__;
 const AIR_UNLIT_SUN: f32 = __AIR_UNLIT_SUN__;
+const AIR_NIGHT_SUN: f32 = __AIR_NIGHT_SUN__;
 const AIR_TINY: f32 = 1.1754944e-38;
 const MIN_LIGHTS_DARKNESS: f32 = __MIN_LIGHTS_DARKNESS__;
 // Marks the night lights' tiles in the tile table's level word.
@@ -227,9 +228,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let latitude_cosine = length(normal.xy);
     let lat = atan2(normal.z,latitude_cosine);
     let lon = atan2(normal.y,normal.x);
-    // The polar caps have their own imagery, projection and colour matching: the
-    // precise CPU repair draws them (a small share of an overview).
-    if view.raster.z != 0u && abs(lat) > POLAR_CAP_START { output[i] = 0u; return; }
+    // The polar caps have their own imagery, projection and colour matching, and the
+    // night lights their own fill past their tiles: the precise CPU repair draws them
+    // (a small share of an overview).
+    if (view.raster.z != 0u || view.lights.x != 0u) && abs(lat) > POLAR_CAP_START { output[i] = 0u; return; }
     let mpp = t * EARTH_RADIUS_M * (2.0 * FOV_HALF_TAN / f32(view.effects.z)) / sqrt(max(incidence,LOD_INC_COS));
     // The radius of the parallel's circle: the prime vertical radius times cos(latitude).
     let prime_vertical = view.figure.x / sqrt(1.0 - view.figure.y * normal.z * normal.z);
@@ -276,11 +278,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         k = k*k*(3.0-2.0*k);
         shade = NIGHT_BRIGHTNESS+DAY_RANGE*k; night = NIGHT_BLUE*(1.0-k); darkness = 1.0-k;
     }
-    // As the CPU's `night_lights` and `finish_surface`: without the sun the lights are
-    // the picture; with it they glow where it is dark.
+    // Night lights without the sun: night everywhere (`RenderCfg::night_everywhere`).
+    let all_night = !sunlit && view.lights.x != 0u;
+    if all_night { shade = NIGHT_BRIGHTNESS; night = NIGHT_BLUE; darkness = 1.0; }
+    // As the CPU's `night_lights` and `finish_surface`: the lights glow where it is dark.
     var lights = vec4<f32>(0.0);
-    if view.lights.x != 0u && (!sunlit || darkness >= MIN_LIGHTS_DARKNESS) { lights = chain(1u,lights_zoom,uv,distance,z,fraction); }
-    if lights.w > 0.0 && !sunlit { color = lights.rgb; }
+    if view.lights.x != 0u && darkness >= MIN_LIGHTS_DARKNESS { lights = chain(1u,lights_zoom,uv,distance,z,fraction); }
     // The air in front of the ground (`atmosphere::Tables::ground_from_space`,
     // `finish_surface`): low sunlight is orange, the air dims and adds its glow.
     let airy = view.effects.y != 0u;
@@ -290,8 +293,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if airy {
         let up = air_up(incidence);
         crossed = air_crossed(up).xyz;
-        var mu_s = AIR_UNLIT_SUN;
-        var nu = -incidence*AIR_UNLIT_SUN;
+        var mu_s = select(AIR_UNLIT_SUN,AIR_NIGHT_SUN,all_night);
+        var nu = -incidence*mu_s;
         if sunlit {
             let ground_sun = dot(normal,view.sun.xyz);
             nu = dot(dir,view.sun.xyz);
@@ -304,7 +307,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         glow = air_scattered(up,mu_s,nu);
     }
     color = color*sunlight*shade + vec3<f32>(0.0,0.0,night);
-    if lights.w > 0.0 && sunlit { color += lights.rgb*darkness; }
+    if lights.w > 0.0 { color += lights.rgb*darkness; }
     if airy {
         let grazing = (1.0-incidence)*(1.0-incidence);
         let share = AIR_NADIR_SHARE + (1.0-AIR_NADIR_SHARE)*grazing*grazing;
