@@ -234,6 +234,7 @@ mod tests {
             night_lights: None,
             stars: None,
             sky_behind: false,
+            clouds: None,
         };
         (basis, cfg)
     }

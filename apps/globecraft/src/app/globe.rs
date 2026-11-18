@@ -140,6 +140,12 @@ impl App {
                 .then(|| self.night_lights_edition()),
             sky: self.sky_ready(),
             stars: self.layer(MapLayer::Stars),
+            clouds: self.frame_clouds().map(|clouds| {
+                (
+                    clouds.opacity.to_bits(),
+                    std::sync::Arc::as_ptr(&clouds.map) as usize,
+                )
+            }),
         }
         .keys(now_unix());
         let state = keys.state.wrapping_add(relief_step);

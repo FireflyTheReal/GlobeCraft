@@ -105,6 +105,18 @@ impl App {
             .look_drag(basis.ray(rect, from), basis.ray(rect, to), model, ground_km)
     }
 
+    /// The clouds for the frame to draw from below, while the layer is shown.
+    pub(super) fn frame_clouds(&self) -> Option<globecraft_render::clouds::CloudsCfg> {
+        if !self.layer(MapLayer::Clouds) || !self.explorer.on_earth() {
+            return None;
+        }
+        Some(globecraft_render::clouds::CloudsCfg {
+            map: self.live.maps.cloud_map()?,
+            opacity: self.settings.layers.opacity.get(MapLayer::Clouds),
+            light: self.cloud_light(),
+        })
+    }
+
     /// How the cloud layer is lit: as the globe is (`RenderCfg::sun`, night everywhere
     /// with the night lights and no sun).
     pub(super) fn cloud_light(&self) -> globecraft_render::clouds::CloudLight {

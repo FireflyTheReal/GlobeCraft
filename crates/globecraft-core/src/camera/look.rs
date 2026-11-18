@@ -10,6 +10,12 @@ use glam::{DQuat, DVec3};
 /// A line of sight this close to straight down keeps the heading it had (its
 /// direction along the ground is not defined).
 const LEVEL_SIGHT_EPSILON: f64 = 1e-9;
+/// How far below the horizon the view can be lowered: straight down, less a little
+/// so that the direction it looks along the ground stays defined.
+const STRAIGHT_DOWN_DEG: f64 = 89.99;
+/// A drag along a line of sight within about 6° of straight down does not turn the
+/// view (the sine of that angle).
+const NEAR_VERTICAL_SINE: f64 = 0.1;
 /// Times the point where the line of sight meets the raised ground is found again.
 const GROUND_REFINEMENTS: usize = 3;
 
@@ -35,10 +41,18 @@ impl Cam {
         let eye = basis.c;
         let rotation = basis.rotation_from_view();
         // Turning to the right is clockwise seen from above.
-        let turn = DQuat::from_axis_angle(geometry.normal(eye).normalize(), -turn_deg.to_radians());
+        let vertical = geometry.normal(eye).normalize();
+        let turn = DQuat::from_axis_angle(vertical, -turn_deg.to_radians());
         let right = turn * (rotation * DVec3::X);
-        let sight = (DQuat::from_axis_angle(right.normalize(), raise_deg.to_radians())
-            * (turn * (rotation * DVec3::NEG_Z)))
+        let forward = turn * (rotation * DVec3::NEG_Z);
+        // Lowered at most to straight down: past it the view would flip over to the
+        // other side (user, 2026-11-18).
+        let below_deg = (-forward.dot(vertical))
+            .clamp(-1.0, 1.0)
+            .asin()
+            .to_degrees();
+        let raise_deg = raise_deg.max(below_deg - STRAIGHT_DOWN_DEG);
+        let sight = (DQuat::from_axis_angle(right.normalize(), raise_deg.to_radians()) * forward)
             .normalize();
         // The ground there is the surface raised along its normal: met by the line from
         // the eye lowered as far along the normal where it lands (found again from
@@ -102,7 +116,14 @@ impl Cam {
         let north = up.cross(east);
         let bearing = |d: DVec3| d.dot(east).atan2(d.dot(north)).to_degrees();
         let elevation = |d: DVec3| d.dot(up).clamp(-1.0, 1.0).asin().to_degrees();
-        let turn = wrap_lon(bearing(from) - bearing(to));
+        // Close to straight down a bearing swings wildly with a small move: the drag
+        // only raises or lowers there.
+        let level = |d: DVec3| (d - up * d.dot(up)).length() >= NEAR_VERTICAL_SINE;
+        let turn = if level(from) && level(to) {
+            wrap_lon(bearing(from) - bearing(to))
+        } else {
+            0.0
+        };
         let raise = elevation(from) - elevation(to);
         self.look_around(turn, raise, model, ground_km)
             || (raise != 0.0 && turn != 0.0 && self.look_around(turn, 0.0, model, ground_km))
@@ -172,6 +193,30 @@ mod tests {
         let at = after.project_precise(after.c + seen * 1e-4, rect).unwrap();
         let off = (at - glam::DVec2::new(f64::from(end.x), f64::from(end.y))).length();
         assert!(off < 1.0, "{off} px");
+    }
+
+    #[test]
+    fn lowering_the_view_stops_at_straight_down() {
+        for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
+            let mut cam = Cam {
+                lat: 47.0,
+                lon: 11.0,
+                heading: 40.0,
+                alt: 3.0,
+                tilt: 20.0,
+            };
+            // Far past straight down, in one go and in small steps.
+            assert!(cam.look_around(0.0, -60.0, model, 0.5));
+            assert!(cam.tilt < 0.05, "{}", cam.tilt);
+            assert!(wrap_lon(cam.heading - 40.0).abs() < 1.0, "{}", cam.heading);
+            for _ in 0..20 {
+                cam.look_around(0.0, -2.0, model, 0.5);
+                assert!(cam.tilt < 0.05 && wrap_lon(cam.heading - 40.0).abs() < 1.0);
+            }
+            // Raised again it leans the same way it did.
+            assert!(cam.look_around(0.0, 10.0, model, 0.5));
+            assert!(wrap_lon(cam.heading - 40.0).abs() < 1.0, "{}", cam.heading);
+        }
     }
 
     #[test]

@@ -1,15 +1,19 @@
 //! The live clouds as a layer of their own, `CLOUD_LAYER_KM` above the ground: lit by
 //! the sun, dark at night, seen with the parallax of their height, and sampled from the
 //! full 8192-wide map (user, 2026-11-18: "clouds are only 2K?", "place cloud layer at
-//! ~8 km"). The app draws them as a textured mesh over the frame; this module works
-//! out where each corner of that mesh lands on the layer and how lit it is.
+//! ~8 km"). Seen from above, the app draws them as a textured mesh over the frame; this
+//! module works out where each corner of that mesh lands on the layer and how lit it
+//! is. Seen from below, the renderer draws them into the frame's sky (`from_below`),
+//! where the relief hides them as it should.
 use crate::tuning::{TWILIGHT_OFFSET, TWILIGHT_WIDTH};
 use emath::{Pos2, Rect};
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use globecraft_core::{
     EARTH_RADIUS_KM, VERTICAL_FOV_HALF_TAN, camera::Basis, earth_model::SurfaceGeometry,
     math::ll_to_v3,
 };
+use globecraft_data::live_maps::CloudMap;
+use std::sync::Arc;
 
 /// The clouds' height above the surface. Real tops range from 2 to 15 km; one height
 /// for all keeps them a layer over the ground.
@@ -25,8 +29,9 @@ const CLOUD_FADE_KM: (f64, f64) = (12.0, 30.0);
 /// haze, and the mesh's last cells, cut where the line of sight misses the layer,
 /// showed as steps against the sky.
 const CLOUD_HORIZON_COSINES: (f64, f64) = (0.06, 0.25);
-/// The clouds' light on the night side, as a share of daylight.
-const CLOUD_NIGHT_LIGHT: f32 = 0.06;
+/// The clouds' colour on the night side: faint and bluish, as under the moon and the
+/// sky's own glow. Black, they were lost on the dark ground (user, 2026-11-18).
+const CLOUD_NIGHT_COLOUR: Vec3 = Vec3::new(0.16, 0.18, 0.24);
 /// A level of the cloud map is used while one of its texels covers at least this share
 /// of a screen pixel at the view's centre: finer levels shimmer as the view moves (the
 /// textures have no mipmaps).
@@ -50,14 +55,14 @@ pub struct CloudCorner {
     pub pos: Pos2,
     /// In the cloud map: 0 to 1 from 180° W eastward, 0 to 1 from the north pole.
     pub uv: [f64; 2],
-    /// Its light, 0 (night) to 1 (day).
-    pub light: f32,
+    /// Its colour, 0 to 1 (white by day).
+    pub colour: [f32; 3],
     /// How much of the clouds show there, 0 to 1 (less toward the layer's horizon).
     pub opacity: f32,
 }
 
 /// The cloud layer as a grid of corners over the screen, row by row; `None` where
-/// the line of sight misses the layer.
+/// the line of sight leads away from the layer (clear corners where it passes it).
 pub struct CloudShell {
     pub columns: usize,
     pub rows: usize,
@@ -93,25 +98,30 @@ pub fn cloud_shell(
     );
     let corner = |pos: Pos2| {
         let ray = basis.ray(rect, pos);
-        let hit = shell.intersect(basis.c, ray)?;
+        // A line of sight past the layer's edge still makes a corner, an invisible
+        // one where it passes nearest: the cells across the edge fade out instead of
+        // being cut off in steps.
+        let Some(hit) = shell.intersect(basis.c, ray) else {
+            let nearest = -basis.c.dot(ray);
+            if nearest <= 0.0 {
+                return None;
+            }
+            let (lat, lon) = shell.coordinates(basis.c + ray * nearest);
+            return Some(CloudCorner {
+                pos,
+                uv: [(lon + 180.0) / 360.0, (90.0 - lat) / 180.0],
+                colour: cloud_colour(light, ll_to_v3(lat, lon)).to_array(),
+                opacity: 0.0,
+            });
+        };
         let (lat, lon) = shell.coordinates(hit);
         let facing = (-ray.dot(ll_to_v3(lat, lon)) - CLOUD_HORIZON_COSINES.0)
             / (CLOUD_HORIZON_COSINES.1 - CLOUD_HORIZON_COSINES.0);
         let facing = facing.clamp(0.0, 1.0);
-        let light = match light {
-            CloudLight::Sun(sun) => {
-                let k = ((ll_to_v3(lat, lon).dot(sun) + TWILIGHT_OFFSET) / TWILIGHT_WIDTH)
-                    .clamp(0.0, 1.0) as f32;
-                let k = k * k * (3.0 - 2.0 * k);
-                CLOUD_NIGHT_LIGHT + (1.0 - CLOUD_NIGHT_LIGHT) * k
-            }
-            CloudLight::Even => 1.0,
-            CloudLight::Night => CLOUD_NIGHT_LIGHT,
-        };
         Some(CloudCorner {
             pos,
             uv: [(lon + 180.0) / 360.0, (90.0 - lat) / 180.0],
-            light,
+            colour: cloud_colour(light, ll_to_v3(lat, lon)).to_array(),
             opacity: (facing * facing * (3.0 - 2.0 * facing)) as f32,
         })
     };
@@ -138,6 +148,86 @@ pub fn cloud_shell(
         fade,
         pixel_km,
     })
+}
+
+/// The clouds' colour where the layer's vertical is `up`.
+fn cloud_colour(light: CloudLight, up: DVec3) -> Vec3 {
+    match light {
+        CloudLight::Sun(sun) => {
+            let k = ((up.dot(sun) + TWILIGHT_OFFSET) / TWILIGHT_WIDTH).clamp(0.0, 1.0) as f32;
+            CLOUD_NIGHT_COLOUR.lerp(Vec3::ONE, k * k * (3.0 - 2.0 * k))
+        }
+        CloudLight::Even => Vec3::ONE,
+        CloudLight::Night => CLOUD_NIGHT_COLOUR,
+    }
+}
+
+/// The clouds for the renderer, which draws them into the sky when the camera is
+/// below them.
+#[derive(Clone)]
+pub struct CloudsCfg {
+    pub map: Arc<CloudMap>,
+    /// The layer's opacity (0 to 1).
+    pub opacity: f32,
+    pub light: CloudLight,
+}
+
+/// Below the layer the clouds fade in: from none with the eye this far under it (km)
+/// to all at the second, so that they do not appear at once as the camera comes down
+/// through them.
+const BELOW_FADE_KM: (f64, f64) = (0.0, 2.0);
+/// Seen from below, distant clouds fade into the sky: by e every this many km.
+const BELOW_HAZE_KM: f64 = 150.0;
+/// The underside of thick cloud is grey: the thickest is this much darker.
+const UNDERSIDE_SHADE: f32 = 0.45;
+
+/// The clouds seen from `eye` (in the surface's units; `height_km` above it) along the
+/// sky ray `direction`: their colour (0 to 1) and opacity, or `None` without any.
+pub(crate) fn from_below(
+    clouds: &CloudsCfg,
+    surface: SurfaceGeometry,
+    eye: DVec3,
+    height_km: f64,
+    direction: DVec3,
+) -> Option<(Vec3, f32)> {
+    let under =
+        (CLOUD_LAYER_KM - height_km - BELOW_FADE_KM.0) / (BELOW_FADE_KM.1 - BELOW_FADE_KM.0);
+    if under <= 0.0 {
+        return None;
+    }
+    let layer = raised(surface, CLOUD_LAYER_KM);
+    let hit = layer.intersect(eye, direction)?;
+    let (lat, lon) = layer.coordinates(hit);
+    let density = sample(clouds.map.levels.first()?, lat, lon);
+    if density <= 0.0 {
+        return None;
+    }
+    let far = hit.distance(eye) * EARTH_RADIUS_KM / BELOW_HAZE_KM;
+    let under = under.min(1.0);
+    let opacity = density
+        * CLOUD_OPACITY
+        * clouds.opacity
+        * (under * under * (3.0 - 2.0 * under)) as f32
+        * (-far).exp() as f32;
+    let colour = cloud_colour(clouds.light, ll_to_v3(lat, lon)) * (1.0 - UNDERSIDE_SHADE * density);
+    Some((colour, opacity))
+}
+
+/// The cloud map's opacity (0 to 1) at a place, between its four nearest texels.
+fn sample(map: &image::GrayImage, lat: f64, lon: f64) -> f32 {
+    let (width, height) = (map.width() as f64, map.height() as f64);
+    let x = (lon + 180.0) / 360.0 * width - 0.5;
+    let y = ((90.0 - lat) / 180.0 * height - 0.5).clamp(0.0, height - 1.0);
+    let (x0, y0) = (x.floor(), y.floor());
+    let (fx, fy) = ((x - x0) as f32, (y - y0) as f32);
+    let at = |x: f64, y: f64| {
+        let x = x.rem_euclid(width) as u32;
+        let y = y.min(height - 1.0) as u32;
+        f32::from(map.get_pixel(x, y)[0]) / 255.0
+    };
+    let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1.0, y0) * fx;
+    let bottom = at(x0, y0 + 1.0) * (1.0 - fx) + at(x0 + 1.0, y0 + 1.0) * fx;
+    top * (1.0 - fy) + bottom * fy
 }
 
 /// Which level of a cloud map `widths` wide (finest first) to draw a view whose
@@ -260,21 +350,61 @@ mod tests {
     }
 
     #[test]
-    fn clouds_are_lit_by_day_and_dark_by_night() {
+    fn clouds_are_lit_by_day_and_faint_but_seen_by_night() {
         let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(300.0, 200.0));
         let basis = view(1000.0, 0.0, EarthModel::Wgs84);
         let centre = |light| {
-            cloud_shell(&basis, rect, 100.0, 1.0, light)
-                .unwrap()
-                .corners[4]
-                .unwrap()
-                .light
+            Vec3::from(
+                cloud_shell(&basis, rect, 100.0, 1.0, light)
+                    .unwrap()
+                    .corners[4]
+                    .unwrap()
+                    .colour,
+            )
         };
         let overhead = ll_to_v3(30.0, 179.0);
-        assert_eq!(centre(CloudLight::Sun(overhead)), 1.0);
-        assert_eq!(centre(CloudLight::Sun(-overhead)), CLOUD_NIGHT_LIGHT);
-        assert_eq!(centre(CloudLight::Night), CLOUD_NIGHT_LIGHT);
-        assert_eq!(centre(CloudLight::Even), 1.0);
+        assert_eq!(centre(CloudLight::Sun(overhead)), Vec3::ONE);
+        assert_eq!(centre(CloudLight::Sun(-overhead)), CLOUD_NIGHT_COLOUR);
+        assert_eq!(centre(CloudLight::Night), CLOUD_NIGHT_COLOUR);
+        assert_eq!(centre(CloudLight::Even), Vec3::ONE);
+        // Faint, but well over a night ground's dark.
+        assert!(CLOUD_NIGHT_COLOUR.min_element() > 0.1);
+    }
+
+    #[test]
+    fn from_below_the_clouds_overhead_show_and_fade_into_the_distance() {
+        let surface = EarthModel::Wgs84.geometry();
+        let mut map = image::GrayImage::from_pixel(64, 32, image::Luma([255]));
+        // A clear band along the equator.
+        for x in 0..64 {
+            map.put_pixel(x, 15, image::Luma([0]));
+            map.put_pixel(x, 16, image::Luma([0]));
+        }
+        let clouds = CloudsCfg {
+            map: Arc::new(CloudMap { levels: vec![map] }),
+            opacity: 1.0,
+            light: CloudLight::Even,
+        };
+        let at = |lat: f64, height_km: f64, direction: DVec3| {
+            let ground = surface.position(lat, 10.0);
+            let eye = ground + ll_to_v3(lat, 10.0) * (height_km / EARTH_RADIUS_KM);
+            from_below(&clouds, surface, eye, height_km, direction)
+        };
+        let up = ll_to_v3(45.0, 10.0);
+        // Straight up from 1 km under thick cloud: grey, nearly as opaque as drawn.
+        let (colour, opacity) = at(45.0, 1.0, up).unwrap();
+        assert!(
+            (colour.x - (1.0 - UNDERSIDE_SHADE)).abs() < 1e-3,
+            "{colour}"
+        );
+        assert!(opacity > 0.65, "{opacity}");
+        // Toward the horizon they fade into the sky.
+        let east = DVec3::new(-10f64.to_radians().sin(), 10f64.to_radians().cos(), 0.0);
+        let low = (east + up * 0.05).normalize();
+        assert!(at(45.0, 1.0, low).unwrap().1 < 0.5 * opacity);
+        // None in the clear band, and none from above the layer.
+        assert!(at(0.0, 1.0, ll_to_v3(0.0, 10.0)).is_none());
+        assert!(at(45.0, 9.0, up).is_none());
     }
 
     #[test]

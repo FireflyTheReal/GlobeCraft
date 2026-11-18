@@ -55,6 +55,7 @@ impl App {
             level_blend: quality.level_blend(),
             // Behind each strip, as the sky layer does on screen (`render_still`).
             sky_behind: true,
+            clouds: None,
             ..self.frame_config(width, height, 1.0)
         };
         // One tile tier for the whole picture (the one most of it would use), so no

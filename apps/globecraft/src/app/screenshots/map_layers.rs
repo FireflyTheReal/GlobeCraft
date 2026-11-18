@@ -696,6 +696,24 @@ fn sky_layer_screenshots() {
         .expect("camera");
     settle(&mut h, 8.0);
     save(&mut h, &dir, "36-clouds-close-and-tilted");
+    // From below, 1 km up, looking at the horizon.
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": lat + 10.0, "lon": lon + 20.0, "altitude_km": 1.0, "tilt_deg": 85.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 8.0);
+    save(&mut h, &dir, "39-clouds-from-below");
+    // From afar again, the map surely loaded by now: day and night.
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": -lat + 60.0, "lon": lon + 120.0, "altitude_km": 12000.0, "tilt_deg": 0.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "40-clouds-day-and-night-loaded");
     // Sunsets from 2 km up: the sun 6° and half a degree over the horizon, west of
     // the point under it, looking east... toward it.
     h.state_mut()

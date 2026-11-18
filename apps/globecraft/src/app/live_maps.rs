@@ -47,8 +47,10 @@ impl LiveMaps {
         radar: Option<f32>,
         light: CloudLight,
     ) {
-        if let Some(opacity) = clouds {
-            self.draw_clouds(painter, basis, rect, opacity, light);
+        match clouds {
+            Some(opacity) => self.draw_clouds(painter, basis, rect, opacity, light),
+            // Hidden, the cloud textures (up to 170 MB on the graphics card) go.
+            None => self.cloud_textures = None,
         }
         let Some((image, opacity)) = self.service.radar().zip(radar) else {
             return;
@@ -177,16 +179,11 @@ impl LiveMaps {
                     // than running back across the whole Earth.
                     let u = corner.uv[0] + (first.uv[0] - corner.uv[0]).round();
                     let alpha = alpha * corner.opacity;
-                    let level = (corner.light * alpha * 255.0) as u8;
+                    let [r, g, b] = corner.colour.map(|c| (c * alpha * 255.0) as u8);
                     mesh.vertices.push(egui::epaint::Vertex {
                         pos: corner.pos,
                         uv: Pos2::new(u as f32, corner.uv[1] as f32),
-                        color: Color32::from_rgba_premultiplied(
-                            level,
-                            level,
-                            level,
-                            (alpha * 255.0) as u8,
-                        ),
+                        color: Color32::from_rgba_premultiplied(r, g, b, (alpha * 255.0) as u8),
                     });
                 }
                 mesh.add_triangle(base, base + 1, base + 2);
@@ -194,6 +191,11 @@ impl LiveMaps {
             }
         }
         painter.add(mesh);
+    }
+
+    /// The cloud map, once loaded.
+    pub fn cloud_map(&self) -> Option<Arc<CloudMap>> {
+        self.service.cloud().cloned()
     }
 
     pub fn status(&self, clouds: bool, radar: bool, lang: Lang) -> String {

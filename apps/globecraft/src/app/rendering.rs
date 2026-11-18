@@ -329,6 +329,7 @@ impl App {
                 .flatten(),
             // The sky layer draws space at full resolution behind the frame.
             sky_behind: true,
+            clouds: self.frame_clouds(),
         }
     }
 

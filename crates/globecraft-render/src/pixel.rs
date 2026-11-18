@@ -183,27 +183,35 @@ pub(super) fn with_air(
 /// `ray.camera_dot` the ray's reach along it, both in the surface's own measure.
 pub(super) fn sky(
     ray: &rays::RaySample,
-    cc: f64,
+    rays: &RayCaster,
     air: Option<&atmosphere::Frame>,
     cfg: &RenderCfg,
 ) -> Vec4 {
     let d = ray.direction;
+    let cc = rays.camera_len_squared;
     let air = air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32));
     // The sun through the air in front of it, over the sky's glow.
     let sun = cfg.sun.map_or(glam::Vec3::ZERO, |sun| {
         let through = air.map_or(glam::Vec3::ONE, |air| air.transmitted.truncate());
         crate::sun::sun_in_sky(d, sun, through)
     });
+    // From below, the clouds are in front of the sky and the sun.
+    let clouds = cfg.clouds.as_ref().and_then(|clouds| {
+        let height_km = (cc.sqrt() - 1.0) * globecraft_core::EARTH_RADIUS_KM;
+        crate::clouds::from_below(clouds, rays.model_geometry(), rays.camera(), height_km, d)
+    });
+    let (cloud, cover) = clouds.unwrap_or((glam::Vec3::ZERO, 0.0));
     if cfg.sky_behind {
         let glow = air.map_or(Vec4::ZERO, atmosphere::Air::behind);
         // Premultiplied: the sun's light hides as much of the sky behind.
-        return (glow.truncate() + sun)
-            .min(glam::Vec3::ONE)
-            .extend(glow.w.max(sun.max_element()));
+        let open = (glow.truncate() + sun).min(glam::Vec3::ONE);
+        let alpha = glow.w.max(sun.max_element());
+        return (cloud * cover + open * (1.0 - cover)).extend(cover + alpha * (1.0 - cover));
     }
     let col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
     let col = air.map_or(col, |air| air.over_sky(col));
-    (col.truncate() + sun).min(glam::Vec3::ONE).extend(1.0)
+    let open = (col.truncate() + sun).min(glam::Vec3::ONE);
+    open.lerp(cloud, cover).extend(1.0)
 }
 
 /// Space without the air (0 to 1 as drawn), for a sky drawn behind the frame.
@@ -249,6 +257,7 @@ mod tests {
                 night_lights: None,
                 stars: None,
                 sky_behind: false,
+                clouds: None,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -289,6 +298,7 @@ mod tests {
             night_lights: None,
             stars: None,
             sky_behind: false,
+            clouds: None,
         };
         for latitude in [
             -90.0_f64,
@@ -347,6 +357,7 @@ mod tests {
             night_lights: None,
             stars: None,
             sky_behind: false,
+            clouds: None,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

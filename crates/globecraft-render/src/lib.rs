@@ -92,6 +92,9 @@ pub struct RenderCfg {
     /// otherwise transparent. Motion frames render at a fraction of the size, which
     /// blurred the stars and the Milky Way and made stars blink (user, 2026-11-17).
     pub sky_behind: bool,
+    /// The clouds, drawn into the sky when the camera is below their layer (above it
+    /// the app draws them over the frame).
+    pub clouds: Option<clouds::CloudsCfg>,
 }
 
 impl RenderCfg {
@@ -408,7 +411,6 @@ fn render_row<const ELLIPSOID: bool>(
     row: &mut [u8],
 ) {
     let (w, h) = rays.pixels();
-    let cc = rays.camera_len_squared;
     let pixel_angle = pixel_angle(h, cfg);
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
@@ -462,7 +464,7 @@ fn render_row<const ELLIPSOID: bool>(
                             1.0,
                         ),
                         terrain::March::Miss => {
-                            let sky = sky(&ray, cc, air, cfg);
+                            let sky = sky(&ray, rays, air, cfg);
                             alpha = sky.w;
                             sky
                         }
@@ -480,7 +482,7 @@ fn render_row<const ELLIPSOID: bool>(
                     1.0,
                 ),
                 None => {
-                    let sky = sky(&ray, cc, air, cfg);
+                    let sky = sky(&ray, rays, air, cfg);
                     alpha = sky.w;
                     sky
                 }

@@ -85,6 +85,9 @@ pub struct RasterView {
     pub night_lights: Option<u16>,
     pub stars: bool,
     pub sky: bool,
+    /// The clouds as the frame draws them from below: the layer's opacity (bits)
+    /// and which map, when shown.
+    pub clouds: Option<(u32, usize)>,
 }
 pub struct ViewKeys {
     pub state: u64,
@@ -128,6 +131,7 @@ impl RasterView {
                 // clock (the Milky Way): without it a toggle drew nothing new.
                 self.sunlight,
                 self.stars,
+                self.clouds,
             ),
         )
             .hash(&mut state);
@@ -144,7 +148,7 @@ impl RasterView {
             self.terrain,
             (self.terrain_exaggeration.to_bits(), self.smooth_relief),
             sun_key,
-            (self.model.code(), self.sky),
+            (self.model.code(), self.sky, self.clouds),
         )
             .hash(&mut presentation);
         ViewKeys {
@@ -182,6 +186,7 @@ mod tests {
             ground_km: 0.0,
             sunlight: false,
             sky: false,
+            clouds: None,
             night_lights: None,
             stars: true,
         };
@@ -225,6 +230,7 @@ mod tests {
             ground_km: 0.0,
             sunlight: true,
             sky: false,
+            clouds: None,
             night_lights: None,
             stars: true,
         };
@@ -275,6 +281,7 @@ mod tests {
             atmosphere: false,
             sunlight: false,
             sky: false,
+            clouds: None,
             terrain: false,
             terrain_exaggeration: 1.0,
             smooth_relief: true,
