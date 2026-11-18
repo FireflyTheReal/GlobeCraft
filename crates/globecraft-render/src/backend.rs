@@ -514,6 +514,7 @@ mod native_fallback_tests {
                 sky_behind: false,
                 clouds: None,
                 glint: None,
+                aurora: None,
             },
             overlays: None,
             aircraft: None,

@@ -53,6 +53,10 @@ pub(super) struct Overview {
     /// it holds.
     water: wgpu::Buffer,
     water_for: Option<std::sync::Arc<image::GrayImage>>,
+    /// The aurora forecast (`aurora::glow`), packed as the water map, and the forecast
+    /// it holds.
+    aurora: wgpu::Buffer,
+    aurora_for: Option<std::sync::Arc<globecraft_data::aurora::AuroraGrid>>,
     staging: wgpu::Buffer,
     pixels: usize,
     dependency_count: usize,
@@ -126,6 +130,8 @@ impl Overview {
             ),
             water: buffer(device, "GlobeCraft water", 4, wgpu::BufferUsages::STORAGE),
             water_for: None,
+            aurora: buffer(device, "GlobeCraft aurora", 4, wgpu::BufferUsages::STORAGE),
+            aurora_for: None,
             staging: buffer(
                 device,
                 "GlobeCraft overview readback",
@@ -213,6 +219,23 @@ impl Overview {
             });
             self.water_for = Some(water.clone());
         }
+        let aurora = request.cfg.aurora.as_ref();
+        if let Some(aurora) = aurora
+            && !self
+                .aurora_for
+                .as_ref()
+                .is_some_and(|held| std::sync::Arc::ptr_eq(held, &aurora.grid))
+        {
+            use wgpu::util::DeviceExt;
+            let mut bytes = aurora.grid.values().to_vec();
+            bytes.resize(bytes.len().next_multiple_of(4), 0);
+            self.aurora = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("GlobeCraft aurora"),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            self.aurora_for = Some(aurora.grid.clone());
+        }
         let rotation = request.basis.rotation_from_view();
         let v4 = |vector: glam::DVec3, w| [vector.x as f32, vector.y as f32, vector.z as f32, w];
         let (shape, figure) = figure(request.basis.model.geometry(), request.basis.c);
@@ -226,7 +249,13 @@ impl Overview {
                 if water.is_some() { 1.0 } else { 0.0 },
             ),
             shape,
-            figure,
+            // The aurora's opacity rides in the figure's last place (0: off).
+            figure: [
+                figure[0],
+                figure[1],
+                figure[2],
+                aurora.map_or(0.0, |aurora| aurora.opacity.max(f32::MIN_POSITIVE)),
+            ],
             raster: [
                 request.width as u32,
                 request.height as u32,
@@ -309,6 +338,10 @@ impl Overview {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: self.water.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.aurora.as_entire_binding(),
                 },
             ],
         });

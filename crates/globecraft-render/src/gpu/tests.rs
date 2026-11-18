@@ -6,6 +6,32 @@ use globecraft_data::tiles::{Lookup, Provider, make_key};
 #[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
 fn gpu_overview_matches_cpu() {
     let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    // An aurora oval of 80 % from 60° to 75° of latitude, north and south.
+    let rows: Vec<serde_json::Value> = (0..360)
+        .flat_map(|lon| (-90..=90).map(move |lat: i32| (lon, lat)))
+        .map(|(lon, lat)| {
+            serde_json::json!([
+                lon,
+                lat,
+                if (60..=75).contains(&lat.abs()) {
+                    80
+                } else {
+                    0
+                }
+            ])
+        })
+        .collect();
+    let aurora = crate::aurora::AuroraCfg {
+        grid: Arc::new(
+            globecraft_data::aurora::AuroraGrid::parse(&serde_json::json!({
+                "Observation Time": "2026-11-04T04:00:00Z",
+                "Forecast Time": "2026-11-04T04:00:00Z",
+                "coordinates": rows,
+            }))
+            .unwrap(),
+        ),
+        opacity: 1.0,
+    };
     // Water in stripes of 10° of longitude, shining more toward the east of each.
     let water = Arc::new(image::GrayImage::from_fn(360, 180, |x, _| {
         image::Luma([((x % 20) * 12) as u8])
@@ -99,6 +125,7 @@ fn gpu_overview_matches_cpu() {
                         sky_behind: false,
                         clouds: None,
                         glint: enabled.then(|| water.clone()),
+                        aurora: lights.then(|| aurora.clone()),
                     },
                     overlays: None,
                     aircraft: None,
@@ -265,6 +292,7 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
             sky_behind: false,
             clouds: None,
             glint: None,
+            aurora: None,
         },
         overlays: None,
         aircraft: None,
@@ -323,6 +351,7 @@ fn motion_and_idle_frames_choose_the_same_level() {
             sky_behind: false,
             clouds: None,
             glint: None,
+            aurora: None,
         },
         overlays: None,
         aircraft: None,

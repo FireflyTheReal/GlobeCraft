@@ -90,6 +90,9 @@ pub struct RasterView {
     pub clouds: Option<(u32, u64)>,
     /// The water map for the sun's glint (the live maps' generation), when shown.
     pub glint: Option<u64>,
+    /// The aurora as the frame draws it: the layer's opacity (bits) and the
+    /// forecast's moment (bits), when shown.
+    pub aurora: Option<(u32, u64)>,
 }
 pub struct ViewKeys {
     pub state: u64,
@@ -133,7 +136,7 @@ impl RasterView {
                 // clock (the Milky Way): without it a toggle drew nothing new.
                 self.sunlight,
                 self.stars,
-                (self.clouds, self.glint),
+                (self.clouds, self.glint, self.aurora),
             ),
         )
             .hash(&mut state);
@@ -150,7 +153,12 @@ impl RasterView {
             self.terrain,
             (self.terrain_exaggeration.to_bits(), self.smooth_relief),
             sun_key,
-            (self.model.code(), self.sky, self.clouds, self.glint),
+            (
+                self.model.code(),
+                self.sky,
+                self.clouds,
+                (self.glint, self.aurora),
+            ),
         )
             .hash(&mut presentation);
         ViewKeys {
@@ -190,6 +198,7 @@ mod tests {
             sky: false,
             clouds: None,
             glint: None,
+            aurora: None,
             night_lights: None,
             stars: true,
         };
@@ -235,6 +244,7 @@ mod tests {
             sky: false,
             clouds: None,
             glint: None,
+            aurora: None,
             night_lights: None,
             stars: true,
         };
@@ -287,6 +297,7 @@ mod tests {
             sky: false,
             clouds: None,
             glint: None,
+            aurora: None,
             terrain: false,
             terrain_exaggeration: 1.0,
             smooth_relief: true,

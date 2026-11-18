@@ -146,6 +146,9 @@ impl App {
                 .map(|clouds| (clouds.opacity.to_bits(), self.live.maps.generation())),
             glint: (self.layer(MapLayer::Sunlight) && self.live.maps.water_map().is_some())
                 .then(|| self.live.maps.generation()),
+            aurora: self
+                .frame_aurora()
+                .map(|aurora| (aurora.opacity.to_bits(), aurora.grid.forecast.to_bits())),
         }
         .keys(now_unix());
         let state = keys.state.wrapping_add(relief_step);
@@ -306,13 +309,8 @@ impl App {
         if fade.is_none() {
             self.frame.fade_started = None;
         }
-        if let Some(sky) = self.frame.renderer.displayed_sky_behind.clone() {
-            self.frame.sky_layer.draw(ui.ctx(), &painter, rect, &sky);
-            if self.explorer.on_earth() {
-                let mut faded = painter.clone();
-                faded.multiply_opacity(self.settings.layers.opacity.get(MapLayer::Aurora));
-                self.paint_aurora(&faded, &sky.basis, rect, true);
-            }
+        if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
+            self.frame.sky_layer.draw(ui.ctx(), &painter, rect, sky);
         }
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         if let (Some(progress), Some(from)) = (fade, &self.frame.fade_from) {
@@ -784,7 +782,6 @@ impl App {
         } else {
             None
         };
-        self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect, false);
         self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
         self.paint_antarctic_claims(painter, &display_basis, rect);
         // All map names share one screen, placed in priority order, each layer

@@ -23,6 +23,8 @@ pub(super) struct Surface {
     pub(super) metres_per_pixel: f64,
     /// The sun's glint off the water there (0 to 1, `sun::glint`).
     pub(super) glint: f32,
+    /// The aurora's light between the eye and the pixel (`aurora::glow`).
+    pub(super) aurora: glam::Vec3,
 }
 pub(super) fn surface<const ELLIPSOID: bool>(
     x: usize,
@@ -157,6 +159,10 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         lat,
         lon,
         metres_per_pixel: mpp,
+        aurora: cfg.aurora.as_ref().map_or(glam::Vec3::ZERO, |aurora| {
+            let camera = ray.point - ray.direction * ray.distance;
+            crate::aurora::glow(aurora, cfg.sun, camera, ray.direction, ray.distance)
+        }),
         glint: match (cfg.sun, &cfg.glint) {
             (Some(sun), Some(water)) => {
                 crate::sun::glint(water, lat, lon, ray.direction, ray.normal, sun)
@@ -203,6 +209,10 @@ pub(super) fn sky(
         let through = air.map_or(glam::Vec3::ONE, |air| air.transmitted.truncate());
         crate::sun::sun_in_sky(d, sun, through)
     });
+    // The aurora glows in the air, behind the clouds seen from below.
+    let aurora = cfg.aurora.as_ref().map_or(glam::Vec3::ZERO, |aurora| {
+        crate::aurora::glow(aurora, cfg.sun, rays.camera(), d, f64::INFINITY)
+    });
     // From below, the clouds are in front of the sky and the sun.
     let clouds = cfg.clouds.as_ref().and_then(|clouds| {
         let height_km = (cc.sqrt() - 1.0) * globecraft_core::EARTH_RADIUS_KM;
@@ -212,14 +222,19 @@ pub(super) fn sky(
     if cfg.sky_behind {
         let glow = air.map_or(Vec4::ZERO, atmosphere::Air::behind);
         // Premultiplied: the sun's light hides as much of the sky behind.
-        let open = (glow.truncate() + sun).min(glam::Vec3::ONE);
+        let open = screen((glow.truncate() + sun).min(glam::Vec3::ONE), aurora);
         let alpha = glow.w.max(sun.max_element());
         return (cloud * cover + open * (1.0 - cover)).extend(cover + alpha * (1.0 - cover));
     }
     let col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
     let col = air.map_or(col, |air| air.over_sky(col));
-    let open = (col.truncate() + sun).min(glam::Vec3::ONE);
+    let open = screen((col.truncate() + sun).min(glam::Vec3::ONE), aurora);
     open.lerp(cloud, cover).extend(1.0)
+}
+
+/// `light` (0 to 1) laid over `colour` as a screen blend: it brightens, never past 1.
+pub(super) fn screen(colour: glam::Vec3, light: glam::Vec3) -> glam::Vec3 {
+    colour + light * (glam::Vec3::ONE - colour)
 }
 
 /// Space without the air (0 to 1 as drawn), for a sky drawn behind the frame.
@@ -267,6 +282,7 @@ mod tests {
                 sky_behind: false,
                 clouds: None,
                 glint: None,
+                aurora: None,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -309,6 +325,7 @@ mod tests {
             sky_behind: false,
             clouds: None,
             glint: None,
+            aurora: None,
         };
         for latitude in [
             -90.0_f64,
@@ -369,6 +386,7 @@ mod tests {
             sky_behind: false,
             clouds: None,
             glint: None,
+            aurora: None,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.

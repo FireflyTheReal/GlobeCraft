@@ -273,6 +273,7 @@ fn replay(
         sky_behind: false,
         clouds: None,
         glint: None,
+        aurora: None,
     };
     let hole = hole_rgba(&config(1.0));
     let used = Mutex::new(HashSet::<TileKey>::new());

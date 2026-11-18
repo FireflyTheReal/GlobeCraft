@@ -331,6 +331,7 @@ impl App {
             sky_behind: true,
             clouds: self.frame_clouds(),
             glint: sun.and_then(|_| self.live.maps.water_map()),
+            aurora: self.frame_aurora(),
         }
     }
 

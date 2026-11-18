@@ -34,6 +34,11 @@ impl AuroraGrid {
         self.values[(lon % LONGITUDES) * LATITUDES + lat.min(LATITUDES - 1)]
     }
 
+    /// Every chance (%), longitude by longitude, each from latitude −90° up.
+    pub fn values(&self) -> &[u8] {
+        &self.values
+    }
+
     /// The highest chance anywhere.
     pub fn peak(&self) -> u8 {
         self.values.iter().copied().max().unwrap_or(0)

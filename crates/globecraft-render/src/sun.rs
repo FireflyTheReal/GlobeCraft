@@ -28,6 +28,10 @@ pub(crate) const GLINT_STRENGTH: f32 = 0.5;
 pub(crate) const GLINT_SHININESS: f32 = 60.0;
 /// A highlight fainter than this is left out (it would not show; it saves a lookup).
 pub(crate) const GLINT_MIN_HIGHLIGHT: f32 = 1e-4;
+/// The glint fades out as the sun sinks to the water's horizon: from all with the sun
+/// this high (its cosine to the vertical, about 3°) to none at the horizon. It ended
+/// at the horizon in a hard line across the sunset's path (user, 2026-11-18).
+pub(crate) const GLINT_SUNSET_COSINE: f32 = 0.05;
 
 /// The sun's glint (0 to 1) off the water at a place, seen along `direction` where
 /// the surface's normal is `normal`.
@@ -39,7 +43,10 @@ pub(crate) fn glint(
     normal: DVec3,
     sun: DVec3,
 ) -> f32 {
-    if normal.dot(sun) <= 0.0 {
+    // The glint fades as the sun sets where it shines, instead of ending in a line:
+    // seen from above the ground, the sun stays up past where it set below.
+    let up = (normal.dot(sun) as f32 / GLINT_SUNSET_COSINE).clamp(0.0, 1.0);
+    if up <= 0.0 {
         return 0.0;
     }
     let half = (sun - direction).normalize();
@@ -48,7 +55,8 @@ pub(crate) fn glint(
     if highlight < GLINT_MIN_HIGHLIGHT {
         return 0.0;
     }
-    crate::clouds::sample(water, lat, lon) * GLINT_STRENGTH * highlight
+    let setting = up * up * (3.0 - 2.0 * up);
+    crate::clouds::sample(water, lat, lon) * GLINT_STRENGTH * highlight * setting
 }
 
 /// The sun's light `angle` radians from its centre (0 to 1): its disc, then its glow.
@@ -106,8 +114,17 @@ mod tests {
         assert_eq!(glint(&water, 0.0, 10.0, down, normal, DVec3::X), 0.0);
         let aside = DVec3::new(0.6, 0.8, 0.0);
         assert!(glint(&water, 0.0, -10.0, down, normal, aside) < 0.01);
-        // Below the horizon there is none.
+        // Below the horizon there is none, and toward it the glint fades.
         assert_eq!(glint(&water, 0.0, -10.0, down, normal, -DVec3::X), 0.0);
+        let low = |elevation_deg: f64| {
+            let e = elevation_deg.to_radians();
+            let sun = DVec3::new(e.sin(), e.cos(), 0.0);
+            // Looking along the sun's mirror line.
+            let view = DVec3::new(-e.sin(), e.cos(), 0.0);
+            glint(&water, 0.0, -10.0, view, normal, sun)
+        };
+        assert_eq!(low(0.0), 0.0);
+        assert!(0.0 < low(1.0) && low(1.0) < low(2.0) && low(2.0) < low(4.0));
     }
 
     #[test]

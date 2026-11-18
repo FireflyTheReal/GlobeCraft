@@ -1,7 +1,6 @@
 //! Aircraft geometry is prepared in render; styled shapes and hover stay in egui.
 use globecraft_core::layers::MapLayer;
 mod aurora;
-pub(super) use aurora::AuroraShapes;
 pub(super) use aurora::legend_colour as aurora_colour;
 mod fade;
 pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
@@ -496,30 +495,21 @@ pub(super) fn hover_label(
 }
 
 impl App {
-    /// The aurora glow, under every line and name, while the app's time is near the
-    /// forecast's moment. Its layer is above the clouds: seen from below it goes
-    /// behind the frame (`behind`, after the sky layer), from above over it.
-    pub(super) fn paint_aurora(
-        &mut self,
-        painter: &egui::Painter,
-        basis: &Basis,
-        rect: Rect,
-        behind: bool,
-    ) {
-        if !self.layer(MapLayer::Aurora) || aurora::seen_from_below(basis) != behind {
-            return;
+    /// The aurora for the frame to draw in the air: while its layer shows and the
+    /// app's time is near the forecast's moment.
+    pub(super) fn frame_aurora(&self) -> Option<globecraft_render::aurora::AuroraCfg> {
+        if !self.layer(MapLayer::Aurora) || !self.explorer.on_earth() {
+            return None;
         }
-        let Some(grid) = self.live.aurora.grid() else {
-            return;
-        };
-        let scene = self.scene_unix();
-        if !self.time.is_live() && (scene - grid.forecast).abs() > aurora::SHOWN_WITHIN_SECS {
-            return;
+        let grid = self.live.aurora.grid()?;
+        let live = self.time.is_live();
+        if !live && (self.scene_unix() - grid.forecast).abs() > aurora::SHOWN_WITHIN_SECS {
+            return None;
         }
-        let sunlight = self.layer(MapLayer::Sunlight);
-        self.live
-            .aurora_shapes
-            .paint(painter, basis, rect, &grid, scene, sunlight);
+        Some(globecraft_render::aurora::AuroraCfg {
+            grid,
+            opacity: self.settings.layers.opacity.get(MapLayer::Aurora),
+        })
     }
 }
 

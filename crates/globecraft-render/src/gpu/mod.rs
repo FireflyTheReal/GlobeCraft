@@ -240,6 +240,7 @@ impl GpuRenderer {
                 sky_behind: false,
                 clouds: None,
                 glint: None,
+                aurora: None,
             },
             overlays: None,
             aircraft: None,

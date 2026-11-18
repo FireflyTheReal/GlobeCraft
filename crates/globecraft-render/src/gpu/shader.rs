@@ -41,6 +41,18 @@ pub(super) fn source() -> String {
         ("GLINT_STRENGTH", crate::sun::GLINT_STRENGTH),
         ("GLINT_SHININESS", crate::sun::GLINT_SHININESS),
         ("GLINT_MIN_HIGHLIGHT", crate::sun::GLINT_MIN_HIGHLIGHT),
+        ("GLINT_SUNSET_COSINE", crate::sun::GLINT_SUNSET_COSINE),
+        ("AURORA_LOW_KM", crate::aurora::AURORA_LOW_KM),
+        ("AURORA_HIGH_KM", crate::aurora::AURORA_HIGH_KM),
+        ("AURORA_MIN_CHANCE", crate::aurora::MIN_CHANCE),
+        ("AURORA_FULL_CHANCE", crate::aurora::FULL_CHANCE),
+        ("AURORA_GLOW_PER_KM", crate::aurora::GLOW_PER_KM),
+        ("AURORA_MAX_LIGHT", crate::aurora::MAX_LIGHT),
+        ("AURORA_RED", crate::aurora::AURORA_COLOUR[0]),
+        ("AURORA_GREEN", crate::aurora::AURORA_COLOUR[1]),
+        ("AURORA_BLUE", crate::aurora::AURORA_COLOUR[2]),
+        ("AURORA_DAY_COSINE", crate::aurora::DAY_COSINE),
+        ("AURORA_NIGHT_COSINE", crate::aurora::NIGHT_COSINE),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{value:?}"));
     }

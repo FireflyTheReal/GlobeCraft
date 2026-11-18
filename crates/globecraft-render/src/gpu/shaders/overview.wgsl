@@ -5,7 +5,7 @@ struct View {
     right: vec4<f32>, up: vec4<f32>, forward: vec4<f32>,
     sun: vec4<f32>, // toward the sun; w: the glint on (1) or off (0)
     shape: vec4<f32>, // 1 / the surface's semi-axes squared; the camera in that metric, squared
-    figure: vec4<f32>, // semi-major axis (m), eccentricity squared, unused
+    figure: vec4<f32>, // semi-major axis (m), eccentricity squared, unused, aurora opacity (0: off)
     raster: vec4<u32>, // width, height, imagery, provider max zoom
     effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, reserved
     limits: vec4<u32>, // tracked max zoom, dependency count, table mask, water map width
@@ -25,6 +25,70 @@ struct View {
 const GLINT_STRENGTH: f32 = __GLINT_STRENGTH__;
 const GLINT_SHININESS: f32 = __GLINT_SHININESS__;
 const GLINT_MIN_HIGHLIGHT: f32 = __GLINT_MIN_HIGHLIGHT__;
+const GLINT_SUNSET_COSINE: f32 = __GLINT_SUNSET_COSINE__;
+// The aurora in the air (`aurora::glow`): the forecast's chance by 1° (bytes packed
+// four to a word, longitude by longitude from latitude −90°).
+@group(0) @binding(8) var<storage, read> aurora: array<u32>;
+const AURORA_LOW_KM: f32 = __AURORA_LOW_KM__;
+const AURORA_HIGH_KM: f32 = __AURORA_HIGH_KM__;
+const AURORA_MIN_CHANCE: f32 = __AURORA_MIN_CHANCE__;
+const AURORA_FULL_CHANCE: f32 = __AURORA_FULL_CHANCE__;
+const AURORA_GLOW_PER_KM: f32 = __AURORA_GLOW_PER_KM__;
+const AURORA_MAX_LIGHT: f32 = __AURORA_MAX_LIGHT__;
+const AURORA_COLOUR: vec3<f32> = vec3<f32>(__AURORA_RED__, __AURORA_GREEN__, __AURORA_BLUE__);
+const AURORA_DAY_COSINE: f32 = __AURORA_DAY_COSINE__;
+const AURORA_NIGHT_COSINE: f32 = __AURORA_NIGHT_COSINE__;
+fn aurora_node(lon: i32, lat: i32) -> f32 {
+    let index = u32(((lon % 360) + 360) % 360) * 181u + u32(clamp(lat, 0, 180));
+    return f32((aurora[index / 4u] >> ((index % 4u) * 8u)) & 255u);
+}
+fn aurora_chance(lat_deg: f32, lon_deg: f32) -> f32 {
+    let x = lon_deg - floor(lon_deg / 360.0) * 360.0;
+    let y = clamp(lat_deg + 90.0, 0.0, 180.0);
+    let x0 = floor(x); let y0 = floor(y);
+    let fx = x - x0; let fy = y - y0;
+    let ix = i32(x0); let iy = i32(y0);
+    let top = aurora_node(ix, iy) * (1.0 - fx) + aurora_node(ix + 1, iy) * fx;
+    let bottom = aurora_node(ix, iy + 1) * (1.0 - fx) + aurora_node(ix + 1, iy + 1) * fx;
+    return top * (1.0 - fy) + bottom * fy;
+}
+// The glowing km along a stretch of the ray, by the forecast at its middle.
+fn aurora_shine(camera: vec3<f32>, dir: vec3<f32>, from_t: f32, to_t: f32, end: f32) -> f32 {
+    let start = max(from_t, 0.0); let stop = min(to_t, end);
+    if stop <= start { return 0.0; }
+    let middle = normalize(camera + dir * (0.5 * (start + stop)));
+    var night = 1.0;
+    if view.effects.x != 0u {
+        var t = clamp((AURORA_DAY_COSINE - dot(middle, view.sun.xyz)) / (AURORA_DAY_COSINE - AURORA_NIGHT_COSINE), 0.0, 1.0);
+        night = t * t * (3.0 - 2.0 * t);
+    }
+    if night <= 0.0 { return 0.0; }
+    let chance = aurora_chance(degrees(asin(clamp(middle.z, -1.0, 1.0))), degrees(atan2(middle.y, middle.x)));
+    let strength = pow(clamp((chance - AURORA_MIN_CHANCE) / (AURORA_FULL_CHANCE - AURORA_MIN_CHANCE), 0.0, 1.0), 0.8);
+    return strength * night * (stop - start) * (EARTH_RADIUS_M / 1000.0);
+}
+// Where the ray meets the sphere `km` up: its distances in and out (x > y: missed).
+fn aurora_sphere(camera: vec3<f32>, dir: vec3<f32>, km: f32) -> vec2<f32> {
+    let radius = 1.0 + km / (EARTH_RADIUS_M / 1000.0);
+    let b = dot(camera, dir);
+    let disc = b * b - (dot(camera, camera) - radius * radius);
+    if disc <= 0.0 { return vec2<f32>(1.0, 0.0); }
+    return vec2<f32>(-b - sqrt(disc), -b + sqrt(disc));
+}
+fn aurora_glow(camera: vec3<f32>, dir: vec3<f32>, end: f32) -> vec3<f32> {
+    let outer = aurora_sphere(camera, dir, AURORA_HIGH_KM);
+    if outer.x > outer.y { return vec3<f32>(0.0); }
+    let inner = aurora_sphere(camera, dir, AURORA_LOW_KM);
+    var km = 0.0;
+    if inner.x <= inner.y {
+        km = aurora_shine(camera, dir, outer.x, inner.x, end) + aurora_shine(camera, dir, inner.y, outer.y, end);
+    } else {
+        km = aurora_shine(camera, dir, outer.x, outer.y, end);
+    }
+    let raw = km * AURORA_GLOW_PER_KM * view.figure.w;
+    let light = raw / (1.0 + raw / AURORA_MAX_LIGHT);
+    return vec3<f32>(1.0) - exp(-AURORA_COLOUR * light);
+}
 fn water_texel(x: i32, y: i32) -> f32 {
     let width = i32(view.limits.w);
     let index = u32(y * width + ((x % width) + width) % width);
@@ -332,11 +396,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // The sun's glint off the water (`sun::glint`), lit as the ground is.
     var glint = 0.0;
-    if sunlit && view.sun.w > 0.0 && dot(normal,view.sun.xyz) > 0.0 {
+    let up = clamp(dot(normal,view.sun.xyz) / GLINT_SUNSET_COSINE, 0.0, 1.0);
+    if sunlit && view.sun.w > 0.0 && up > 0.0 {
         let half = normalize(view.sun.xyz - dir);
         let highlight = pow(max(dot(normal,half),0.0), GLINT_SHININESS);
         if highlight >= GLINT_MIN_HIGHLIGHT {
-            glint = water_at(degrees(lat), degrees(lon)) * GLINT_STRENGTH * highlight;
+            glint = water_at(degrees(lat), degrees(lon)) * GLINT_STRENGTH * highlight * up * up * (3.0 - 2.0 * up);
         }
     }
     color = color*sunlight*shade + vec3<f32>(0.0,0.0,night) + sunlight*glint;
@@ -347,6 +412,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let through = vec3<f32>(1.0) + (crossed - vec3<f32>(1.0))*share;
         let light = glow*(AIR_EXPOSURE*share);
         color = sqrt(color*color*through + light/(vec3<f32>(1.0)+light));
+    }
+    // The aurora glows in the air in front (`finish_surface`).
+    if view.figure.w > 0.0 {
+        let glow = aurora_glow(camera, dir, t);
+        color = color + glow * (vec3<f32>(1.0) - color);
     }
     let rgb = vec3<u32>(clamp(color,vec3<f32>(0.0),vec3<f32>(1.0))*255.0);
     output[i] = rgb.r | (rgb.g<<8u) | (rgb.b<<16u) | (255u<<24u);

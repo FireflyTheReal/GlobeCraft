@@ -236,6 +236,7 @@ mod tests {
             sky_behind: false,
             clouds: None,
             glint: None,
+            aurora: None,
         };
         (basis, cfg)
     }

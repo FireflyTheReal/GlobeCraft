@@ -97,6 +97,8 @@ pub struct RenderCfg {
     pub clouds: Option<clouds::CloudsCfg>,
     /// How much the water shines (`LiveMaps::water`): with the sun, its glint.
     pub glint: Option<Arc<image::GrayImage>>,
+    /// The aurora, glowing in the air.
+    pub aurora: Option<aurora::AuroraCfg>,
 }
 
 impl RenderCfg {
@@ -345,10 +347,12 @@ fn finish_surface(
     if let Some(lights) = lights {
         col += lights * surface.darkness;
     }
-    match surface.air {
+    let col = match surface.air {
         Some((air, share)) => air.over(col, share),
         None => col,
-    }
+    };
+    // The aurora glows in the air in front.
+    pixel::screen(col.truncate(), surface.aurora).extend(col.w)
 }
 
 /// The night-lights colour under `surface`, when the layer is on and the pixel is
@@ -720,6 +724,7 @@ mod tests;
 mod benchmarks;
 
 pub mod aircraft;
+pub mod aurora;
 pub mod clouds;
 pub mod planet;
 pub mod scale_bar;

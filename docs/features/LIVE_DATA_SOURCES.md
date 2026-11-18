@@ -10,8 +10,9 @@ over Everest and under airliners at cruise. They come from the full 8192 × 4096
 white by day, faint blue-grey at night. From above, the app draws them over the frame
 and they fade out between 22 and 10.5 km; from below (under 10 km), the renderer draws
 them into the sky, where relief hides them. Aircraft on the far side of the layer
-fade behind thick cloud. The aurora is a layer just above the clouds (10.5 km): over
-them from above, behind them (with the stars, behind the frame) from below.
+fade behind thick cloud. The aurora glows in the air
+(`globecraft_render::aurora`): in a shell 90 to 170 km up, faint seen straight down,
+bright edge-on above the limb, and in the night sky (behind the clouds) from the ground.
 
 With Sunlight on, the same service's water map
 (https://clouds.matteason.co.uk/images/4096x2048/specular.jpg: the sea bright, land
