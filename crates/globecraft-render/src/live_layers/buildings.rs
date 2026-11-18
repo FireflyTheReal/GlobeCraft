@@ -13,6 +13,7 @@ use super::{LiveInput, altitude_fade};
 use crate::overlays::{Ground, TerrainVisibility};
 use emath::{Pos2, Rect};
 use glam::DVec3;
+use globecraft_core::VERTICAL_FOV_HALF_TAN;
 use globecraft_data::buildings::{Building, MAX_ALTITUDE_KM};
 use globecraft_data::tiles::TileCache;
 use rayon::prelude::*;
@@ -134,53 +135,58 @@ pub(super) fn project(
             faces
         })
         .collect();
-    let (mut faces, mut points, mut triangles) = (Vec::new(), Vec::new(), Vec::new());
-    for run in runs {
-        let (point, triangle) = (points.len() as u32, triangles.len() as u32);
-        faces.extend(run.faces.into_iter().map(|face| Face {
-            points: face.points.start + point..face.points.end + point,
-            triangles: face.triangles.start + triangle..face.triangles.end + triangle,
-            ..face
-        }));
-        points.extend(run.points);
-        triangles.extend(run.triangles);
-    }
-    // The nearest faces, then far to near.
+    // Every face with the run it is in; the nearest faces, then far to near. The runs
+    // keep their points and triangles where they are, and the mesh is laid out on
+    // every core too: done on one, these steps took longer than the projection
+    // (17 ms of 38 for 40,000 blocks, 2026-11-18).
+    let mut faces: Vec<(u32, &Face)> = runs
+        .iter()
+        .enumerate()
+        .flat_map(|(run, faces)| faces.faces.iter().map(move |face| (run as u32, face)))
+        .collect();
     if faces.len() > MAX_FACES {
-        faces.select_nth_unstable_by(MAX_FACES, |a, b| a.depth.total_cmp(&b.depth));
+        faces.select_nth_unstable_by(MAX_FACES, |a, b| a.1.depth.total_cmp(&b.1.depth));
         faces.truncate(MAX_FACES);
     }
-    faces.sort_unstable_by(|a, b| b.depth.total_cmp(&a.depth));
-    let mut mesh = BuildingMesh {
-        vertices: Vec::with_capacity(points.len()),
-        indices: Vec::with_capacity(triangles.len()),
-    };
-    for face in faces {
-        let first = mesh.vertices.len() as u32;
-        mesh.vertices.extend(
-            points[face.points.start as usize..face.points.end as usize]
+    faces.par_sort_unstable_by(|a, b| b.1.depth.total_cmp(&a.1.depth));
+    // Where each face's corners start in the mesh.
+    let mut firsts = Vec::with_capacity(faces.len());
+    let mut corners = 0u32;
+    for (_, face) in &faces {
+        firsts.push(corners);
+        corners += face.points.len() as u32;
+    }
+    let vertices: Vec<BuildingVertex> = faces
+        .par_iter()
+        .flat_map_iter(|&(run, face)| {
+            runs[run as usize].points[face.points.start as usize..face.points.end as usize]
                 .iter()
                 .map(|&(at, nearness)| BuildingVertex {
                     at,
                     nearness,
                     colour: face.colour,
-                }),
-        );
-        mesh.indices.extend(
-            triangles[face.triangles.start as usize..face.triangles.end as usize]
+                })
+        })
+        .collect();
+    let indices: Vec<u32> = faces
+        .par_iter()
+        .zip(&firsts)
+        .flat_map_iter(|(&(run, face), &first)| {
+            // A face's triangles count its own corners from zero.
+            runs[run as usize].triangles[face.triangles.start as usize..face.triangles.end as usize]
                 .iter()
-                .map(|&index| first + index),
-        );
-    }
+                .map(move |&index| first + index)
+        })
+        .collect();
+    let mut mesh = BuildingMesh { vertices, indices };
     let nearest = mesh
         .vertices
-        .iter()
-        .fold(f32::MIN_POSITIVE, |nearest, vertex| {
-            nearest.max(vertex.nearness)
-        });
-    for vertex in &mut mesh.vertices {
-        vertex.nearness /= nearest;
-    }
+        .par_iter()
+        .map(|vertex| vertex.nearness)
+        .reduce(|| f32::MIN_POSITIVE, f32::max);
+    mesh.vertices
+        .par_iter_mut()
+        .for_each(|vertex| vertex.nearness /= nearest);
     mesh
 }
 
@@ -199,6 +205,25 @@ struct Scratch {
     top: Vec<DVec3>,
     base_on_screen: Vec<Option<Corner>>,
     top_on_screen: Vec<Option<Corner>>,
+}
+
+/// The radius of a sphere round a block's middle that holds it (Earth radii): half its
+/// footprint's diagonal and half its height.
+fn block_radius(outline: &[(f64, f64)], lat: f64, building: &Building) -> f64 {
+    let (mut south, mut north, mut west, mut east) = (
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for &(lat, lon) in outline {
+        (south, north) = (south.min(lat), north.max(lat));
+        (west, east) = (west.min(lon), east.max(lon));
+    }
+    let across = (north - south).to_radians();
+    let along = (east - west).to_radians() * lat.to_radians().cos();
+    let height = f64::from(building.top_m - building.base_m) / METRES_PER_RADIUS;
+    0.5 * (across * across + along * along + height * height).sqrt()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -232,6 +257,29 @@ fn block(
         floor + f64::from(building.base_m) / METRES_PER_RADIUS,
         floor + f64::from(building.top_m) / METRES_PER_RADIUS,
     );
+    // Before its corners are projected: a block wholly behind the camera, off the
+    // screen or too small to see is left out by its middle and size alone. Most
+    // blocks of a city seen from 1 km are, and each corner costs a projection
+    // (user, 2026-11-17: 1 km over New York "a bit laggy").
+    let middle = basis.surface_position(lat, lon) + up * (0.5 * (base_lift + top_lift));
+    let radius = block_radius(outline, lat, building);
+    let depth = basis.view_depth(middle);
+    if depth < -radius {
+        return;
+    }
+    if depth > radius {
+        let points_per_radian = f64::from(rect.height()) * 0.5 / VERTICAL_FOV_HALF_TAN;
+        let size = (2.0 * radius / depth * points_per_radian) as f32;
+        let seen = basis.project_precise(middle, rect).is_some_and(|at| {
+            reach
+                .expand(size)
+                .contains(Pos2::new(at.x as f32, at.y as f32))
+        });
+        // Half the drawn minimum: the middle's size is a lower bound only roughly.
+        if !seen || size < 0.5 * MIN_SIZE_POINTS {
+            return;
+        }
+    }
     scratch.base.clear();
     scratch.top.clear();
     scratch.base_on_screen.clear();
@@ -300,6 +348,25 @@ fn block(
             light.on(up),
         ),
     };
+    // Its shadow on the ground, under everything else of the block (C3).
+    if let Some(sun) = input.sun {
+        let ground: Vec<DVec3> = outline
+            .iter()
+            .map(|&(lat, lon)| basis.surface_position(lat, lon) + up * floor)
+            .collect();
+        let behind = ((middle - camera).length() + radius).powi(2);
+        shadow(
+            out,
+            basis,
+            rect,
+            behind,
+            &ground,
+            up,
+            top_lift - floor,
+            sun,
+            alpha,
+        );
+    }
     // Walls: each faces the right-hand side of its edge (outlines run anticlockwise,
     // courtyards clockwise, seen from above), and only those facing the camera show.
     let mut first = 0;
@@ -386,6 +453,120 @@ fn block(
             );
         }
     }
+}
+
+/// Below this sun height (sine of its elevation, about 3°) blocks cast no shadow:
+/// the light is too dim and the shadows would stretch across the city.
+const SHADOW_MIN_SUN_SINE: f64 = 0.05;
+/// A shadow reaches at most this many times the block's height (the sun at 11°).
+const SHADOW_MAX_LENGTH_RATIO: f64 = 5.0;
+/// How dark a shadow is drawn on the ground (opacity of black, at full daylight).
+const SHADOW_OPACITY: f32 = 0.35;
+
+/// Adds the shadow a block of footprint `ground` (its outer ring, on the ground) and
+/// `height` (Earth radii) casts with the sun toward `sun`: the hull of the footprint
+/// and the footprint moved away from the sun by the shadow's length. Each block's
+/// shadow falls on the ground only, not on other blocks; `depth` draws it before the
+/// block's own faces.
+#[allow(clippy::too_many_arguments)]
+fn shadow(
+    out: &mut Faces,
+    basis: &globecraft_core::camera::Basis,
+    rect: Rect,
+    depth: f64,
+    ground: &[DVec3],
+    up: DVec3,
+    height: f64,
+    sun: DVec3,
+    alpha: u8,
+) {
+    let rise = sun.dot(up);
+    if rise < SHADOW_MIN_SUN_SINE || height <= 0.0 {
+        return;
+    }
+    let level = sun - up * rise;
+    let length = (height * level.length() / rise).min(height * SHADOW_MAX_LENGTH_RATIO);
+    let away = -level.normalize_or_zero() * length;
+    // Fades in as the sun rises from its lowest.
+    let strength = ((rise - SHADOW_MIN_SUN_SINE) / SHADOW_MIN_SUN_SINE).clamp(0.0, 1.0) as f32;
+    let shade = (SHADOW_OPACITY * strength * f32::from(alpha)) as u8;
+    if shade == 0 {
+        return;
+    }
+    let points: Vec<DVec3> = ground
+        .iter()
+        .copied()
+        .chain(ground.iter().map(|&point| point + away))
+        .collect();
+    // In the ground's plane, about the footprint's first corner.
+    let east = DVec3::Z.cross(up).normalize_or(DVec3::X);
+    let north = up.cross(east);
+    let flat: Vec<(f64, f64)> = points
+        .iter()
+        .map(|&point| {
+            (
+                (point - points[0]).dot(east),
+                (point - points[0]).dot(north),
+            )
+        })
+        .collect();
+    let hull = convex_hull(&flat);
+    // Each corner projected once; `face` cuts a triangle reaching behind the camera.
+    let seen: Vec<Option<Corner>> = hull
+        .iter()
+        .map(|&index| {
+            let point = points[index];
+            let at = basis.project_precise(point, rect)?;
+            Some((
+                Pos2::new(at.x as f32, at.y as f32),
+                (1.0 / basis.view_depth(point)) as f32,
+            ))
+        })
+        .collect();
+    for index in 1..hull.len().saturating_sub(1) {
+        let world = [
+            points[hull[0]],
+            points[hull[index]],
+            points[hull[index + 1]],
+        ];
+        let seen = [seen[0], seen[index], seen[index + 1]];
+        face(out, basis, rect, depth, &world, &seen, [0, 0, 0, shade]);
+    }
+}
+
+/// The corners of the convex hull of `points`, anticlockwise (Andrew's monotone
+/// chain): indices into `points`.
+fn convex_hull(points: &[(f64, f64)]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..points.len()).collect();
+    order.sort_by(|&a, &b| {
+        points[a]
+            .0
+            .total_cmp(&points[b].0)
+            .then(points[a].1.total_cmp(&points[b].1))
+    });
+    let cross = |o: usize, a: usize, b: usize| {
+        (points[a].0 - points[o].0) * (points[b].1 - points[o].1)
+            - (points[a].1 - points[o].1) * (points[b].0 - points[o].0)
+    };
+    let mut hull: Vec<usize> = Vec::with_capacity(points.len() + 1);
+    for pass in [false, true] {
+        let start = hull.len();
+        let sequence: Box<dyn Iterator<Item = &usize>> = if pass {
+            Box::new(order.iter().rev())
+        } else {
+            Box::new(order.iter())
+        };
+        for &point in sequence {
+            while hull.len() >= start + 2
+                && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.0
+            {
+                hull.pop();
+            }
+            hull.push(point);
+        }
+        hull.pop();
+    }
+    hull
 }
 
 /// Adds the flat, convex face with corners `world` (seen on screen at `seen`, where
@@ -573,6 +754,108 @@ mod tests {
         input.view.altitude_km = camera.alt;
         input.buildings = tiles(vec![block_at(48.0, 11.0), block_at(48.001, 11.0)]);
         input
+    }
+
+    /// How long the blocks of a dense city take to project: 40,000 blocks 60 m apart
+    /// (a 12 km square, as at 1 km over Manhattan), seen from 1 km at a 70° tilt.
+    /// Manual: run with `--ignored --nocapture` in release.
+    #[test]
+    #[ignore = "manual timing"]
+    fn dense_city_projection_time() {
+        let mut input = view(70.0, 30.0);
+        let camera = Cam {
+            lat: 40.75,
+            lon: -73.98,
+            heading: 30.0,
+            alt: 1.0,
+            tilt: 70.0,
+        };
+        input.view.basis = camera.basis_for_model(1.6, Default::default());
+        input.view.altitude_km = camera.alt;
+        let step = 0.000_55;
+        let blocks = (0..200)
+            .flat_map(|row| (0..200).map(move |column| (row, column)))
+            .map(|(row, column)| {
+                block_at(
+                    40.70 + f64::from(row) * step,
+                    -74.04 + f64::from(column) * step * 1.3,
+                )
+            })
+            .collect();
+        input.buildings = tiles(blocks);
+        // An afternoon sun, so the blocks cast shadows.
+        input.sun = Some(
+            (globecraft_core::math::ll_to_v3(40.75, -73.98) + glam::DVec3::new(0.3, -0.5, -0.2))
+                .normalize(),
+        );
+        let _ = project(&input, None, None);
+        let start = std::time::Instant::now();
+        let runs = 10;
+        let mut triangles = 0;
+        for _ in 0..runs {
+            triangles = project(&input, None, None).indices.len() / 3;
+        }
+        println!(
+            "dense city: {:?} per projection, {triangles} triangles, {} threads",
+            start.elapsed() / runs,
+            rayon::current_num_threads()
+        );
+    }
+
+    #[test]
+    fn the_hull_keeps_the_outside_corners_only() {
+        let points = [
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (1.0, 1.0),
+            (2.0, 2.0),
+            (0.0, 2.0),
+            (1.0, 0.0),
+        ];
+        let mut hull = convex_hull(&points);
+        hull.sort_unstable();
+        assert_eq!(hull, vec![0, 1, 3, 4]);
+    }
+
+    #[test]
+    fn a_block_casts_its_shadow_away_from_the_sun() {
+        // Straight down at noon with the sun 45° high in the south: the shadow lies
+        // north of the block (up the screen), as long as the block is tall (30 m).
+        let mut input = view(0.0, 0.0);
+        input.buildings = tiles(vec![block_at(48.0, 11.0)]);
+        let up = globecraft_core::math::ll_to_v3(48.0, 11.0);
+        let (la, lo) = (48f64.to_radians(), 11f64.to_radians());
+        let north = DVec3::new(-la.sin() * lo.cos(), -la.sin() * lo.sin(), la.cos());
+        input.sun = Some((up - north).normalize());
+        let lit = project(&input, None, None);
+        let dark: Vec<&BuildingVertex> = lit
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.colour[..3] == [0, 0, 0] && vertex.colour[3] > 0)
+            .collect();
+        assert!(dark.len() >= 3, "{lit:?}");
+        let roof_top = lit
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.colour[..3] != [0, 0, 0])
+            .map(|vertex| vertex.at.y)
+            .fold(f32::INFINITY, f32::min);
+        let shadow_top = dark
+            .iter()
+            .map(|vertex| vertex.at.y)
+            .fold(f32::INFINITY, f32::min);
+        assert!(shadow_top < roof_top, "{shadow_top} {roof_top}");
+        // Drawn before the block.
+        assert_eq!(lit.vertices[lit.indices[0] as usize].colour[..3], [0, 0, 0]);
+        // At night, none.
+        input.sun = Some(-up);
+        let night = project(&input, None, None);
+        assert!(
+            night
+                .vertices
+                .iter()
+                .all(|vertex| vertex.colour[..3] != [0, 0, 0])
+        );
     }
 
     #[test]
