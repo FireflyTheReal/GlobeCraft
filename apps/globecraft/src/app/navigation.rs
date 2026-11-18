@@ -96,6 +96,15 @@ impl App {
                 && self.cam.look_around(turn_deg, 0.0, model, ground_km))
     }
 
+    /// Looks around so that what was under `from` on the screen is under `to`.
+    pub(super) fn look_drag(&mut self, from: Pos2, to: Pos2, rect: Rect) -> bool {
+        let basis = self.view_basis((rect.width() / rect.height()) as f64);
+        let (model, ground_km) = (self.active_earth_model(), self.motion.ground_km);
+        self.motion.glide = None;
+        self.cam
+            .look_drag(basis.ray(rect, from), basis.ray(rect, to), model, ground_km)
+    }
+
     /// How the cloud layer is lit: as the globe is (`RenderCfg::sun`, night everywhere
     /// with the night lights and no sun).
     pub(super) fn cloud_light(&self) -> globecraft_render::clouds::CloudLight {

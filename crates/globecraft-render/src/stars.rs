@@ -1,12 +1,12 @@
-//! The naked-eye stars and the sun. The stars: the Yale Bright Star Catalogue (`assets/stars`), placed in
+//! The naked-eye stars: the Yale Bright Star Catalogue (`assets/stars`), placed in
 //! the sky for a moment by the same celestial frame as the Milky Way. Until
 //! 2026-11-18 the stars were made up (one in 1,400 cells of a grid) and fixed to the
 //! Earth, so they turned with it instead of with the sky (user: "are the stars
 //! accurate?").
 //!
 //! Stars are drawn as dots behind the frame, at the picture's full resolution: the
-//! app's sky layer draws them on screen, `paint_behind` into screenshots. So is the
-//! sun, with Sunlight on: its disc and the glow around it (user: "activate sun").
+//! app's sky layer draws them on screen, `paint_behind` into screenshots. The sun is
+//! drawn in the frame itself, through the air (`sun`).
 use emath::{Pos2, Rect};
 use glam::{DVec3, Vec3};
 use globecraft_core::{VERTICAL_FOV_HALF_TAN, camera::Basis, celestial::CelestialFrame};
@@ -134,38 +134,6 @@ fn project(basis: &Basis, local: DVec3, width: f64, height: f64) -> Option<Pos2>
     ))
 }
 
-/// The sun's angular radius (radians).
-const SUN_RADIUS_RAD: f64 = 0.004_65;
-/// Its colour as drawn: white, a little warm.
-pub const SUN_COLOUR: [f32; 3] = [1.0, 0.97, 0.9];
-/// The glow around the disc, as a camera's optics spread a bright light: a bright
-/// near part and a faint wide one, each its light at the disc's edge and the angle
-/// (radians) over which it falls by e.
-const SUN_GLOW_NEAR: (f32, f64) = (0.5, 0.012);
-const SUN_GLOW_WIDE: (f32, f64) = (0.12, 0.09);
-/// Past this angle from the sun (radians) its glow is left out.
-pub const SUN_GLOW_REACH_RAD: f64 = 0.45;
-
-/// The sun's light `angle` radians from its centre (0 to 1): its disc, then its glow.
-pub fn sun_light(angle: f64) -> f32 {
-    if angle <= SUN_RADIUS_RAD {
-        return 1.0;
-    }
-    if angle >= SUN_GLOW_REACH_RAD {
-        return 0.0;
-    }
-    let past = angle - SUN_RADIUS_RAD;
-    let glow = |(light, fall): (f32, f64)| light * (-past / fall).exp() as f32;
-    (glow(SUN_GLOW_NEAR) + glow(SUN_GLOW_WIDE)).min(1.0)
-}
-
-/// Where the sun's centre lands in a `width` × `height` pixel picture, and how many
-/// pixels a radian spans there (the picture's centre measure).
-pub fn sun_seen(basis: &Basis, sun: DVec3, width: f64, height: f64) -> Option<(Pos2, f64)> {
-    let local = basis.rotation_from_view().transpose() * sun;
-    project(basis, local, width, height).map(|at| (at, height * 0.5 / VERTICAL_FOV_HALF_TAN))
-}
-
 /// How bright a star of `magnitude` is drawn, 0 to 1.
 fn light(magnitude: f32) -> f32 {
     let flux = 10f32.powf(-0.4 * (magnitude - FULL_LIGHT_MAGNITUDE));
@@ -201,14 +169,10 @@ pub(crate) fn paint_behind(
         }
         let (x, y) = (index % width, rows.start + index / width);
         let ray = basis.ray(picture, Pos2::new(x as f32 + 0.5, y as f32 + 0.5));
-        let sun = cfg.sun.map_or(Vec3::ZERO, |sun| {
-            Vec3::from(SUN_COLOUR) * sun_light(ray.angle_between(sun))
-        });
         let behind = match &cfg.sky {
             Some(sky) => sky.sample(ray).truncate(),
             None => space,
-        } + light[index]
-            + sun;
+        } + light[index];
         for (channel, value) in pixel[..3].iter_mut().zip(behind.to_array()) {
             let under = value.clamp(0.0, 1.0) * open * 255.0;
             *channel = (f32::from(*channel) + under).min(255.0) as u8;
@@ -310,21 +274,6 @@ mod tests {
         // Space is near black; a few pixels carry stars.
         let lit = top.chunks_exact(4).filter(|pixel| pixel[0] > 40).count();
         assert!((1..500).contains(&lit), "{lit}");
-    }
-
-    #[test]
-    fn the_sun_is_a_full_disc_in_a_glow_that_fades_out() {
-        assert_eq!(sun_light(0.0), 1.0);
-        assert_eq!(sun_light(SUN_RADIUS_RAD), 1.0);
-        let mut last = 1.0;
-        for step in 1..100 {
-            let light = sun_light(SUN_RADIUS_RAD + f64::from(step) * 0.005);
-            assert!(light <= last);
-            last = light;
-        }
-        assert!(sun_light(0.02) < 0.5);
-        assert!(sun_light(SUN_GLOW_REACH_RAD - 1e-6) < 0.01);
-        assert_eq!(sun_light(SUN_GLOW_REACH_RAD), 0.0);
     }
 
     #[test]

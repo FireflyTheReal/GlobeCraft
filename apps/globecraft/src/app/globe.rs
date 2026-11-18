@@ -22,10 +22,6 @@ pub(super) const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
 const DRAG_TILT_DEG_PER_POINT: f64 = 0.25;
-/// Looking around (Ctrl or ⌘ + drag): degrees the view turns per point dragged, so
-/// the view follows the pointer at about the screen's own angle per point (45° over
-/// a 900-point view).
-const LOOK_DEG_PER_POINT: f64 = 0.05;
 /// A turn-or-tilt drag is one or the other once it has gone this far.
 const TURN_DRAG_DECIDED_POINTS: f32 = 6.0;
 /// Shift+scroll (a laptop's two-finger scroll) tilts the view.
@@ -443,15 +439,13 @@ impl App {
         if swallow {
             // The held press stays put.
         } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && look {
-            // The view follows the pointer: right looks right, up looks up.
+            // The picture stays under the pointer, as a pan holds the ground.
             let d = ui.input(|i| i.pointer.delta());
-            let sensitivity = self.settings.navigation.rotation_sensitivity;
-            self.motion.fly = None;
-            self.motion.last_drag = None;
-            self.look_around(
-                f64::from(d.x) * LOOK_DEG_PER_POINT * sensitivity,
-                -f64::from(d.y) * LOOK_DEG_PER_POINT * sensitivity,
-            );
+            if let Some(to) = resp.interact_pointer_pos() {
+                self.motion.fly = None;
+                self.motion.last_drag = None;
+                self.look_drag(to - d, to, rect);
+            }
             interacting = true;
         } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
             let d =

@@ -87,6 +87,28 @@ impl Cam {
     }
 }
 
+impl Cam {
+    /// Looks around so that what was seen along `from` is seen along `to` (unit
+    /// world directions, as `Basis::ray` gives them for two points on the screen): a
+    /// drag holds the picture under the pointer (user, 2026-11-18). The turn about the
+    /// eye's vertical is exact, the raise as near as a raise along the view's middle
+    /// gives. Whether the view moved (see [`Self::look_around`]).
+    pub fn look_drag(&mut self, from: DVec3, to: DVec3, model: EarthModel, ground_km: f64) -> bool {
+        let eye = self.basis_over_ground(1.0, model, ground_km).c;
+        let up = model.geometry().normal(eye).normalize();
+        // Any two directions across the vertical measure the bearing.
+        let across = if up.z.abs() < 0.9 { DVec3::Z } else { DVec3::X };
+        let east = across.cross(up).normalize();
+        let north = up.cross(east);
+        let bearing = |d: DVec3| d.dot(east).atan2(d.dot(north)).to_degrees();
+        let elevation = |d: DVec3| d.dot(up).clamp(-1.0, 1.0).asin().to_degrees();
+        let turn = wrap_lon(bearing(from) - bearing(to));
+        let raise = elevation(from) - elevation(to);
+        self.look_around(turn, raise, model, ground_km)
+            || (raise != 0.0 && turn != 0.0 && self.look_around(turn, 0.0, model, ground_km))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +150,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_drag_holds_the_picture_under_the_pointer() {
+        let model = EarthModel::Wgs84;
+        let mut cam = Cam {
+            lat: 45.0,
+            lon: 6.0,
+            heading: 10.0,
+            alt: 5.0,
+            tilt: 65.0,
+        };
+        let rect = emath::Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(1200.0, 800.0));
+        let (start, end) = (emath::pos2(500.0, 450.0), emath::pos2(540.0, 430.0));
+        let before = cam.basis_over_ground(1.5, model, 0.0);
+        let seen = before.ray(rect, start);
+        assert!(cam.look_drag(seen, before.ray(rect, end), model, 0.0));
+        let after = cam.basis_over_ground(1.5, model, 0.0);
+        // What was under the pointer is under it still, within a pixel.
+        let at = after.project_precise(after.c + seen * 1e-4, rect).unwrap();
+        let off = (at - glam::DVec2::new(f64::from(end.x), f64::from(end.y))).length();
+        assert!(off < 1.0, "{off} px");
     }
 
     #[test]

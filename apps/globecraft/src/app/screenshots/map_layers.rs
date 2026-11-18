@@ -696,6 +696,28 @@ fn sky_layer_screenshots() {
         .expect("camera");
     settle(&mut h, 8.0);
     save(&mut h, &dir, "36-clouds-close-and-tilted");
+    // Sunsets from 2 km up: the sun 6° and half a degree over the horizon, west of
+    // the point under it, looking east... toward it.
+    h.state_mut()
+        .run("layer.show", json!({"layer": "clouds", "visible": false}))
+        .expect("clouds");
+    for (elevation, name) in [(6.0, "37-sun-low"), (0.5, "38-sun-setting")] {
+        let arc_km = (90.0 - elevation) * globecraft_core::EARTH_RADIUS_KM.to_radians();
+        let (camera_lat, camera_lon) = globecraft_core::math::destination(lat, lon, 270.0, arc_km);
+        // From there, the way back to the point under the sun.
+        let heading = globecraft_core::earth_model::EarthModel::PerfectSphere
+            .initial_bearing((camera_lat, camera_lon), (lat, lon))
+            .expect("bearing");
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": camera_lat, "lon": camera_lon, "altitude_km": 2.0,
+                    "tilt_deg": 85.0, "heading_deg": heading}),
+            )
+            .expect("camera");
+        settle(&mut h, 8.0);
+        save(&mut h, &dir, name);
+    }
 }
 
 /// Zooms in by mouse wheel from 230 km to under 90 km and prints how long each UI

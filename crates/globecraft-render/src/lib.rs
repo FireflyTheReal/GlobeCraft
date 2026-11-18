@@ -12,6 +12,7 @@ mod pixel;
 pub mod polar;
 mod rays;
 pub mod stars;
+mod sun;
 mod terrain;
 pub use pixel::space_color;
 use pixel::{Surface, sky, surface, with_air};

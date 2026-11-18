@@ -524,7 +524,6 @@ impl App {
                 basis: frame.request.basis,
                 backdrop: cfg.sky.clone(),
                 stars: cfg.stars,
-                sun: cfg.sun,
             });
         self.frame.renderer.displayed_credits = frame
             .request

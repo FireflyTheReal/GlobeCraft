@@ -189,11 +189,21 @@ pub(super) fn sky(
 ) -> Vec4 {
     let d = ray.direction;
     let air = air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32));
+    // The sun through the air in front of it, over the sky's glow.
+    let sun = cfg.sun.map_or(glam::Vec3::ZERO, |sun| {
+        let through = air.map_or(glam::Vec3::ONE, |air| air.transmitted.truncate());
+        crate::sun::sun_in_sky(d, sun, through)
+    });
     if cfg.sky_behind {
-        return air.map_or(Vec4::ZERO, atmosphere::Air::behind);
+        let glow = air.map_or(Vec4::ZERO, atmosphere::Air::behind);
+        // Premultiplied: the sun's light hides as much of the sky behind.
+        return (glow.truncate() + sun)
+            .min(glam::Vec3::ONE)
+            .extend(glow.w.max(sun.max_element()));
     }
     let col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
-    air.map_or(col, |air| air.over_sky(col)).with_w(1.0)
+    let col = air.map_or(col, |air| air.over_sky(col));
+    (col.truncate() + sun).min(glam::Vec3::ONE).extend(1.0)
 }
 
 /// Space without the air (0 to 1 as drawn), for a sky drawn behind the frame.
