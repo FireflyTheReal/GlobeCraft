@@ -4,6 +4,7 @@ use glam::{DVec3, Vec2, Vec4};
 mod atmosphere;
 pub mod backend;
 pub mod celestial;
+mod colour_match;
 pub mod diagnostics;
 #[cfg(feature = "gpu")]
 mod gpu;
@@ -147,6 +148,23 @@ impl<F: Fn(TileKey) -> Lookup> Local<'_, F> {
             }
         }
     }
+    /// The mean colour of tile `k` around `(u, v)` (`Tile::mean_colour`), asking for
+    /// the tile as `tile_color` does while it is not there.
+    fn mean_colour(&mut self, k: TileKey, dist: f32, u: f64, v: f64, cells: usize) -> Option<Vec4> {
+        match self.map.entry(k).or_insert_with(|| match (self.lookup)(k) {
+            Lookup::Ready(tile) => LocalTile::Ready(tile),
+            Lookup::Pending => LocalTile::Pending,
+            Lookup::Absent => LocalTile::Absent(dist),
+            Lookup::Unavailable => LocalTile::Unavailable,
+        }) {
+            LocalTile::Ready(tile) => tile.mean_colour(u, v, cells),
+            LocalTile::Pending | LocalTile::Unavailable => None,
+            LocalTile::Absent(nearest) => {
+                *nearest = nearest.min(dist);
+                None
+            }
+        }
+    }
     #[cfg(test)]
     fn misses(self) -> impl Iterator<Item = (TileKey, f32)> {
         self.map.into_iter().filter_map(|(key, tile)| match tile {
@@ -215,7 +233,7 @@ fn sample_chain(
         let ty = (s.v * n).floor().min(n - 1.0);
         let k = make_key(prov, zz as u8, tx as u32, ty as u32, rel);
         if let Some(c) = loc.tile_color(k, s.dist, s.u * n - tx, s.v * n - ty, stride(zz)) {
-            return (c, zz);
+            return (colour_match::matched(loc, prov, rel, s, c, zz), zz);
         }
         zz -= 1;
     }

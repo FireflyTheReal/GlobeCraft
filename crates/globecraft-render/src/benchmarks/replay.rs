@@ -211,6 +211,7 @@ fn hole_rgba(cfg: &RenderCfg) -> [u8; 4] {
         heading: 0.0,
         alt: 1_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis(1.0);
     let (pixels, _, _) =
@@ -429,6 +430,7 @@ fn streaming_replay() {
         heading,
         alt,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let reports = [
         // Zoom into Munich from a whole-globe view, exponentially like a scroll zoom.

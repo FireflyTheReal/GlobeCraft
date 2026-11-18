@@ -129,6 +129,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 60.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let visibility = TerrainVisibility::new(&basis, Some(&Flat)).unwrap();
@@ -143,6 +144,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 60.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let visibility = TerrainVisibility::new(&basis, Some(&Ridge)).unwrap();
@@ -156,6 +158,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         assert!(TerrainVisibility::new(&down, Some(&Ridge)).is_none());
@@ -180,6 +183,7 @@ mod tests {
             heading: 0.0,
             alt: 30.0,
             tilt: 65.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let ground = Counted(std::sync::atomic::AtomicUsize::new(0));
@@ -229,6 +233,7 @@ mod cost {
             heading: 0.0,
             alt: 30.0,
             tilt: 65.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let unbounded = Counted(std::sync::atomic::AtomicUsize::new(0), f64::INFINITY);
@@ -308,6 +313,7 @@ mod benchmarks {
             heading: 0.0,
             alt: 25.0,
             tilt: 65.0,
+            look_up: 0.0,
         }
         .basis(1.6);
         let rect = Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(1600.0, 1000.0));

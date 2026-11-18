@@ -123,8 +123,8 @@ pub(crate) fn view_radius_deg(altitude_km: f64, tilt_deg: f64) -> f64 {
 /// top of the screen and at both bottom corners: one between the top and the bottom
 /// edge left the bottom corners out, and their tiles faded away as the view tilted
 /// (user, 2026-11-17).
-/// shortcut: the far corners of a wide, steeply tilted view lie outside the disc;
-/// take the view's ground outline if empty corners show.
+/// The far corners of a wide, steeply tilted view lie outside it: see
+/// [`far_corners_disc`].
 pub(crate) fn seen_disc(view: crate::ViewQuery) -> ((f64, f64), f64) {
     let centre = (view.latitude, view.longitude);
     let whole = view_radius_deg(view.altitude_km, view.tilt_deg);
@@ -155,6 +155,42 @@ pub(crate) fn seen_disc(view: crate::ViewQuery) -> ((f64, f64), f64) {
         globecraft_core::math::destination(centre.0, centre.1, view.heading_deg, ahead_km),
         radius,
     )
+}
+
+/// A view tilted at least this far (degrees) has top corners outside [`seen_disc`].
+const FAR_CORNERS_MIN_TILT_DEG: f64 = 45.0;
+
+/// The ground toward the top corners of a wide tilted view (roadmap B6): a disc around
+/// the middle of the screen's top edge, out to the corners (they lie out to the side
+/// by up to some 18 times the camera's height at 85°). Covering them with
+/// [`seen_disc`] would double its size and coarsen the tiles near the camera; layers
+/// fill it with tiles a level coarser instead. `None` for a view little tilted.
+pub(crate) fn far_corners_disc(view: crate::ViewQuery) -> Option<((f64, f64), f64)> {
+    if view.tilt_deg < FAR_CORNERS_MIN_TILT_DEG {
+        return None;
+    }
+    let altitude_km = view.altitude_km.max(0.05);
+    let tilt = view.tilt_deg.to_radians();
+    let tan_v = globecraft_core::VERTICAL_FOV_HALF_TAN;
+    let height_km = altitude_km * tilt.cos();
+    let top = (tilt + tan_v.atan()).min(TILTED_REACH_MAX_RAD);
+    let far = height_km * top.tan();
+    // A ray to a top corner leans out to the side by the window's width over its depth.
+    let side = height_km * WIDEST_ASPECT * tan_v * (top - tilt).cos() / top.cos();
+    let horizon_deg = (EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude_km))
+        .acos()
+        .to_degrees();
+    let radius = (side * (1.0 + DISC_MARGIN) / KM_PER_DEGREE).min(horizon_deg);
+    let ahead_km = far - height_km * tilt.tan();
+    Some((
+        globecraft_core::math::destination(
+            view.latitude,
+            view.longitude,
+            view.heading_deg,
+            ahead_km,
+        ),
+        radius,
+    ))
 }
 
 /// The highest camera altitude at `lat` whose tiles hold municipal lines (the

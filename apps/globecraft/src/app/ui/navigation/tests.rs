@@ -122,6 +122,7 @@ fn the_footprint_is_convex_and_inside_the_mini_globe_at_every_tilt() {
                         heading,
                         alt,
                         tilt,
+                        look_up: 0.0,
                     };
                     let outline = footprint(&cam, rect);
                     let case = format!("{width}x{height} alt {alt} tilt {tilt} lat {lat}");
@@ -159,6 +160,7 @@ fn the_footprint_grows_smoothly_as_the_view_tilts() {
                 heading: 10.0,
                 alt,
                 tilt: f64::from(step) * 0.5,
+                look_up: 0.0,
             };
             let now = area(&footprint(&cam, rect));
             if let Some(before) = previous {
@@ -184,6 +186,7 @@ fn a_straight_down_footprint_is_the_view_rectangle_on_the_ground() {
         heading: 0.0,
         alt: 900.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let outline = footprint(&cam, rect);
     let half = |axis: Vec2| {
@@ -213,6 +216,7 @@ fn a_tilted_view_shows_a_forward_footprint() {
         heading,
         alt: 900.0,
         tilt: 55.0,
+        look_up: 0.0,
     };
     let outline = globe.view_outline(&cam.basis(aspect), rect);
     assert!(outline.len() >= 3);
@@ -252,6 +256,7 @@ fn a_tilted_footprint_follows_the_horizon_not_the_sky() {
         heading,
         alt: 60.0,
         tilt: 75.0,
+        look_up: 0.0,
     };
     let basis = cam.basis(aspect);
     let top = Pos2::new(rect.center().x, rect.top());

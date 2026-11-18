@@ -252,6 +252,7 @@ mod tests {
             heading: 0.0,
             alt: 30_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let (width, height) = (300, 200);
         let basis = cam.basis(1.5);
@@ -285,6 +286,7 @@ mod tests {
             heading: 0.0,
             alt: 30_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let basis = cam.basis(1.5);
         let frame = CelestialFrame::at_unix(1_763_000_000.0).unwrap();

@@ -18,6 +18,9 @@ use std::{
     sync::mpsc,
     time::{Duration, Instant},
 };
+/// The first moment whose clouds are kept (the archive's first week, 2026-W11,
+/// starts on 9 March 2026, Unix seconds): earlier times show none.
+pub const CLOUDS_KEPT_SINCE_UNIX: f64 = 1_773_014_400.0;
 const CLOUD_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 const RADAR_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60);

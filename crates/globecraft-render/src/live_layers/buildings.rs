@@ -758,6 +758,7 @@ mod tests {
             heading,
             alt: 0.6,
             tilt,
+            look_up: 0.0,
         };
         input.view.basis = camera.basis_for_model(1.0, Default::default());
         input.view.altitude_km = camera.alt;
@@ -778,6 +779,7 @@ mod tests {
             heading: 30.0,
             alt: 1.0,
             tilt: 70.0,
+            look_up: 0.0,
         };
         input.view.basis = camera.basis_for_model(1.6, Default::default());
         input.view.altitude_km = camera.alt;
@@ -1015,6 +1017,7 @@ mod tests {
             heading: 0.0,
             alt: 0.03,
             tilt: 80.0,
+            look_up: 0.0,
         }
         .basis(1.5);
         // The camera stands 29.5 m south of the point it looks at; the block's

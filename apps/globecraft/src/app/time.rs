@@ -15,6 +15,10 @@ pub(super) struct TimelineState {
     /// The moment dated imagery shows, and when it last moved (it trails a playing
     /// time, so tiles of each day can arrive).
     pub(super) imagery: (f64, std::time::Instant),
+    /// How many days the track spans (`time.range`), and where it ends while the time
+    /// is away from it (Unix seconds; `None`: at the real time).
+    pub(super) range_days: f64,
+    pub(super) track_end: Option<f64>,
 }
 
 impl Default for TimelineState {
@@ -23,6 +27,8 @@ impl Default for TimelineState {
             open: false,
             speed: HOUR_SECS,
             imagery: (0.0, std::time::Instant::now()),
+            range_days: 7.0,
+            track_end: None,
         }
     }
 }
@@ -46,6 +52,17 @@ pub(super) const SPEEDS: [(f64, &str); 4] = [
     (6.0 * HOUR_SECS, "timeline-speed-six-hours"),
     (24.0 * HOUR_SECS, "timeline-speed-day"),
 ];
+/// The spans the timeline's track offers, days.
+pub(super) const RANGES: [(f64, &str); 5] = [
+    (1.0, "timeline-range-day"),
+    (7.0, "timeline-range-week"),
+    (30.0, "timeline-range-month"),
+    (365.0, "timeline-range-year"),
+    (3650.0, "timeline-range-decade"),
+];
+/// The track spans at least a day and at most ten years.
+const MIN_RANGE_DAYS: f64 = 1.0;
+const MAX_RANGE_DAYS: f64 = 3650.0;
 /// The event windows the timeline offers, hours (0: everything).
 pub(super) const WINDOWS: [(f64, &str); 5] = [
     (0.0, "timeline-window-all"),
@@ -120,6 +137,13 @@ impl App {
                 }
             }
             TimeCommand::Window(p) => self.time.set_window(Some(p.hours * HOUR_SECS)),
+            TimeCommand::Range(p) => {
+                if !p.days.is_finite() {
+                    return Err("days must be a number".into());
+                }
+                self.timeline.range_days = p.days.clamp(MIN_RANGE_DAYS, MAX_RANGE_DAYS);
+                self.timeline.track_end = None;
+            }
         }
         Ok(self.time_json())
     }
@@ -132,6 +156,7 @@ impl App {
             "live": self.time.is_live(),
             "hours_per_second": self.time.speed() / HOUR_SECS,
             "window_hours": self.time.window_secs().map(|s| s / HOUR_SECS),
+            "range_days": self.timeline.range_days,
         })
     }
 }

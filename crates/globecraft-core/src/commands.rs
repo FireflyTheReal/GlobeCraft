@@ -205,7 +205,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "eye",
         Explore,
         View,
-        r#"{"type":"object","properties":{"turn_deg":{"type":"number","description":"Degrees to turn the view to the right (negative: left), about the camera. Without either angle the command switches look-around dragging on or off"},"raise_deg":{"type":"number","description":"Degrees to raise the view toward the horizon (negative: lower it), about the camera"}}}"#
+        r#"{"type":"object","properties":{"turn_deg":{"type":"number","description":"Degrees to turn the view to the right (negative: left), about the camera. Without either angle the command switches look-around dragging on or off"},"raise_deg":{"type":"number","description":"Degrees to raise the view (negative: lower it), about the camera: past the horizon toward the sky"}}}"#
     ),
     command!(
         "camera.topDown",
@@ -723,6 +723,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         View,
         View,
         r#"{"type":"object","properties":{"hours":{"type":"number","description":"Timed points (earthquakes…) show when they happened within this many hours before the app's time; 0 shows all"}},"required":["hours"]}"#
+    ),
+    command!(
+        "time.range",
+        "time-range",
+        "history",
+        View,
+        View,
+        r#"{"type":"object","properties":{"days":{"type":"number","description":"How many days the timeline's track spans, 1 to 3650"}},"required":["days"]}"#
     ),
     command!(
         "ui.tileDiagnostics",

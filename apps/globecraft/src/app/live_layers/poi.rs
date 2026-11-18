@@ -438,6 +438,7 @@ pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
                 heading: 0.0,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(f64::from(rect.width() / rect.height())),
             rect,

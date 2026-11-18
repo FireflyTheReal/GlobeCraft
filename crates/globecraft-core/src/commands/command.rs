@@ -129,6 +129,7 @@ pub enum TimeCommand {
     Pause,
     Speed(SetSpeed),
     Window(Hours),
+    Range(Days),
 }
 
 /// The selected aircraft: `flight.*`.
@@ -324,6 +325,7 @@ command_table! {
     "time.pause" => Time(TimeCommand::Pause),
     "time.speed" => Time(TimeCommand::Speed(SetSpeed)),
     "time.window" => Time(TimeCommand::Window(Hours)),
+    "time.range" => Time(TimeCommand::Range(Days)),
     "ui.tileDiagnostics" => Interface(InterfaceCommand::TileDiagnostics(Switch)),
     "ui.navigatorStyle" => Interface(InterfaceCommand::NavigatorStyle(SetNavigatorStyle)),
     "ui.ribbon" => Interface(InterfaceCommand::Ribbon),

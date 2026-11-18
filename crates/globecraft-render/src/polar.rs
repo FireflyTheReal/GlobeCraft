@@ -287,6 +287,7 @@ mod tests {
                 heading: 0.0,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(4.0 / 3.0)
         };

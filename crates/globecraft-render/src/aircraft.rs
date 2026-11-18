@@ -227,6 +227,7 @@ mod tests {
             heading: 0.0,
             alt: 50.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(4.0 / 3.0);
         let landing = plane(Some(500.0), Some(-1000.0));
@@ -270,6 +271,7 @@ mod tests {
                 heading: 0.0,
                 alt: 30.0,
                 tilt: 70.0,
+                look_up: 0.0,
             }
             .basis_for_model(4.0 / 3.0, model);
             let raised = project_flights(

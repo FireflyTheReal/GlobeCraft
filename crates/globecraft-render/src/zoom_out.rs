@@ -130,6 +130,7 @@ mod tests {
             heading: 0.0,
             alt: 5.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let keys = zoom_out_tiles(cam, 1600, 1.6, Provider::Satellite, &[0]);
         let levels: Vec<u8> = keys.iter().map(|&k| unkey(k).1).collect();
@@ -157,6 +158,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         assert!(zoom_out_tiles(cam, 1000, 1.5, Provider::Streets, &[0]).is_empty());
         let both = zoom_out_tiles(cam, 1000, 1.5, Provider::Wayback, &[3, 9]);

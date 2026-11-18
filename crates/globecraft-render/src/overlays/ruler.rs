@@ -103,6 +103,7 @@ mod tests {
             heading: 0.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(600.0));
@@ -134,6 +135,7 @@ mod tests {
             heading: 0.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(600.0));

@@ -1,7 +1,7 @@
 //! The timeline (roadmap 4.H): a bar along the bottom of the globe with the app's date
 //! and time, steps of an hour and a day, play at a speed, back to now, a time-of-day
-//! slider and the window of past events timed points show. Every control runs a
-//! `time.*` command.
+//! slider and the window of past events timed points show, and under them the track
+//! (`timeline_track`). Every control runs a `time.*` command.
 use super::icons;
 use super::theme::{Tokens, regular, semibold};
 use crate::app::App;
@@ -29,6 +29,7 @@ impl App {
         let live = self.time.is_live();
         let playing = self.time.speed() != 0.0;
         let with_slider = globe.width() >= SLIDER_MIN_GLOBE_WIDTH;
+        let mut track_end = self.timeline.track_end;
         egui::Area::new(egui::Id::new("timeline_bar"))
             .order(egui::Order::Middle)
             .pivot(Align2::CENTER_BOTTOM)
@@ -41,7 +42,7 @@ impl App {
                     .corner_radius(10.0)
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        let row = ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
                             // Date and time, or Live, in a fixed width: a bar that
                             // changed width as the clock ran would move its centre, and
@@ -178,8 +179,11 @@ impl App {
                                 run = Some(("ui.timeline", json!({"on": false})));
                             }
                         });
+                        let width = row.response.rect.width();
+                        track_end = self.timeline_track(ui, width, unix, &mut run);
                     });
             });
+        self.timeline.track_end = track_end;
         if let Some((id, params)) = run {
             // A changed time renders like a moving camera until it settles.
             self.touch();

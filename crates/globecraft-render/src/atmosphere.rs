@@ -1007,6 +1007,7 @@ mod tests {
             heading,
             alt,
             tilt,
+            look_up: 0.0,
         };
         // The view (latitude, longitude, altitude km, tilt, heading) and where the sun
         // is overhead (latitude, longitude).

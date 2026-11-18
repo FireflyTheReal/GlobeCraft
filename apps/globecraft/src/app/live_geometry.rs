@@ -203,6 +203,7 @@ mod tests {
             heading: 0.0,
             alt: 1000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let input = LiveInput {
             view: LiveView {
@@ -267,6 +268,7 @@ mod tests {
             heading: 0.0,
             alt: 1000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let mut input = LiveInput {
             view: LiveView {

@@ -217,6 +217,7 @@ impl GpuRenderer {
             heading: 25.0,
             alt: 9000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let request = RenderRequest {
             width: WIDTH,

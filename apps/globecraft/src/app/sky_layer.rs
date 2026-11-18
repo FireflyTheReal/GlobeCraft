@@ -157,6 +157,7 @@ mod tests {
             alt: 20_000.0,
             heading: 30.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let basis = cam.basis(1.6);
         let frame = CelestialFrame::at_unix(1_763_000_000.0).unwrap();

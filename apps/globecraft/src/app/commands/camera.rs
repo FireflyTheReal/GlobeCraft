@@ -112,13 +112,13 @@ impl App {
                 let (turn, raise) = (p.turn_deg.unwrap_or(0.0), p.raise_deg.unwrap_or(0.0));
                 self.motion.fly = None;
                 if !self.look_around(turn, raise) {
-                    return Err("the view would no longer look at the ground".into());
+                    return Err("the view cannot turn that way from here".into());
                 }
                 self.touch();
                 self.camera_json()
             }
             CameraCommand::TopDown => {
-                self.cam.tilt = 0.0;
+                (self.cam.tilt, self.cam.look_up) = (0.0, 0.0);
                 self.touch();
                 self.camera_json()
             }
@@ -136,6 +136,6 @@ impl App {
     pub(super) fn camera_json(&self) -> Value {
         json!({"lat": self.cam.lat, "lon": self.cam.lon, "altitude_km": self.cam.alt,
             "heading_deg": self.cam.heading, "tilt_deg": self.cam.tilt,
-            "max_tilt_deg": self.cam.max_tilt()})
+            "max_tilt_deg": self.cam.max_tilt(), "look_up_deg": self.cam.look_up})
     }
 }

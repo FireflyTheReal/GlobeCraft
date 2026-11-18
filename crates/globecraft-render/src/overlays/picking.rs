@@ -96,6 +96,7 @@ mod tests {
                 heading: 0.0,
                 alt: 20.0,
                 tilt: 60.0,
+                look_up: 0.0,
             }
             .basis_for_model(800.0 / 600.0, model);
             let at = rect.center() - emath::vec2(0.0, 120.0);

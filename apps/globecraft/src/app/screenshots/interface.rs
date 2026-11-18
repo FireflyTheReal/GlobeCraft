@@ -696,8 +696,8 @@ fn the_legend_closes_when_its_last_key_goes() {
     assert!(app.legend_open());
 }
 
-/// `camera.lookAround` turns the view about the eye; a look past the ground is
-/// refused and leaves the view as it was. No rendering.
+/// `camera.lookAround` turns the view about the eye; raised past the ground it looks
+/// up at the sky (roadmap C8), and lowered it comes back. No rendering.
 #[test]
 fn looking_around_turns_the_view_about_the_eye() {
     let mut h = Harness::builder()
@@ -718,15 +718,16 @@ fn looking_around_turns_the_view_about_the_eye() {
     assert!((heading - 30.0).abs() < 1.0, "{heading}");
     let moved = eye(app).distance(before) * globecraft_core::EARTH_RADIUS_KM;
     assert!(moved < 1e-6, "{moved} km");
-    let cam = app.cam;
-    assert!(
-        app.run("camera.lookAround", json!({"raise_deg": 60.0}))
-            .is_err()
-    );
-    assert_eq!(
-        (app.cam.lat, app.cam.lon, app.cam.tilt),
-        (cam.lat, cam.lon, cam.tilt)
-    );
+    let raised = app
+        .run("camera.lookAround", json!({"raise_deg": 60.0}))
+        .expect("look up");
+    assert!(raised["look_up_deg"].as_f64().unwrap() > 0.0, "{raised}");
+    let lowered = app
+        .run("camera.lookAround", json!({"raise_deg": -60.0}))
+        .expect("look down");
+    assert_eq!(lowered["look_up_deg"].as_f64(), Some(0.0));
+    let moved = eye(app).distance(before) * globecraft_core::EARTH_RADIUS_KM;
+    assert!(moved < 1e-6, "{moved} km");
     // Without angles it switches look-around dragging on, and off again.
     let mode = app.run("camera.lookAround", json!({})).expect("mode");
     assert_eq!(mode["look_mode"], true);

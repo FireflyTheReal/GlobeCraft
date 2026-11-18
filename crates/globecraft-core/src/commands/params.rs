@@ -386,6 +386,11 @@ params! {
         pub hours: f64,
     }
 
+    /// `time.range`
+    pub struct Days {
+        pub days: f64,
+    }
+
     /// `time.play`
     pub struct Play {
         pub hours_per_second: Option<f64>,

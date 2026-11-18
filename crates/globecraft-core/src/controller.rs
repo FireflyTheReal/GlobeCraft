@@ -258,6 +258,7 @@ mod tests {
             alt: 100.0,
             heading: 0.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let motion = ControllerMotion {
             pan_x: 1.0,

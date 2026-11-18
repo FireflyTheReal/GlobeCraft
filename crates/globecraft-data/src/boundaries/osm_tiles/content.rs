@@ -70,7 +70,7 @@ impl TileKey {
             y: self.y / 2,
         })
     }
-    pub(super) fn children(self) -> [Self; 4] {
+    pub(crate) fn children(self) -> [Self; 4] {
         let (z, x, y) = (self.z + 1, self.x * 2, self.y * 2);
         [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| Self {
             z,

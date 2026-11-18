@@ -217,6 +217,7 @@ mod tests {
             heading: 0.0,
             alt: 5_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(4.0 / 3.0);
         let cfg = RenderCfg {

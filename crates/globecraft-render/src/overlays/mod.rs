@@ -735,6 +735,7 @@ mod tests {
             heading: 0.0,
             alt: 30.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let view = OverlayProjection {
@@ -782,6 +783,7 @@ mod tests {
             heading: 0.0,
             alt: 30.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let draw = |data: &BoundaryData, countries: bool, states: bool, cities: bool| {

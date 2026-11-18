@@ -122,6 +122,7 @@ mod projection_tests {
             alt: 14_000.0,
             heading: 0.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let radar = RgbaImage::from_pixel(4, 4, image::Rgba([123, 45, 67, 255]));

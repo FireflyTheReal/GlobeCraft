@@ -37,6 +37,7 @@ pub(in crate::app) mod surface;
 pub(in crate::app) mod theme;
 pub(in crate::app) mod tile_diagnostics;
 pub(in crate::app) mod timeline;
+mod timeline_track;
 mod updater;
 pub(in crate::app) mod widgets;
 pub(in crate::app) mod window_chrome;

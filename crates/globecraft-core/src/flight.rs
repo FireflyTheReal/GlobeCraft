@@ -33,6 +33,7 @@ impl Flight {
             heading: 0.0,
             alt: alt.clamp(MIN_CAMERA_ALTITUDE_KM, MAX_CAMERA_ALTITUDE_KM),
             tilt: from.tilt,
+            look_up: 0.0,
         };
         b.clamp_tilt();
         let dist = model.distance_km((a.lat, a.lon), (b.lat, b.lon));
@@ -82,6 +83,7 @@ impl Flight {
             heading: a.heading + wrap_lon(b.heading - a.heading) * s,
             alt: (la + (lb - la) * s + (PI * t).sin() * self.bump).exp(),
             tilt: a.tilt + (b.tilt - a.tilt) * s,
+            look_up: 0.0,
         }
         .with_tilt_clamped()
     }
@@ -121,6 +123,7 @@ mod tests {
                 heading: 30.0,
                 alt: 500.0,
                 tilt: 0.0,
+                look_up: 0.0,
             };
             let mut flight = Flight::new_for_model(from, end.0, end.1, 400.0, model);
             let middle = flight.advance(flight.dur * 0.5);
@@ -139,6 +142,7 @@ mod tests {
             heading: 0.0,
             alt: 500.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let mut flight = Flight::new(from, 0.0, -179.0, 500.0);
         let halfway = flight.advance(flight.dur / 2.0);
@@ -162,6 +166,7 @@ mod tests {
             heading: 30.0,
             alt: 500.0,
             tilt: 10.0,
+            look_up: 0.0,
         };
         let mut flight =
             Flight::new(from, 40.0, 50.0, 400.0).with_orientation(Some(370.0), Some(45.0));

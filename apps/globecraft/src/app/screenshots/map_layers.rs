@@ -923,3 +923,166 @@ fn mountain_jump_probe() {
     }
     save(&mut h, &dir, "40-mountain-jump");
 }
+
+/// A close tilted view from cold (roadmap B5): when the far third of the frame, the
+/// middle and the near third stop changing as imagery lands, and how many tiles are
+/// still loading. Saves the view at 5, 15 and 40 s. Manual (network).
+#[test]
+#[ignore = "manual: needs network; how a tilted view fills in, near to far"]
+fn tilted_far_field_probe() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let env_f64 = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(40.74),
+                "lon": env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(-73.99),
+                "altitude_km": env_f64("GLOBECRAFT_SHOT_ALT").unwrap_or(3.0),
+                "tilt_deg": env_f64("GLOBECRAFT_SHOT_TILT").unwrap_or(80.0),
+                "heading_deg": 30.0}),
+        )
+        .expect("camera");
+    let started = std::time::Instant::now();
+    let mut before: Option<[Vec<u8>; 3]> = None;
+    let mut settled = [0u128; 3];
+    for step in 0..400 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let elapsed = started.elapsed().as_millis();
+        for (at, name) in [(50, "tilted-5s"), (150, "tilted-15s"), (399, "tilted-40s")] {
+            if step == at {
+                save(&mut h, &dir, name);
+            }
+        }
+        let app = h.state();
+        let Some(frame) = &app.frame.image else {
+            continue;
+        };
+        // Bands of rows: the far third (top, below the sky), the middle, the near third.
+        let band = |band: usize| -> Vec<u8> {
+            let rows = frame.height / 3;
+            let row_bytes = frame.width * 4;
+            frame.pixels[band * rows * row_bytes..(band + 1) * rows * row_bytes]
+                .iter()
+                .step_by(4 * 29)
+                .copied()
+                .collect()
+        };
+        let now = [band(0), band(1), band(2)];
+        if let Some(old) = &before
+            && old[0].len() == now[0].len()
+        {
+            let mut line = format!("{elapsed:6} ms  loading {:3}", app.tiles.cache.inflight());
+            for index in 0..3 {
+                let change = old[index]
+                    .iter()
+                    .zip(&now[index])
+                    .map(|(a, b)| f64::from(a.abs_diff(*b)))
+                    .sum::<f64>()
+                    / now[index].len() as f64;
+                if change > 0.3 {
+                    settled[index] = elapsed;
+                }
+                line += &format!("  {}: {change:5.2}", ["far", "mid", "near"][index]);
+            }
+            if step % 10 == 0 {
+                println!("{line}");
+            }
+        }
+        before = Some(now);
+    }
+    println!(
+        "last change: far {} ms, middle {} ms, near {} ms",
+        settled[0], settled[1], settled[2]
+    );
+}
+
+/// Looking around past the horizon (roadmap C8): from 2 km over the Alps, the view
+/// raised 30° into the afternoon sky, then 30° more, then by night. Manual (network).
+#[test]
+#[ignore = "manual: needs network; the view raised into the sky"]
+fn look_up_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "clouds", "visible": true}))
+        .expect("clouds");
+    // 2026-11-18 14:00 UTC: afternoon over the Alps.
+    app.run("time.set", json!({"time": 1_795_010_400.0}))
+        .expect("time");
+    app.run(
+        "camera.set",
+        json!({"lat": 46.5, "lon": 8.0, "altitude_km": 2.0, "tilt_deg": 80.0, "heading_deg": 200.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 20.0);
+    save(&mut h, &dir, "look-up-0");
+    for (name, raise) in [("look-up-30", 30.0), ("look-up-60", 30.0)] {
+        let reply = h
+            .state_mut()
+            .run("camera.lookAround", json!({"raise_deg": raise}))
+            .expect("look up");
+        println!("{reply}");
+        settle(&mut h, 15.0);
+        save(&mut h, &dir, name);
+    }
+    h.state_mut()
+        .run("time.set", json!({"time": 1_795_042_800.0}))
+        .expect("night");
+    settle(&mut h, 15.0);
+    save(&mut h, &dir, "look-up-night");
+}
+
+/// The timeline with its track (roadmap C4), set three days back with a day's window
+/// of events and the clouds and night lights on; then a tilted view across the change
+/// of Esri's imagery sources between levels 11 and 12 (roadmap C6). Manual (network).
+#[test]
+#[ignore = "manual: needs network; the timeline's track and imagery levels' colours"]
+fn timeline_and_levels_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    for (id, params) in [
+        ("layer.show", json!({"layer": "clouds", "visible": true})),
+        (
+            "layer.show",
+            json!({"layer": "night_lights", "visible": true}),
+        ),
+        ("ui.timeline", json!({"on": true})),
+        ("time.step", json!({"hours": -72.0})),
+        ("time.window", json!({"hours": 24.0})),
+        (
+            "camera.set",
+            json!({"lat": 46.3, "lon": 8.3, "altitude_km": 40.0, "tilt_deg": 75.0, "heading_deg": 20.0}),
+        ),
+    ] {
+        app.run(id, params)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+    settle(&mut h, 40.0);
+    save(&mut h, &dir, "timeline-track");
+    h.state_mut()
+        .run("time.range", json!({"days": 365.0}))
+        .expect("range");
+    settle(&mut h, 5.0);
+    save(&mut h, &dir, "timeline-track-year");
+    // By day, without the clouds: the near ground at levels 12 and finer, the far at 11
+    // and coarser (2026-11-15 11:00 UTC).
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "clouds", "visible": false}))
+        .expect("clouds");
+    app.run("time.set", json!({"time": 1_794_740_400.0}))
+        .expect("time");
+    settle(&mut h, 40.0);
+    save(&mut h, &dir, "levels-day");
+}

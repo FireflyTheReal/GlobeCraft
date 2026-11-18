@@ -45,6 +45,7 @@ fn raster_matches_regression_fixtures() {
         heading: 25.0,
         alt: 14000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis(w as f64 / h as f64);
     let config = |grid, atmo, sun| RenderCfg {
@@ -170,6 +171,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 25.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -183,6 +185,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: -130.0,
                 alt: 1_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -196,6 +199,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 70.0,
                 alt: 500.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -209,6 +213,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 180.0,
                 alt: 30_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -222,6 +227,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 25.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -236,6 +242,7 @@ fn batch_references() -> [BatchReference; 6] {
                 // The closest distance when the fixture was recorded.
                 alt: 0.15,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
     ]
@@ -424,6 +431,7 @@ fn celestial_backdrop_changes_only_sky_and_preserves_tile_priorities() {
         heading: 20.0,
         alt: 14_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let basis = cam.basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);
@@ -499,6 +507,7 @@ fn without_level_blend_every_pixel_shows_one_level() {
         heading: 0.0,
         alt: 300.0,
         tilt: 70.0,
+        look_up: 0.0,
     }
     .basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);
@@ -630,6 +639,7 @@ fn terrain_views() {
             heading,
             alt,
             tilt,
+            look_up: 0.0,
         }
         .basis_for_model(
             width as f64 / height as f64,
@@ -725,6 +735,7 @@ fn a_fixed_level_shows_one_tile_tier_across_the_picture() {
                 heading: 0.0,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(width as f64 / height as f64)
         })
@@ -760,6 +771,7 @@ fn night_lights_glow_on_the_night_side_and_everywhere_without_sun() {
         heading: 0.0,
         alt: 400.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let basis = cam.basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);
@@ -825,6 +837,7 @@ fn night_lights_cover_the_poles_where_their_tiles_end() {
             heading: 0.0,
             alt: 300.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let basis = cam.basis(width as f64 / height as f64);
         cfg.night_lights = Some(0);
@@ -869,6 +882,7 @@ fn relief_switch_on_probe() {
             heading: 0.0,
             alt: 199.9,
             tilt,
+            look_up: 0.0,
         }
         .basis_for_model(
             width as f64 / height as f64,

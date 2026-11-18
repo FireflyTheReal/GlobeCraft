@@ -188,6 +188,7 @@ mod tests {
                 heading,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(800.0 / 600.0);
             let step = crate::grid_step(alt, 800, 600);
@@ -230,6 +231,7 @@ mod tests {
                         heading: 0.0,
                         alt: 100.0,
                         tilt: 0.0,
+                        look_up: 0.0,
                     }
                     .basis(1.0),
                     rect,

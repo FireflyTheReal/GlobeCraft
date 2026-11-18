@@ -9,7 +9,9 @@
 //! cache's, in Settings -> Cache). A tile on disk shows at once; one of an older
 //! build of the set shows too and is downloaded again.
 use crate::boundaries::osm_tiles::content::TileKey;
-use crate::boundaries::osm_tiles::pick::{KM_PER_DEGREE, around, ideal_zoom, seen_disc};
+use crate::boundaries::osm_tiles::pick::{
+    KM_PER_DEGREE, around, far_corners_disc, ideal_zoom, seen_disc,
+};
 use crate::boundaries::osm_tiles::store::DiskStore;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -610,13 +612,55 @@ pub(crate) fn wanted<T>(spec: &Spec<T>, view: View) -> (u8, Vec<TileKey>) {
             spec.max_tiles
         };
         if tiles.len() <= limit || zoom <= spec.min_zoom {
-            return (zoom, tiles.into_iter().take(spec.max_floor_tiles).collect());
+            let mut tiles: Vec<TileKey> = tiles.into_iter().take(spec.max_floor_tiles).collect();
+            far_corners(spec, view, zoom, &mut tiles);
+            return (zoom, tiles);
         }
         zoom -= 1;
         if skip(zoom) && zoom > spec.min_zoom {
             zoom -= 1;
         }
     }
+}
+
+/// Adds the ground toward the top corners of a wide tilted view (`far_corners_disc`)
+/// a level coarser than `tiles`: a coarser tile where none of its quarters is among
+/// `tiles`, and the missing quarters where some are. At most half the view's tiles
+/// more, and room is left in the cache.
+fn far_corners<T>(spec: &Spec<T>, view: View, zoom: u8, tiles: &mut Vec<TileKey>) {
+    let Some(coarser) = zoom
+        .checked_sub(1)
+        .filter(|&z| z >= spec.min_zoom && spec.skip_zoom != Some(z))
+    else {
+        return;
+    };
+    let Some(((latitude, longitude), radius)) = far_corners_disc(view.at) else {
+        return;
+    };
+    let room = (spec.max_tiles / 2).min(spec.max_cached_tiles.saturating_sub(2 * tiles.len()));
+    let fine: HashSet<TileKey> = tiles.iter().copied().collect();
+    let mut extra = Vec::new();
+    for tile in around(coarser, latitude, longitude, radius) {
+        if extra.len() >= room {
+            break;
+        }
+        let quarters = tile.children();
+        match quarters
+            .iter()
+            .filter(|quarter| fine.contains(quarter))
+            .count()
+        {
+            0 => extra.push(tile),
+            4 => {}
+            _ => extra.extend(
+                quarters
+                    .into_iter()
+                    .filter(|quarter| !fine.contains(quarter)),
+            ),
+        }
+    }
+    extra.truncate(room);
+    tiles.extend(extra);
 }
 
 /// Drops the tiles used longest ago until both the count and the estimated heap
@@ -792,6 +836,38 @@ mod tests {
         drop(stream);
         drop(runtime);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_wide_steep_view_adds_coarser_tiles_toward_its_far_corners() {
+        let at = |tilt_deg: f64| View {
+            at: crate::ViewQuery {
+                latitude: 48.1,
+                longitude: 11.6,
+                altitude_km: 30.0,
+                tilt_deg,
+                heading_deg: 0.0,
+            },
+            floor: 4,
+        };
+        let (zoom, flat) = wanted(&TEST_SPEC, at(0.0));
+        assert!(flat.iter().all(|key| key.z == zoom));
+        let (zoom, steep) = wanted(&TEST_SPEC, at(80.0));
+        let fine: HashSet<TileKey> = steep.iter().copied().filter(|k| k.z == zoom).collect();
+        let coarser: Vec<&TileKey> = steep.iter().filter(|key| key.z == zoom - 1).collect();
+        assert!(!coarser.is_empty(), "{steep:?}");
+        assert!(steep.iter().all(|key| key.z >= zoom - 1));
+        // A coarser tile never lies over the finer ones, nor is any tile twice.
+        for tile in &coarser {
+            assert!(
+                tile.children()
+                    .iter()
+                    .all(|quarter| !fine.contains(quarter))
+            );
+        }
+        let unique: HashSet<&TileKey> = steep.iter().collect();
+        assert_eq!(unique.len(), steep.len());
+        assert!(steep.len() <= fine.len() + TEST_SPEC.max_tiles / 2 + 3);
     }
 
     #[test]

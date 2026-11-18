@@ -1,7 +1,7 @@
 //! Looking around from the eye: the view turns about the camera instead of about the
 //! point it looks at, as a person turns their head (user, 2026-11-18: "rotate in
 //! place", a feature of its own beside turning and tilting the globe).
-use super::{Cam, MAX_TILT_DEG};
+use super::{Cam, MAX_LOOK_UP_DEG, MAX_TILT_DEG};
 use crate::earth_model::EarthModel;
 use crate::math::{ll_to_v3, wrap_lon};
 use crate::{EARTH_RADIUS_KM, MAX_CAMERA_LATITUDE_DEG, MIN_CAMERA_ALTITUDE_KM};
@@ -18,14 +18,18 @@ const STRAIGHT_DOWN_DEG: f64 = 89.99;
 const NEAR_VERTICAL_SINE: f64 = 0.1;
 /// Times the point where the line of sight meets the raised ground is found again.
 const GROUND_REFINEMENTS: usize = 3;
+/// Halvings that find how far a raise can lean the view over the ground before the
+/// rest raises it above (a hundredth of a degree for a raise of 30°).
+const RAISE_HALVINGS: usize = 12;
 
 impl Cam {
-    /// Turns the view about the eye: `turn_deg` to the right, `raise_deg` up toward
-    /// the horizon. The eye stays where it is; the looked-at point becomes where the
-    /// new line of sight meets the ground, `ground_km` above the surface (the relief's
-    /// height under the old point). Returns false, changing nothing, when that line
-    /// would miss the ground, lean past the camera's steepest tilt there or come
-    /// closer than the closest camera distance: the view only looks down at the Earth.
+    /// Turns the view about the eye: `turn_deg` to the right, `raise_deg` up. The eye
+    /// stays where it is. While the line of sight meets the ground, the looked-at
+    /// point becomes where it meets it, `ground_km` above the surface (the relief's
+    /// height under the old point); past the steepest tilt, or where the line would
+    /// miss the ground, the view is raised about the eye instead (`look_up`): up to
+    /// the sky (roadmap C8). Lowered, the view comes down from the sky first. Returns
+    /// false, changing nothing, when even the turn alone cannot be made.
     pub fn look_around(
         &mut self,
         turn_deg: f64,
@@ -36,6 +40,60 @@ impl Cam {
         if !turn_deg.is_finite() || !raise_deg.is_finite() {
             return false;
         }
+        let mut orbit = Cam {
+            look_up: 0.0,
+            ..*self
+        };
+        let looked_up = self.look_up.clamp(0.0, MAX_LOOK_UP_DEG);
+        let raised = looked_up + raise_deg;
+        // Above the ground's view already, or come down only part of the way.
+        if looked_up > 0.0 && raised >= 0.0 {
+            if turn_deg != 0.0 && !orbit.look_over_ground(turn_deg, 0.0, model, ground_km) {
+                return false;
+            }
+            orbit.look_up = raised.min(MAX_LOOK_UP_DEG);
+            *self = orbit;
+            return true;
+        }
+        // From the sky down onto the ground, or over the ground all along.
+        let over_ground = if looked_up > 0.0 { raised } else { raise_deg };
+        if orbit.look_over_ground(turn_deg, over_ground, model, ground_km) {
+            *self = orbit;
+            return true;
+        }
+        if over_ground <= 0.0 {
+            return false;
+        }
+        // Raised past what the ground allows: as far as it does, the rest about the eye.
+        let (mut low, mut high) = (0.0, over_ground);
+        let mut best = orbit;
+        if !best.look_over_ground(turn_deg, 0.0, model, ground_km) {
+            return false;
+        }
+        for _ in 0..RAISE_HALVINGS {
+            let middle = 0.5 * (low + high);
+            let mut tried = orbit;
+            if tried.look_over_ground(turn_deg, middle, model, ground_km) {
+                (low, best) = (middle, tried);
+            } else {
+                high = middle;
+            }
+        }
+        best.look_up = (over_ground - low).min(MAX_LOOK_UP_DEG);
+        *self = best;
+        true
+    }
+
+    /// [`Self::look_around`] for a view on the ground (`look_up` zero): false where
+    /// the new line of sight misses the ground, leans past the steepest tilt there or
+    /// comes closer than the closest camera distance.
+    fn look_over_ground(
+        &mut self,
+        turn_deg: f64,
+        raise_deg: f64,
+        model: EarthModel,
+        ground_km: f64,
+    ) -> bool {
         let basis = self.basis_over_ground(1.0, model, ground_km);
         let geometry = model.geometry();
         let eye = basis.c;
@@ -92,6 +150,7 @@ impl Cam {
             heading: wrap_lon(heading),
             alt,
             tilt,
+            look_up: 0.0,
         };
         if alt < MIN_CAMERA_ALTITUDE_KM || tilt > next.max_tilt().min(MAX_TILT_DEG) {
             return false;
@@ -148,6 +207,7 @@ mod tests {
                 heading: 30.0,
                 alt: 3.0,
                 tilt: 60.0,
+                look_up: 0.0,
             };
             let start = eye(&cam, model, ground_km);
             for (turn, raise) in [(20.0, 0.0), (0.0, 5.0), (-45.0, -10.0), (90.0, 3.0)] {
@@ -182,6 +242,7 @@ mod tests {
             heading: 10.0,
             alt: 5.0,
             tilt: 65.0,
+            look_up: 0.0,
         };
         let rect = emath::Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(1200.0, 800.0));
         let (start, end) = (emath::pos2(500.0, 450.0), emath::pos2(540.0, 430.0));
@@ -204,6 +265,7 @@ mod tests {
                 heading: 40.0,
                 alt: 3.0,
                 tilt: 20.0,
+                look_up: 0.0,
             };
             // Far past straight down, in one go and in small steps.
             assert!(cam.look_around(0.0, -60.0, model, 0.5));
@@ -220,20 +282,43 @@ mod tests {
     }
 
     #[test]
-    fn looking_above_the_horizon_or_past_the_steepest_tilt_changes_nothing() {
+    fn looking_above_the_horizon_raises_the_view_about_the_eye() {
+        let model = EarthModel::Wgs84;
         let mut cam = Cam {
             lat: 10.0,
             lon: 20.0,
             heading: 0.0,
             alt: 2.0,
             tilt: 80.0,
+            look_up: 0.0,
         };
-        let before = (cam.lat, cam.lon, cam.alt, cam.tilt, cam.heading);
-        assert!(!cam.look_around(0.0, 30.0, EarthModel::Wgs84, 0.0));
-        assert_eq!(before, (cam.lat, cam.lon, cam.alt, cam.tilt, cam.heading));
-        assert!(!cam.look_around(f64::NAN, 0.0, EarthModel::Wgs84, 0.0));
-        // Looking down along the line of sight is fine.
-        assert!(cam.look_around(0.0, -30.0, EarthModel::Wgs84, 0.0));
-        assert!((cam.tilt - 50.0).abs() < 1.0, "{}", cam.tilt);
+        let start = eye(&cam, model, 0.0);
+        let up = model.geometry().normal(start).normalize();
+        // The line of sight's angle above the horizon at the eye (degrees).
+        let elevation = |cam: &Cam| {
+            let forward = cam.basis_over_ground(1.0, model, 0.0).dir(0.0, 0.0);
+            forward.dot(up).asin().to_degrees()
+        };
+        let level = elevation(&cam);
+        assert!(level < 0.0, "{level}");
+        assert!(cam.look_around(0.0, 30.0, model, 0.0));
+        assert!(cam.look_up > 0.0, "{cam:?}");
+        assert!(
+            (elevation(&cam) - level - 30.0).abs() < 0.1,
+            "{}",
+            elevation(&cam)
+        );
+        // Turned while looking up, and lowered back: the eye stays all along.
+        assert!(cam.look_around(40.0, 0.0, model, 0.0));
+        assert!((elevation(&cam) - level - 30.0).abs() < 0.1);
+        assert!(cam.look_around(0.0, -30.0, model, 0.0));
+        assert_eq!(cam.look_up, 0.0);
+        assert!((elevation(&cam) - level).abs() < 0.1, "{}", elevation(&cam));
+        let moved = eye(&cam, model, 0.0).distance(start) * EARTH_RADIUS_KM;
+        assert!(moved < 1e-6, "{moved} km");
+        // No further than near the zenith, and nothing for a bad angle.
+        assert!(cam.look_around(0.0, 500.0, model, 0.0));
+        assert_eq!(cam.look_up, MAX_LOOK_UP_DEG);
+        assert!(!cam.look_around(f64::NAN, 0.0, model, 0.0));
     }
 }

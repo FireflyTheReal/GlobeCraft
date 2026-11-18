@@ -9,6 +9,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         heading: 0.0,
         alt: 100.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     LiveInput {
         view: LiveView {
@@ -98,6 +99,7 @@ fn terrain_occlusion_drops_a_road_hidden_behind_a_ridge() {
         heading: 0.0,
         alt: 30.0,
         tilt: 65.0,
+        look_up: 0.0,
     }
     .basis(1.0);
     input.view.altitude_km = 30.0;
@@ -132,6 +134,7 @@ fn live_lines_are_raised_onto_the_relief() {
         heading: 0.0,
         alt: 100.0,
         tilt: 60.0,
+        look_up: 0.0,
     }
     .basis(1.0);
     input.view.altitude_km = 100.0;
@@ -234,6 +237,7 @@ fn orbital_updates_reuse_roads_and_project_only_current_valid_subpoints() {
         alt: 1000.0,
         heading: 0.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis_for_model(1.0, EarthModel::Wgs84);
     request.satellites = Some(

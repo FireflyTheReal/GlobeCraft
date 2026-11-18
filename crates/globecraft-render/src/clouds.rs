@@ -375,6 +375,7 @@ mod tests {
             heading: 0.0,
             alt,
             tilt,
+            look_up: 0.0,
         }
         .basis_for_model(1.5, model)
     }

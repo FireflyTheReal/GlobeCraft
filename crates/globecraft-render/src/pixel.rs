@@ -261,6 +261,7 @@ mod tests {
             heading: 25.0,
             alt: 120.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis_for_model(1.0, model);
         let mut bands = Vec::new();
@@ -345,6 +346,7 @@ mod tests {
                     heading: 25.0,
                     alt: 0.15,
                     tilt: 0.0,
+                    look_up: 0.0,
                 }
                 .basis_for_model(1.0, model);
                 let rays = RayCaster::new(1, 1, &basis);
@@ -399,6 +401,7 @@ mod tests {
                 heading: 0.0,
                 alt: altitude_km,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis_for_model(1.0, model);
             let rays = RayCaster::new(1, 1, &basis);

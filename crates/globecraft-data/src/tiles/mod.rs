@@ -168,6 +168,36 @@ pub struct Tile {
     /// When the cache took an elevation tile in: its relief grows from what stood
     /// there before (`grown`). Tiles made directly (fixtures) are fully grown.
     arrived: Option<std::time::Instant>,
+    /// A colour tile's mean colour (0 to 1) over `MEAN_CELLS` × `MEAN_CELLS` blocks,
+    /// row by row: what one imagery level's colours are matched to another's by
+    /// (roadmap C6). Empty for elevation tiles.
+    means: Vec<[f32; 3]>,
+}
+
+/// Blocks per side a colour tile's mean colours are kept for (`Tile::mean_colour`).
+pub const MEAN_CELLS: usize = 8;
+
+/// The mean colours of an RGBA picture over `MEAN_CELLS` × `MEAN_CELLS` blocks.
+fn block_means(w: usize, h: usize, px: &[u8]) -> Vec<[f32; 3]> {
+    if w < MEAN_CELLS || h < MEAN_CELLS || px.len() < w * h * 4 {
+        return Vec::new();
+    }
+    let mut sums = vec![[0u32; 4]; MEAN_CELLS * MEAN_CELLS];
+    for y in 0..h {
+        let row = y * MEAN_CELLS / h * MEAN_CELLS;
+        for (x, pixel) in px[y * w * 4..(y + 1) * w * 4].chunks_exact(4).enumerate() {
+            let sum = &mut sums[row + x * MEAN_CELLS / w];
+            for channel in 0..3 {
+                sum[channel] += u32::from(pixel[channel]);
+            }
+            sum[3] += 1;
+        }
+    }
+    sums.iter()
+        .map(|sum| {
+            std::array::from_fn(|channel| sum[channel] as f32 / (sum[3].max(1) as f32 * 255.0))
+        })
+        .collect()
 }
 
 /// An elevation tile's relief grows in over this long instead of snapping to its
@@ -206,6 +236,7 @@ impl Tile {
             px: Vec::new(),
             elevation: Some(elevation),
             arrived: None,
+            means: Vec::new(),
         })
     }
     /// An elevation tile from prepared heights (fixtures and benchmarks).
@@ -216,6 +247,7 @@ impl Tile {
             px: Vec::new(),
             elevation: Some(elevation),
             arrived: None,
+            means: Vec::new(),
         }
     }
     /// Heights and block maxima, for elevation tiles.
@@ -224,7 +256,37 @@ impl Tile {
     }
     /// Decoded memory held, for the cache budget.
     pub fn bytes(&self) -> usize {
-        self.px.len() + self.elevation.as_ref().map_or(0, Elevation::bytes)
+        self.px.len()
+            + self.elevation.as_ref().map_or(0, Elevation::bytes)
+            + std::mem::size_of_val(self.means.as_slice())
+    }
+    /// The tile's mean colour around `(u, v)` (0 to 1 across it) over blocks a
+    /// `cells`-th of it wide (`cells` divides `MEAN_CELLS`), bilinear between their
+    /// middles; `None` for a tile without mean colours.
+    pub fn mean_colour(&self, u: f64, v: f64, cells: usize) -> Option<Vec4> {
+        if self.means.is_empty() || cells == 0 || !MEAN_CELLS.is_multiple_of(cells) {
+            return None;
+        }
+        let group = MEAN_CELLS / cells;
+        let block = |bx: usize, by: usize| {
+            let mut sum = Vec4::ZERO;
+            for y in by * group..(by + 1) * group {
+                for x in bx * group..(bx + 1) * group {
+                    let [r, g, b] = self.means[y * MEAN_CELLS + x];
+                    sum += Vec4::new(r, g, b, 0.0);
+                }
+            }
+            sum / (group * group) as f32
+        };
+        let last = (cells - 1) as f64;
+        let x = (u * cells as f64 - 0.5).clamp(0.0, last);
+        let y = (v * cells as f64 - 0.5).clamp(0.0, last);
+        let (x0, y0) = (x as usize, y as usize);
+        let (x1, y1) = ((x0 + 1).min(cells - 1), (y0 + 1).min(cells - 1));
+        let (fx, fy) = ((x - x0 as f64) as f32, (y - y0 as f64) as f32);
+        let top = block(x0, y0).lerp(block(x1, y0), fx);
+        let bottom = block(x0, y1).lerp(block(x1, y1), fx);
+        Some(top.lerp(bottom, fy))
     }
     /// Decodes the same PNG/JPEG tile bytes used by the disk and network loaders.
     pub fn decode(bytes: &[u8]) -> Result<Self, crate::Error> {
@@ -232,6 +294,7 @@ impl Tile {
         Ok(Self {
             w: img.width() as usize,
             h: img.height() as usize,
+            means: block_means(img.width() as usize, img.height() as usize, img.as_raw()),
             px: img.into_raw(),
             elevation: None,
             arrived: None,
@@ -374,6 +437,7 @@ mod sampling_tests {
             ],
             elevation: None,
             arrived: None,
+            means: Vec::new(),
         };
         assert_eq!(tile.sample(0.25, 0.25, 1.0), Vec4::new(1.0, 0.0, 0.0, 0.0));
         assert_eq!(tile.sample(0.75, 0.25, 1.0), Vec4::new(0.0, 1.0, 0.0, 0.0));
@@ -392,6 +456,7 @@ mod sampling_tests {
             ],
             elevation: None,
             arrived: None,
+            means: Vec::new(),
         };
         // Between texel 1 (red) and texel 2 (blue), level weights/lane zero.
         assert_eq!(tile.sample(0.5, 0.5, 1.0), Vec4::new(0.5, 0.0, 0.5, 0.0));
@@ -409,6 +474,7 @@ mod sampling_tests {
             ],
             elevation: None,
             arrived: None,
+            means: Vec::new(),
         };
         assert_eq!(tile.sample(0.5, 0.5, 2.0), Vec4::new(0.5, 0.0, 0.5, 0.0));
     }
@@ -433,6 +499,7 @@ mod sampling_tests {
             px,
             elevation: None,
             arrived: None,
+            means: Vec::new(),
         };
         let bilinear = tile.sample(0.53, 0.5, 1.0);
         let area = tile.sample(0.53, 0.5, 4.0);

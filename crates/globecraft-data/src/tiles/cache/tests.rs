@@ -46,6 +46,7 @@ fn tiny_tile(value: u8) -> Tile {
         px: vec![value, value, value, 255],
         elevation: None,
         arrived: None,
+        means: Vec::new(),
     }
 }
 
@@ -103,6 +104,7 @@ fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weig
             px: vec![0; 8],
             elevation: None,
             arrived: None,
+            means: Vec::new(),
         }),
     );
     cache.ready.run_pending_tasks();

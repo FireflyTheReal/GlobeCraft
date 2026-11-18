@@ -596,6 +596,7 @@ mod tests {
             heading: 0.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let requested = Cam { lon: 90.0, ..shown };
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -622,6 +623,7 @@ mod tests {
             heading: 0.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let basis = shown.basis(4.0 / 3.0);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));

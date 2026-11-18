@@ -53,6 +53,12 @@ pub(super) fn shown(slot: i64) -> String {
 /// The clouds of `slot` (white on black: their opacity), from this week's maps or a
 /// week's archive, whichever is likelier to hold it first.
 pub(super) async fn download(slot: i64, now: f64) -> Result<super::CloudMap, crate::Error> {
+    if ((slot + 1) * SLOT_SECS) as f64 <= super::CLOUDS_KEPT_SINCE_UNIX {
+        return Err(crate::Error::msg(format!(
+            "Clouds are kept from {} UTC on",
+            shown((super::CLOUDS_KEPT_SINCE_UNIX / SLOT_SECS as f64) as i64)
+        )));
+    }
     let (stamp, week) = names(slot).ok_or_else(|| crate::Error::msg("time out of range"))?;
     let this_week =
         names((now / SLOT_SECS as f64).floor() as i64).is_some_and(|(_, current)| current == week);

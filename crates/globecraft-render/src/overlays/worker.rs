@@ -277,6 +277,7 @@ mod tests {
                 heading: 0.0,
                 alt: 6000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(1.0),
             rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 600.0)),
@@ -335,6 +336,7 @@ mod tests {
                 heading: 0.0,
                 alt: 1000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(1.0),
             rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 600.0)),
@@ -454,6 +456,7 @@ mod tests {
                 heading: 0.0,
                 alt: 1000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(1.0),
             rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 600.0)),
