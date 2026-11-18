@@ -61,6 +61,7 @@ fn aircraft_geometry_reuse_cost() {
             ..Default::default()
         }),
         unix_secs: 1010.0,
+        clouds: None,
     };
     let geometry = preparer.prepare(request.clone());
     let mut samples = Vec::new();

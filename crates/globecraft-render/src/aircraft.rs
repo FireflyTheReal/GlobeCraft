@@ -31,7 +31,7 @@ const LANDING_HEIGHT_FEET: f64 = 5_000.0;
 const LANDING_EXTRAPOLATION_MAX_SECS: f64 = 45.0;
 const SECONDS_PER_MINUTE: f64 = 60.0;
 const KM_PER_NAUTICAL_MILE: f64 = 1.852;
-const KM_PER_FOOT: f64 = 0.000_304_8;
+pub(crate) const KM_PER_FOOT: f64 = 0.000_304_8;
 const SECONDS_PER_HOUR: f64 = 3600.0;
 const HEADING_PROBE_KM: f64 = 3.0;
 /// A plane reported turning keeps turning for at most this long (a standard-rate

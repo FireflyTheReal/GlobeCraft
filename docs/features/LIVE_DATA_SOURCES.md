@@ -3,11 +3,16 @@
 **Satellite clouds:** Matt Eason, Live Cloud Maps (CC0-1.0). Latest source:
 https://clouds.matteason.co.uk/images/8192x4096/clouds-alpha.png
 Repository: https://github.com/matteason/live-cloud-maps
-The clouds are drawn as a layer 8 km above the ground (`globecraft_render::clouds`),
-from the full 8192 × 4096 map (with 4096- and 2048-wide levels for views from far
-out), lit like the globe: white by day, faint blue-grey at night. From above the
-app draws them over the frame and they fade out between 20 and 8.5 km; from below
-(under 8 km) the renderer draws them into the sky, where relief hides them.
+
+The clouds are drawn as a layer 10 km above the ground (`globecraft_render::clouds`):
+over Everest and under airliners at cruise. They come from the full 8192 × 4096 map
+(with 4096- and 2048-wide levels for views from far out) and are lit like the globe:
+white by day, faint blue-grey at night. From above, the app draws them over the frame
+and they fade out between 22 and 10.5 km; from below (under 10 km), the renderer draws
+them into the sky, where relief hides them. Aircraft on the far side of the layer
+fade behind thick cloud. The aurora is a layer just above the clouds (10.5 km): over
+them from above, behind them (with the stars, behind the frame) from below.
+
 **Required source attribution:** Contains modified EUMETSAT data
 
 The provider publishes eight updates per day (one every three hours), depending on upstream satellite data availability.

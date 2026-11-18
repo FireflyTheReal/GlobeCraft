@@ -39,6 +39,7 @@ fn aircraft_geometry_is_prepared_for_the_raster_camera_before_publication() {
         view: expected,
         data: Arc::new(globecraft_data::aircraft::AircraftSnapshot::default()),
         unix_secs: 1000.0,
+        clouds: None,
     });
     worker.submit(view);
     wakes.recv_timeout(TEST_TIMEOUT).unwrap();

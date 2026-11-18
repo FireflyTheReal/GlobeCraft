@@ -16,14 +16,15 @@ use globecraft_data::live_maps::CloudMap;
 use std::sync::Arc;
 
 /// The clouds' height above the surface. Real tops range from 2 to 15 km; one height
-/// for all keeps them a layer over the ground.
-pub const CLOUD_LAYER_KM: f64 = 8.0;
+/// for all keeps them a layer over the ground: over Everest (8.8 km), and under
+/// airliners at cruise, which show above them (user, 2026-11-18).
+pub const CLOUD_LAYER_KM: f64 = 10.0;
 /// How opaque the thickest cloud is drawn, before the layer's own opacity.
 pub const CLOUD_OPACITY: f32 = 0.78;
 /// Close to the layer the clouds seen from above fade out: from none at this height
 /// of the eye above the surface to all at the second. It meets the view from below
 /// (`BELOW_FADE_KM`), so that there are clouds at every height.
-const CLOUD_FADE_KM: (f64, f64) = (8.5, 20.0);
+const CLOUD_FADE_KM: (f64, f64) = (CLOUD_LAYER_KM + 0.5, CLOUD_LAYER_KM + 12.0);
 /// Toward the layer's horizon the clouds thin out: from none where the line of sight
 /// meets the layer at this cosine down to all from the second. Seen edge-on they are
 /// haze, and the mesh's last cells, cut where the line of sight misses the layer,
@@ -83,46 +84,115 @@ pub fn cloud_shell(
     pixels_per_point: f32,
     light: CloudLight,
 ) -> Option<CloudShell> {
-    let shell = raised(basis.model.geometry(), CLOUD_LAYER_KM);
-    let ground = basis.model.geometry();
-    let (lat, lon) = ground.coordinates(basis.c);
-    let height_km = (basis.c.length() - ground.position(lat, lon).length()) * EARTH_RADIUS_KM;
-    let t = ((height_km - CLOUD_FADE_KM.0) / (CLOUD_FADE_KM.1 - CLOUD_FADE_KM.0)).clamp(0.0, 1.0);
-    let fade = (t * t * (3.0 - 2.0 * t)) as f32;
+    let height_km = eye_height_km(basis);
+    let fade = above_fade(height_km);
     if fade <= 0.0 {
         return None;
     }
+    let grid = layer_grid(basis, rect, step, CLOUD_LAYER_KM);
+    let corners = grid
+        .corners
+        .iter()
+        .map(|corner| {
+            corner.map(|corner| CloudCorner {
+                pos: corner.pos,
+                uv: [(corner.lon + 180.0) / 360.0, (90.0 - corner.lat) / 180.0],
+                colour: cloud_colour(light, ll_to_v3(corner.lat, corner.lon)).to_array(),
+                opacity: corner.facing,
+            })
+        })
+        .collect();
+    // At the view's centre: how far the layer is, and so how wide a pixel there.
+    let shell = raised(basis.model.geometry(), CLOUD_LAYER_KM);
+    let distance = shell
+        .intersect(basis.c, basis.ray(rect, rect.center()))
+        .map_or(height_km / EARTH_RADIUS_KM, |hit| hit.distance(basis.c));
+    let pixel_km = distance * EARTH_RADIUS_KM * 2.0 * VERTICAL_FOV_HALF_TAN
+        / f64::from(rect.height() * pixels_per_point).max(1.0);
+    Some(CloudShell {
+        columns: grid.columns,
+        rows: grid.rows,
+        corners,
+        fade,
+        pixel_km,
+    })
+}
+
+/// How high the eye of `basis` is above the surface (km).
+pub fn eye_height_km(basis: &Basis) -> f64 {
+    let ground = basis.model.geometry();
+    let (lat, lon) = ground.coordinates(basis.c);
+    (basis.c.length() - ground.position(lat, lon).length()) * EARTH_RADIUS_KM
+}
+
+/// Where a line of sight meets a layer over the ground.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayerCorner {
+    /// On the screen, in points.
+    pub pos: Pos2,
+    pub lat: f64,
+    pub lon: f64,
+    /// How much of the layer shows there, 0 to 1: less toward its horizon, where it
+    /// is seen edge-on, and none where the line of sight passes by it.
+    pub facing: f32,
+}
+
+/// Lines of sight over the screen, one every `step` points, and where they meet a
+/// layer `height_km` above the surface, from above or from below.
+pub struct LayerGrid {
+    pub columns: usize,
+    pub rows: usize,
+    /// Row by row; `None` where the line of sight leads away from the layer, or
+    /// meets the ground first.
+    pub corners: Vec<Option<LayerCorner>>,
+}
+
+/// The layer `height_km` up seen from `basis` over `rect`, a corner every `step`
+/// points.
+pub fn layer_grid(basis: &Basis, rect: Rect, step: f32, height_km: f64) -> LayerGrid {
+    let ground = basis.model.geometry();
+    let shell = raised(ground, height_km);
+    let below = eye_height_km(basis) < height_km;
     let (columns, rows) = (
         (rect.width() / step).ceil().max(1.0) as usize,
         (rect.height() / step).ceil().max(1.0) as usize,
     );
     let corner = |pos: Pos2| {
         let ray = basis.ray(rect, pos);
-        // A line of sight past the layer's edge still makes a corner, an invisible
-        // one where it passes nearest: the cells across the edge fade out instead of
-        // being cut off in steps.
         let Some(hit) = shell.intersect(basis.c, ray) else {
+            // A line of sight past the layer's edge still makes a corner, a clear one
+            // where it passes nearest: the cells across the edge fade out instead of
+            // being cut off in steps.
             let nearest = -basis.c.dot(ray);
             if nearest <= 0.0 {
                 return None;
             }
             let (lat, lon) = shell.coordinates(basis.c + ray * nearest);
-            return Some(CloudCorner {
+            return Some(LayerCorner {
                 pos,
-                uv: [(lon + 180.0) / 360.0, (90.0 - lat) / 180.0],
-                colour: cloud_colour(light, ll_to_v3(lat, lon)).to_array(),
-                opacity: 0.0,
+                lat,
+                lon,
+                facing: 0.0,
             });
         };
+        // From below, a line toward the ground meets the layer only on the far side
+        // of the Earth.
+        if below
+            && ground
+                .intersect(basis.c, ray)
+                .is_some_and(|floor| floor.distance(basis.c) < hit.distance(basis.c))
+        {
+            return None;
+        }
         let (lat, lon) = shell.coordinates(hit);
-        let facing = (-ray.dot(ll_to_v3(lat, lon)) - CLOUD_HORIZON_COSINES.0)
-            / (CLOUD_HORIZON_COSINES.1 - CLOUD_HORIZON_COSINES.0);
-        let facing = facing.clamp(0.0, 1.0);
-        Some(CloudCorner {
+        let facing = ((ray.dot(ll_to_v3(lat, lon)).abs() - CLOUD_HORIZON_COSINES.0)
+            / (CLOUD_HORIZON_COSINES.1 - CLOUD_HORIZON_COSINES.0))
+            .clamp(0.0, 1.0);
+        Some(LayerCorner {
             pos,
-            uv: [(lon + 180.0) / 360.0, (90.0 - lat) / 180.0],
-            colour: cloud_colour(light, ll_to_v3(lat, lon)).to_array(),
-            opacity: (facing * facing * (3.0 - 2.0 * facing)) as f32,
+            lat,
+            lon,
+            facing: (facing * facing * (3.0 - 2.0 * facing)) as f32,
         })
     };
     // Some 30,000 lines of sight for a large window: 7.5 ms on one thread.
@@ -137,20 +207,11 @@ pub fn cloud_shell(
             ))
         })
         .collect();
-    // At the view's centre: how far the layer is, and so how wide a pixel there.
-    let centre_ray = basis.ray(rect, rect.center());
-    let distance = shell
-        .intersect(basis.c, centre_ray)
-        .map_or(height_km / EARTH_RADIUS_KM, |hit| hit.distance(basis.c));
-    let pixel_km = distance * EARTH_RADIUS_KM * 2.0 * VERTICAL_FOV_HALF_TAN
-        / f64::from(rect.height() * pixels_per_point).max(1.0);
-    Some(CloudShell {
+    LayerGrid {
         columns,
         rows,
         corners,
-        fade,
-        pixel_km,
-    })
+    }
 }
 
 /// The clouds' colour where the layer's vertical is `up`.
@@ -193,8 +254,7 @@ pub(crate) fn from_below(
     height_km: f64,
     direction: DVec3,
 ) -> Option<(Vec3, f32)> {
-    let under =
-        (CLOUD_LAYER_KM - height_km - BELOW_FADE_KM.0) / (BELOW_FADE_KM.1 - BELOW_FADE_KM.0);
+    let under = below_fade(height_km);
     if under <= 0.0 {
         return None;
     }
@@ -206,14 +266,54 @@ pub(crate) fn from_below(
         return None;
     }
     let far = hit.distance(eye) * EARTH_RADIUS_KM / BELOW_HAZE_KM;
-    let under = under.min(1.0);
-    let opacity = density
-        * CLOUD_OPACITY
-        * clouds.opacity
-        * (under * under * (3.0 - 2.0 * under)) as f32
-        * (-far).exp() as f32;
+    let opacity = density * CLOUD_OPACITY * clouds.opacity * under * (-far).exp() as f32;
     let colour = cloud_colour(clouds.light, ll_to_v3(lat, lon)) * (1.0 - UNDERSIDE_SHADE * density);
     Some((colour, opacity))
+}
+
+/// How much of the clouds seen from above shows with the eye `height_km` up (0 to 1).
+fn above_fade(height_km: f64) -> f32 {
+    smooth((height_km - CLOUD_FADE_KM.0) / (CLOUD_FADE_KM.1 - CLOUD_FADE_KM.0))
+}
+
+/// How much of the clouds seen from below shows with the eye `height_km` up (0 to 1).
+fn below_fade(height_km: f64) -> f32 {
+    smooth((CLOUD_LAYER_KM - height_km - BELOW_FADE_KM.0) / (BELOW_FADE_KM.1 - BELOW_FADE_KM.0))
+}
+
+/// 0 to 1, eased at both ends.
+fn smooth(t: f64) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    (t * t * (3.0 - 2.0 * t)) as f32
+}
+
+/// How much of a thing `km` above the surface at a place shows through the clouds
+/// seen from `basis` (0 to 1): all on the eye's side of the layer, less behind thick
+/// cloud on the other. Aircraft below the layer hide under the clouds seen from above,
+/// those above them from below (user, 2026-11-18).
+pub fn seen_through(clouds: &CloudsCfg, basis: &Basis, lat: f64, lon: f64, km: f64) -> f32 {
+    let eye_km = eye_height_km(basis);
+    let eye_above = eye_km > CLOUD_LAYER_KM;
+    if eye_above == (km > CLOUD_LAYER_KM) {
+        return 1.0;
+    }
+    let fade = if eye_above {
+        above_fade(eye_km)
+    } else {
+        below_fade(eye_km)
+    };
+    let layer = raised(basis.model.geometry(), CLOUD_LAYER_KM);
+    let thing = basis.raised_position(lat, lon, km);
+    let Some(crossing) = layer.intersect(basis.c, (thing - basis.c).normalize()) else {
+        return 1.0;
+    };
+    let (lat, lon) = layer.coordinates(crossing);
+    let density = clouds
+        .map
+        .levels
+        .first()
+        .map_or(0.0, |map| sample(map, lat, lon));
+    1.0 - density * CLOUD_OPACITY * clouds.opacity * fade
 }
 
 /// The cloud map's opacity (0 to 1) at a place, between its four nearest texels.
@@ -279,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn the_layer_lies_eight_kilometres_up_under_the_view() {
+    fn the_layer_lies_at_its_height_under_the_view() {
         for model in [EarthModel::PerfectSphere, EarthModel::Wgs84] {
             let basis = view(400.0, 0.0, model);
             let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(300.0, 200.0));
@@ -299,8 +399,8 @@ mod tests {
             let (lat, lon) = ground.coordinates(hit);
             let up_km = (hit.length() - ground.position(lat, lon).length()) * EARTH_RADIUS_KM;
             assert!((up_km - CLOUD_LAYER_KM).abs() < 0.05, "{model:?}: {up_km}");
-            // 392 km to the layer, 200 pixels for 2·tan(22.5°) of it.
-            let expected = 392.0 * 2.0 * VERTICAL_FOV_HALF_TAN / 200.0;
+            // 390 km to the layer, 200 pixels for 2·tan(22.5°) of it.
+            let expected = 390.0 * 2.0 * VERTICAL_FOV_HALF_TAN / 200.0;
             assert!(
                 (shell.pixel_km - expected).abs() < 0.5,
                 "{}",
@@ -321,8 +421,8 @@ mod tests {
                 CloudLight::Even,
             )
         };
-        assert!(shell(8.0).is_none());
-        let half = shell(14.25).unwrap().fade;
+        assert!(shell(10.0).is_none());
+        let half = shell(16.25).unwrap().fade;
         assert!(0.3 < half && half < 0.7, "{half}");
         assert_eq!(shell(25.0).unwrap().fade, 1.0);
     }
@@ -407,7 +507,27 @@ mod tests {
         assert!(at(45.0, 1.0, low).unwrap().1 < 0.5 * opacity);
         // None in the clear band, and none from above the layer.
         assert!(at(0.0, 1.0, ll_to_v3(0.0, 10.0)).is_none());
-        assert!(at(45.0, 9.0, up).is_none());
+        assert!(at(45.0, 11.0, up).is_none());
+    }
+
+    #[test]
+    fn aircraft_hide_behind_thick_cloud_on_the_layers_other_side() {
+        let clouds = CloudsCfg {
+            map: Arc::new(CloudMap {
+                levels: vec![image::GrayImage::from_pixel(64, 32, image::Luma([255]))],
+            }),
+            opacity: 1.0,
+            light: CloudLight::Even,
+        };
+        let (lat, lon) = (30.0, 179.0);
+        let from_above = view(400.0, 0.0, EarthModel::Wgs84);
+        let below = seen_through(&clouds, &from_above, lat, lon, 3.0);
+        assert!((below - (1.0 - CLOUD_OPACITY)).abs() < 1e-3, "{below}");
+        assert_eq!(seen_through(&clouds, &from_above, lat, lon, 11.5), 1.0);
+        // From under the layer it is the other way round.
+        let from_below = view(1.0, 0.0, EarthModel::Wgs84);
+        assert_eq!(seen_through(&clouds, &from_below, lat, lon, 3.0), 1.0);
+        assert!(seen_through(&clouds, &from_below, lat, lon, 11.5) < 0.3);
     }
 
     #[test]

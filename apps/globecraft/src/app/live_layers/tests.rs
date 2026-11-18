@@ -42,6 +42,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
             ..Default::default()
         }),
         unix_secs: 1010.0,
+        clouds: None,
     };
     let mut overlay = AircraftOverlay::new(ctx.clone());
     let original = AircraftPreparer::default().prepare(input.clone());
@@ -142,6 +143,7 @@ fn aircraft_mesh_repaint_cost() {
             ..Default::default()
         }),
         unix_secs: 1010.0,
+        clouds: None,
     };
     let geometry = AircraftPreparer::default().prepare(request.clone());
     let visible = geometry.flights.len();
@@ -221,6 +223,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                 ..Default::default()
             }),
             unix_secs: 1010.0,
+            clouds: None,
         };
         let geometry = AircraftPreparer::default().prepare(input.clone());
         assert_eq!(geometry.labels, [0], "the flight is labelled at 300 km");

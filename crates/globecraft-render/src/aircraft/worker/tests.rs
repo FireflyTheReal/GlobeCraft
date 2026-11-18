@@ -43,6 +43,7 @@ fn input() -> ProjectionInput {
             ..Default::default()
         }),
         unix_secs: 1010.1,
+        clouds: None,
     }
 }
 

@@ -42,6 +42,8 @@ pub struct ProjectionInput {
     pub view: ProjectionView,
     pub data: Arc<AircraftSnapshot>,
     pub unix_secs: f64,
+    /// The clouds, which hide planes on the other side of their layer.
+    pub clouds: Option<crate::clouds::CloudsCfg>,
 }
 impl ProjectionInput {
     pub fn same_request(&self, other: &Self) -> bool {
@@ -81,7 +83,7 @@ impl AircraftPreparer {
         }
         #[cfg(feature = "profiling")]
         let _profile = globecraft_data::profiling::Span::new("aircraft.project");
-        let flights = project_flights(
+        let mut flights = project_flights(
             &input.view.basis,
             input.view.rect,
             &input.data.aircraft,
@@ -89,6 +91,22 @@ impl AircraftPreparer {
             input.view.map_scale,
             input.view.heights,
         );
+        // Under thick cloud seen from above (or over it from below) a plane fades out,
+        // by where it was last reported: a texel of the cloud map is 5 km.
+        if let (Some(clouds), true) = (&input.clouds, input.view.heights) {
+            for flight in &mut flights {
+                let report = &input.data.aircraft[flight.source_index];
+                let km =
+                    report.altitude_feet.unwrap_or(0.0).max(0.0) * crate::aircraft::KM_PER_FOOT;
+                flight.opacity *= crate::clouds::seen_through(
+                    clouds,
+                    &input.view.basis,
+                    report.latitude,
+                    report.longitude,
+                    km,
+                );
+            }
+        }
         let mut labels: Vec<usize> = Vec::new();
         if input.view.altitude_km <= LABEL_MAX_ALTITUDE_KM {
             for (index, flight) in flights.iter().enumerate() {

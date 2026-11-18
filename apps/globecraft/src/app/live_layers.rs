@@ -192,6 +192,7 @@ impl App {
             },
             data: self.aircraft_snapshot(),
             unix_secs: now_unix(),
+            clouds: self.frame_clouds(),
         }
     }
     pub(super) fn draw_live_layers(
@@ -496,9 +497,16 @@ pub(super) fn hover_label(
 
 impl App {
     /// The aurora glow, under every line and name, while the app's time is near the
-    /// forecast's moment.
-    pub(super) fn paint_aurora(&mut self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
-        if !self.layer(MapLayer::Aurora) {
+    /// forecast's moment. Its layer is above the clouds: seen from below it goes
+    /// behind the frame (`behind`, after the sky layer), from above over it.
+    pub(super) fn paint_aurora(
+        &mut self,
+        painter: &egui::Painter,
+        basis: &Basis,
+        rect: Rect,
+        behind: bool,
+    ) {
+        if !self.layer(MapLayer::Aurora) || aurora::seen_from_below(basis) != behind {
             return;
         }
         let Some(grid) = self.live.aurora.grid() else {

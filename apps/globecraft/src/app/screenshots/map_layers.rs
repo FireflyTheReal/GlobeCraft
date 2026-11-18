@@ -227,6 +227,25 @@ fn aurora_screenshot() {
         .expect("sunlight");
     settle(&mut h, 2.0);
     save(&mut h, &dir, "24-aurora-without-sunlight");
+    // Close up in the oval, the glow fills the view (it stopped in a rectangle
+    // smaller than the view, user 2026-11-18), and from the ground it is in the sky.
+    h.state_mut()
+        .run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    for (camera, name) in [
+        (
+            json!({"lat": 60.0, "lon": -72.0, "altitude_km": 110.0, "tilt_deg": 0.0}),
+            "25-aurora-close",
+        ),
+        (
+            json!({"lat": 56.0, "lon": -72.0, "altitude_km": 1.0, "tilt_deg": 85.0, "heading_deg": 0.0}),
+            "26-aurora-from-below",
+        ),
+    ] {
+        h.state_mut().run("camera.set", camera).expect("camera");
+        settle(&mut h, 3.0);
+        save(&mut h, &dir, name);
+    }
 }
 
 /// An airport code in the search box (roadmap 5, `TRK-02`), with a sample airport
