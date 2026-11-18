@@ -114,6 +114,7 @@ async fn archived(
         .then(|| response.headers().get(reqwest::header::CONTENT_RANGE))
         .flatten()
         .and_then(|range| range.to_str().ok()?.rsplit_once('/')?.1.parse::<u64>().ok())
+        .filter(|&total| total > 0)
         .ok_or_else(|| crate::Error::msg("the cloud archive answered without a range"))?;
     let range = |range: std::ops::Range<u64>| {
         crate::http::body(
@@ -174,6 +175,11 @@ fn find_frame(tail: &[u8], total: u64, stamp: &str) -> Result<Frame, crate::Erro
     }
     let start = entry.header_start();
     let end = (start + LOCAL_HEADER_MAX_BYTES + entry.compressed_size()).min(directory);
+    if end <= start {
+        return Err(crate::Error::msg(
+            "the cloud archive's directory is damaged",
+        ));
+    }
     Ok(Frame {
         name: entry.name()?.into_owned(),
         range: start..end,
