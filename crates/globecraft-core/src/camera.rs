@@ -6,6 +6,7 @@ use crate::{
 use crate::{MAX_CAMERA_LATITUDE_DEG, METERS_PER_KM, METERS_PER_LATITUDE_DEGREE};
 use emath::{Pos2, Rect};
 use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dcamera::rh};
+mod look;
 // Reject near-zero projection depths and rotation axes; bound pan amplification near poles.
 const PROJECTION_DEPTH_EPSILON: f64 = 1e-9;
 const ROTATION_AXIS_EPSILON: f64 = 1e-13;

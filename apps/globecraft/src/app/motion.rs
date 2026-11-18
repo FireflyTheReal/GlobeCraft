@@ -19,6 +19,9 @@ pub(super) struct MotionState {
     pub(super) last_drag: Option<DragKind>,
     /// The view coasting on after a drag was let go.
     pub(super) glide: Option<Glide>,
+    /// Dragging looks around from the eye instead of moving the globe
+    /// (`camera.lookAround` without angles; Ctrl/⌘+drag does it any time).
+    pub(super) look_mode: bool,
 }
 
 /// What a drag does to the view.

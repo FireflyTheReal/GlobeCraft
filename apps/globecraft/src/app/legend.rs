@@ -1,7 +1,7 @@
 //! The legend: what the colours and symbols on the globe mean. It opens by itself when
 //! something coded appears (aircraft, ships, satellites, a selected flight, rain
-//! radar, aurora, places of interest),
-//! closes with its ✕, and `ui.legend` (View tab, Command Search) brings it back.
+//! radar, aurora, places of interest), closes by itself when the last of them goes or
+//! with its ✕, and `ui.legend` (View tab, Command Search) brings it back.
 //! Each key takes its colours from the code that draws them, so the two never differ.
 use super::App;
 use super::live_layers::{
@@ -186,7 +186,8 @@ impl App {
     }
 
     /// Opens the legend's pane when a key appears on the globe (without taking the view
-    /// from another pane).
+    /// from another pane), and closes it when the last key goes (user, 2026-11-18).
+    /// Opened by hand with nothing on the globe, it stays.
     pub(super) fn legend_watch(&mut self) {
         let kinds = self.legend_kinds();
         if kinds
@@ -194,6 +195,8 @@ impl App {
             .any(|kind| !self.panes.legend.seen.contains(kind))
         {
             self.settings.workspace.add_right(RightPane::Legend);
+        } else if kinds.is_empty() && !self.panes.legend.seen.is_empty() {
+            self.settings.workspace.close_right(RightPane::Legend);
         }
         self.panes.legend.seen = kinds;
     }

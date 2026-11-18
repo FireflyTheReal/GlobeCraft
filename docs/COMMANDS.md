@@ -17,6 +17,7 @@ Parameters are a JSON object; none is required unless marked.
 | `camera.zoomOut` | Zoom Out | Move the camera away from the surface. | — | yes |
 | `camera.resetNorth` | North Up | Turn the view so north points up (N). | — | yes |
 | `camera.tilt` | Tilt | Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down). Close to the ground the camera backs off as far as the tilt needs. | `step` (number): Degrees to add to the current tilt<br>`tilt_deg` (number): Tilt from straight down, 0..85 (less close to the ground and far out) | yes |
+| `camera.lookAround` | Look around | Turn the view about the camera, as you turn your head: the camera stays where it is and looks elsewhere (Ctrl+drag, ⌘+drag on a Mac; the button makes every drag look around until pressed again). The view only looks down at the Earth: it stops where the next look would miss the ground. | `raise_deg` (number): Degrees to raise the view toward the horizon (negative: lower it), about the camera<br>`turn_deg` (number): Degrees to turn the view to the right (negative: left), about the camera. Without either angle the command switches look-around dragging on or off | yes |
 | `camera.topDown` | Top-Down View | Look straight down again (U). | — | yes |
 | `camera.globalView` | Global View | Fly out until the whole globe is in view. | — | yes |
 | `camera.autoRotate` | Auto-Rotate | Slowly spin the globe. | `on` (boolean): Omit to toggle | yes |

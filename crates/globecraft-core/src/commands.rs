@@ -200,6 +200,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..85 (less close to the ground and far out)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
     ),
     command!(
+        "camera.lookAround",
+        "camera-look-around",
+        "eye",
+        Explore,
+        View,
+        r#"{"type":"object","properties":{"turn_deg":{"type":"number","description":"Degrees to turn the view to the right (negative: left), about the camera. Without either angle the command switches look-around dragging on or off"},"raise_deg":{"type":"number","description":"Degrees to raise the view toward the horizon (negative: lower it), about the camera"}}}"#
+    ),
+    command!(
         "camera.topDown",
         "camera-top-down",
         "globe_view",

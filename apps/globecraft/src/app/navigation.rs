@@ -85,6 +85,17 @@ impl App {
         );
     }
 
+    /// Turns the view about the eye (`Cam::look_around`) over the relief as drawn. A
+    /// raise that would miss the ground still turns. Whether the view moved.
+    pub(super) fn look_around(&mut self, turn_deg: f64, raise_deg: f64) -> bool {
+        let (model, ground_km) = (self.active_earth_model(), self.motion.ground_km);
+        self.motion.glide = None;
+        self.cam.look_around(turn_deg, raise_deg, model, ground_km)
+            || (raise_deg != 0.0
+                && turn_deg != 0.0
+                && self.cam.look_around(turn_deg, 0.0, model, ground_km))
+    }
+
     /// The view as drawn: the camera around the ground point raised to the terrain.
     pub(super) fn view_basis(&self, aspect: f64) -> globecraft_core::camera::Basis {
         self.cam

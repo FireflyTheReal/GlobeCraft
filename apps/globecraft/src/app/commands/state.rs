@@ -26,6 +26,10 @@ impl App {
         let earth = self.explorer.on_earth();
         match id {
             "camera.autoRotate" => on(self.motion.auto_rotate),
+            "camera.lookAround" => CommandState {
+                enabled: earth,
+                checked: self.motion.look_mode && params.as_object().is_none_or(|p| p.is_empty()),
+            },
             "ruler.enable" => on(self.measure.on),
             "ruler.closeShape" => on(self.measure.paths.closed()),
             "edit.undo" => CommandState {

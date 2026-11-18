@@ -189,6 +189,12 @@ params! {
         pub step: Option<f64>,
     }
 
+    /// `camera.lookAround`
+    pub struct LookAround {
+        pub turn_deg: Option<f64>,
+        pub raise_deg: Option<f64>,
+    }
+
     /// `search.place`
     pub struct SearchPlace {
         /// Without one (the ribbon's button), the search box takes the focus.

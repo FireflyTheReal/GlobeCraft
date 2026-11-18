@@ -673,3 +673,63 @@ fn icon_sheet() {
             .expect("save");
     }
 }
+
+/// The legend opens when a coded layer appears and closes when the last one goes;
+/// opened by hand with nothing on the globe, it stays (user, 2026-11-18). No rendering.
+#[test]
+fn the_legend_closes_when_its_last_key_goes() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let app = h.state_mut();
+    let show = |app: &mut App, visible: bool| {
+        app.run("layer.show", json!({"layer": "aurora", "visible": visible}))
+            .expect("aurora");
+        app.legend_watch();
+    };
+    show(app, true);
+    assert!(app.legend_open());
+    show(app, false);
+    assert!(!app.legend_open());
+    app.run("ui.legend", json!({"on": true})).expect("legend");
+    app.legend_watch();
+    assert!(app.legend_open());
+}
+
+/// `camera.lookAround` turns the view about the eye; a look past the ground is
+/// refused and leaves the view as it was. No rendering.
+#[test]
+fn looking_around_turns_the_view_about_the_eye() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": 40.0, "lon": -74.0, "altitude_km": 2.0, "heading_deg": 0.0, "tilt_deg": 60.0}),
+    )
+    .expect("camera");
+    let eye = |app: &App| app.view_basis(1.0).c;
+    let before = eye(app);
+    let turned = app
+        .run("camera.lookAround", json!({"turn_deg": 30.0}))
+        .expect("look");
+    let heading = turned["heading_deg"].as_f64().unwrap();
+    assert!((heading - 30.0).abs() < 1.0, "{heading}");
+    let moved = eye(app).distance(before) * globecraft_core::EARTH_RADIUS_KM;
+    assert!(moved < 1e-6, "{moved} km");
+    let cam = app.cam;
+    assert!(
+        app.run("camera.lookAround", json!({"raise_deg": 60.0}))
+            .is_err()
+    );
+    assert_eq!(
+        (app.cam.lat, app.cam.lon, app.cam.tilt),
+        (cam.lat, cam.lon, cam.tilt)
+    );
+    // Without angles it switches look-around dragging on, and off again.
+    let mode = app.run("camera.lookAround", json!({})).expect("mode");
+    assert_eq!(mode["look_mode"], true);
+    let mode = app.run("camera.lookAround", json!({})).expect("mode");
+    assert_eq!(mode["look_mode"], false);
+}

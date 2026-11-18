@@ -104,6 +104,19 @@ impl App {
                 self.touch();
                 self.camera_json()
             }
+            CameraCommand::LookAround(p) if p.turn_deg.is_none() && p.raise_deg.is_none() => {
+                self.motion.look_mode = !self.motion.look_mode;
+                json!({"look_mode": self.motion.look_mode})
+            }
+            CameraCommand::LookAround(p) => {
+                let (turn, raise) = (p.turn_deg.unwrap_or(0.0), p.raise_deg.unwrap_or(0.0));
+                self.motion.fly = None;
+                if !self.look_around(turn, raise) {
+                    return Err("the view would no longer look at the ground".into());
+                }
+                self.touch();
+                self.camera_json()
+            }
             CameraCommand::TopDown => {
                 self.cam.tilt = 0.0;
                 self.touch();
