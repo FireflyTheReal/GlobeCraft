@@ -19,6 +19,15 @@ With Sunlight on, the same service's water map
 and cloud dark) gives the sun's glint on the water, on the CPU and the GPU alike
 (`globecraft_render::sun::glint`).
 
+**Clouds of an earlier time:** with the app's time set back before the current three
+hours, the clouds are those kept for it by Joshua Binswanger's archive of the same
+maps (https://github.com/joshuabinswanger/matteason_live-cloud-maps_downloader, CC0):
+this week's maps as releases `maps-YYYYMMDD_HHMM` (the 8192 × 4096 map), each finished
+week as `archive-YYYY-Www`, whose zip of 2048 × 1024 frames is read in two ranges (its
+directory, then the one frame nearest the time) rather than whole (about 30 MB). The
+maps repeat where the source did not update (several days in November 2026), and a
+missed run is filled by the nearest frame. Back at the present, the live map returns.
+
 **Required source attribution:** Contains modified EUMETSAT data
 
 The provider publishes eight updates per day (one every three hours), depending on upstream satellite data availability.

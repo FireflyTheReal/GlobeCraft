@@ -59,9 +59,8 @@ const ROOF_SAMPLE_SHARE: f64 = 0.6;
 /// No roof taken from imagery is darker than this (luminance, 0–1): roofs in
 /// shadow in the photo, or dark slate, came out black (screenshots, 2026-11-16).
 const MIN_IMAGERY_LUMINANCE: f32 = 0.2;
-/// The coarsest imagery a roof takes its colour from: one texel at zoom 12 spans
-/// about 40 m, a block or two.
-const COARSEST_IMAGERY_ZOOM: u8 = 12;
+/// The coarsest imagery a roof takes its colour from.
+const COARSEST_IMAGERY_ZOOM: u8 = globecraft_data::tiles::FINE_IMAGERY_ZOOM;
 /// Light from the sky alone, and from the sun on a face turned to it.
 const AMBIENT: f32 = 0.55;
 const DIRECT: f32 = 0.45;
@@ -112,12 +111,22 @@ pub(super) fn project(
     }
     let visibility = TerrainVisibility::new(&view.basis, ground);
     let reach = view.rect.expand(VIEW_MARGIN_POINTS);
-    // Blocks are projected on every core, a run of them per job, then joined.
+    // Blocks are projected on every core, a run of them per job, then joined. A tile
+    // just shown fades in, one replaced fades out (`TileFade`), instead of popping.
     let runs: Vec<Faces> = snapshot
         .tiles
         .par_iter()
-        .flat_map(|tile| tile.buildings.par_chunks(BLOCKS_PER_JOB))
-        .map(|run| {
+        .enumerate()
+        .filter_map(|(index, tile)| {
+            let fade = opacity * snapshot.fade(index).opacity(input.now);
+            (fade > 0.0).then_some((tile, fade))
+        })
+        .flat_map(|(tile, fade)| {
+            tile.buildings
+                .par_chunks(BLOCKS_PER_JOB)
+                .map(move |run| (run, fade))
+        })
+        .map(|(run, fade)| {
             let (mut faces, mut scratch) = (Faces::default(), Scratch::default());
             for building in run {
                 block(
@@ -127,7 +136,7 @@ pub(super) fn project(
                     imagery,
                     visibility.as_ref(),
                     reach,
-                    (opacity * 255.0) as u8,
+                    (fade * 255.0) as u8,
                     &mut scratch,
                     &mut faces,
                 );
@@ -856,6 +865,48 @@ mod tests {
                 .iter()
                 .all(|vertex| vertex.colour[..3] != [0, 0, 0])
         );
+    }
+
+    #[test]
+    fn a_new_tile_fades_in_and_a_replaced_one_out() {
+        use globecraft_data::vector_tiles::TileFade;
+        let mut input = view(0.0, 0.0);
+        let start = input.now;
+        let blocks = input.buildings.as_ref().unwrap().tiles.clone();
+        let fading = |fade: TileFade| {
+            Some(Arc::new(BuildingSnapshot {
+                tiles: blocks.clone(),
+                zoom: 14,
+                fades: vec![fade],
+            }))
+        };
+        let alpha = |input: &LiveInput| {
+            let mesh = project(input, None, None);
+            mesh.vertices.iter().map(|v| v.colour[3]).max().unwrap_or(0)
+        };
+        let full = alpha(&input);
+        assert!(full > 200, "{full}");
+        let shown = TileFade {
+            shown: Some(start),
+            retired: None,
+        };
+        input.buildings = fading(shown);
+        assert_eq!(alpha(&input), 0, "just shown");
+        assert!(input.buildings_fading());
+        let mut later = input.clone();
+        later.now = start + std::time::Duration::from_millis(225);
+        let half = alpha(&later);
+        assert!(0 < half && half < full, "{half}");
+        // Its moment matters while it fades, so the blocks are projected again.
+        assert!(!input.same_request(&later));
+        later.now = start + std::time::Duration::from_secs(1);
+        assert_eq!(alpha(&later), full);
+        let retired = TileFade {
+            shown: None,
+            retired: Some(start),
+        };
+        later.buildings = fading(retired);
+        assert_eq!(alpha(&later), 0, "gone");
     }
 
     #[test]

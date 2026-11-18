@@ -65,6 +65,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         poi_layers: Default::default(),
         poi_shown: None,
         unix_secs: 1_700_000_000.0,
+        now: std::time::Instant::now(),
         satellite_heights: true,
     }
 }

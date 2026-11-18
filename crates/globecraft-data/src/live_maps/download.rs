@@ -37,20 +37,25 @@ pub(super) async fn download_clouds() -> Result<CloudMap, crate::Error> {
             .collect();
         let full = GrayImage::from_raw(width, height, alpha)
             .ok_or_else(|| crate::Error::msg("cloud image has an unexpected size"))?;
-        let mut levels = vec![full];
-        while levels.len() < CLOUD_LEVELS {
-            let last = levels.last().expect("one level at least");
-            let (width, height) = ((last.width() / 2).max(1), (last.height() / 2).max(1));
-            levels.push(image::imageops::resize(
-                last,
-                width,
-                height,
-                FilterType::Triangle,
-            ));
-        }
-        Ok(CloudMap { levels })
+        Ok(cloud_map(full))
     })
     .await?
+}
+
+/// The cloud map of the clouds' opacity `full`, with its smaller levels.
+pub(super) fn cloud_map(full: GrayImage) -> CloudMap {
+    let mut levels = vec![full];
+    while levels.len() < CLOUD_LEVELS {
+        let last = levels.last().expect("one level at least");
+        let (width, height) = ((last.width() / 2).max(1), (last.height() / 2).max(1));
+        levels.push(image::imageops::resize(
+            last,
+            width,
+            height,
+            FilterType::Triangle,
+        ));
+    }
+    CloudMap { levels }
 }
 
 /// The water's shine (see `WATER_SOURCE`), one channel.

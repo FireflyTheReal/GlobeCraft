@@ -16,6 +16,9 @@ use std::{
     time::{Duration, Instant},
 };
 /// Download tasks; each source's own `max_parallel` limits how many serve it at once.
+/// Imagery this fine or finer colours the buildings: one texel at zoom 12 spans about
+/// 40 m, a block or two.
+pub const FINE_IMAGERY_ZOOM: u8 = 12;
 const TILE_WORKER_COUNT: usize = 16;
 /// Idle download tasks look at the queue this often even without a wake-up (a source's
 /// throttling pause ending, a slot freed for a waiting source).
@@ -121,6 +124,9 @@ pub struct TileCache {
     generation: AtomicU64,
     /// Like `generation`, for elevation tiles only: what raises overlays onto the relief.
     elevation_generation: AtomicU64,
+    /// Like `generation`, for imagery tiles of `FINE_IMAGERY_ZOOM` or finer only: what
+    /// colours the buildings again.
+    imagery_generation: AtomicU64,
     /// When the last elevation tile arrived.
     elevation_arrived: Mutex<Option<Instant>>,
     inflight: AtomicUsize,
@@ -219,6 +225,7 @@ impl TileCache {
             tx,
             generation: AtomicU64::new(0),
             elevation_generation: AtomicU64::new(0),
+            imagery_generation: AtomicU64::new(0),
             elevation_arrived: Mutex::new(None),
             inflight: AtomicUsize::new(0),
             fixture_source: None,
@@ -783,6 +790,9 @@ impl TileCache {
             self.inflight.fetch_sub(1, Ordering::Relaxed);
         }
         self.generation.fetch_add(1, Ordering::Relaxed);
+        if admitted {
+            self.note_fine_imagery(key);
+        }
         if admitted && unkey(key).0 == super::Provider::TerrainDem {
             self.elevation_generation.fetch_add(1, Ordering::Relaxed);
             *self
@@ -806,6 +816,18 @@ impl TileCache {
     /// Changes whenever a tile request finishes, including failures.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+    /// Changes whenever an imagery tile of `FINE_IMAGERY_ZOOM` or finer arrives: the
+    /// buildings take their colours from these, and were coloured again for every
+    /// tile that finished, labels, relief and failures too.
+    pub fn imagery_generation(&self) -> u64 {
+        self.imagery_generation.load(Ordering::Relaxed)
+    }
+    fn note_fine_imagery(&self, key: TileKey) {
+        let (provider, zoom, ..) = unkey(key);
+        if provider.is_imagery() && zoom >= FINE_IMAGERY_ZOOM {
+            self.imagery_generation.fetch_add(1, Ordering::Relaxed);
+        }
     }
     /// While relief is growing in (`ELEVATION_FADE` after an elevation tile arrived):
     /// a step number that changes every `step`, so a view at rest is drawn again
@@ -1183,6 +1205,7 @@ async fn finish_revalidation(
             if tile.bytes() <= cache.budget {
                 cache.ready.insert(job.key, Arc::new(tile));
                 cache.generation.fetch_add(1, Ordering::Relaxed);
+                cache.note_fine_imagery(job.key);
                 repaint();
             }
             report_disk_failure(

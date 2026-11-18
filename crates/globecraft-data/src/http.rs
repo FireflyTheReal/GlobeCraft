@@ -118,7 +118,7 @@ pub(crate) async fn body(
     let response = request.send().await?.error_for_status()?;
     read_limited(response, limit).await
 }
-async fn read_limited(
+pub(crate) async fn read_limited(
     mut response: reqwest::Response,
     limit: u64,
 ) -> Result<Vec<u8>, crate::Error> {

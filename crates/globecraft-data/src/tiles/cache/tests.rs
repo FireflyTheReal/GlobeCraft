@@ -675,3 +675,26 @@ fn loaded_colour_takes_the_finest_ready_tile_and_never_requests() {
     assert!(colour(&cache, 16).is_none());
     assert_eq!(cache.inflight(), 0);
 }
+
+#[test]
+fn only_fine_imagery_colours_the_buildings_again() {
+    let (cache, _rx) = test_cache(1 << 20);
+    let fine = make_key(Provider::Satellite, FINE_IMAGERY_ZOOM, 1, 1, 0);
+    cache.complete(
+        make_key(Provider::Satellite, FINE_IMAGERY_ZOOM - 1, 1, 1, 0),
+        Ok(tiny_tile(1)),
+    );
+    cache.complete(make_key(Provider::Streets, 16, 1, 1, 0), Ok(tiny_tile(1)));
+    cache.complete(
+        make_key(Provider::TerrainDem, 14, 1, 1, 0),
+        Ok(tiny_tile(1)),
+    );
+    cache.complete(
+        make_key(Provider::Satellite, 16, 2, 2, 0),
+        Err(TileFailure::Error),
+    );
+    assert_eq!(cache.imagery_generation(), 0);
+    cache.complete(fine, Ok(tiny_tile(1)));
+    assert_eq!(cache.imagery_generation(), 1);
+    assert_eq!(cache.generation(), 5);
+}

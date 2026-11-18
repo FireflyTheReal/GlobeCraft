@@ -129,7 +129,7 @@ impl App {
                     |(provider, release)| globecraft_render::live_layers::BuildingImagery {
                         provider,
                         release,
-                        generation: self.tiles.cache.generation(),
+                        generation: self.tiles.cache.imagery_generation(),
                     },
                 ),
             vessels: self
@@ -150,6 +150,7 @@ impl App {
             poi_layers: self.poi_layers(),
             poi_shown: Some(self.map_data.poi_shapes.shown()),
             unix_secs: now_unix(),
+            now: std::time::Instant::now(),
             satellite_heights: !self.settings.layers.flat_live_objects,
         }
     }
@@ -227,6 +228,7 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            now: std::time::Instant::now(),
             satellite_heights: true,
         };
         let geometry =
@@ -294,6 +296,7 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            now: std::time::Instant::now(),
             satellite_heights: true,
         };
         let geometry =

@@ -165,6 +165,10 @@ impl<T> Snapshot<T> {
     pub fn fade(&self, index: usize) -> TileFade {
         self.fades.get(index).copied().unwrap_or_default()
     }
+    /// Whether a tile is fading in or out at `now`.
+    pub fn fading(&self, now: Instant) -> bool {
+        self.fades.iter().any(|fade| fade.animating(now))
+    }
 }
 
 /// A tile on show, for the fades.

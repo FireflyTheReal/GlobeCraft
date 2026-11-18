@@ -683,6 +683,8 @@ impl eframe::App for App {
             ui,
             &self.runtime,
             self.layer(MapLayer::Clouds),
+            // Set back, the app's time shows the clouds kept for it.
+            (!self.time.is_live()).then(|| self.scene_unix()),
             self.layer(MapLayer::Radar),
             // The sun's glint on the water.
             self.layer(MapLayer::Sunlight) && self.explorer.on_earth(),

@@ -250,7 +250,24 @@ impl FrameRenderer {
             status.note = Some(format!("{error}; {outlook}"));
         });
     }
+    /// Draws `request`'s frame, a motion frame sharpened (`sharpen::motion_frame`).
     pub fn render(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+        buffer: Vec<u8>,
+    ) -> RenderedView {
+        let mut frame = self.draw(request, cache, buffer);
+        crate::sharpen::motion_frame(
+            &mut frame.pixels,
+            request.width,
+            request.height,
+            request.cfg.lod_scale,
+        );
+        frame
+    }
+
+    fn draw(
         &mut self,
         request: &RenderRequest,
         cache: &TileCache,

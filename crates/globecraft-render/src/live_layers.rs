@@ -100,9 +100,8 @@ impl LiveView {
 pub struct BuildingImagery {
     pub provider: globecraft_data::tiles::Provider,
     pub release: u16,
-    /// The tile cache's generation: imagery arriving colours the blocks again.
-    /// shortcut: any finished tile counts, so blocks are coloured again for each tile
-    /// while a view loads; count imagery tiles alone if that shows in profiles.
+    /// The tile cache's imagery generation: fine imagery arriving colours the blocks
+    /// again.
     pub generation: u64,
 }
 #[derive(Clone)]
@@ -127,6 +126,8 @@ pub struct LiveInput {
     /// The place names on screen, which keep their places (`poi::PoiShown`).
     pub poi_shown: Option<Arc<poi::PoiShown>>,
     pub unix_secs: f64,
+    /// When the input was made: building tiles fade in and out by it.
+    pub now: std::time::Instant,
     /// Satellites at their height; off, on the ground below them.
     pub satellite_heights: bool,
 }
@@ -168,11 +169,19 @@ impl LiveInput {
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
     }
-    /// The same blocks under the same light (the app moves the sun in steps).
+    /// The same blocks under the same light (the app moves the sun in steps), and
+    /// no tile of them fading in or out.
     fn same_buildings(&self, other: &Self) -> bool {
         same(&self.buildings, &other.buildings)
             && self.imagery == other.imagery
             && self.sun == other.sun
+            && (self.now == other.now || !self.buildings_fading())
+    }
+    /// Whether a building tile is fading in or out.
+    fn buildings_fading(&self) -> bool {
+        self.buildings
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.fading(self.now))
     }
     fn same_transport(&self, other: &Self) -> bool {
         same(&self.transport, &other.transport)

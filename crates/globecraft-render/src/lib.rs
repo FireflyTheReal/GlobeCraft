@@ -11,6 +11,7 @@ pub mod overlays;
 mod pixel;
 pub mod polar;
 mod rays;
+mod sharpen;
 pub mod stars;
 mod sun;
 mod terrain;

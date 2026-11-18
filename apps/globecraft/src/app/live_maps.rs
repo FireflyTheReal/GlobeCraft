@@ -118,13 +118,15 @@ impl LiveMaps {
         ctx: &egui::Context,
         runtime: &globecraft_data::runtime::ServiceRuntime,
         clouds: bool,
+        cloud_time: Option<f64>,
         radar: bool,
         water: bool,
     ) {
         let wake = ctx.clone();
-        self.service.update(runtime, clouds, radar, water, move || {
-            wake.request_repaint()
-        });
+        self.service
+            .update(runtime, clouds, cloud_time, radar, water, move || {
+                wake.request_repaint()
+            });
         if clouds || radar {
             ctx.request_repaint_after(Duration::from_secs(60));
         }

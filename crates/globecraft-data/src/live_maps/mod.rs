@@ -2,6 +2,7 @@
 use globecraft_core::language::Lang;
 use image::{GrayImage, RgbaImage};
 use std::sync::Arc;
+mod archive;
 mod download;
 /// The radar's colours: each band from its lowest reflectivity (dBZ) up, as drawn
 /// on the map and in the legend.
@@ -128,24 +129,40 @@ impl<T: Send + 'static> Feed<T> {
 #[derive(Default)]
 pub struct LiveMaps {
     cloud: Feed<Arc<CloudMap>>,
+    /// The three-hour slot the cloud map shown is of, and of the one loading: `None`
+    /// for the live map.
+    cloud_slot: Option<i64>,
+    cloud_loading: Option<i64>,
     radar: Feed<RadarFrame>,
     water: Feed<Arc<GrayImage>>,
     generation: u64,
 }
 impl LiveMaps {
     /// Takes in finished downloads and starts the ones due: the clouds and the radar
-    /// while their layers show, the water's shine while `water` (the sun's glint).
+    /// while their layers show, the water's shine while `water` (the sun's glint). The
+    /// clouds are those of `cloud_time` (Unix seconds) when it is set back before the
+    /// current three hours, and the live map otherwise.
     pub fn update(
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
         clouds: bool,
+        cloud_time: Option<f64>,
         radar: bool,
         water: bool,
         repaint: impl Fn() + Send + Sync + 'static,
     ) {
         let repaint = Arc::new(repaint);
+        let cloud_loading = self.cloud.receiver.is_some();
+        let cloud_arrived = self.cloud.receive("Cloud download interrupted");
+        if cloud_arrived {
+            self.cloud_slot = self.cloud_loading;
+        } else if cloud_loading && self.cloud.receiver.is_none() && self.cloud_loading.is_some() {
+            // No clouds kept for that moment: none shown, rather than another moment's.
+            (self.cloud.value, self.cloud_slot) = (None, None);
+            self.generation += 1;
+        }
         let arrived = [
-            self.cloud.receive("Cloud download interrupted"),
+            cloud_arrived,
             self.radar.receive("Radar download interrupted"),
             self.water.receive("Water map download interrupted"),
         ];
@@ -153,10 +170,25 @@ impl LiveMaps {
             self.generation += 1;
             repaint();
         }
+        // Another moment: loaded at once (the picture shown stays until it is in). While
+        // the time moves, the next moment waits for the one loading.
+        let now = unix_now();
+        let wanted = archive::earlier_slot(cloud_time, now);
+        if wanted != self.cloud_loading && self.cloud.receiver.is_none() {
+            (self.cloud.attempt, self.cloud.error) = (None, None);
+        }
+        let idle = self.cloud.receiver.is_none();
         self.cloud
-            .refresh(clouds, CLOUD_INTERVAL, runtime, &repaint, || async {
-                download_clouds().await.map(Arc::new)
+            .refresh(clouds, CLOUD_INTERVAL, runtime, &repaint, || async move {
+                match wanted {
+                    Some(slot) => archive::download(slot, now).await,
+                    None => download_clouds().await,
+                }
+                .map(Arc::new)
             });
+        if idle && self.cloud.receiver.is_some() {
+            self.cloud_loading = wanted;
+        }
         self.radar
             .refresh(radar, RADAR_INTERVAL, runtime, &repaint, download_radar);
         // The water's shine is the clouds' companion: as often, from the same source.
@@ -184,18 +216,22 @@ impl LiveMaps {
     pub fn status(&self, clouds: bool, radar: bool, lang: Lang) -> String {
         let mut lines = Vec::new();
         if clouds {
+            let loaded = match self.cloud_slot {
+                Some(slot) => lang.format(
+                    "live-clouds-archived",
+                    &[("time", archive::shown(slot).into())],
+                ),
+                None => lang.text("live-clouds-ok").to_owned(),
+            };
             lines.push(self.cloud.status(
                 lang,
                 "live-clouds-failed",
-                lang.text("live-clouds-ok").to_owned(),
+                loaded,
                 "live-clouds-loading",
             ));
         }
         if radar {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
+            let now = unix_now() as i64;
             let age = self
                 .radar
                 .value
@@ -210,6 +246,12 @@ impl LiveMaps {
         }
         lines.join("\n")
     }
+}
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }
 fn refresh_due(last: Option<Instant>, loaded: bool, interval: Duration) -> bool {
     last.is_none_or(|t| t.elapsed() >= if loaded { interval } else { RETRY_INTERVAL })

@@ -80,6 +80,7 @@ the authority; `CREDITS.md` links to them.
 | CelesTrak | `celestrak.org` | normally one request every 6 h | `GlobeCraft/<version> (satellite orbits; CelesTrak)` |
 | RainViewer | `api.rainviewer.com`, `tilecache.rainviewer.com` | normally one request every 10 min for the metadata, then visible radar tiles | `GlobeCraft/<version> (radar viewer)` |
 | Live Cloud Maps (Matt Eason, EUMETSAT) | `clouds.matteason.co.uk` | normally one request every 3 h for the clouds, and one for the water map while Sunlight is on | `GlobeCraft/<version> (attribution: Matt Eason, EUMETSAT)` |
+| Cloud map archive (Joshua Binswanger, CC0) | `github.com` release downloads (redirected to GitHub's asset hosts) | only with the clouds on and the app's time set back: one map (about 5 MB) or two ranges of a week's zip (64 KB and about 600 KB) per three-hour moment shown, one at a time | same as the live clouds |
 | TomTom Traffic | `api.tomtom.com` | normally one request every 2 min; camera movement may request a new tile grid sooner | `GlobeCraft/<version> (traffic; TomTom)` |
 | GlobeCraft updates | `api.github.com`, `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | once per session | `self-update/<crate version>` from the updater library |
 

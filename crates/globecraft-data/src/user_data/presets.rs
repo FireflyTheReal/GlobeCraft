@@ -160,6 +160,21 @@ fn gibs_true_colour() -> UserSource {
     }
 }
 
+/// The ozone layer's thickness (Dobson units) from the OMPS instrument on Suomi NPP,
+/// its newest day: the data comes in a few days to weeks late, so it is not matched
+/// to the app's time (`default` is GIBS's newest).
+fn ozone() -> UserSource {
+    UserSource::Tiles {
+        template: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/\
+                   OMPS_Ozone_Total_Column/default/default/\
+                   GoogleMapsCompatible_Level6/{z}/{y}/{x}.png"
+            .into(),
+        min_zoom: 0,
+        max_zoom: 6,
+        tile_px: 256,
+    }
+}
+
 fn forest_loss() -> UserSource {
     UserSource::Tiles {
         template:
@@ -379,6 +394,20 @@ pub static PRESETS: &[Preset] = &[
         key: None,
         color: "#ffffff",
         source: gibs_true_colour,
+    },
+    Preset {
+        code: "ozone",
+        name_key: "preset-ozone",
+        help_key: "preset-ozone-help",
+        category: Category::Earth,
+        licence: "NASA open data",
+        commercial_use: true,
+        longevity: Longevity::Institutional,
+        attribution: "NASA EOSDIS GIBS, OMPS (Suomi NPP)",
+        opacity: 0.7,
+        key: None,
+        color: "#a070ff",
+        source: ozone,
     },
     Preset {
         code: "forest_loss",
