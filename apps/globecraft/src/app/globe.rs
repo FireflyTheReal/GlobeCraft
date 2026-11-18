@@ -758,6 +758,7 @@ impl App {
                 .then(|| opacity.get(MapLayer::Clouds)),
             self.layer(MapLayer::Radar)
                 .then(|| opacity.get(MapLayer::Radar)),
+            self.cloud_light(),
         );
         self.user_layers
             .draw_rasters(painter, &display_basis, rect, &self.settings.user_layers);

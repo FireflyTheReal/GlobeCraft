@@ -96,6 +96,20 @@ impl App {
                 && self.cam.look_around(turn_deg, 0.0, model, ground_km))
     }
 
+    /// How the cloud layer is lit: as the globe is (`RenderCfg::sun`, night everywhere
+    /// with the night lights and no sun).
+    pub(super) fn cloud_light(&self) -> globecraft_render::clouds::CloudLight {
+        use globecraft_render::clouds::CloudLight;
+        if self.layer(MapLayer::Sunlight) {
+            let (lat, lon) = globecraft_core::math::subsolar(self.scene_unix());
+            CloudLight::Sun(globecraft_core::math::ll_to_v3(lat, lon))
+        } else if self.layer(MapLayer::NightLights) {
+            CloudLight::Night
+        } else {
+            CloudLight::Even
+        }
+    }
+
     /// The view as drawn: the camera around the ground point raised to the terrain.
     pub(super) fn view_basis(&self, aspect: f64) -> globecraft_core::camera::Basis {
         self.cam

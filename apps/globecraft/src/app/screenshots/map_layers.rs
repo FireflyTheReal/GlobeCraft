@@ -676,6 +676,26 @@ fn sky_layer_screenshots() {
     .expect("camera");
     settle(&mut h, 6.0);
     save(&mut h, &dir, "34-sun-beside-the-earth");
+    // The cloud layer 8 km up: by day and night from afar, then close and tilted.
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "clouds", "visible": true}))
+        .expect("clouds");
+    app.run(
+        "camera.set",
+        json!({"lat": -lat + 60.0, "lon": lon + 120.0, "altitude_km": 12000.0, "tilt_deg": 0.0}),
+    )
+    .expect("camera");
+    // The 8192-wide map is some 20 MB.
+    settle(&mut h, 60.0);
+    save(&mut h, &dir, "35-clouds-day-and-night");
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": lat, "lon": lon + 30.0, "altitude_km": 300.0, "tilt_deg": 70.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 8.0);
+    save(&mut h, &dir, "36-clouds-close-and-tilted");
 }
 
 /// Zooms in by mouse wheel from 230 km to under 90 km and prints how long each UI

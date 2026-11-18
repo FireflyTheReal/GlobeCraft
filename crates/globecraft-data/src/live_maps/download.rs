@@ -1,6 +1,6 @@
 //! Service-specific downloads and radar palette decoding.
-use super::RadarFrame;
-use image::{RgbaImage, imageops::FilterType};
+use super::{CloudMap, RadarFrame};
+use image::{GrayImage, RgbaImage, imageops::FilterType};
 const CLOUD_SOURCE: &str = "https://clouds.matteason.co.uk/images/8192x4096/clouds-alpha.png";
 const RADAR_API: &str = "https://api.rainviewer.com/public/weather-maps.json";
 const TILE_ZOOM: usize = 2;
@@ -11,7 +11,10 @@ const CLOUD_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
 const RADAR_METADATA_MAX_BYTES: u64 = 1024 * 1024;
 /// One 512 px radar tile, with ample room for its PNG encoding.
 const RADAR_TILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
-pub(super) async fn download_clouds() -> Result<RgbaImage, crate::Error> {
+/// The cloud map is kept at its full width and at these smaller ones (each half the
+/// last), so a view far out samples a level near its own pixel size.
+const CLOUD_LEVELS: usize = 3;
+pub(super) async fn download_clouds() -> Result<CloudMap, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Cloud)?;
     // Cache bust by 3-hour slots; URL remains the requested source image.
     let epoch = std::time::SystemTime::now()
@@ -21,12 +24,27 @@ pub(super) async fn download_clouds() -> Result<RgbaImage, crate::Error> {
         / (3 * 60 * 60);
     let url = format!("{CLOUD_SOURCE}?slot={epoch}");
     let bytes = crate::http::body(client.get(url), CLOUD_IMAGE_MAX_BYTES).await?;
-    // Decode off the UI thread and keep only the working resolution in memory.
+    // Decode off the UI thread. The clouds are their opacity (the image's alpha; its
+    // grey is near white throughout): one channel at full size, 32 MB, and the
+    // smaller levels from it. Shrunk to 2048 × 1024 they blurred (user, 2026-11-18).
     tokio::task::spawn_blocking(move || {
         let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?;
-        Ok(image
-            .resize_exact(2048, 1024, FilterType::Triangle)
-            .to_rgba8())
+        let (width, height) = (image.width(), image.height());
+        let alpha: Vec<u8> = image.into_rgba8().pixels().map(|pixel| pixel[3]).collect();
+        let full = GrayImage::from_raw(width, height, alpha)
+            .ok_or_else(|| crate::Error::msg("cloud image has an unexpected size"))?;
+        let mut levels = vec![full];
+        while levels.len() < CLOUD_LEVELS {
+            let last = levels.last().expect("one level at least");
+            let (width, height) = ((last.width() / 2).max(1), (last.height() / 2).max(1));
+            levels.push(image::imageops::resize(
+                last,
+                width,
+                height,
+                FilterType::Triangle,
+            ));
+        }
+        Ok(CloudMap { levels })
     })
     .await?
 }

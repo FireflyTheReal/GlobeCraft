@@ -1,6 +1,7 @@
 //! Cloud/radar fetching, refresh policy and loaded imagery snapshots.
 use globecraft_core::language::Lang;
-use image::RgbaImage;
+use image::{GrayImage, RgbaImage};
+use std::sync::Arc;
 mod download;
 /// The radar's colours: each band from its lowest reflectivity (dBZ) up, as drawn
 /// on the map and in the legend.
@@ -20,6 +21,12 @@ const CLOUD_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 const RADAR_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
+/// The clouds' opacity over the whole Earth (equirectangular, north up, from 180° W),
+/// finest level first, each half the size of the one before.
+pub struct CloudMap {
+    pub levels: Vec<GrayImage>,
+}
+
 struct RadarFrame {
     image: RgbaImage,
     time: i64,
@@ -27,9 +34,9 @@ struct RadarFrame {
 
 #[derive(Default)]
 pub struct LiveMaps {
-    cloud: Option<RgbaImage>,
+    cloud: Option<Arc<CloudMap>>,
     radar: Option<RgbaImage>,
-    cloud_rx: Option<mpsc::Receiver<Result<RgbaImage, crate::Error>>>,
+    cloud_rx: Option<mpsc::Receiver<Result<CloudMap, crate::Error>>>,
     radar_rx: Option<mpsc::Receiver<Result<RadarFrame, crate::Error>>>,
     cloud_attempt: Option<Instant>,
     radar_attempt: Option<Instant>,
@@ -49,8 +56,8 @@ impl LiveMaps {
         let repaint = std::sync::Arc::new(repaint);
         if let Some(rx) = &self.cloud_rx {
             match rx.try_recv() {
-                Ok(Ok(image)) => {
-                    self.cloud = Some(image);
+                Ok(Ok(map)) => {
+                    self.cloud = Some(Arc::new(map));
                     self.cloud_error = None;
                     self.cloud_rx = None;
                     self.generation += 1;
@@ -128,7 +135,8 @@ impl LiveMaps {
         }
     }
 
-    pub fn cloud(&self) -> Option<&RgbaImage> {
+    /// The cloud map; a new download is a new `Arc`.
+    pub fn cloud(&self) -> Option<&Arc<CloudMap>> {
         self.cloud.as_ref()
     }
     pub fn radar(&self) -> Option<&RgbaImage> {

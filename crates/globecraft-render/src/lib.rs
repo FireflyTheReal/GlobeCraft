@@ -714,6 +714,7 @@ mod tests;
 mod benchmarks;
 
 pub mod aircraft;
+pub mod clouds;
 pub mod planet;
 pub mod scale_bar;
 pub mod weather;

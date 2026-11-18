@@ -2,16 +2,17 @@
 use emath::{Pos2, Rect};
 use globecraft_core::camera::Basis;
 use image::RgbaImage;
-const CLOUD_OPACITY: f32 = 0.78;
 const RADAR_OPACITY: f32 = 0.88;
 const RADAR_LATITUDE_LIMIT_DEG: f64 = 85.0;
-pub fn project_live_maps(
+/// The rain radar seen from `basis`, at its `opacity`, as a `width` × `height`
+/// straight-alpha RGBA image of `rect`. (The clouds are a layer above the ground of
+/// their own: `clouds`.)
+pub fn project_radar(
     basis: &Basis,
     rect: Rect,
     width: usize,
     height: usize,
-    cloud: Option<(&RgbaImage, f32)>,
-    radar: Option<(&RgbaImage, f32)>,
+    radar: (&RgbaImage, f32),
 ) -> Vec<u8> {
     let mut rgba = vec![0u8; width * height * 4];
     let rsize = rect.size();
@@ -23,22 +24,9 @@ pub fn project_live_maps(
                 continue;
             };
             let i = (y * width + x) * 4;
-            // Each at the user's opacity (roadmap 6.1), times its own.
-            if let Some((img, opacity)) = cloud {
-                let c = equirect_pixel(img, lat, lon);
-                over(
-                    &mut rgba[i..i + 4],
-                    [
-                        c[0],
-                        c[1],
-                        c[2],
-                        (c[3] as f32 * CLOUD_OPACITY * opacity) as u8,
-                    ],
-                );
-            }
-            if lat.abs() < RADAR_LATITUDE_LIMIT_DEG
-                && let Some((img, opacity)) = radar
-            {
+            // At the user's opacity (roadmap 6.1), times its own.
+            if lat.abs() < RADAR_LATITUDE_LIMIT_DEG {
+                let (img, opacity) = radar;
                 let r = mercator_pixel(img, lat, lon);
                 over(
                     &mut rgba[i..i + 4],
@@ -86,11 +74,6 @@ pub fn project_user_rasters(
     rgba
 }
 
-fn equirect_pixel(img: &RgbaImage, lat: f64, lon: f64) -> [u8; 4] {
-    let x = (((lon + 180.0) / 360.0 * img.width() as f64) as u32).min(img.width() - 1);
-    let y = (((90.0 - lat) / 180.0 * img.height() as f64) as u32).min(img.height() - 1);
-    img.get_pixel(x, y).0
-}
 fn mercator_pixel(img: &RgbaImage, lat: f64, lon: f64) -> [u8; 4] {
     let x = (((lon + 180.0) / 360.0 * img.width() as f64) as u32).min(img.width() - 1);
     let radians = lat.to_radians();
@@ -118,12 +101,6 @@ pub(crate) fn over(dst: &mut [u8], src: [u8; 4]) {
 mod tests {
     use super::*;
     #[test]
-    fn global_coords() {
-        let mut img = RgbaImage::new(360, 180);
-        img.put_pixel(180, 90, image::Rgba([123, 45, 67, 255]));
-        assert_eq!(equirect_pixel(&img, 0.0, 0.0), [123, 45, 67, 255]);
-    }
-    #[test]
     fn alpha_blend() {
         let mut pixel = [0u8; 4];
         over(&mut pixel, [0, 200, 0, 128]);
@@ -137,7 +114,7 @@ mod projection_tests {
     use emath::Vec2;
     use globecraft_core::camera::Cam;
     #[test]
-    fn cloud_raster_preserves_opacity_and_leaves_space_clear() {
+    fn radar_raster_keeps_its_opacity_and_leaves_space_clear() {
         let rect = Rect::from_min_size(Pos2::new(30.0, 50.0), Vec2::splat(800.0));
         let basis = Cam {
             lat: 0.0,
@@ -147,11 +124,11 @@ mod projection_tests {
             tilt: 0.0,
         }
         .basis(1.0);
-        let cloud = RgbaImage::from_pixel(4, 2, image::Rgba([123, 45, 67, 255]));
-        let pixels = project_live_maps(&basis, rect, 9, 9, Some((&cloud, 1.0)), None);
+        let radar = RgbaImage::from_pixel(4, 4, image::Rgba([123, 45, 67, 255]));
+        let pixels = project_radar(&basis, rect, 9, 9, (&radar, 1.0));
         assert_eq!(
             &pixels[(4 * 9 + 4) * 4..(4 * 9 + 5) * 4],
-            &[123, 45, 67, 198]
+            &[123, 45, 67, 224]
         );
         assert_eq!(&pixels[..4], &[0, 0, 0, 0]);
     }
