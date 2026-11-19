@@ -10,8 +10,11 @@ use std::time::Duration;
 /// generation.
 type ProjectionKey = (Basis, usize, usize, u32, u64);
 /// A corner of the clouds' mesh every this many points: the map is laid straight
-/// across each cell, which stays within a pixel at this size.
+/// across each cell, which stays within a pixel at this size…
 const CLOUD_MESH_STEP_POINTS: f32 = 8.0;
+/// …and while the view moves, every this many: a mesh is made for every frame then,
+/// on the interface's thread (a quarter of the corners, about 2 ms).
+const MOVING_CLOUD_MESH_STEP_POINTS: f32 = 16.0;
 #[derive(Default)]
 pub(super) struct LiveMaps {
     service: globecraft_data::live_maps::LiveMaps,
@@ -27,6 +30,7 @@ pub(super) struct LiveMaps {
 #[derive(PartialEq)]
 struct CloudMeshKey {
     basis: Basis,
+    step: f32,
     rect: Rect,
     pixels_per_point: f32,
     opacity: f32,
@@ -132,7 +136,8 @@ impl LiveMaps {
         }
     }
     /// Draws the clouds and the radar at their opacities (roadmap 6.1), `None` while
-    /// hidden; the clouds lit as `light` says.
+    /// hidden; the clouds lit as `light` says, more coarsely while the view `moving`.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         painter: &egui::Painter,
@@ -141,9 +146,15 @@ impl LiveMaps {
         clouds: Option<f32>,
         radar: Option<f32>,
         light: CloudLight,
+        moving: bool,
     ) {
+        let step = if moving {
+            MOVING_CLOUD_MESH_STEP_POINTS
+        } else {
+            CLOUD_MESH_STEP_POINTS
+        };
         match clouds {
-            Some(opacity) => self.draw_clouds(painter, basis, rect, opacity, light),
+            Some(opacity) => self.draw_clouds(painter, basis, rect, opacity, light, step),
             // Hidden, the cloud textures (up to 170 MB on the graphics card) go.
             None => (self.cloud_textures, self.cloud_mesh) = (None, None),
         }
@@ -205,6 +216,7 @@ impl LiveMaps {
         rect: Rect,
         opacity: f32,
         light: CloudLight,
+        step: f32,
     ) {
         let Some(map) = self.service.cloud().cloned() else {
             return;
@@ -224,6 +236,7 @@ impl LiveMaps {
         }
         let key = CloudMeshKey {
             basis: *basis,
+            step,
             rect,
             pixels_per_point: ctx.pixels_per_point(),
             opacity,
@@ -235,13 +248,7 @@ impl LiveMaps {
             painter.add(egui::Shape::Mesh(mesh.clone()));
             return;
         }
-        let Some(shell) = cloud_shell(
-            basis,
-            rect,
-            CLOUD_MESH_STEP_POINTS,
-            ctx.pixels_per_point(),
-            light,
-        ) else {
+        let Some(shell) = cloud_shell(basis, rect, step, ctx.pixels_per_point(), light) else {
             self.cloud_mesh = None;
             return;
         };

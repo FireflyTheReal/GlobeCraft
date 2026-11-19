@@ -195,18 +195,22 @@ pub fn layer_grid(basis: &Basis, rect: Rect, step: f32, height_km: f64) -> Layer
             facing: (facing * facing * (3.0 - 2.0 * facing)) as f32,
         })
     };
-    // Some 30,000 lines of sight for a large window: 7.5 ms on one thread.
-    use rayon::prelude::*;
-    let corners = (0..(rows + 1) * (columns + 1))
-        .into_par_iter()
-        .map(|index| {
-            let (column, row) = (index % (columns + 1), index / (columns + 1));
-            corner(Pos2::new(
-                rect.min.x + rect.width() * column as f32 / columns as f32,
-                rect.min.y + rect.height() * row as f32 / rows as f32,
-            ))
-        })
-        .collect();
+    // Some 30,000 lines of sight for a large window at rest: 7.5 ms on one thread. On
+    // the interface's own pool: on the shared one this waited behind the rows of a
+    // frame being drawn, up to 140 ms (2026-11-18). A moving view takes a coarser grid.
+    let corners = crate::on_interface_pool(|| {
+        use rayon::prelude::*;
+        (0..(rows + 1) * (columns + 1))
+            .into_par_iter()
+            .map(|index| {
+                let (column, row) = (index % (columns + 1), index / (columns + 1));
+                corner(Pos2::new(
+                    rect.min.x + rect.width() * column as f32 / columns as f32,
+                    rect.min.y + rect.height() * row as f32 / rows as f32,
+                ))
+            })
+            .collect()
+    });
     LayerGrid {
         columns,
         rows,

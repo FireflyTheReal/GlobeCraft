@@ -649,6 +649,18 @@ fn terrain_views() {
         cfg.sky = None;
         cfg.atmo = true;
         cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+        // PROBE_SUN: a low afternoon sun from the west-south-west, 15° up: the
+        // relief's shadows (roadmap C5).
+        if std::env::var_os("PROBE_SUN").is_some() {
+            let up = globecraft_core::math::ll_to_v3(30.3, 79.8);
+            let east = glam::DVec3::Z.cross(up).normalize();
+            let north = up.cross(east);
+            let (rise, bearing) = (15f64.to_radians(), 250f64.to_radians());
+            cfg.sun = Some(
+                (up * rise.sin() + (north * bearing.cos() + east * bearing.sin()) * rise.cos())
+                    .normalize(),
+            );
+        }
         // PROBE_SHARP: without smoothing (Settings › Graphics).
         if std::env::var_os("PROBE_SHARP").is_some() {
             cfg.terrain = cfg.terrain.map(crate::TerrainCfg::without_smoothing);

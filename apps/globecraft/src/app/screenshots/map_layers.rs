@@ -1086,3 +1086,70 @@ fn timeline_and_levels_screenshots() {
     settle(&mut h, 40.0);
     save(&mut h, &dir, "levels-day");
 }
+
+/// The interface thread's time per frame while the view turns slowly over New York
+/// at 1.2 km with the buildings on (roadmap B1, B7): after the tiles have loaded,
+/// 120 steps of 0.25° each, the mean and the slowest step, and how many new globe
+/// frames arrived. Manual (network).
+#[test]
+#[ignore = "manual: needs network; interface time per frame over a dense city"]
+fn city_turn_frame_times() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    // PROBE_NO_BUILDINGS: the same turn without them.
+    let buildings = std::env::var_os("PROBE_NO_BUILDINGS").is_none();
+    app.run(
+        "layer.show",
+        json!({"layer": "buildings", "visible": buildings}),
+    )
+    .expect("buildings");
+    // PROBE_CLOUDS: with the clouds on; PROBE_ALT_KM: from higher up.
+    if std::env::var_os("PROBE_CLOUDS").is_some() {
+        app.run("layer.show", json!({"layer": "clouds", "visible": true}))
+            .expect("clouds");
+    }
+    let altitude_km = std::env::var("PROBE_ALT_KM")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.2);
+    app.run(
+        "camera.set",
+        json!({"lat": 40.752, "lon": -73.985, "altitude_km": altitude_km, "tilt_deg": 65.0, "heading_deg": 30.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 60.0);
+    let mut times = Vec::new();
+    let mut frames = 0;
+    let mut last = h
+        .state()
+        .frame
+        .image
+        .as_ref()
+        .map(|f| Arc::as_ptr(&f.pixels));
+    for step in 0..120 {
+        let heading = 30.0 + 0.25 * f64::from(step);
+        h.state_mut()
+            .run("camera.set", json!({"heading_deg": heading}))
+            .expect("turn");
+        let started = std::time::Instant::now();
+        h.step();
+        times.push(started.elapsed().as_secs_f64() * 1e3);
+        let shown = h
+            .state()
+            .frame
+            .image
+            .as_ref()
+            .map(|f| Arc::as_ptr(&f.pixels));
+        frames += usize::from(shown != last);
+        last = shown;
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+    times.sort_by(f64::total_cmp);
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    println!(
+        "interface step: {mean:.1} ms mean, {:.1} ms median, {:.1} ms 95th, {:.1} ms slowest; {frames} globe frames in 120 steps",
+        times[times.len() / 2],
+        times[times.len() * 95 / 100],
+        times[times.len() - 1]
+    );
+}

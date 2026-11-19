@@ -762,6 +762,7 @@ impl App {
             self.layer(MapLayer::Radar)
                 .then(|| opacity.get(MapLayer::Radar)),
             self.cloud_light(),
+            self.frame.last_interact.elapsed() <= IDLE_RENDER_DELAY,
         );
         self.user_layers
             .draw_rasters(painter, &display_basis, rect, &self.settings.user_layers);

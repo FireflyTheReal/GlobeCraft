@@ -177,6 +177,35 @@ impl<F: Fn(TileKey) -> Lookup> Local<'_, F> {
 /// Fractional `2^x` table for per-pixel stride sizing: `EXP2_LUT[i] = 2^(i/TILE_EXP2_LUT_STEPS)`
 /// for i ≤ 256, built once, so the per-pixel cost is an interpolated lookup
 /// instead of a libm `powf` call.
+/// Threads of the pool for work the interface's thread waits on.
+const INTERFACE_POOL_THREADS: usize = 2;
+
+/// A small pool of its own for work the interface's thread waits on (layers projected
+/// for the view it draws): on the shared pool that work waited behind the rows of a
+/// frame being drawn, up to 140 ms a frame (2026-11-18). `None` when no thread could
+/// be started: the work then runs on the calling thread.
+pub fn interface_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: LazyLock<Option<rayon::ThreadPool>> = LazyLock::new(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(INTERFACE_POOL_THREADS)
+            .thread_name(|index| format!("globecraft-interface-{index}"))
+            .build()
+            .inspect_err(|error| {
+                globecraft_data::log_line!("Could not start the interface's pool: {error}")
+            })
+            .ok()
+    });
+    POOL.as_ref()
+}
+
+/// Runs `work` on the interface's pool (`interface_pool`), or here without one.
+pub(crate) fn on_interface_pool<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    match interface_pool() {
+        Some(pool) => pool.install(work),
+        None => work(),
+    }
+}
+
 static EXP2_LUT: LazyLock<[f64; 257]> = LazyLock::new(|| {
     let mut lut = [0.0; 257];
     for (i, slot) in lut.iter_mut().enumerate() {
@@ -467,17 +496,22 @@ fn render_row<const ELLIPSOID: bool>(
                         priority,
                         loc,
                     ) {
-                        terrain::March::Hit(ground, light) => shade_surface(
-                            with_air(
-                                surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
-                                &ground,
-                                air,
-                            ),
-                            cfg,
-                            cfg.rel,
-                            loc,
-                            light,
-                        ),
+                        terrain::March::Hit(ground, light) => {
+                            let shadow = cfg.sun.map_or(1.0, |sun| {
+                                terrain::sun_light(&ground, sun, geometry, relief, pixel_angle, loc)
+                            });
+                            shade_surface(
+                                with_air(
+                                    surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
+                                    &ground,
+                                    air,
+                                ),
+                                cfg,
+                                cfg.rel,
+                                loc,
+                                light * shadow,
+                            )
+                        }
                         terrain::March::Floor => shade_surface(
                             with_air(
                                 surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),

@@ -54,23 +54,26 @@ pub fn project_user_rasters(
     use rayon::prelude::*;
     let mut rgba = vec![0u8; width * height * 4];
     let rsize = rect.size();
-    rgba.par_chunks_mut(width * 4)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
-            for x in 0..width {
-                let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
-                let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
-                    continue;
-                };
-                let pixel = &mut row[x * 4..x * 4 + 4];
-                for (layer, opacity) in layers {
-                    if let Some(c) = layer.sample(lat, lon) {
-                        over(pixel, [c[0], c[1], c[2], (f32::from(c[3]) * opacity) as u8]);
+    // On the interface's own pool: it waits for this.
+    crate::on_interface_pool(|| {
+        rgba.par_chunks_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
+                for x in 0..width {
+                    let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
+                    let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
+                        continue;
+                    };
+                    let pixel = &mut row[x * 4..x * 4 + 4];
+                    for (layer, opacity) in layers {
+                        if let Some(c) = layer.sample(lat, lon) {
+                            over(pixel, [c[0], c[1], c[2], (f32::from(c[3]) * opacity) as u8]);
+                        }
                     }
                 }
-            }
-        });
+            });
+    });
     rgba
 }
 

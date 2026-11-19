@@ -146,6 +146,70 @@ pub(super) enum March {
     Miss,
 }
 
+/// Relief casts shadows with the sun on (roadmap C5): ground behind a ridge, seen
+/// from the sun, keeps this share of its light. The air's own twilight darkens it
+/// further where the sun is low.
+const TERRAIN_SHADOW_LIGHT: f32 = 0.6;
+/// The march toward the sun starts this high over the ground (metres, before
+/// exaggeration), so the slope it leaves does not shade itself.
+const SHADOW_LIFT_M: f64 = 20.0;
+/// …and at least this many of the elevation texels it reads above it, times the
+/// exaggeration: a coarser level's heights stand above the finer ground on slopes.
+const SHADOW_LIFT_TEXELS: f64 = 1.5;
+/// The march toward the sun reads the elevation this many times coarser than the
+/// view: the shadow's edge is soft anyway, and it reads fewer, smaller tiles.
+const SHADOW_DETAIL_COARSER: f64 = 4.0;
+/// Tiles only the shadows need are asked for after the view's own.
+const SHADOW_REQUEST_PRIORITY: f32 = f32::MAX;
+
+/// The light left at `ground` (a relief hit seen from `camera`, `hit.distance` away)
+/// by the relief between it and the sun (`sun`, a unit vector): `TERRAIN_SHADOW_LIGHT`
+/// in the shadow, all of it (1) in the sun, with the shadow faded as the relief is.
+pub(super) fn sun_light(
+    hit: &rays::RaySample,
+    sun: DVec3,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> f32 {
+    let up = hit.normal;
+    // Below the horizon there the night darkens the ground already.
+    if sun.dot(up) <= 0.0 || terrain.fade <= 0.0 {
+        return 1.0;
+    }
+    let to_world = terrain.exaggeration / EARTH_RADIUS_M;
+    let texel = hit.distance * pixel_angle * SHADOW_DETAIL_COARSER * DEM_PIXELS_PER_TEXEL;
+    let lift = (SHADOW_LIFT_M * to_world).max(texel * SHADOW_LIFT_TEXELS * terrain.exaggeration);
+    let start = hit.point + up * lift;
+    // The march picks its elevation level by the distance from where it starts: from
+    // a point as far behind as the camera is, it reads the levels the view reads.
+    let behind = hit.distance;
+    let ray = rays::RaySample {
+        direction: sun,
+        ..*hit
+    };
+    let shaded = matches!(
+        march(
+            &ray,
+            behind,
+            false,
+            start - sun * behind,
+            geometry,
+            terrain,
+            pixel_angle * SHADOW_DETAIL_COARSER,
+            SHADOW_REQUEST_PRIORITY,
+            loc,
+        ),
+        March::Hit(..)
+    );
+    if shaded {
+        1.0 + (TERRAIN_SHADOW_LIGHT - 1.0) * terrain.fade
+    } else {
+        1.0
+    }
+}
+
 /// A loaded elevation tile (by its index in the batch's `Local::dem`) and where it sits.
 #[derive(Clone, Copy)]
 pub(super) struct Grid {
@@ -1083,6 +1147,95 @@ mod march_tests {
             (Provider::TerrainDem, 0..5, ..) if with_stand_in => Lookup::Ready(old.clone()),
             _ => Lookup::Unavailable,
         }
+    }
+
+    /// Ground east of longitude 80° stands `metres` high, west of it at sea level, at
+    /// every level alike.
+    fn cliff_world(metres: f32) -> impl Fn(TileKey) -> Lookup {
+        let tiles = std::sync::Mutex::new(HashMap::<TileKey, Arc<Tile>>::new());
+        move |key| {
+            let (provider, z, tx, _, _) = crate::unkey(key);
+            if provider != Provider::TerrainDem {
+                return Lookup::Absent;
+            }
+            let tile = tiles
+                .lock()
+                .unwrap()
+                .entry(key)
+                .or_insert_with(|| {
+                    let (size, n) = (64, f64::from(1u32 << z));
+                    let heights = (0..size * size)
+                        .map(|i| {
+                            let u = (f64::from(tx) + ((i % size) as f64 + 0.5) / size as f64) / n;
+                            if u * 360.0 - 180.0 > 80.0 {
+                                metres
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect();
+                    Arc::new(Tile::from_elevation(Elevation::from_heights(size, heights)))
+                })
+                .clone();
+            Lookup::Ready(tile)
+        }
+    }
+
+    #[test]
+    fn a_cliff_shades_the_ground_before_it_from_a_sun_behind_it() {
+        let geometry = EarthModel::PerfectSphere.geometry();
+        let lookup = cliff_world(300.0);
+        // 200 m west of the cliff's foot, seen from 5 km straight above.
+        let (lat, lon) = (30.0, 80.0 - 0.2 / (111.32 * 30f64.to_radians().cos()));
+        let up = globecraft_core::math::ll_to_v3(lat, lon);
+        let origin = geometry.position(lat, lon) + up * (5.0 / globecraft_core::EARTH_RADIUS_KM);
+        let east = DVec3::Z.cross(up).normalize();
+        let light = |sun: DVec3| {
+            let mut loc = Local {
+                lookup: &lookup,
+                map: HashMap::<_, _, KeyBuild>::default(),
+                dem: Vec::new(),
+                dem_placed: Vec::new(),
+                dem_index: HashMap::default(),
+                now: std::time::Instant::now(),
+            };
+            let (ray, hits) = ray_from(origin, -up, geometry);
+            let pixel_angle = 1e-3;
+            let terrain = TerrainCfg::new(1.0, 1.0);
+            let hit = match march(
+                &ray,
+                0.0,
+                hits,
+                origin,
+                geometry,
+                terrain,
+                pixel_angle,
+                0.0,
+                &mut loc,
+            ) {
+                March::Hit(hit, _) => hit,
+                March::Floor => ray,
+                March::Miss => panic!("no ground"),
+            };
+            sun_light(
+                &hit,
+                sun.normalize(),
+                geometry,
+                terrain,
+                pixel_angle,
+                &mut loc,
+            )
+        };
+        let low = 10f64.to_radians();
+        // Low in the east, behind the cliff: in its shadow.
+        assert_eq!(
+            light(up * low.sin() + east * low.cos()),
+            TERRAIN_SHADOW_LIGHT
+        );
+        // Low in the west, or high: in the sun; below the horizon: left to the night.
+        assert_eq!(light(up * low.sin() - east * low.cos()), 1.0);
+        assert_eq!(light(up), 1.0);
+        assert_eq!(light(-up), 1.0);
     }
 
     #[test]

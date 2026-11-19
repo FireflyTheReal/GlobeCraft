@@ -24,6 +24,36 @@ use rayon::prelude::*;
 pub struct BuildingMesh {
     pub vertices: Vec<BuildingVertex>,
     pub indices: Vec<u32>,
+    /// The corners as a GPU draws them, laid out with the mesh off the interface's
+    /// thread (500,000 corners of a dense city took it milliseconds a frame).
+    gpu: Vec<GpuCorner>,
+}
+
+/// A corner for a GPU: clip position (x and y, -1 to 1, y up), nearness, colour
+/// premultiplied. Sixteen bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuCorner {
+    clip: [f32; 3],
+    colour: [u8; 4],
+}
+
+impl BuildingMesh {
+    /// The corners' bytes for a vertex buffer (`GpuCorner`: three `f32`, then four
+    /// colour bytes).
+    pub fn gpu_vertex_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.gpu)
+    }
+    /// The triangles' bytes for an index buffer of `u32`.
+    pub fn index_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.indices)
+    }
+}
+
+/// A colour's channels multiplied by its opacity, rounded.
+fn premultiplied([r, g, b, a]: [u8; 4]) -> [u8; 4] {
+    let times = |c: u8| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
+    [times(r), times(g), times(b), a]
 }
 
 /// A corner of a face.
@@ -187,7 +217,11 @@ pub(super) fn project(
                 .map(move |&index| first + index)
         })
         .collect();
-    let mut mesh = BuildingMesh { vertices, indices };
+    let mut mesh = BuildingMesh {
+        vertices,
+        indices,
+        gpu: Vec::new(),
+    };
     let nearest = mesh
         .vertices
         .par_iter()
@@ -196,6 +230,19 @@ pub(super) fn project(
     mesh.vertices
         .par_iter_mut()
         .for_each(|vertex| vertex.nearness /= nearest);
+    let (min, span) = (view.rect.min, view.rect.size());
+    mesh.gpu = mesh
+        .vertices
+        .par_iter()
+        .map(|vertex| GpuCorner {
+            clip: [
+                (vertex.at.x - min.x) / span.x * 2.0 - 1.0,
+                1.0 - (vertex.at.y - min.y) / span.y * 2.0,
+                vertex.nearness,
+            ],
+            colour: premultiplied(vertex.colour),
+        })
+        .collect();
     mesh
 }
 
@@ -909,6 +956,24 @@ mod tests {
         };
         later.buildings = fading(retired);
         assert_eq!(alpha(&later), 0, "gone");
+    }
+
+    #[test]
+    fn the_gpu_corners_are_the_mesh_in_clip_space() {
+        let input = view(60.0, 0.0);
+        let mesh = project(&input, None, None);
+        assert_eq!(mesh.gpu.len(), mesh.vertices.len());
+        assert_eq!(mesh.gpu_vertex_bytes().len(), 16 * mesh.vertices.len());
+        assert_eq!(mesh.index_bytes().len(), 4 * mesh.indices.len());
+        let rect = input.view.rect;
+        for (corner, vertex) in mesh.gpu.iter().zip(&mesh.vertices) {
+            let x = rect.min.x + (corner.clip[0] + 1.0) / 2.0 * rect.width();
+            let y = rect.min.y + (1.0 - corner.clip[1]) / 2.0 * rect.height();
+            assert!((x - vertex.at.x).abs() < 1e-3 && (y - vertex.at.y).abs() < 1e-3);
+            assert_eq!(corner.clip[2], vertex.nearness);
+        }
+        assert_eq!(premultiplied([200, 100, 50, 128]), [100, 50, 25, 128]);
+        assert_eq!(premultiplied([200, 100, 50, 255]), [200, 100, 50, 255]);
     }
 
     #[test]
