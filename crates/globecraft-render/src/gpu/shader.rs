@@ -53,6 +53,8 @@ pub(super) fn source() -> String {
         ("AURORA_BLUE", crate::aurora::AURORA_COLOUR[2]),
         ("AURORA_DAY_COSINE", crate::aurora::DAY_COSINE),
         ("AURORA_NIGHT_COSINE", crate::aurora::NIGHT_COSINE),
+        ("AURORA_SAMPLE_KM", crate::aurora::SAMPLE_KM),
+        ("AURORA_MAX_SAMPLES", crate::aurora::MAX_SAMPLES as f32),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{value:?}"));
     }

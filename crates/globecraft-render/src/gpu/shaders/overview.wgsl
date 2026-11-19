@@ -38,6 +38,8 @@ const AURORA_MAX_LIGHT: f32 = __AURORA_MAX_LIGHT__;
 const AURORA_COLOUR: vec3<f32> = vec3<f32>(__AURORA_RED__, __AURORA_GREEN__, __AURORA_BLUE__);
 const AURORA_DAY_COSINE: f32 = __AURORA_DAY_COSINE__;
 const AURORA_NIGHT_COSINE: f32 = __AURORA_NIGHT_COSINE__;
+const AURORA_SAMPLE_KM: f32 = __AURORA_SAMPLE_KM__;
+const AURORA_MAX_SAMPLES: f32 = __AURORA_MAX_SAMPLES__;
 fn aurora_node(lon: i32, lat: i32) -> f32 {
     let index = u32(((lon % 360) + 360) % 360) * 181u + u32(clamp(lat, 0, 180));
     return f32((aurora[index / 4u] >> ((index % 4u) * 8u)) & 255u);
@@ -52,20 +54,30 @@ fn aurora_chance(lat_deg: f32, lon_deg: f32) -> f32 {
     let bottom = aurora_node(ix, iy + 1) * (1.0 - fx) + aurora_node(ix + 1, iy + 1) * fx;
     return top * (1.0 - fy) + bottom * fy;
 }
-// The glowing km along a stretch of the ray, by the forecast at its middle.
-fn aurora_shine(camera: vec3<f32>, dir: vec3<f32>, from_t: f32, to_t: f32, end: f32) -> f32 {
-    let start = max(from_t, 0.0); let stop = min(to_t, end);
-    if stop <= start { return 0.0; }
-    let middle = normalize(camera + dir * (0.5 * (start + stop)));
+// How much the aurora glows at a point of the shell, as the CPU's `aurora::glow_at`.
+fn aurora_at(at: vec3<f32>) -> f32 {
     var night = 1.0;
     if view.effects.x != 0u {
-        var t = clamp((AURORA_DAY_COSINE - dot(middle, view.sun.xyz)) / (AURORA_DAY_COSINE - AURORA_NIGHT_COSINE), 0.0, 1.0);
+        var t = clamp((AURORA_DAY_COSINE - dot(at, view.sun.xyz)) / (AURORA_DAY_COSINE - AURORA_NIGHT_COSINE), 0.0, 1.0);
         night = t * t * (3.0 - 2.0 * t);
     }
     if night <= 0.0 { return 0.0; }
-    let chance = aurora_chance(degrees(asin(clamp(middle.z, -1.0, 1.0))), degrees(atan2(middle.y, middle.x)));
-    let strength = pow(clamp((chance - AURORA_MIN_CHANCE) / (AURORA_FULL_CHANCE - AURORA_MIN_CHANCE), 0.0, 1.0), 0.8);
-    return strength * night * (stop - start) * (EARTH_RADIUS_M / 1000.0);
+    let chance = aurora_chance(degrees(asin(clamp(at.z, -1.0, 1.0))), degrees(atan2(at.y, at.x)));
+    return pow(clamp((chance - AURORA_MIN_CHANCE) / (AURORA_FULL_CHANCE - AURORA_MIN_CHANCE), 0.0, 1.0), 0.8) * night;
+}
+// The glowing km along a stretch of the ray, the forecast read every
+// AURORA_SAMPLE_KM or so (at most AURORA_MAX_SAMPLES times).
+fn aurora_shine(camera: vec3<f32>, dir: vec3<f32>, from_t: f32, to_t: f32, end: f32) -> f32 {
+    let start = max(from_t, 0.0); let stop = min(to_t, end);
+    if stop <= start { return 0.0; }
+    let length_km = (stop - start) * (EARTH_RADIUS_M / 1000.0);
+    let samples = u32(clamp(ceil(length_km / AURORA_SAMPLE_KM), 1.0, AURORA_MAX_SAMPLES));
+    let step = (stop - start) / f32(samples);
+    var seen = 0.0;
+    for (var index = 0u; index < samples; index++) {
+        seen += aurora_at(normalize(camera + dir * (start + step * (f32(index) + 0.5))));
+    }
+    return seen / f32(samples) * length_km;
 }
 // Where the ray meets the sphere `km` up: its distances in and out (x > y: missed).
 fn aurora_sphere(camera: vec3<f32>, dir: vec3<f32>, km: f32) -> vec2<f32> {

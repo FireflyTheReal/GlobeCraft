@@ -26,6 +26,20 @@ pub(super) struct SkyBehind {
 #[derive(Default)]
 pub(super) struct SkyLayer {
     texture: Option<(Arc<SkyImage>, TextureHandle)>,
+    /// The Milky Way's and the stars' meshes as last drawn, while the sky holds: the
+    /// interface draws again for anything that moves on the screen.
+    drawn: Option<(SkyKey, Arc<Mesh>, Option<Arc<Mesh>>)>,
+}
+
+/// What the sky's meshes were made for.
+#[derive(PartialEq)]
+struct SkyKey {
+    basis: Basis,
+    rect: Rect,
+    pixels_per_point: f32,
+    /// The Milky Way's picture, its visibility (bits) and the moment of the sky.
+    backdrop: Option<(usize, u32, CelestialFrame)>,
+    stars: Option<CelestialFrame>,
 }
 
 impl SkyLayer {
@@ -37,15 +51,38 @@ impl SkyLayer {
         rect: Rect,
         sky: &SkyBehind,
     ) {
-        match &sky.backdrop {
-            Some(backdrop) => painter.add(self.milky_way(ctx, rect, &sky.basis, backdrop)),
-            None => {
-                let [r, g, b] = globecraft_render::space_color().map(|c| (c * 255.0) as u8);
-                painter.rect_filled(rect, 0.0, Color32::from_rgb(r, g, b))
-            }
+        let key = SkyKey {
+            basis: sky.basis,
+            rect,
+            pixels_per_point: ctx.pixels_per_point(),
+            backdrop: sky.backdrop.as_ref().map(|backdrop| {
+                (
+                    Arc::as_ptr(backdrop.image()) as usize,
+                    backdrop.visibility().to_bits(),
+                    backdrop.frame(),
+                )
+            }),
+            stars: sky.stars,
         };
-        if let Some(frame) = sky.stars {
-            painter.add(stars(rect, &sky.basis, frame, ctx.pixels_per_point()));
+        let Some(backdrop) = &sky.backdrop else {
+            let [r, g, b] = globecraft_render::space_color().map(|c| (c * 255.0) as u8);
+            painter.rect_filled(rect, 0.0, Color32::from_rgb(r, g, b));
+            if let Some(frame) = sky.stars {
+                painter.add(stars(rect, &sky.basis, frame, ctx.pixels_per_point()));
+            }
+            return;
+        };
+        if !self.drawn.as_ref().is_some_and(|(drawn, ..)| *drawn == key) {
+            let milky_way = Arc::new(self.milky_way(ctx, rect, &sky.basis, backdrop));
+            let stars = sky
+                .stars
+                .map(|frame| Arc::new(stars(rect, &sky.basis, frame, ctx.pixels_per_point())));
+            self.drawn = Some((key, milky_way, stars));
+        }
+        let (_, milky_way, stars) = self.drawn.as_ref().expect("made above");
+        painter.add(egui::Shape::Mesh(milky_way.clone()));
+        if let Some(stars) = stars {
+            painter.add(egui::Shape::Mesh(stars.clone()));
         }
     }
 

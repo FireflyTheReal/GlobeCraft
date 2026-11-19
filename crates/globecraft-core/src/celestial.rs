@@ -3,7 +3,7 @@ use glam::{DMat3, DVec2, DVec3};
 use std::f64::consts::{PI, TAU};
 const UNIX_EPOCH_JULIAN_DATE: f64 = 2_440_587.5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CelestialFrame {
     celestial_from_earth_fixed: DMat3,
 }

@@ -38,6 +38,11 @@ pub(crate) const AURORA_COLOUR: [f32; 3] = [0.25, 1.0, 0.5];
 /// zenith angle): none in daylight, full once the sun is well below the horizon.
 pub(crate) const DAY_COSINE: f32 = 0.05;
 pub(crate) const NIGHT_COSINE: f32 = -0.12;
+/// A stretch of a ray through the shell reads the forecast about every this many km,
+/// at most `MAX_SAMPLES` times: seen edge-on a stretch runs thousands of km, and read
+/// only at its middle the oval vanished where that middle fell inside its ring.
+pub(crate) const SAMPLE_KM: f32 = 150.0;
+pub(crate) const MAX_SAMPLES: u32 = 12;
 
 /// The aurora's light (0 to 1 per colour, to be screened over what is behind) along a
 /// ray from `camera` (Earth radii) in `direction` (unit) up to `end` (Earth radii;
@@ -54,21 +59,17 @@ pub(crate) fn glow(
         if to <= from {
             return 0.0;
         }
-        // The forecast where the ray is halfway through this stretch.
-        let middle = (camera + direction * (0.5 * (from + to))).normalize();
-        let night = sun.map_or(1.0, |sun| {
-            let t = ((DAY_COSINE - middle.dot(sun) as f32) / (DAY_COSINE - NIGHT_COSINE))
-                .clamp(0.0, 1.0);
-            t * t * (3.0 - 2.0 * t)
-        });
-        if night <= 0.0 {
-            return 0.0;
-        }
-        let (lat, lon) = (
-            middle.z.clamp(-1.0, 1.0).asin().to_degrees(),
-            middle.y.atan2(middle.x).to_degrees(),
-        );
-        strength(chance_at(&aurora.grid, lat, lon)) * night * ((to - from) * EARTH_RADIUS_KM) as f32
+        let length_km = ((to - from) * EARTH_RADIUS_KM) as f32;
+        let samples = ((length_km / SAMPLE_KM).ceil() as u32).clamp(1, MAX_SAMPLES);
+        let step = (to - from) / f64::from(samples);
+        let seen: f32 = (0..samples)
+            .map(|index| {
+                let at =
+                    (camera + direction * (from + step * (f64::from(index) + 0.5))).normalize();
+                glow_at(aurora, sun, at)
+            })
+            .sum();
+        seen / samples as f32 * length_km
     };
     let (outer, inner) = (
         sphere(camera, direction, AURORA_HIGH_KM),
@@ -85,6 +86,23 @@ pub(crate) fn glow(
     };
     let light = soften(km * GLOW_PER_KM * aurora.opacity);
     Vec3::from(AURORA_COLOUR).map(|colour| 1.0 - (-colour * light).exp())
+}
+
+/// How much the aurora glows at a point `at` of the shell (unit vector), 0 to 1: the
+/// forecast there, out by day.
+fn glow_at(aurora: &AuroraCfg, sun: Option<DVec3>, at: DVec3) -> f32 {
+    let night = sun.map_or(1.0, |sun| {
+        let t = ((DAY_COSINE - at.dot(sun) as f32) / (DAY_COSINE - NIGHT_COSINE)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    });
+    if night <= 0.0 {
+        return 0.0;
+    }
+    let (lat, lon) = (
+        at.z.clamp(-1.0, 1.0).asin().to_degrees(),
+        at.y.atan2(at.x).to_degrees(),
+    );
+    strength(chance_at(&aurora.grid, lat, lon)) * night
 }
 
 /// The glow of the forecast's `chance` (%) seen straight down through the shell at
@@ -133,13 +151,18 @@ mod tests {
 
     /// A forecast of `chance` everywhere north of 60° N.
     fn north(chance: u8) -> AuroraCfg {
+        band(chance, 60..=90)
+    }
+
+    /// A forecast of `chance` between the latitudes `band` (degrees north).
+    fn band(chance: u8, band: std::ops::RangeInclusive<i32>) -> AuroraCfg {
         let mut rows = Vec::new();
         for lon in 0..LONGITUDES {
             for lat in -90..=90 {
                 rows.push(serde_json::json!([
                     lon,
                     lat,
-                    if lat >= 60 { chance } else { 0 }
+                    if band.contains(&lat) { chance } else { 0 }
                 ]));
             }
         }
@@ -153,6 +176,18 @@ mod tests {
             grid: Arc::new(grid),
             opacity: 1.0,
         }
+    }
+
+    #[test]
+    fn seen_edge_on_the_ring_shines_though_the_middle_of_the_path_is_dark() {
+        // A ring from 80° to 88° N, looked through edge-on just over the pole: the
+        // path through the shell has its middle over the dark pole, its ends over the
+        // ring.
+        let aurora = band(60, 80..=88);
+        let height = 1.0 + 130.0 / EARTH_RADIUS_KM;
+        let camera = DVec3::new(3.0, 0.0, height);
+        let light = glow(&aurora, None, camera, -DVec3::X, f64::INFINITY);
+        assert!(light.y > 0.1, "{light}");
     }
 
     #[test]

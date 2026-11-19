@@ -261,6 +261,18 @@ struct Scratch {
     top: Vec<DVec3>,
     base_on_screen: Vec<Option<Corner>>,
     top_on_screen: Vec<Option<Corner>>,
+    shadow: ShadowScratch,
+}
+
+/// A block's shadow's buffers, kept from block to block like `Scratch`'s.
+#[derive(Default)]
+struct ShadowScratch {
+    ground: Vec<DVec3>,
+    points: Vec<DVec3>,
+    flat: Vec<(f64, f64)>,
+    order: Vec<usize>,
+    hull: Vec<usize>,
+    seen: Vec<Option<Corner>>,
 }
 
 /// The radius of a sphere round a block's middle that holds it (Earth radii): half its
@@ -406,22 +418,22 @@ fn block(
     };
     // Its shadow on the ground, under everything else of the block (C3).
     if let Some(sun) = input.sun {
-        let ground: Vec<DVec3> = outline
-            .iter()
-            .map(|&(lat, lon)| basis.surface_position(lat, lon) + up * floor)
-            .collect();
+        let mut buffers = std::mem::take(&mut scratch.shadow);
+        buffers.ground.clear();
+        buffers.ground.extend(
+            outline
+                .iter()
+                .map(|&(lat, lon)| basis.surface_position(lat, lon) + up * floor),
+        );
         let behind = ((middle - camera).length() + radius).powi(2);
-        shadow(
-            out,
-            basis,
-            rect,
-            behind,
-            &ground,
+        let shade = Shade {
             up,
-            top_lift - floor,
+            height: top_lift - floor,
             sun,
             alpha,
-        );
+        };
+        shadow(out, basis, rect, behind, shade, &mut buffers);
+        scratch.shadow = buffers;
     }
     // Walls: each faces the right-hand side of its edge (outlines run anticlockwise,
     // courtyards clockwise, seen from above), and only those facing the camera show.
@@ -530,12 +542,15 @@ fn shadow(
     basis: &globecraft_core::camera::Basis,
     rect: Rect,
     depth: f64,
-    ground: &[DVec3],
-    up: DVec3,
-    height: f64,
-    sun: DVec3,
-    alpha: u8,
+    shade: Shade,
+    buffers: &mut ShadowScratch,
 ) {
+    let Shade {
+        up,
+        height,
+        sun,
+        alpha,
+    } = shade;
     let rise = sun.dot(up);
     if rise < SHADOW_MIN_SUN_SINE || height <= 0.0 {
         return;
@@ -549,36 +564,38 @@ fn shadow(
     if shade == 0 {
         return;
     }
-    let points: Vec<DVec3> = ground
-        .iter()
-        .copied()
-        .chain(ground.iter().map(|&point| point + away))
-        .collect();
+    let ShadowScratch {
+        ground,
+        points,
+        flat,
+        order,
+        hull,
+        seen,
+    } = buffers;
+    points.clear();
+    points.extend(ground.iter().copied());
+    points.extend(ground.iter().map(|&point| point + away));
     // In the ground's plane, about the footprint's first corner.
     let east = DVec3::Z.cross(up).normalize_or(DVec3::X);
     let north = up.cross(east);
-    let flat: Vec<(f64, f64)> = points
-        .iter()
-        .map(|&point| {
-            (
-                (point - points[0]).dot(east),
-                (point - points[0]).dot(north),
-            )
-        })
-        .collect();
-    let hull = convex_hull(&flat);
+    flat.clear();
+    flat.extend(points.iter().map(|&point| {
+        (
+            (point - points[0]).dot(east),
+            (point - points[0]).dot(north),
+        )
+    }));
+    convex_hull_into(flat, order, hull);
     // Each corner projected once; `face` cuts a triangle reaching behind the camera.
-    let seen: Vec<Option<Corner>> = hull
-        .iter()
-        .map(|&index| {
-            let point = points[index];
-            let at = basis.project_precise(point, rect)?;
-            Some((
-                Pos2::new(at.x as f32, at.y as f32),
-                (1.0 / basis.view_depth(point)) as f32,
-            ))
-        })
-        .collect();
+    seen.clear();
+    seen.extend(hull.iter().map(|&index| {
+        let point = points[index];
+        let at = basis.project_precise(point, rect)?;
+        Some((
+            Pos2::new(at.x as f32, at.y as f32),
+            (1.0 / basis.view_depth(point)) as f32,
+        ))
+    }));
     for index in 1..hull.len().saturating_sub(1) {
         let world = [
             points[hull[0]],
@@ -590,10 +607,29 @@ fn shadow(
     }
 }
 
+/// What a block's shadow is cast from: its ground's up, its height (Earth radii), the
+/// sun and the block's opacity.
+#[derive(Clone, Copy)]
+struct Shade {
+    up: DVec3,
+    height: f64,
+    sun: DVec3,
+    alpha: u8,
+}
+
 /// The corners of the convex hull of `points`, anticlockwise (Andrew's monotone
 /// chain): indices into `points`.
+#[cfg(test)]
 fn convex_hull(points: &[(f64, f64)]) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..points.len()).collect();
+    let (mut order, mut hull) = (Vec::new(), Vec::new());
+    convex_hull_into(points, &mut order, &mut hull);
+    hull
+}
+
+/// `convex_hull` into `hull`, with `order` for room: both reused.
+fn convex_hull_into(points: &[(f64, f64)], order: &mut Vec<usize>, hull: &mut Vec<usize>) {
+    order.clear();
+    order.extend(0..points.len());
     order.sort_by(|&a, &b| {
         points[a]
             .0
@@ -604,7 +640,7 @@ fn convex_hull(points: &[(f64, f64)]) -> Vec<usize> {
         (points[a].0 - points[o].0) * (points[b].1 - points[o].1)
             - (points[a].1 - points[o].1) * (points[b].0 - points[o].0)
     };
-    let mut hull: Vec<usize> = Vec::with_capacity(points.len() + 1);
+    hull.clear();
     for pass in [false, true] {
         let start = hull.len();
         let sequence: Box<dyn Iterator<Item = &usize>> = if pass {
@@ -622,7 +658,6 @@ fn convex_hull(points: &[(f64, f64)]) -> Vec<usize> {
         }
         hull.pop();
     }
-    hull
 }
 
 /// Adds the flat, convex face with corners `world` (seen on screen at `seen`, where

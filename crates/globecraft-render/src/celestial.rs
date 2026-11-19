@@ -39,6 +39,10 @@ impl SkyBackdrop {
     pub fn visibility(&self) -> f32 {
         self.visibility
     }
+    /// The moment of the sky it shows.
+    pub fn frame(&self) -> CelestialFrame {
+        self.frame
+    }
     pub fn uv(&self, earth_fixed: DVec3) -> glam::DVec2 {
         equatorial_uv(self.frame.direction(earth_fixed))
     }
