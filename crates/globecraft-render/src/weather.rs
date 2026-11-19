@@ -14,32 +14,38 @@ pub fn project_radar(
     height: usize,
     radar: (&RgbaImage, f32),
 ) -> Vec<u8> {
+    use rayon::prelude::*;
     let mut rgba = vec![0u8; width * height * 4];
     let rsize = rect.size();
-    for y in 0..height {
-        let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
-        for x in 0..width {
-            let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
-            let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
-                continue;
-            };
-            let i = (y * width + x) * 4;
-            // At the user's opacity (roadmap 6.1), times its own.
-            if lat.abs() < RADAR_LATITUDE_LIMIT_DEG {
-                let (img, opacity) = radar;
-                let r = mercator_pixel(img, lat, lon);
-                over(
-                    &mut rgba[i..i + 4],
-                    [
-                        r[0],
-                        r[1],
-                        r[2],
-                        (r[3] as f32 * RADAR_OPACITY * opacity) as u8,
-                    ],
-                );
-            }
-        }
-    }
+    // On the interface's own pool: it waits for this, for every frame of a moving
+    // view (zooming with the radar on lagged, user 2026-11-19).
+    crate::on_interface_pool(|| {
+        rgba.par_chunks_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
+                    let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
+                        continue;
+                    };
+                    // At the user's opacity (roadmap 6.1), times its own.
+                    if lat.abs() < RADAR_LATITUDE_LIMIT_DEG {
+                        let (img, opacity) = radar;
+                        let r = mercator_pixel(img, lat, lon);
+                        over(
+                            pixel,
+                            [
+                                r[0],
+                                r[1],
+                                r[2],
+                                (r[3] as f32 * RADAR_OPACITY * opacity) as u8,
+                            ],
+                        );
+                    }
+                }
+            });
+    });
     rgba
 }
 /// The user's web map layers (Add Data) seen from `basis`, bottom to top, each at its

@@ -9,6 +9,10 @@ use std::time::Duration;
 /// What the radar was projected for: view, size, its opacity bits and the imagery's
 /// generation.
 type ProjectionKey = (Basis, usize, usize, u32, u64);
+/// The radar is laid over the screen at most this many pixels wide, at rest and while
+/// the view moves.
+const RADAR_MAX_WIDTH_PX: usize = 960;
+const MOVING_RADAR_MAX_WIDTH_PX: usize = 320;
 /// A corner of the clouds' mesh every this many points: the map is laid straight
 /// across each cell, which stays within a pixel at this size…
 const CLOUD_MESH_STEP_POINTS: f32 = 8.0;
@@ -161,11 +165,12 @@ impl LiveMaps {
         let Some((image, opacity)) = self.service.radar().zip(radar) else {
             return;
         };
-        // Projection is cached and updated only when camera or imagery changes.
-        let max_width = if painter.ctx().input(|i| i.pointer.any_down()) {
-            480
+        // Projection is cached and updated only when camera or imagery changes; a
+        // moving view's is coarser (the radar's own pixels are kilometres wide).
+        let max_width = if moving {
+            MOVING_RADAR_MAX_WIDTH_PX
         } else {
-            960
+            RADAR_MAX_WIDTH_PX
         };
         let width =
             ((rect.width() * painter.ctx().pixels_per_point()) as usize).clamp(160, max_width);
@@ -266,38 +271,23 @@ impl LiveMaps {
         };
         let alpha = opacity * CLOUD_OPACITY * shell.fade;
         let mut mesh = Mesh::with_texture(texture);
-        let row = shell.columns + 1;
-        for y in 0..shell.rows {
-            for x in 0..shell.columns {
-                let corners = [
-                    y * row + x,
-                    y * row + x + 1,
-                    (y + 1) * row + x + 1,
-                    (y + 1) * row + x,
-                ]
-                .map(|index| shell.corners[index]);
-                let [Some(first), ..] = corners else {
-                    continue;
-                };
-                if corners.iter().any(Option::is_none) {
-                    continue;
-                }
-                let base = mesh.vertices.len() as u32;
-                for corner in corners.into_iter().flatten() {
-                    // Across the map's edge the picture goes on (it repeats) rather
-                    // than running back across the whole Earth.
-                    let u = corner.uv[0] + (first.uv[0] - corner.uv[0]).round();
-                    let alpha = alpha * corner.opacity;
-                    let [r, g, b] = corner.colour.map(|c| (c * alpha * 255.0) as u8);
-                    mesh.vertices.push(egui::epaint::Vertex {
-                        pos: corner.pos,
-                        uv: Pos2::new(u as f32, corner.uv[1] as f32),
-                        color: Color32::from_rgba_premultiplied(r, g, b, (alpha * 255.0) as u8),
-                    });
-                }
-                mesh.add_triangle(base, base + 1, base + 2);
-                mesh.add_triangle(base, base + 2, base + 3);
+        for corners in &shell.cells {
+            let base = mesh.vertices.len() as u32;
+            let first = corners[0];
+            for corner in corners {
+                // Across the map's edge the picture goes on (it repeats) rather than
+                // running back across the whole Earth.
+                let u = corner.uv[0] + (first.uv[0] - corner.uv[0]).round();
+                let alpha = alpha * corner.opacity;
+                let [r, g, b] = corner.colour.map(|c| (c * alpha * 255.0) as u8);
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: corner.pos,
+                    uv: Pos2::new(u as f32, corner.uv[1] as f32),
+                    color: Color32::from_rgba_premultiplied(r, g, b, (alpha * 255.0) as u8),
+                });
             }
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
         }
         let mesh = Arc::new(mesh);
         painter.add(egui::Shape::Mesh(mesh.clone()));

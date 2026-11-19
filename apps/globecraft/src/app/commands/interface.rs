@@ -3,7 +3,8 @@ use crate::app::App;
 use eframe::egui;
 use globecraft_core::commands::InterfaceCommand;
 use globecraft_data::settings::{
-    appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
+    appearance::ThemePreference,
+    workspace::{PaneSide, PaneTab},
 };
 use serde_json::{Value, json};
 
@@ -15,18 +16,12 @@ impl App {
     pub(super) fn run_interface(&mut self, command: InterfaceCommand) -> Result<Value, String> {
         let ctx = self.ctx.clone();
         Ok(match command {
-            InterfaceCommand::LayersPane | InterfaceCommand::PlacesPane => {
-                let panel = match command {
-                    InterfaceCommand::LayersPane => SidebarPanel::Layers,
-                    _ => SidebarPanel::Places,
-                };
-                let layout = &mut self.settings.sidebar;
-                if layout.open && layout.panel == panel {
-                    layout.open = false;
-                } else {
-                    layout.panel = panel;
-                    layout.open = true;
-                }
+            InterfaceCommand::LayersPane => {
+                self.settings.workspace.toggle_right(PaneTab::Layers);
+                json!({})
+            }
+            InterfaceCommand::PlacesPane => {
+                self.settings.workspace.toggle_right(PaneTab::Places);
                 json!({})
             }
             #[cfg(not(feature = "assistant"))]
@@ -37,10 +32,10 @@ impl App {
             InterfaceCommand::AssistantPane(p) => {
                 match p.ask.filter(|q| !q.is_empty()) {
                     Some(question) => {
-                        self.settings.workspace.open_right(RightPane::Assistant);
+                        self.settings.workspace.open_right(PaneTab::Assistant);
                         self.assistant.queue(question);
                     }
-                    None => self.settings.workspace.toggle_right(RightPane::Assistant),
+                    None => self.settings.workspace.toggle_right(PaneTab::Assistant),
                 }
                 json!({})
             }
@@ -51,12 +46,31 @@ impl App {
                 json!({"stopped": running})
             }
             InterfaceCommand::MeasurePane => {
-                self.settings.workspace.toggle_right(RightPane::Measure);
+                self.settings.workspace.toggle_right(PaneTab::Measure);
                 json!({})
             }
             InterfaceCommand::LeftPane => {
-                self.settings.sidebar.open = !self.settings.sidebar.open;
-                json!({})
+                self.settings.workspace.toggle_pane();
+                json!({"shown": self.settings.workspace.right_pane.is_some()})
+            }
+            InterfaceCommand::PaneSide(p) => {
+                let workspace = &mut self.settings.workspace;
+                workspace.pane_side = match p.side.as_deref() {
+                    Some(code) => PaneSide::from_code(code).ok_or("side must be left or right")?,
+                    None => match workspace.pane_side {
+                        PaneSide::Left => PaneSide::Right,
+                        PaneSide::Right => PaneSide::Left,
+                    },
+                };
+                json!({"side": workspace.pane_side.code()})
+            }
+            InterfaceCommand::MovePaneTab(p) => {
+                let tab = PaneTab::from_code(&p.tab)
+                    .filter(|tab| self.settings.workspace.right_is_open(*tab))
+                    .ok_or("that tab is not open in the side pane")?;
+                let workspace = &mut self.settings.workspace;
+                workspace.move_tab(tab, usize::try_from(p.to).unwrap_or(usize::MAX));
+                json!({"tabs": workspace.right_open.iter().map(|t| t.code()).collect::<Vec<_>>()})
             }
             InterfaceCommand::NavigationControls(p) => {
                 let shown = p.toggled(!self.settings.hide_navigation_controls);

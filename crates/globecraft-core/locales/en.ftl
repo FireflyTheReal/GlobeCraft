@@ -406,6 +406,7 @@ explorer-sky-preview = The custom sky is previewed here; it is not used as the E
 live-clouds-failed = Cloud update failed
 live-cached-image =  (cached image shown)
 live-clouds-ok = Clouds: Matt Eason (3-hour updates)
+live-clouds-none-kept = No clouds were kept for { $time } UTC (kept from 9 March 2026, every 3 hours)
 live-clouds-archived = Clouds of { $time } UTC (Matt Eason, kept by Joshua Binswanger)
 live-clouds-loading = Clouds: loading satellite imagery…
 live-radar-failed = Radar update failed
@@ -646,17 +647,6 @@ satellites-hover-tooltip =
     { $model ->
         [sgp4] Predicted with SGP4 from CelesTrak elements
        *[simple] Estimated orbital position • CelesTrak
-    }
-transport-airport-hover-tooltip =
-    { $name }
-    IATA { $iata } • ICAO { $icao }
-    { $class ->
-        [international] International airport
-        [public] Public airport
-        [regional] Regional airport
-        [military] Military airfield
-        [private] Private airfield
-       *[other] Airfield
     }
 
 update-available-label = Update to v{ $version }
@@ -1039,7 +1029,16 @@ cmd-assistant-stop-help = End the assistant's current request; actions it hasn't
 cmd-ui-pane-measure = Measure Pane
 cmd-ui-pane-measure-help = Show the ruler's measurements, units and history.
 cmd-ui-left-pane = Side Pane
-cmd-ui-left-pane-help = Show or hide the pane on the left of the globe.
+cmd-ui-left-pane-help = Show or hide the side pane (its tabs stay).
+cmd-ui-pane-side = Side Pane Position
+cmd-ui-pane-side-help = Put the side pane on the left or the right of the globe.
+cmd-ui-pane-move-tab = Move Pane Tab
+cmd-ui-pane-move-tab-help = Move a tab of the side pane to another position.
+pane-side-left = Dock on the left
+pane-side-right = Dock on the right
+pane-side-switch-tooltip = Move the pane to the other side of the globe
+pane-flight-title = Flight
+pane-satellite-title = Satellite
 cmd-ui-navigation-controls = Navigator
 cmd-ui-navigation-controls-help = Show or hide the on-globe compass and zoom controls.
 ribbon-group-time = Time
@@ -1072,6 +1071,9 @@ timeline-speed-minute = 1 min/s
 timeline-speed-hour = 1 h/s
 timeline-speed-six-hours = 6 h/s
 timeline-speed-day = 1 day/s
+timeline-step-back-help = One step back (a tick of the track)
+timeline-step-forward-help = One step forward (a tick of the track)
+timeline-settings-help = Time settings: back to now, speed, window of events, span
 timeline-range-day = 1 day
 timeline-range-week = 1 week
 timeline-range-month = 1 month

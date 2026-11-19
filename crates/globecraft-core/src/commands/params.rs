@@ -401,6 +401,17 @@ params! {
         pub hours_per_second: f64,
     }
 
+    /// `ui.pane.side`
+    pub struct SetPaneSide {
+        pub side: Option<String>,
+    }
+
+    /// `ui.pane.moveTab`
+    pub struct MovePaneTab {
+        pub tab: String,
+        pub to: u64,
+    }
+
     /// `ui.navigatorStyle`
     pub struct SetNavigatorStyle {
         pub style: String,

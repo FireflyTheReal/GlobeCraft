@@ -1,38 +1,30 @@
 //! Keyboard reach (roadmap 6.6, layout redesign step 5). egui already moves the focus
 //! with Tab and the arrow keys, and Enter or Space press the focused control; this
 //! module adds what the custom-painted interface needs on top: a visible focus ring
-//! on every control, and F6 to jump between the window's regions (the ribbon, the left
-//! pane, the right pane, the globe).
+//! on every control, and F6 to jump between the window's regions (the ribbon, the side
+//! pane, the globe).
 use super::theme::Tokens;
 use crate::app::App;
 use eframe::egui::{self, CornerRadius, Id, Stroke, StrokeKind};
-use globecraft_data::settings::sidebar::SidebarPanel;
+use globecraft_data::settings::workspace::PaneTab;
 
 /// The id of a ribbon tab's button.
 pub(in crate::app) fn ribbon_tab_id(tab: globecraft_core::commands::Tab) -> Id {
     Id::new(("ribbon_tab", tab.code()))
 }
 
-/// The id of a left pane's tab.
-pub(in crate::app) fn left_tab_id(panel: SidebarPanel) -> Id {
-    Id::new(("left_pane_tab", panel as u8))
-}
-
-/// The id of a right pane's tab.
-pub(in crate::app) fn right_tab_id(pane: globecraft_data::settings::workspace::RightPane) -> Id {
-    Id::new(("right_pane_tab", pane as u8))
+/// The id of a side pane's tab.
+pub(in crate::app) fn pane_tab_id(tab: PaneTab) -> Id {
+    Id::new(("side_pane_tab", tab.code()))
 }
 
 impl App {
-    /// The window's regions in F6 order: the shown ribbon tab, the shown left pane's tab
-    /// and the shown right pane's tab, where they are open. `None` is the globe.
+    /// The window's regions in F6 order: the shown ribbon tab and the side pane's tab
+    /// in view, where it is open. `None` is the globe.
     fn regions(&self) -> Vec<Option<Id>> {
         let mut regions = vec![Some(ribbon_tab_id(self.settings.workspace.ribbon_tab))];
-        if self.settings.sidebar.open {
-            regions.push(Some(left_tab_id(self.settings.sidebar.panel)));
-        }
         if let Some(pane) = self.settings.workspace.right_pane {
-            regions.push(Some(right_tab_id(pane)));
+            regions.push(Some(pane_tab_id(pane)));
         }
         regions.push(None);
         regions

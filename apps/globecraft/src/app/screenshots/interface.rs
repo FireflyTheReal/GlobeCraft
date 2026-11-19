@@ -49,7 +49,7 @@ fn interface_screenshots() {
 
     let app = h.state_mut();
     app.settings.workspace.ribbon_tab = Tab::Live;
-    app.settings.workspace.open_right(RightPane::Measure);
+    app.settings.workspace.open_right(PaneTab::Measure);
     let _ = app.run("ruler.addPoint", json!({"lat": 38.72, "lon": -9.14}));
     let _ = app.run("ruler.addPoint", json!({"lat": -22.9, "lon": -43.2}));
     settle(&mut h, 2.0);
@@ -57,7 +57,7 @@ fn interface_screenshots() {
 
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.settings.workspace.open_right(RightPane::Assistant);
+    app.settings.workspace.open_right(PaneTab::Assistant);
     let _ = app.run("ui.pane.places", Value::Null);
     let _ = app.run(
         "places.add",
@@ -385,12 +385,12 @@ fn surfaces_screenshots() {
 }
 
 /// The keyboard: F6 reaches the ribbon's tabs, the arrows move between them, Enter
-/// opens one, F6 goes on to the left pane and the globe, and the focused control has a
+/// opens one, F6 goes on to the side pane and the globe, and the focused control has a
 /// ring (layout redesign step 5).
 #[test]
 #[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
 fn keyboard_navigation_screenshot() {
-    use super::super::ui::focus::{left_tab_id, ribbon_tab_id};
+    use super::super::ui::focus::{pane_tab_id, ribbon_tab_id};
     let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
         return;
     };
@@ -422,13 +422,18 @@ fn keyboard_navigation_screenshot() {
     save(&mut h, &dir, "keyboard-ribbon-tab");
     h.key_press(egui::Key::F6);
     settle(&mut h, 0.2);
-    let panel = h.state().settings.sidebar.panel;
+    let pane = h
+        .state()
+        .settings
+        .workspace
+        .right_pane
+        .expect("a tab in view");
     assert_eq!(
         focused(&h),
-        Some(left_tab_id(panel)),
-        "F6 goes on to the left pane"
+        Some(pane_tab_id(pane)),
+        "F6 goes on to the side pane"
     );
-    save(&mut h, &dir, "keyboard-left-pane");
+    save(&mut h, &dir, "keyboard-side-pane");
     h.key_press(egui::Key::F6);
     settle(&mut h, 0.2);
     assert_eq!(
@@ -438,7 +443,7 @@ fn keyboard_navigation_screenshot() {
     );
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
     settle(&mut h, 0.2);
-    assert_eq!(focused(&h), Some(left_tab_id(panel)), "Shift+F6 goes back");
+    assert_eq!(focused(&h), Some(pane_tab_id(pane)), "Shift+F6 goes back");
 }
 
 /// Side menus in the group drop-downs: Nature ▾ › Exaggeration ▸, My data ▾ ›
@@ -733,4 +738,91 @@ fn looking_around_turns_the_view_about_the_eye() {
     assert_eq!(mode["look_mode"], true);
     let mode = app.run("camera.lookAround", json!({})).expect("mode");
     assert_eq!(mode["look_mode"], false);
+}
+
+/// The status bar's camera altitude is the camera's height above sea level, and
+/// entering one puts the camera there along its line of sight. No rendering.
+#[test]
+fn the_camera_altitude_is_its_height() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": 40.0, "lon": -74.0, "altitude_km": 10.0, "heading_deg": 0.0, "tilt_deg": 60.0}),
+    )
+    .expect("camera");
+    // Ten km from the point it looks at, leaning 60°: about 5 km up.
+    let height = app.eye_height_km();
+    assert!((height - 5.0).abs() < 0.1, "{height}");
+    let alt = app.alt_for_eye_height(3.0);
+    app.cam.alt = alt;
+    assert!(
+        (app.eye_height_km() - 3.0).abs() < 1e-3,
+        "{}",
+        app.eye_height_km()
+    );
+    assert!((alt - 6.0).abs() < 0.1, "{alt}");
+}
+
+/// The side pane (one since 2026-11-19): its tabs, What's here as a tab, docked on
+/// the left, and its content at the narrowest and a wide width.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn side_pane_screenshots() {
+    use globecraft_data::settings::workspace::{
+        MAX_RIGHT_PANE_WIDTH_POINTS, MIN_RIGHT_PANE_WIDTH_POINTS, PaneSide,
+    };
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "pane-default");
+    let _ = h
+        .state_mut()
+        .run("ui.here", json!({"lat": 46.3, "lon": 8.3}));
+    settle(&mut h, 1.0);
+    assert_eq!(
+        h.state().settings.workspace.right_pane,
+        Some(PaneTab::Here),
+        "What's here opens as a tab"
+    );
+    save(&mut h, &dir, "pane-here");
+    let _ = h
+        .state_mut()
+        .run("ui.pane.moveTab", json!({"tab": "here", "to": 0}));
+    let _ = h.state_mut().run("ui.pane.side", Value::Null);
+    settle(&mut h, 1.0);
+    assert_eq!(h.state().settings.workspace.pane_side, PaneSide::Left);
+    assert_eq!(h.state().settings.workspace.right_open[0], PaneTab::Here);
+    save(&mut h, &dir, "pane-left");
+    for (width, name) in [
+        (MIN_RIGHT_PANE_WIDTH_POINTS, "pane-narrow"),
+        (MAX_RIGHT_PANE_WIDTH_POINTS, "pane-wide"),
+    ] {
+        let mut settings = Settings::default();
+        settings.appearance.theme = ThemePreference::Dark;
+        settings.workspace.right_width_points = width;
+        settings.workspace.open_right(PaneTab::Measure);
+        settings.workspace.open_right(PaneTab::Legend);
+        settings.workspace.open_right(PaneTab::Layers);
+        let mut h = harness_with(settings);
+        settle(&mut h, 1.0);
+        save(&mut h, &dir, name);
+    }
+    // Closing the tab clears what it showed.
+    let mut h = harness(ThemePreference::Dark);
+    let _ = h
+        .state_mut()
+        .run("ui.here", json!({"lat": 46.3, "lon": 8.3}));
+    settle(&mut h, 0.5);
+    h.state_mut().pointer.here_card = None;
+    settle(&mut h, 0.5);
+    assert!(
+        !h.state().settings.workspace.right_is_open(PaneTab::Here),
+        "the tab goes with its selection"
+    );
 }

@@ -7,8 +7,7 @@ GlobeCraft's window follows the layout of [RustGIS](https://github.com/opengeos/
 | --- | --- |
 | Header | File, Quick Access Toolbar (Undo, Redo, Screenshot), the place search and **Command Search** (Ctrl/⌘+K); Open KML and Save stay in the File menu. Windows and Linux keep their native title bar with the system's own minimize, maximize/restore and close. macOS keeps its native traffic lights at the left. The window title stays **GlobeCraft** and is not drawn in the merged header |
 | Ribbon | **File** menu, then the tabs Home, Layers, Live, View, Places, Settings and Help. Double-click a tab (or Ctrl+F1) to collapse the ribbon; a collapsed ribbon opens over the globe when a tab is clicked |
-| Left pane | **Layers** (basemap and every layer as a table of contents with status and credits), **Places** (the KML tree; it can be pinned below the other tabs) and **Globe** (search results, navigation, export, controls) |
-| Right pane | **AI Assistant** and **Measure** as closable tabs |
+| Side pane | One pane, on the right of the globe by default or on the left (`ui.pane.side`, the chevron at the end of its tabs, or its right-click menu). Its tabs: **Layers** (basemap and every layer as a table of contents with status and credits), **Places** (the KML tree; it can be pinned below the other tabs), **AI Assistant**, **Measure**, **Legend**, **Explorer**, and the details of a selected **flight**, **satellite** or point (**What's here**), which open as a tab with the selection and clear it when closed. Tabs close with their ✕ and are dragged along the header to reorder them (`ui.pane.moveTab`); when their names do not fit they show as icons |
 | Globe | The renderer, the navigator (rotation ring, move pad, zoom slider), scale bar and credits |
 | Status bar | Cursor and centre coordinates (click to copy), camera altitude (click to type one), heading (click for north up), status messages, updates and tile loading |
 

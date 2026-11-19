@@ -282,6 +282,34 @@ mod tests {
     }
 
     #[test]
+    fn the_tilt_controls_lean_on_into_the_sky_and_come_down_from_it_first() {
+        let model = EarthModel::Wgs84;
+        let mut cam = Cam {
+            lat: 10.0,
+            lon: 20.0,
+            heading: 0.0,
+            alt: 2.0,
+            tilt: 80.0,
+            look_up: 0.0,
+        };
+        // Leaning past the steepest tilt raises the view about the eye.
+        cam.tilt_view(100.0);
+        assert_eq!(cam.tilt, MAX_TILT_DEG);
+        assert!((cam.look_up - 15.0).abs() < 1e-9);
+        assert!((cam.view_tilt() - 100.0).abs() < 1e-9);
+        // After a look around into the sky, lowering takes the look up away first.
+        assert!(cam.look_around(0.0, 10.0, model, 0.0));
+        let (tilt, raised) = (cam.tilt, cam.view_tilt());
+        cam.tilt_view(raised - 5.0);
+        assert_eq!(cam.tilt, tilt);
+        assert!((cam.view_tilt() - (raised - 5.0)).abs() < 1e-9);
+        cam.tilt_view(30.0);
+        assert_eq!((cam.tilt, cam.look_up), (30.0, 0.0));
+        cam.tilt_view(f64::NAN);
+        assert_eq!(cam.tilt, 30.0);
+    }
+
+    #[test]
     fn looking_above_the_horizon_raises_the_view_about_the_eye() {
         let model = EarthModel::Wgs84;
         let mut cam = Cam {

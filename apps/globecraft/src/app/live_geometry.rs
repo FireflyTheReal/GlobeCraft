@@ -51,6 +51,15 @@ impl LiveOverlay {
         let stale = current
             .as_ref()
             .is_none_or(|geometry| !geometry.input.same_request(&input));
+        // A layer turned on or off: the last geometry of the same frame stays drawn
+        // until the new set is projected, or everything shown blinked out for a
+        // moment (user 2026-11-19).
+        let current = current.or_else(|| {
+            self.latest
+                .as_ref()
+                .filter(|geometry| geometry.input.view.same_frame(&input.view))
+                .cloned()
+        });
         if stale
             && self
                 .requested
@@ -248,11 +257,12 @@ mod tests {
         let shown = overlay.update(later.clone()).unwrap();
         later.unix_secs += 5.0;
         assert!(Arc::ptr_eq(&shown, &overlay.update(later.clone()).unwrap()));
-        // Turning the layer off hides its last geometry at once; a new tile snapshot
-        // (above) keeps it only because the layer stays present.
+        // Turning a layer on or off keeps the last geometry of the same frame until
+        // the new set is projected (the draw of each layer checks its switch), so
+        // the other layers do not blink out.
         let mut hidden = later;
         hidden.satellites = None;
-        assert!(overlay.update(hidden).is_none());
+        assert!(Arc::ptr_eq(&shown, &overlay.update(hidden).unwrap()));
         let mut moved = input;
         moved.view.rect = moved.view.rect.translate(egui::vec2(10.0, 0.0));
         assert!(overlay.update(moved).is_none());
@@ -320,9 +330,9 @@ mod tests {
             &geometry,
             &overlay.update(input.clone()).unwrap()
         ));
-        // Turning on a layer group whose geometry is not projected yet does blank it
-        // rather than showing a set that lacks the newly enabled layer.
+        // Turning on a layer group whose geometry is not projected yet keeps the
+        // last set on screen meanwhile: blanking it made everything shown blink.
         input.transport_layers.airports = true;
-        assert!(overlay.update(input).is_none());
+        assert!(Arc::ptr_eq(&geometry, &overlay.update(input).unwrap()));
     }
 }

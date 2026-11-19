@@ -445,11 +445,30 @@ pub(super) fn satellite_tooltip(
     if together.is_empty() {
         return text;
     }
-    let with = lang.format(
-        "satellites-together",
-        &[("names", together.join(", ").into())],
-    );
-    format!("{text}\n{with}")
+    format!("{text}\n{}", together_with(lang, together))
+}
+
+/// The craft flying with a satellite: a line break every few names, so a station with
+/// many visitors does not make one long line (user 2026-11-19).
+const TOGETHER_LINE_CHARS: usize = 36;
+
+pub(in crate::app) fn together_with(lang: Lang, names: &[&str]) -> String {
+    let mut wrapped = String::new();
+    let mut line = 0;
+    for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+            if line + name.len() > TOGETHER_LINE_CHARS {
+                wrapped.push_str(",\n");
+                line = 0;
+            } else {
+                wrapped.push_str(", ");
+                line += 2;
+            }
+        }
+        wrapped.push_str(name);
+        line += name.len();
+    }
+    lang.format("satellites-together", &[("names", wrapped.into())])
 }
 
 fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape> {
@@ -680,5 +699,27 @@ mod tests {
                 matches!((&first,repeated),(Shape::Mesh(a),Shape::Mesh(b)) if Arc::ptr_eq(a,b))
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod together_tests {
+    use super::*;
+
+    #[test]
+    fn many_craft_together_wrap_onto_lines() {
+        let names = [
+            "SOYUZ-MS 28",
+            "PROGRESS-MS 31",
+            "PROGRESS-MS 32",
+            "CREW DRAGON 11",
+        ];
+        let text = together_with(Lang::En, &names);
+        assert!(text.lines().count() >= 2, "{text}");
+        assert!(
+            text.lines().all(|line| line.chars().count() <= 60),
+            "{text}"
+        );
+        assert_eq!(together_with(Lang::En, &["SOYUZ"]).lines().count(), 1);
     }
 }

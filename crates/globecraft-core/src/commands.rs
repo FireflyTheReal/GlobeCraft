@@ -613,6 +613,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "ui.pane.side",
+        "ui-pane-side",
+        "pane",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"side":{"type":"string","enum":["left","right"],"description":"The side of the globe the side pane is on; omit to switch sides"}}}"#
+    ),
+    command!(
+        "ui.pane.moveTab",
+        "ui-pane-move-tab",
+        "pane",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"tab":{"type":"string","enum":["assistant","measure","legend","explorer","layers","places","flight","satellite","here"]},"to":{"type":"integer","minimum":0,"description":"The tab's new position, 0 first"}},"required":["tab","to"]}"#
+    ),
+    command!(
         "ui.navigationControls",
         "ui-navigation-controls",
         "nav_controls",

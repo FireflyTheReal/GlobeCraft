@@ -19,7 +19,7 @@ fn assistant_runs_commands_end_to_end() {
     ]);
     let mut h = harness(ThemePreference::Light);
     let app = h.state_mut();
-    app.settings.workspace.open_right(RightPane::Assistant);
+    app.settings.workspace.open_right(PaneTab::Assistant);
     app.ensure_agent();
     let mut config = app.assistant_config("custom");
     config.base_url = format!("http://127.0.0.1:{port}/v1");

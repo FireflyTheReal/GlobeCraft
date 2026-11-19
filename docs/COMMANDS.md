@@ -89,7 +89,9 @@ Parameters are a JSON object; none is required unless marked.
 | `ui.pane.assistant` | AI Assistant | Ask questions about the globe or tell GlobeCraft what to do, with a model of your choice. | `ask` (string) | no |
 | `assistant.stop` | Stop the AI Assistant | End the assistant's current request; actions it hasn't run yet are skipped and a late reply is ignored. | — | no |
 | `ui.pane.measure` | Measure Pane | Show the ruler's measurements, units and history. | — | no |
-| `ui.leftPane` | Side Pane | Show or hide the pane on the left of the globe. | — | no |
+| `ui.leftPane` | Side Pane | Show or hide the side pane (its tabs stay). | — | no |
+| `ui.pane.side` | Side Pane Position | Put the side pane on the left or the right of the globe. | `side` (string): one of `left`, `right`: The side of the globe the side pane is on; omit to switch sides | no |
+| `ui.pane.moveTab` | Move Pane Tab | Move a tab of the side pane to another position. | `tab` (string), required: one of `assistant`, `measure`, `legend`, `explorer`, `layers`, `places`, `flight`, `satellite`, `here`<br>`to` (integer), required: The tab's new position, 0 first | no |
 | `ui.navigationControls` | Navigator | Show or hide the on-globe compass and zoom controls. | `on` (boolean): Omit to toggle | yes |
 | `ui.legend` | Legend | Shows what the colours on the globe mean: a selected flight's altitudes, rain radar, aurora and places of interest. Opens by itself when one of them appears. | `on` (boolean): Omit to toggle | no |
 | `ui.timeline` | Timeline | Show the timeline: the app's date and time, steps, play, and the window of past events. | `on` (boolean): Omit to toggle | no |

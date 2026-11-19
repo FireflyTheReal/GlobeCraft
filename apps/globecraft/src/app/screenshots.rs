@@ -9,7 +9,7 @@ use super::{App, RestartRequest};
 use eframe::egui;
 use egui_kittest::{Harness, wgpu::WgpuTestRenderer};
 use globecraft_core::commands::Tab;
-use globecraft_data::settings::{Settings, appearance::ThemePreference, workspace::RightPane};
+use globecraft_data::settings::{Settings, appearance::ThemePreference, workspace::PaneTab};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -27,6 +27,12 @@ const SIZE: egui::Vec2 = egui::vec2(1480.0, 900.0);
 fn harness(theme: ThemePreference) -> Harness<'static, App> {
     let mut settings = Settings::default();
     settings.appearance.theme = theme;
+    harness_with(settings)
+}
+
+/// The harness with `settings` from its first frame (a pane's width, say, which egui
+/// keeps once it has drawn the pane).
+fn harness_with(settings: Settings) -> Harness<'static, App> {
     // GLOBECRAFT_SHOT_SIZE ("1190x775") and _PPP reproduce a user's window.
     let size = std::env::var("GLOBECRAFT_SHOT_SIZE")
         .ok()

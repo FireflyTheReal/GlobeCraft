@@ -866,9 +866,9 @@ impl App {
                 {
                     self.windows.add_data = None;
                 }
-                self.settings.sidebar.open = true;
-                self.settings.sidebar.panel =
-                    globecraft_data::settings::sidebar::SidebarPanel::Layers;
+                self.settings
+                    .workspace
+                    .open_right(globecraft_data::settings::workspace::PaneTab::Layers);
             }
             Action::OpenKml => {
                 self.windows.add_data = None;

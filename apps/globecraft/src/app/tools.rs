@@ -182,7 +182,6 @@ pub(in crate::app) const EXTRAS: &[(&str, &str)] = &[
     ("view.panes", "ui.pane.places"),
     ("view.panes", "ui.tileDiagnostics"),
     ("view.window", "ui.ribbon"),
-    ("view.window", "ui.minimize"),
 ];
 
 /// Whether a tool is on the ribbon by default.

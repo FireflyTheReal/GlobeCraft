@@ -74,7 +74,7 @@ impl App {
             );
             hot |= response.hovered();
             if response.double_clicked() {
-                self.cam.set_tilt(0.0);
+                self.cam.tilt_view(0.0);
                 self.motion.fly = None;
                 self.nav.tilt_drag = false;
                 active = true;
@@ -82,13 +82,13 @@ impl App {
                 && let Some(p) = response.interact_pointer_pos()
             {
                 self.nav.tilt_drag = response.drag_started();
-                self.cam.tilt_zooming_out(tilt_at(centre, p));
+                self.cam.tilt_view(tilt_at(centre, p));
                 self.motion.fly = None;
                 active = true;
             }
             if response.hovered() && !tooltip_shown {
                 tooltip_shown = true;
-                let degrees = self.cam.tilt.round() as i64;
+                let degrees = self.cam.view_tilt().round() as i64;
                 response.on_hover_text(
                     lg.format("navigation-tilt-tooltip", &[("degrees", degrees.into())]),
                 );
@@ -98,7 +98,7 @@ impl App {
         if self.nav.tilt_drag {
             match ui.input(|i| i.pointer.primary_down().then(|| i.pointer.interact_pos())) {
                 Some(Some(p)) => {
-                    self.cam.tilt_zooming_out(tilt_at(centre, p));
+                    self.cam.tilt_view(tilt_at(centre, p));
                     self.motion.fly = None;
                     active = true;
                 }
@@ -124,7 +124,7 @@ impl App {
             track,
             Stroke::new(TRACK_INNER_WIDTH_POINTS * k, fill),
         ));
-        let tilt = (self.cam.tilt as f32).clamp(0.0, max);
+        let tilt = (self.cam.view_tilt() as f32).clamp(0.0, max);
         let samples = ((ARC_SAMPLES as f32 * tilt / max).ceil() as usize).max(1);
         let tilted: Vec<Pos2> = (0..=samples)
             .map(|i| arc_point(centre, radius, tilt * i as f32 / samples as f32))

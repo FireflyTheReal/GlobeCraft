@@ -1,9 +1,9 @@
 //! One look for everything that opens over the globe (layout redesign step 2):
 //! *dialogs* for tasks with a beginning and an end (Settings, Add Data, About, Keyboard
-//! Shortcuts), centred, in three widths; *cards* for one selected thing (a flight, a
-//! satellite, a point), at the globe's top-left corner, one at a time; *popovers* for a
-//! quick edit next to what it edits (the altitude). All share the header (title and ✕),
-//! the frame, the padding and the footer row of buttons on the right.
+//! Shortcuts), centred, in three widths, and *popovers* for a quick edit next to what it
+//! edits (the altitude). Both share the header (title and ✕), the frame, the padding and
+//! the footer row of buttons on the right. (A selected flight, satellite or point shows
+//! in a tab of the side pane since 2026-11-19, no longer as a card here.)
 use super::icons;
 use super::theme::{Tokens, regular, semibold};
 use eframe::egui::{
@@ -16,7 +16,7 @@ use globecraft_core::language::Lang;
 pub(in crate::app) enum Width {
     /// About, the altitude editor.
     Small,
-    /// Keyboard shortcuts, cards.
+    /// Keyboard shortcuts.
     Medium,
     /// Settings, Add Data.
     Large,
@@ -36,16 +36,10 @@ impl Width {
 pub(in crate::app) enum Place {
     /// A dialog: centred over the globe, below the ribbon and between the panes.
     Centre,
-    /// A card: in the top-left corner of the globe's rectangle.
-    Card(Rect),
     /// A popover: its `pivot` corner at `at`.
     At { at: egui::Pos2, pivot: Align2 },
 }
 
-/// The gap between a card and the globe's edges.
-pub(in crate::app) const CARD_MARGIN_POINTS: f32 = 12.0;
-/// The width of a card.
-pub(in crate::app) const CARD_WIDTH_POINTS: f32 = 320.0;
 const HEADER_HEIGHT_POINTS: f32 = 36.0;
 const PADDING_POINTS: i8 = 14;
 const CORNER_RADIUS: u8 = 10;
@@ -55,7 +49,6 @@ const CORNER_RADIUS: u8 = 10;
 pub(in crate::app) struct Surface<'a> {
     id: egui::Id,
     title: &'a str,
-    subtitle: Option<&'a str>,
     width: f32,
     place: Place,
     height: Option<f32>,
@@ -67,20 +60,8 @@ impl<'a> Surface<'a> {
         Self {
             id: egui::Id::new(id),
             title,
-            subtitle: None,
             width: width.points(),
             place: Place::Centre,
-            height: None,
-            min_size: None,
-        }
-    }
-    pub(in crate::app) fn card(id: &str, title: &'a str, globe: Rect) -> Self {
-        Self {
-            id: egui::Id::new(id),
-            title,
-            subtitle: None,
-            width: CARD_WIDTH_POINTS,
-            place: Place::Card(globe),
             height: None,
             min_size: None,
         }
@@ -89,17 +70,11 @@ impl<'a> Surface<'a> {
         Self {
             id: egui::Id::new(id),
             title,
-            subtitle: None,
             width: Width::Small.points(),
             place: Place::At { at, pivot },
             height: None,
             min_size: None,
         }
-    }
-    /// A second line under the title (a flight's route).
-    pub(in crate::app) fn subtitle(mut self, subtitle: &'a str) -> Self {
-        self.subtitle = Some(subtitle);
-        self
     }
     /// A fixed body height (with the footer), for dialogs whose pages differ in length.
     pub(in crate::app) fn height(mut self, height: f32) -> Self {
@@ -151,19 +126,15 @@ impl<'a> Surface<'a> {
                     .constrain_to(globe),
                 None => window.anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)),
             },
-            Place::Card(globe) => window
-                .fixed_pos(globe.left_top() + vec2(CARD_MARGIN_POINTS, CARD_MARGIN_POINTS))
-                .constrain_to(globe),
             Place::At { at, pivot } => window.pivot(pivot).fixed_pos(at),
         };
         let mut open = true;
-        let escape_closes = !matches!(self.place, Place::Card(_));
         let response = window.show(ctx, |ui| {
             if self.min_size.is_none() {
                 ui.set_width(self.width);
             }
             let close_tip = lang.text("settings-close-action");
-            if header(ui, &t, self.title, self.subtitle, close_tip) {
+            if header(ui, &t, self.title, close_tip) {
                 open = false;
             }
             egui::Frame::NONE
@@ -183,10 +154,7 @@ impl<'a> Surface<'a> {
                 })
                 .inner
         });
-        if escape_closes
-            && !egui::Popup::is_any_open(ctx)
-            && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-        {
+        if !egui::Popup::is_any_open(ctx) && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             open = false;
         }
         (open, response.and_then(|r| r.inner))
@@ -205,11 +173,13 @@ pub(in crate::app) fn remember_globe_rect(ctx: &egui::Context, rect: Rect) {
 
 const GLOBE_RECT_KEY: &str = "surface-globe-rect";
 
-/// The header: title (and subtitle) on the left, ✕ on the right, a line under it.
+/// The header: title on the left, ✕ on the right, a line under it.
 /// Returns whether ✕ was clicked.
-fn header(ui: &mut Ui, t: &Tokens, title: &str, subtitle: Option<&str>, close_tip: &str) -> bool {
-    let height = HEADER_HEIGHT_POINTS + if subtitle.is_some() { 16.0 } else { 0.0 };
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+fn header(ui: &mut Ui, t: &Tokens, title: &str, close_tip: &str) -> bool {
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), HEADER_HEIGHT_POINTS),
+        Sense::hover(),
+    );
     let painter = ui.painter();
     painter.rect_filled(
         rect,
@@ -243,20 +213,6 @@ fn header(ui: &mut Ui, t: &Tokens, title: &str, subtitle: Option<&str>, close_ti
             semibold(14.0),
             t.text,
         );
-    if let Some(subtitle) = subtitle {
-        painter
-            .with_clip_rect(Rect::from_min_max(
-                rect.min,
-                pos2(close.min.x - 6.0, rect.max.y),
-            ))
-            .text(
-                pos2(left, title_y + 17.0),
-                Align2::LEFT_CENTER,
-                subtitle,
-                regular(12.0),
-                t.text_dim,
-            );
-    }
     let resp = close_button(ui, t, close, close_tip);
     resp.clicked()
 }

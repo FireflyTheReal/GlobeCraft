@@ -219,7 +219,16 @@ impl LiveMaps {
     pub fn status(&self, clouds: bool, radar: bool, lang: Lang) -> String {
         let mut lines = Vec::new();
         if clouds {
+            let none_kept = self
+                .cloud
+                .value
+                .as_ref()
+                .is_some_and(|map| map.levels.is_empty());
             let loaded = match self.cloud_slot {
+                Some(slot) if none_kept => lang.format(
+                    "live-clouds-none-kept",
+                    &[("time", archive::shown(slot).into())],
+                ),
                 Some(slot) => lang.format(
                     "live-clouds-archived",
                     &[("time", archive::shown(slot).into())],

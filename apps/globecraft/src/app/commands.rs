@@ -89,7 +89,6 @@ impl globecraft_assistant::Host for AssistantHost<'_> {
 
 impl App {
     pub(in crate::app) fn reveal_places(&mut self) {
-        self.settings.sidebar.open = true;
         self.places.reveal_requested = true;
         self.measure.reveal_requested = false;
     }

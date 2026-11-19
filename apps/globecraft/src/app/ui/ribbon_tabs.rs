@@ -351,10 +351,9 @@ impl App {
             "view.window",
             lang.text("ribbon-group-window"),
             |ui, app| {
+                // No full screen or minimize here: the window's own buttons do
+                // that, and the ribbon's copies misbehaved (user 2026-11-19).
                 big(ui, app, "ui.navigationControls", Value::Null);
-                col(ui, |ui| {
-                    small(ui, app, "ui.fullscreen", Value::Null);
-                });
             },
         );
     }

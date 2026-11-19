@@ -380,7 +380,8 @@ impl App {
         let aspect = f64::from(rect.width() / rect.height().max(1.0));
         let view_fill = t.accent.gamma_multiply(VIEW_FILL_OPACITY);
         let view_stroke = Stroke::new(1.2 * k, t.accent);
-        let basis = self.cam.basis(aspect);
+        // The view as drawn: over the relief and with its look up past the ground.
+        let basis = self.view_basis(aspect);
         let outline = globe.view_outline(&basis, rect);
         let reach = outline
             .iter()

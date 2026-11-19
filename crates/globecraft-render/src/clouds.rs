@@ -37,6 +37,11 @@ const CLOUD_NIGHT_COLOUR: Vec3 = Vec3::new(0.16, 0.18, 0.24);
 /// of a screen pixel at the view's centre: finer levels shimmer as the view moves (the
 /// textures have no mipmaps).
 const MIN_TEXEL_PER_PIXEL: f64 = 0.5;
+/// Cells of the mesh toward the layer's horizon (where it shows less than whole) are
+/// cut into cells this many points wide: the layer's picture bends there, and laid
+/// straight across larger cells it showed in blocks against the sky (user's
+/// recording, 2026-11-19).
+const HORIZON_STEP_POINTS: f32 = 4.0;
 
 /// How the clouds are lit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,6 +73,9 @@ pub struct CloudShell {
     pub columns: usize,
     pub rows: usize,
     pub corners: Vec<Option<CloudCorner>>,
+    /// The mesh's cells, each four corners round it (top left, top right, bottom
+    /// right, bottom left): the grid's, finer toward the layer's horizon.
+    pub cells: Vec<[CloudCorner; 4]>,
     /// How much of the layer shows at this height (0 to 1).
     pub fade: f32,
     /// Kilometres one screen pixel spans on the layer at the view's centre.
@@ -90,18 +98,71 @@ pub fn cloud_shell(
         return None;
     }
     let grid = layer_grid(basis, rect, step, CLOUD_LAYER_KM);
-    let corners = grid
+    let to_cloud = |corner: LayerCorner| CloudCorner {
+        pos: corner.pos,
+        uv: [(corner.lon + 180.0) / 360.0, (90.0 - corner.lat) / 180.0],
+        colour: cloud_colour(light, ll_to_v3(corner.lat, corner.lon)).to_array(),
+        opacity: corner.facing,
+    };
+    let corners: Vec<Option<CloudCorner>> = grid
         .corners
         .iter()
-        .map(|corner| {
-            corner.map(|corner| CloudCorner {
-                pos: corner.pos,
-                uv: [(corner.lon + 180.0) / 360.0, (90.0 - corner.lat) / 180.0],
-                colour: cloud_colour(light, ll_to_v3(corner.lat, corner.lon)).to_array(),
-                opacity: corner.facing,
-            })
-        })
+        .map(|corner| corner.map(to_cloud))
         .collect();
+    let row = grid.columns + 1;
+    let quad = |x: usize, y: usize| -> Option<[CloudCorner; 4]> {
+        let [a, b, c, d] = [
+            y * row + x,
+            y * row + x + 1,
+            (y + 1) * row + x + 1,
+            (y + 1) * row + x,
+        ]
+        .map(|index| corners[index]);
+        Some([a?, b?, c?, d?])
+    };
+    let sight = LayerSight::new(basis, rect, CLOUD_LAYER_KM);
+    let pieces = (step / HORIZON_STEP_POINTS).ceil().max(1.0) as usize;
+    let cells: Vec<[CloudCorner; 4]> = crate::on_interface_pool(|| {
+        use rayon::prelude::*;
+        (0..grid.rows * grid.columns)
+            .into_par_iter()
+            .flat_map_iter(|index| {
+                let (x, y) = (index % grid.columns, index / grid.columns);
+                let whole = quad(x, y);
+                let toward_horizon = whole.is_some_and(|quad| quad.iter().any(|c| c.opacity < 1.0));
+                if pieces == 1 || !toward_horizon {
+                    return whole.into_iter().collect::<Vec<_>>();
+                }
+                // Cut into pieces, each corner found again.
+                let [top_left, _, bottom_right, _] = whole.expect("checked above");
+                let (from, to) = (top_left.pos, bottom_right.pos);
+                let at = |i: usize, j: usize| {
+                    sight
+                        .corner(Pos2::new(
+                            from.x + (to.x - from.x) * i as f32 / pieces as f32,
+                            from.y + (to.y - from.y) * j as f32 / pieces as f32,
+                        ))
+                        .map(to_cloud)
+                };
+                let fine: Vec<Option<CloudCorner>> = (0..=pieces)
+                    .flat_map(|j| (0..=pieces).map(move |i| (i, j)))
+                    .map(|(i, j)| at(i, j))
+                    .collect();
+                let side = pieces + 1;
+                (0..pieces * pieces)
+                    .filter_map(|piece| {
+                        let (i, j) = (piece % pieces, piece / pieces);
+                        Some([
+                            fine[j * side + i]?,
+                            fine[j * side + i + 1]?,
+                            fine[(j + 1) * side + i + 1]?,
+                            fine[(j + 1) * side + i]?,
+                        ])
+                    })
+                    .collect()
+            })
+            .collect()
+    });
     // At the view's centre: how far the layer is, and so how wide a pixel there.
     let shell = raised(basis.model.geometry(), CLOUD_LAYER_KM);
     let distance = shell
@@ -113,6 +174,7 @@ pub fn cloud_shell(
         columns: grid.columns,
         rows: grid.rows,
         corners,
+        cells,
         fade,
         pixel_km,
     })
@@ -147,18 +209,32 @@ pub struct LayerGrid {
     pub corners: Vec<Option<LayerCorner>>,
 }
 
-/// The layer `height_km` up seen from `basis` over `rect`, a corner every `step`
-/// points.
-pub fn layer_grid(basis: &Basis, rect: Rect, step: f32, height_km: f64) -> LayerGrid {
-    let ground = basis.model.geometry();
-    let shell = raised(ground, height_km);
-    let below = eye_height_km(basis) < height_km;
-    let (columns, rows) = (
-        (rect.width() / step).ceil().max(1.0) as usize,
-        (rect.height() / step).ceil().max(1.0) as usize,
-    );
-    let corner = |pos: Pos2| {
-        let ray = basis.ray(rect, pos);
+/// Lines of sight from a view to a layer over the ground.
+pub struct LayerSight<'a> {
+    basis: &'a Basis,
+    rect: Rect,
+    ground: SurfaceGeometry,
+    shell: SurfaceGeometry,
+    below: bool,
+}
+
+impl<'a> LayerSight<'a> {
+    pub fn new(basis: &'a Basis, rect: Rect, height_km: f64) -> Self {
+        let ground = basis.model.geometry();
+        Self {
+            basis,
+            rect,
+            ground,
+            shell: raised(ground, height_km),
+            below: eye_height_km(basis) < height_km,
+        }
+    }
+
+    /// Where the line of sight through `pos` (points) meets the layer; `None` where
+    /// it leads away from it, or meets the ground first.
+    pub fn corner(&self, pos: Pos2) -> Option<LayerCorner> {
+        let (basis, ground, shell) = (self.basis, self.ground, self.shell);
+        let ray = basis.ray(self.rect, pos);
         let Some(hit) = shell.intersect(basis.c, ray) else {
             // A line of sight past the layer's edge still makes a corner, a clear one
             // where it passes nearest: the cells across the edge fade out instead of
@@ -177,7 +253,7 @@ pub fn layer_grid(basis: &Basis, rect: Rect, step: f32, height_km: f64) -> Layer
         };
         // From below, a line toward the ground meets the layer only on the far side
         // of the Earth.
-        if below
+        if self.below
             && ground
                 .intersect(basis.c, ray)
                 .is_some_and(|floor| floor.distance(basis.c) < hit.distance(basis.c))
@@ -194,7 +270,18 @@ pub fn layer_grid(basis: &Basis, rect: Rect, step: f32, height_km: f64) -> Layer
             lon,
             facing: (facing * facing * (3.0 - 2.0 * facing)) as f32,
         })
-    };
+    }
+}
+
+/// The layer `height_km` up seen from `basis` over `rect`, a corner every `step`
+/// points.
+pub fn layer_grid(basis: &Basis, rect: Rect, step: f32, height_km: f64) -> LayerGrid {
+    let sight = LayerSight::new(basis, rect, height_km);
+    let (columns, rows) = (
+        (rect.width() / step).ceil().max(1.0) as usize,
+        (rect.height() / step).ceil().max(1.0) as usize,
+    );
+    let corner = |pos: Pos2| sight.corner(pos);
     // Some 30,000 lines of sight for a large window at rest: 7.5 ms on one thread. On
     // the interface's own pool: on the shared one this waited behind the rows of a
     // frame being drawn, up to 140 ms (2026-11-18). A moving view takes a coarser grid.
@@ -456,6 +543,34 @@ mod tests {
             "{column:?}"
         );
         assert!(*column.last().unwrap() < 0.05, "{column:?}");
+    }
+
+    #[test]
+    fn the_mesh_is_finer_toward_the_layers_horizon() {
+        // The whole globe from 12,000 km: its edge crosses the screen.
+        let basis = view(12_000.0, 0.0, EarthModel::Wgs84);
+        let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 400.0));
+        let shell = cloud_shell(&basis, rect, 16.0, 1.0, CloudLight::Even).unwrap();
+        let width = |cell: &[CloudCorner; 4]| cell[1].pos.x - cell[0].pos.x;
+        let whole = shell.cells.iter().filter(|cell| width(cell) > 15.0).count();
+        let fine: Vec<_> = shell
+            .cells
+            .iter()
+            .filter(|cell| width(cell) <= HORIZON_STEP_POINTS + 0.01)
+            .collect();
+        assert!(
+            whole > 0 && !fine.is_empty(),
+            "{whole} whole, {} fine",
+            fine.len()
+        );
+        // The whole cells show the layer whole: those toward its edge were cut finer.
+        assert!(
+            shell
+                .cells
+                .iter()
+                .filter(|cell| width(cell) > 15.0)
+                .all(|cell| cell.iter().all(|c| c.opacity == 1.0))
+        );
     }
 
     #[test]

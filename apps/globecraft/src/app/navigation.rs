@@ -3,6 +3,7 @@ use eframe::egui::{Pos2, Rect};
 use globecraft_core::flight::Flight;
 use globecraft_core::language::LanguagePreference;
 use globecraft_core::layers::MapLayer;
+use globecraft_core::{MAX_CAMERA_ALTITUDE_KM, MIN_CAMERA_ALTITUDE_KM};
 use std::time::Instant;
 
 /// The navigator's drags and eased turns (roadmap 10.2: one of the feature states
@@ -16,6 +17,9 @@ pub(super) struct NavState {
     /// A navigator cardinal button turns the view to this heading, easing in.
     pub(super) snap_heading: Option<f64>,
 }
+
+/// Times the camera distance is corrected toward a wanted height.
+const EYE_HEIGHT_REFINEMENTS: usize = 4;
 
 impl App {
     pub(super) fn active_earth_model(&self) -> globecraft_core::earth_model::EarthModel {
@@ -139,6 +143,36 @@ impl App {
     pub(super) fn view_basis(&self, aspect: f64) -> globecraft_core::camera::Basis {
         self.cam
             .basis_over_ground(aspect, self.active_earth_model(), self.motion.ground_km)
+    }
+
+    /// How high the camera is above sea level (km): what the status bar shows. The
+    /// camera's `alt` is its distance from the point it looks at, which changes as
+    /// it tilts and looks around while the camera stays (user, 2026-11-19).
+    pub(super) fn eye_height_km(&self) -> f64 {
+        globecraft_render::clouds::eye_height_km(&self.view_basis(1.0))
+    }
+
+    /// The camera distance that puts the camera `height_km` above sea level, along
+    /// its line of sight to the point it looks at.
+    pub(super) fn alt_for_eye_height(&self, height_km: f64) -> f64 {
+        let ground = self.motion.ground_km;
+        let mut cam = self.cam;
+        // Near the ground the height grows with the distance; the Earth's curve
+        // bends that a little far up, so the rule of three is applied a few times.
+        for _ in 0..EYE_HEIGHT_REFINEMENTS {
+            let height = globecraft_render::clouds::eye_height_km(&cam.basis_over_ground(
+                1.0,
+                self.active_earth_model(),
+                ground,
+            ));
+            let above = height - ground;
+            if above <= 0.0 || (height - height_km).abs() < 1e-6 {
+                break;
+            }
+            cam.alt = (cam.alt * (height_km - ground).max(0.0) / above)
+                .clamp(MIN_CAMERA_ALTITUDE_KM, MAX_CAMERA_ALTITUDE_KM);
+        }
+        cam.alt
     }
 
     /// Relief under the overlays, when terrain is drawn.

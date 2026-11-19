@@ -51,13 +51,13 @@ pub(super) fn shown(slot: i64) -> String {
 }
 
 /// The clouds of `slot` (white on black: their opacity), from this week's maps or a
-/// week's archive, whichever is likelier to hold it first.
+/// week's archive, whichever is likelier to hold it first. Where none was kept (before
+/// the archive began, or a missed week), a map without levels: no clouds show, and the
+/// moment is not asked for again while it holds (errors are retried every minute).
 pub(super) async fn download(slot: i64, now: f64) -> Result<super::CloudMap, crate::Error> {
+    let none_kept = || super::CloudMap { levels: Vec::new() };
     if ((slot + 1) * SLOT_SECS) as f64 <= super::CLOUDS_KEPT_SINCE_UNIX {
-        return Err(crate::Error::msg(format!(
-            "Clouds are kept from {} UTC on",
-            shown((super::CLOUDS_KEPT_SINCE_UNIX / SLOT_SECS as f64) as i64)
-        )));
+        return Ok(none_kept());
     }
     let (stamp, week) = names(slot).ok_or_else(|| crate::Error::msg("time out of range"))?;
     let this_week =
@@ -75,8 +75,9 @@ pub(super) async fn download(slot: i64, now: f64) -> Result<super::CloudMap, cra
             None => fetch(&client, &still, MAP_MAX_BYTES).await?,
         }
     };
-    let bytes = found
-        .ok_or_else(|| crate::Error::msg(format!("No clouds were kept for {} UTC", shown(slot))))?;
+    let Some(bytes) = found else {
+        return Ok(none_kept());
+    };
     tokio::task::spawn_blocking(move || {
         let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?;
         Ok(super::download::cloud_map(image.into_luma8()))

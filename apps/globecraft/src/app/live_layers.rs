@@ -18,6 +18,7 @@ pub(super) use poi::river_scene;
 pub(super) use transport::TransportShapes;
 mod world;
 pub(super) use world::WorldShapes;
+pub(in crate::app) use world::together_with;
 #[cfg(test)]
 mod tests;
 use super::App;

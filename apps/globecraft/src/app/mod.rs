@@ -668,8 +668,7 @@ impl eframe::App for App {
         profile_checkpoint!(watchdog, "ui.slow.status");
         self.status_bar(ui);
         profile_checkpoint!(watchdog, "ui.slow.panes");
-        self.left_pane(ui);
-        self.right_pane(ui);
+        self.side_pane(ui);
         profile_checkpoint!(watchdog, "ui.slow.windows");
         self.settings_window(ui);
         self.menu_windows(ui);

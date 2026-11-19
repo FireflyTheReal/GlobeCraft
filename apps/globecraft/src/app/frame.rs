@@ -21,6 +21,9 @@ pub(super) struct FrameState {
     pub(super) wake: render_wake::RenderWakeup,
     pub(super) last_render: Instant,
     pub(super) last_interact: Instant,
+    /// The globe's size last frame: a pane dragged wider or narrower renders like a
+    /// moving camera, so the view follows the edge at once.
+    pub(super) last_viewport: egui::Vec2,
     pub(super) scale_bar: globecraft_render::scale_bar::ScaleBarCache,
     /// A high-quality screenshot rendering in the background.
     pub(super) still_shot: Option<still_shot::StillShot>,
@@ -56,6 +59,7 @@ impl FrameState {
             wake: render_wake::RenderWakeup::default(),
             last_render: Instant::now(),
             last_interact: Instant::now(),
+            last_viewport: egui::Vec2::ZERO,
             scale_bar: Default::default(),
             still_shot: None,
             diagnostics: false,

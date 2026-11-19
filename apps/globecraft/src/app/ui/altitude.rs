@@ -114,7 +114,8 @@ impl App {
             Action::Cancel => self.windows.altitude_editor = None,
             Action::Apply { altitude_km } => {
                 self.motion.fly = None;
-                self.cam.alt = altitude_km;
+                // The camera's height above sea level, as the status bar shows it.
+                self.cam.alt = self.alt_for_eye_height(altitude_km);
                 self.touch();
                 self.windows.altitude_editor = None;
                 ctx.request_repaint();

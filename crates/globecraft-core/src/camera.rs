@@ -275,6 +275,32 @@ impl Cam {
         }
         self.tilt = tilt.min(self.max_tilt());
     }
+    /// The view's lean from straight down, its look up past the ground included: what
+    /// the tilt controls show and change, so that they and looking around (Ctrl+drag)
+    /// move one view (user, 2026-11-19).
+    pub fn view_tilt(&self) -> f64 {
+        self.tilt + self.look_up.clamp(0.0, MAX_LOOK_UP_DEG)
+    }
+    /// Leans the view to `degrees` from straight down (past the steepest tilt up to
+    /// `MAX_TILT_DEG + MAX_LOOK_UP_DEG`): about the point it looks at as far as
+    /// `tilt_zooming_out` leans it, the rest raised about the eye into the sky. Looking
+    /// up already, the view comes down from the sky first.
+    pub fn tilt_view(&mut self, degrees: f64) {
+        if !degrees.is_finite() {
+            return;
+        }
+        let degrees = degrees.clamp(0.0, MAX_TILT_DEG + MAX_LOOK_UP_DEG);
+        if self.look_up > 0.0 && degrees >= self.tilt {
+            self.look_up = (degrees - self.tilt).min(MAX_LOOK_UP_DEG);
+            return;
+        }
+        self.look_up = 0.0;
+        self.tilt_zooming_out(degrees.min(MAX_TILT_DEG));
+        // What leaning about the ground could not reach.
+        if degrees > self.tilt + 1e-9 {
+            self.look_up = (degrees - self.tilt).min(MAX_LOOK_UP_DEG);
+        }
+    }
     /// Moves the looked-at point `rise_km` up along the line of sight, keeping the
     /// eye where it is: when the ground under the view centre turns out higher or
     /// lower (finer relief arrived, or a pan moved the centre over a slope), the view

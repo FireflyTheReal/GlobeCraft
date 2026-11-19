@@ -2,7 +2,7 @@
 use crate::app::App;
 use globecraft_core::commands::{LayerCommand, WorldCommand};
 use globecraft_core::{body::Body, earth_model::EarthModel, layers::MapLayer};
-use globecraft_data::settings::workspace::RightPane;
+use globecraft_data::settings::workspace::PaneTab;
 use serde_json::{Value, json};
 
 impl App {
@@ -178,13 +178,13 @@ impl App {
                 self.flat_earth.open = false;
                 self.explorer.choose(body, &self.files.jobs);
                 if body == Body::Custom {
-                    self.settings.workspace.open_right(RightPane::Explorer);
+                    self.settings.workspace.open_right(PaneTab::Explorer);
                 }
                 self.touch();
                 json!({"body": p.body})
             }
             WorldCommand::Explorer => {
-                self.settings.workspace.toggle_right(RightPane::Explorer);
+                self.settings.workspace.toggle_right(PaneTab::Explorer);
                 json!({})
             }
         })

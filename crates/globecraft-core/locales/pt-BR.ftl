@@ -406,6 +406,7 @@ explorer-sky-preview = O céu personalizado é pré-visualizado aqui; não é us
 live-clouds-failed = Falha ao atualizar nuvens
 live-cached-image =  (exibindo imagem em cache)
 live-clouds-ok = Nuvens: Matt Eason (atualização a cada 3 horas)
+live-clouds-none-kept = Nenhuma nuvem guardada para { $time } UTC (guardadas desde 9 de março de 2026, a cada 3 horas)
 live-clouds-archived = Nuvens de { $time } UTC (Matt Eason, guardadas por Joshua Binswanger)
 live-clouds-loading = Nuvens: carregando imagem de satélite…
 live-radar-failed = Falha ao atualizar radar
@@ -646,17 +647,6 @@ satellites-hover-tooltip =
     { $model ->
         [sgp4] Prevista com SGP4 a partir dos elementos da CelesTrak
        *[simple] Posição orbital estimada • CelesTrak
-    }
-transport-airport-hover-tooltip =
-    { $name }
-    IATA { $iata } • ICAO { $icao }
-    { $class ->
-        [international] Aeroporto internacional
-        [public] Aeroporto público
-        [regional] Aeroporto regional
-        [military] Aeródromo militar
-        [private] Aeródromo privado
-       *[other] Aeródromo
     }
 
 update-available-label = Atualizar para v{ $version }
@@ -1039,7 +1029,16 @@ cmd-assistant-stop-help = Encerra a solicitação atual do assistente; as açõe
 cmd-ui-pane-measure = Painel de medição
 cmd-ui-pane-measure-help = Mostra medições, unidades e histórico da régua.
 cmd-ui-left-pane = Painel lateral
-cmd-ui-left-pane-help = Mostra ou oculta o painel à esquerda do globo.
+cmd-ui-left-pane-help = Mostra ou oculta o painel lateral (as abas continuam).
+cmd-ui-pane-side = Posição do painel lateral
+cmd-ui-pane-side-help = Coloca o painel lateral à esquerda ou à direita do globo.
+cmd-ui-pane-move-tab = Mover aba do painel
+cmd-ui-pane-move-tab-help = Move uma aba do painel lateral para outra posição.
+pane-side-left = Fixar à esquerda
+pane-side-right = Fixar à direita
+pane-side-switch-tooltip = Levar o painel para o outro lado do globo
+pane-flight-title = Voo
+pane-satellite-title = Satélite
 cmd-ui-navigation-controls = Navegador
 cmd-ui-navigation-controls-help = Mostra ou oculta a bússola e o zoom sobre o globo.
 ribbon-group-time = Tempo
@@ -1072,6 +1071,9 @@ timeline-speed-minute = 1 min/s
 timeline-speed-hour = 1 h/s
 timeline-speed-six-hours = 6 h/s
 timeline-speed-day = 1 dia/s
+timeline-step-back-help = Um passo para trás (uma marca da faixa)
+timeline-step-forward-help = Um passo para a frente (uma marca da faixa)
+timeline-settings-help = Ajustes de tempo: voltar ao agora, velocidade, janela de eventos, extensão
 timeline-range-day = 1 dia
 timeline-range-week = 1 semana
 timeline-range-month = 1 mês

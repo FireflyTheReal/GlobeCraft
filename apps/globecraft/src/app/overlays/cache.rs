@@ -390,11 +390,12 @@ impl OverlayCache {
                     self.worker.submit(geometry_view, boundaries.clone());
                     self.requested = Some(request);
                 }
-                // Hold the previous dataset's shapes while the worker prepares
-                // the replacement, but only when they were projected for
-                // exactly this camera and layer set; a moved camera must never
-                // paint geometry from another view.
-                return self.stale == Some(current);
+                // Hold the previous shapes while the worker prepares the
+                // replacement, but only when they were projected for exactly this
+                // camera; a moved camera must never paint geometry from another
+                // view. Another layer set keeps them too: a layer turned on or off
+                // blanked every border for a moment (user 2026-11-19).
+                return self.stale.is_some_and(|stale| stale.view == current.view);
             }
         }
         // Never paint shapes projected for a different displayed camera or layer set.

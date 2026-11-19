@@ -9,7 +9,7 @@ use super::live_layers::{
 };
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
 use globecraft_core::{commands::LegendCommand, layers::MapLayer};
-use globecraft_data::settings::workspace::RightPane;
+use globecraft_data::settings::workspace::PaneTab;
 use globecraft_data::{
     aircraft::AircraftClass, live_maps::RADAR_BANDS, satellites::SatelliteGroup,
 };
@@ -174,15 +174,15 @@ impl App {
         let LegendCommand::Show(p) = command;
         let on = p.toggled(self.legend_open());
         if on {
-            self.settings.workspace.open_right(RightPane::Legend);
+            self.settings.workspace.open_right(PaneTab::Legend);
         } else {
-            self.settings.workspace.close_right(RightPane::Legend);
+            self.settings.workspace.close_right(PaneTab::Legend);
         }
         json!({"visible": on})
     }
 
     pub(super) fn legend_open(&self) -> bool {
-        self.settings.workspace.right_is_open(RightPane::Legend)
+        self.settings.workspace.right_is_open(PaneTab::Legend)
     }
 
     /// Opens the legend's pane when a key appears on the globe (without taking the view
@@ -194,9 +194,9 @@ impl App {
             .iter()
             .any(|kind| !self.panes.legend.seen.contains(kind))
         {
-            self.settings.workspace.add_right(RightPane::Legend);
+            self.settings.workspace.add_right(PaneTab::Legend);
         } else if kinds.is_empty() && !self.panes.legend.seen.is_empty() {
-            self.settings.workspace.close_right(RightPane::Legend);
+            self.settings.workspace.close_right(PaneTab::Legend);
         }
         self.panes.legend.seen = kinds;
     }

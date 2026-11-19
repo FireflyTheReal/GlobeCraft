@@ -2,9 +2,8 @@
 //! tessellated meshes, so a still view costs nothing per frame.
 use super::fade::{TiledShapes, styled_line};
 use eframe::egui::{self, Align2, Color32, Rect, Shape, Stroke, Vec2};
-use globecraft_core::language::Lang;
 use globecraft_data::settings::map_style::{DashStyle, LineType, MapStyle};
-use globecraft_data::transport::{Airport, LineKind};
+use globecraft_data::transport::LineKind;
 use globecraft_data::vector_tiles::TileFade;
 use globecraft_render::live_layers::{LiveGeometry, ProjectedTransport};
 use globecraft_render::overlays::{LabelSpace, LabelSpaceKey, PlacedLabels};
@@ -14,7 +13,6 @@ use std::time::Instant;
 const LABEL_FONT_POINTS: f32 = 11.0;
 const LABEL_OFFSET_POINTS: f32 = 8.0;
 const AIRPORT_MARKER_POINTS: f32 = 4.0;
-const HOVER_RADIUS_POINTS: f32 = 12.0;
 /// Free room kept around each airport marker and name, map points.
 const LABEL_PADDING_POINTS: f32 = 2.0;
 const AIRPORT_COLOR: Color32 = Color32::from_rgb(52, 120, 220);
@@ -110,59 +108,6 @@ impl TransportShapes {
     pub(in crate::app) fn draw_airports(&self, painter: &egui::Painter) {
         self.airports.draw(painter, Instant::now());
     }
-    /// The nearest airport under the pointer, with its codes and class.
-    pub(in crate::app) fn hover(
-        &self,
-        painter: &egui::Painter,
-        geometry: &LiveGeometry,
-        lang: Lang,
-    ) {
-        let Some(pointer) = painter.ctx().pointer_hover_pos() else {
-            return;
-        };
-        let Some(snapshot) = &geometry.input.transport else {
-            return;
-        };
-        let scale = geometry.input.view.map_scale;
-        let mut nearest = None;
-        let mut minimum = (HOVER_RADIUS_POINTS * scale).powi(2);
-        for projected in &geometry.transport.airports {
-            let distance = (pointer - projected.position).length_sq();
-            if distance < minimum {
-                minimum = distance;
-                nearest = Some((projected.position, projected.tile, projected.index));
-            }
-        }
-        let Some((at, tile, index)) = nearest else {
-            return;
-        };
-        let Some(airport) = snapshot
-            .tiles
-            .get(tile)
-            .and_then(|tile| tile.airports.get(index))
-        else {
-            return;
-        };
-        let text = tooltip(lang, airport);
-        super::hover_label(painter, geometry.input.view.rect, at, &text, scale);
-    }
-}
-
-fn tooltip(lang: Lang, airport: &Airport) -> String {
-    let class = if airport.class.is_empty() {
-        "other"
-    } else {
-        airport.class.as_str()
-    };
-    lang.format(
-        "transport-airport-hover-tooltip",
-        &[
-            ("name", airport.name.as_str().into()),
-            ("iata", airport.iata.as_deref().unwrap_or("—").into()),
-            ("icao", airport.icao.as_deref().unwrap_or("—").into()),
-            ("class", class.into()),
-        ],
-    )
 }
 
 fn lines(
@@ -274,34 +219,4 @@ pub(super) fn faded_text(position: egui::Pos2, galley: Arc<egui::Galley>, opacit
     Shape::Text(
         egui::epaint::TextShape::new(position, galley, Color32::BLACK).with_opacity_factor(opacity),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn airport_tooltip_names_codes_and_class() {
-        let airport = Airport {
-            lat: 0.0,
-            lon: 0.0,
-            name: "Example".into(),
-            iata: Some("EXA".into()),
-            icao: Some("EXAM".into()),
-            class: "international".into(),
-        };
-        let text = tooltip(Lang::En, &airport);
-        assert!(text.contains("Example"), "{text}");
-        assert!(text.contains("IATA EXA • ICAO EXAM"), "{text}");
-        assert!(text.contains("International airport"), "{text}");
-        let without_codes = Airport {
-            iata: None,
-            icao: None,
-            class: String::new(),
-            ..airport
-        };
-        let text = tooltip(Lang::PtBr, &without_codes);
-        assert!(text.contains("IATA — • ICAO —"), "{text}");
-        assert!(text.contains("Aeródromo"), "{text}");
-    }
 }

@@ -365,7 +365,7 @@ impl App {
                         "statusbar-camera-altitude",
                         &[(
                             "distance",
-                            self.distance_units().altitude(self.cam.alt).into(),
+                            self.distance_units().altitude(self.eye_height_km()).into(),
                         )],
                     );
                     let altitude_response = ui
@@ -386,7 +386,7 @@ impl App {
                     self.units_menu(&altitude_response);
                     if altitude_response.clicked() {
                         self.windows.altitude_editor = Some(super::altitude::AltitudeEditor::new(
-                            self.cam.alt,
+                            self.eye_height_km(),
                             self.distance_units(),
                             altitude_response.rect.left_top(),
                         ));

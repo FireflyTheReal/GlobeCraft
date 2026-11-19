@@ -45,6 +45,8 @@ impl App {
                 }
                 self.cam.clamp_tilt();
                 if let Some(tilt) = p.tilt_deg {
+                    // A tilt given leans about the ground point, without a look up.
+                    self.cam.look_up = 0.0;
                     // A given altitude is kept (the tilt yields); otherwise the tilt
                     // wins and the camera backs off as far as it needs.
                     if p.altitude_km.is_some() {
@@ -97,10 +99,10 @@ impl App {
                 self.motion.fly = None;
                 let tilt = match (p.tilt_deg, p.step) {
                     (Some(tilt), _) => tilt,
-                    (None, Some(step)) => self.cam.tilt + step,
+                    (None, Some(step)) => self.cam.view_tilt() + step,
                     (None, None) => return Err("give tilt_deg or step".into()),
                 };
-                self.cam.tilt_zooming_out(tilt);
+                self.cam.tilt_view(tilt);
                 self.touch();
                 self.camera_json()
             }

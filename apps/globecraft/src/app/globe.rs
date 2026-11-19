@@ -80,7 +80,12 @@ impl App {
                 .request_repaint_after(Duration::from_secs_f64(secs));
         }
         let interacting = self.navigation_input(ui, &resp, rect, ruler_captured, press.swallow);
-        if interacting || resp.dragged() {
+        // A resized globe (a pane's edge dragged, the window resized) renders at the
+        // lighter motion size until it settles: at full size each step of the drag
+        // waited for a whole frame and the old view sat clipped (user 2026-11-19).
+        let resized = viewport.size() != self.frame.last_viewport;
+        self.frame.last_viewport = viewport.size();
+        if interacting || resp.dragged() || resized {
             self.touch();
         }
 
@@ -150,7 +155,10 @@ impl App {
                 .frame_aurora()
                 .map(|aurora| (aurora.opacity.to_bits(), aurora.grid.forecast.to_bits())),
         }
-        .keys(now_unix());
+        // The app's time, not the clock's: moved on the timeline or played, the sun,
+        // the night and the clouds change with it while the camera holds (they changed
+        // only while it moved, user 2026-11-19).
+        .keys(self.scene_unix());
         let state = keys.state.wrapping_add(relief_step);
         let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;
@@ -400,12 +408,6 @@ impl App {
             ui.request_repaint();
         }
         self.timeline_bar(&ui.ctx().clone(), rect);
-        // One card at a time (the last selected; see `close_other_cards`).
-        self.selected_flight_card(&ui.ctx().clone(), rect);
-        if self.layer(MapLayer::Satellites) {
-            self.selected_satellite_card(&ui.ctx().clone(), rect);
-        }
-        self.here_window(&ui.ctx().clone(), rect);
         self.legend_watch();
         super::ui::surface::remember_globe_rect(ui.ctx(), rect);
 
@@ -413,8 +415,6 @@ impl App {
         self.compare_split(ui, &painter, rect);
         let credits = self.map_credits(lg, &display_basis, rect);
         self.paint_credits(&painter, rect, &credits);
-
-        self.paint_live_map_credit(&painter, rect);
 
         self.globe_context_menu(ui, &resp, menu_suppressed);
 
@@ -500,8 +500,8 @@ impl App {
                 }
             });
             match tilts {
-                Some(true) => self.cam.tilt_zooming_out(
-                    self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
+                Some(true) => self.cam.tilt_view(
+                    self.cam.view_tilt() - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
                 ),
                 Some(false) => {
                     self.cam.heading = wrap_lon(
@@ -525,7 +525,7 @@ impl App {
                 if amount != 0.0 {
                     self.motion.fly = None;
                     self.cam
-                        .tilt_zooming_out(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
+                        .tilt_view(self.cam.view_tilt() + amount * SCROLL_TILT_DEG_PER_POINT);
                     interacting = true;
                 }
             }
@@ -586,7 +586,7 @@ impl App {
                 if tilt != 0.0 {
                     self.motion.fly = None;
                     self.cam
-                        .tilt_zooming_out(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
+                        .tilt_view(self.cam.view_tilt() + tilt * KEY_TILT_DEG_PER_SECOND * dt);
                     interacting = true;
                 }
             }
@@ -867,12 +867,10 @@ impl App {
             self.map_data.transport_shapes.draw_lines(painter);
         }
         self.draw_overlays(painter, &display_basis, rect);
-        if let Some(geometry) = &live_geometry {
+        // No hover card on airports, as on places and peaks (user 2026-11-19).
+        if live_geometry.is_some() {
             self.map_data.poi_shapes.draw_labels(painter);
             self.map_data.transport_shapes.draw_airports(painter);
-            self.map_data
-                .transport_shapes
-                .hover(painter, geometry, self.lang);
         }
         self.user_layers.paint_features(painter);
         self.user_layers.hover(painter, rect, self.lang);
@@ -917,37 +915,6 @@ impl App {
                 Align2::LEFT_BOTTOM,
                 label,
                 FontId::proportional(12.0 * self.settings.map_scale),
-                Color32::WHITE,
-            );
-        }
-    }
-
-    /// The source and credit of the cloud and radar layers, when either is shown.
-    fn paint_live_map_credit(&self, painter: &egui::Painter, rect: Rect) {
-        let lg = self.lang;
-        if self.explorer.on_earth() && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))
-        {
-            let source = self.live.maps.status(
-                self.layer(MapLayer::Clouds),
-                self.layer(MapLayer::Radar),
-                lg,
-            );
-            let credit = if self.layer(MapLayer::Clouds) && self.layer(MapLayer::Radar) {
-                format!(
-                    "{}\n{}",
-                    lg.text("live-cloud-credit"),
-                    lg.text("live-radar-credit")
-                )
-            } else if self.layer(MapLayer::Clouds) {
-                lg.text("live-cloud-credit").into()
-            } else {
-                lg.text("live-radar-credit").into()
-            };
-            painter.text(
-                rect.left_bottom() + Vec2::new(12.0, -58.0),
-                Align2::LEFT_BOTTOM,
-                format!("{source}\n{credit}"),
-                FontId::proportional(11.0),
                 Color32::WHITE,
             );
         }
