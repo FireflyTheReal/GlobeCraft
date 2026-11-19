@@ -264,15 +264,14 @@ impl WorkspaceLayout {
         self.right_open.retain(|pane| !pane.is_details());
         match value.get("right_pane") {
             Some(serde_json::Value::Null) => self.right_pane = None,
-            Some(v) => {
-                if let Some(pane) = v
-                    .as_str()
-                    .and_then(PaneTab::from_code)
-                    .filter(|pane| !pane.is_details())
-                {
-                    self.open_right(pane);
+            Some(v) => match v.as_str().and_then(PaneTab::from_code) {
+                // Its selection is gone: the last tab still open shows instead.
+                Some(pane) if pane.is_details() => {
+                    self.right_pane = self.right_open.last().copied();
                 }
-            }
+                Some(pane) => self.open_right(pane),
+                None => {}
+            },
             None => {}
         }
         if self
@@ -343,7 +342,8 @@ mod tests {
         );
         restored.apply(&serde_json::to_value(restored.clone()).unwrap());
         assert_eq!(restored.right_open, [PaneTab::Measure, PaneTab::Layers]);
-        assert_eq!(restored.right_pane, None);
+        // The pane was on the flight's details: it opens on the last tab left.
+        assert_eq!(restored.right_pane, Some(PaneTab::Layers));
     }
 
     #[test]

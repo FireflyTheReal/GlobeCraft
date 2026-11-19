@@ -498,6 +498,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","radar","clouds","aurora","flights","vessels","satellites","roads","buildings","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
+        "layer.cloudResolution",
+        "layer-cloud-resolution",
+        "cloud",
+        Live,
+        View,
+        r#"{"type":"object","properties":{"pixels":{"type":"integer","enum":[2048,4096,8192],"description":"The cloud map's width: finer shows more detail close in, coarser loads and plays faster on the timeline"}},"required":["pixels"]}"#
+    ),
+    command!(
         "layer.opacity",
         "layer-opacity",
         "transparency",

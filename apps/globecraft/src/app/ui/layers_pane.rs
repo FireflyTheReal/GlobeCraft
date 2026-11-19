@@ -114,11 +114,14 @@ fn toc_row(ui: &mut Ui, t: &Tokens, row: TocRow<'_>) -> egui::Response {
         if enabled { t.icon } else { t.text_disabled },
         if enabled { t.accent } else { t.text_disabled },
     );
-    p.with_clip_rect(r).text(
-        pos2(x0 + 42.0, r.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        regular(12.5),
+    // Cut short with "…" in a narrow pane (the tooltip holds the whole name).
+    let text_x = x0 + 42.0;
+    let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), regular(12.5), ink);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((r.max.x - text_x - 4.0).max(0.0));
+    let galley = p.layout_job(job);
+    p.galley(
+        pos2(text_x, r.center().y - galley.size().y / 2.0),
+        galley,
         ink,
     );
     let resp = resp.on_hover_text(label);

@@ -1153,3 +1153,50 @@ fn city_turn_frame_times() {
         times[times.len() - 1]
     );
 }
+
+/// A playing timeline with the sun on: how many of the frames finished reach the
+/// screen (user 2026-11-19: playback very choppy, mostly the sunlight). Prints the
+/// globe frames shown in 120 interface steps of ~16 ms and the scene time covered.
+#[test]
+#[ignore = "manual probe: plays the timeline and counts the frames shown"]
+fn timeline_playback_frames() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    app.run(
+        "camera.set",
+        json!({"lat": 20.0, "lon": 10.0, "altitude_km": 14_000.0, "tilt_deg": 0.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 10.0);
+    // PROBE_SPEED: hours of scene time a second.
+    let speed = std::env::var("PROBE_SPEED")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    h.state_mut()
+        .run("time.play", json!({"hours_per_second": speed}))
+        .expect("play");
+    let started_at = h.state().scene_unix();
+    let shown_ptr = |h: &Harness<'static, App>| {
+        h.state()
+            .frame
+            .image
+            .as_ref()
+            .map(|f| Arc::as_ptr(&f.pixels))
+    };
+    let mut last = shown_ptr(&h);
+    let mut frames = 0;
+    for _ in 0..120 {
+        h.step();
+        let shown = shown_ptr(&h);
+        frames += usize::from(shown != last);
+        last = shown;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    println!(
+        "{frames} globe frames shown in 120 steps; scene time moved {:.0} min",
+        (h.state().scene_unix() - started_at) / 60.0
+    );
+}

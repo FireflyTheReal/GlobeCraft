@@ -170,6 +170,10 @@ impl App {
                 on(str_param(params, "language")
                     .is_some_and(|l| l == self.locale.preference.code()))
             }
+            "layer.cloudResolution" => on(params
+                .get("pixels")
+                .and_then(Value::as_u64)
+                .is_some_and(|px| px == u64::from(self.settings.layers.cloud_resolution_px))),
             "ruler.unit" => {
                 on(str_param(params, "unit").is_some_and(|u| u == self.settings.ruler_unit.code()))
             }

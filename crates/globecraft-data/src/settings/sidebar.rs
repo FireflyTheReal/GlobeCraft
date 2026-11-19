@@ -75,7 +75,7 @@ mod tests {
     fn the_old_left_pane_becomes_the_side_panes_first_tabs() {
         let mut restored = Settings::default();
         restored
-            .apply_json(br#"{"sidebar":{"panel":"layers","open":true},"workspace":{"right_open":["measure"],"right_pane":null}}"#)
+            .apply_json(br#"{"sidebar":{"panel":"layers","open":true,"width_points":420},"workspace":{"right_open":["measure"],"right_pane":null,"right_width_points":300}}"#)
             .unwrap();
         let workspace = &restored.workspace;
         assert_eq!(
@@ -83,6 +83,10 @@ mod tests {
             [PaneTab::Layers, PaneTab::Places, PaneTab::Measure]
         );
         assert_eq!(workspace.right_pane, Some(PaneTab::Layers));
+        assert_eq!(
+            workspace.right_width_points, 420.0,
+            "the wider pane's width"
+        );
         // Closed, it stays closed; the right pane's tab stays in view.
         let mut restored = Settings::default();
         restored

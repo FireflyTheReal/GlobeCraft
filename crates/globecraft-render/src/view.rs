@@ -15,6 +15,16 @@ const MIN_RENDER_WIDTH_PX: usize = 64;
 const MAX_RENDER_WIDTH_PX: usize = 2000;
 const MIN_RENDER_HEIGHT_PX: usize = 32;
 pub const SCENE_TIME_UPDATE_INTERVAL_SECS: f64 = 60.0;
+/// The moment a frame is drawn for: at rest the scene's time to the minute, so a still
+/// view keeps its frame while the clock runs; while the time plays exactly that time,
+/// or the sun moved in jumps a minute of scene time apart (user, 2026-11-19).
+pub fn frame_time(scene_unix: f64, playing: bool) -> f64 {
+    if playing {
+        scene_unix
+    } else {
+        (scene_unix / SCENE_TIME_UPDATE_INTERVAL_SECS).floor() * SCENE_TIME_UPDATE_INTERVAL_SECS
+    }
+}
 /// The raster for a viewport: full resolution at rest, smaller while moving (smaller
 /// still with `relief`, 3D terrain on screen).
 /// The raster for a view `size_points` large. A moving view (`idle` false) renders
@@ -99,9 +109,13 @@ pub struct ViewKeys {
     pub presentation: u64,
 }
 impl RasterView {
-    pub fn keys(&self, unix_secs: f64) -> ViewKeys {
+    /// The frame's keys at `frame_time` (see [`frame_time`]). The time is in the state
+    /// key only: a frame drawn a moment of scene time ago still shows (as one drawn a
+    /// moment of camera motion ago does); in the presentation key every frame of a
+    /// playing timeline was out of date before it finished, and few were shown.
+    pub fn keys(&self, frame_time: f64) -> ViewKeys {
         let sun_key = if self.sunlight || self.sky {
-            (unix_secs / SCENE_TIME_UPDATE_INTERVAL_SECS) as u64
+            frame_time.to_bits()
         } else {
             0
         };
@@ -152,7 +166,6 @@ impl RasterView {
             self.atmosphere,
             self.terrain,
             (self.terrain_exaggeration.to_bits(), self.smooth_relief),
-            sun_key,
             (
                 self.model.code(),
                 self.sky,
@@ -216,7 +229,12 @@ mod tests {
         assert_ne!(sky_on.keys(120.0).state, starless.keys(120.0).state);
         view.sky = true;
         assert_ne!(off.presentation, view.keys(120.0).presentation);
-        assert_ne!(view.keys(120.0).presentation, view.keys(180.0).presentation);
+        // Another moment draws a new frame; the last one shows until it is done.
+        assert_ne!(view.keys(120.0).state, view.keys(180.0).state);
+        assert_eq!(view.keys(120.0).presentation, view.keys(180.0).presentation);
+        // At rest the frame keeps its minute; playing, every moment is its own.
+        assert_eq!(frame_time(125.0, false), frame_time(170.0, false));
+        assert_eq!(frame_time(125.5, true), 125.5);
     }
     #[test]
     fn motion_changes_state_but_preserves_presentation_compatibility() {
@@ -259,7 +277,8 @@ mod tests {
         let moved = view.keys(120.0);
         assert_ne!(moved.state, original.state);
         assert_eq!(moved.presentation, original.presentation);
-        assert_ne!(view.keys(180.0).presentation, moved.presentation);
+        assert_ne!(view.keys(180.0).state, moved.state);
+        assert_eq!(view.keys(180.0).presentation, moved.presentation);
         view.grid = true;
         assert_ne!(view.keys(120.0).presentation, moved.presentation);
         // A swipe compare's release needs new frames (its split does not).

@@ -269,16 +269,15 @@ impl App {
         lod_scale: f32,
     ) -> RenderCfg {
         let grid_step = globecraft_render::grid_step(self.cam.alt, width, height);
+        // The frame's moment, as its key holds it.
+        let time = self.frame_time();
         let sun = if self.layer(MapLayer::Sunlight) {
-            let (la, lo) = subsolar(self.scene_unix());
+            let (la, lo) = subsolar(time);
             Some(ll_to_v3(la, lo))
         } else {
             None
         };
         let (prov, rel) = self.imagery_source();
-        // The sky turns in steps of this interval (a frame key holds it).
-        let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-        let time = (self.scene_unix() / interval).floor() * interval;
         let sky = if let Some(image) = self.sky.image.clone().filter(|_| self.sky_ready()) {
             let (latitude, longitude) = subsolar(time);
             match globecraft_render::celestial::SkyBackdrop::new(
@@ -461,13 +460,16 @@ impl App {
         // A new frame of the view on screen (tiles arrived, or the view came to
         // rest) fades in over the picture it replaces instead of popping in (roadmap
         // 1.6). The two textures swap roles, so the old picture costs no upload.
-        let same_view = same_view(
-            self.frame.texture.is_some(),
-            self.frame.renderer.displayed,
-            self.frame.renderer.displayed_rect,
-            frame.request.cam,
-            frame.request.overlays.as_ref().map(|input| input.view.rect),
-        );
+        // A playing time replaces its frames as a moving camera does: faded, each one
+        // trailed the last and the sun moved in jumps (user, 2026-11-19).
+        let same_view = self.time.speed() == 0.0
+            && same_view(
+                self.frame.texture.is_some(),
+                self.frame.renderer.displayed,
+                self.frame.renderer.displayed_rect,
+                frame.request.cam,
+                frame.request.overlays.as_ref().map(|input| input.view.rect),
+            );
         let fading = self.frame.fade_from.is_some()
             && self
                 .frame

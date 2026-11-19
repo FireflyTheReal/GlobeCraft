@@ -261,6 +261,14 @@ fn migrate_left_pane(
         }
     }
     workspace.insert("right_open".to_owned(), open.into());
+    // The one pane takes the wider of the two it replaces.
+    let width = |value: Option<&Value>| value.and_then(Value::as_f64);
+    if left_open
+        && let Some(left) = width(sidebar.and_then(|s| s.get("width_points")))
+        && width(workspace.get("right_width_points")).is_none_or(|right| left > right)
+    {
+        workspace.insert("right_width_points".to_owned(), left.into());
+    }
     if left_open && workspace.get("right_pane").is_none_or(Value::is_null) {
         workspace.insert("right_pane".to_owned(), panel.into());
     }

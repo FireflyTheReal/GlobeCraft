@@ -42,6 +42,10 @@ const MIN_TEXEL_PER_PIXEL: f64 = 0.5;
 /// straight across larger cells it showed in blocks against the sky (user's
 /// recording, 2026-11-19).
 const HORIZON_STEP_POINTS: f32 = 4.0;
+/// Cells whose corners' light differs by more than this (a colour channel, 0 to 1) lie
+/// across the day/night edge: they are cut as finely, or the twilight, narrower than
+/// a moving view's cells, showed in steps (user, 2026-11-19).
+const TERMINATOR_SPLIT_LIGHT: f32 = 0.04;
 
 /// How the clouds are lit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,7 +134,15 @@ pub fn cloud_shell(
                 let (x, y) = (index % grid.columns, index / grid.columns);
                 let whole = quad(x, y);
                 let toward_horizon = whole.is_some_and(|quad| quad.iter().any(|c| c.opacity < 1.0));
-                if pieces == 1 || !toward_horizon {
+                let across_twilight = whole.is_some_and(|quad| {
+                    let light = |c: &CloudCorner| Vec3::from(c.colour);
+                    let (low, high) = quad.iter().fold(
+                        (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                        |(low, high), c| (low.min(light(c)), high.max(light(c))),
+                    );
+                    (high - low).max_element() > TERMINATOR_SPLIT_LIGHT
+                });
+                if pieces == 1 || !(toward_horizon || across_twilight) {
                     return whole.into_iter().collect::<Vec<_>>();
                 }
                 // Cut into pieces, each corner found again.
@@ -571,6 +583,38 @@ mod tests {
                 .filter(|cell| width(cell) > 15.0)
                 .all(|cell| cell.iter().all(|c| c.opacity == 1.0))
         );
+    }
+
+    #[test]
+    fn the_mesh_is_finer_across_the_day_and_night_edge() {
+        // From 3,000 km over the evening edge: the sun sets 90° west of the view.
+        let basis = view(3_000.0, 0.0, EarthModel::Wgs84);
+        let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(600.0, 400.0));
+        let sun = ll_to_v3(0.0, -90.0);
+        let shell = cloud_shell(&basis, rect, 16.0, 1.0, CloudLight::Sun(sun)).unwrap();
+        let width = |cell: &[CloudCorner; 4]| cell[1].pos.x - cell[0].pos.x;
+        let light = |c: &CloudCorner| Vec3::from(c.colour);
+        let fine = shell
+            .cells
+            .iter()
+            .filter(|cell| width(cell) <= HORIZON_STEP_POINTS + 0.01)
+            .count();
+        assert!(fine > 0, "the edge is cut finer");
+        // No cell left whole spans the edge.
+        assert!(
+            shell
+                .cells
+                .iter()
+                .filter(|cell| width(cell) > 15.0)
+                .all(|cell| {
+                    cell.iter().all(|c| {
+                        (light(c) - light(&cell[0])).abs().max_element() <= TERMINATOR_SPLIT_LIGHT
+                    })
+                })
+        );
+        // Lit evenly, nothing is cut but toward the layer's horizon (none here).
+        let even = cloud_shell(&basis, rect, 16.0, 1.0, CloudLight::Even).unwrap();
+        assert!(even.cells.iter().all(|cell| width(cell) > 15.0));
     }
 
     #[test]

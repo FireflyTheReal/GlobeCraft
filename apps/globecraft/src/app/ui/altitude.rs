@@ -116,6 +116,8 @@ impl App {
                 self.motion.fly = None;
                 // The camera's height above sea level, as the status bar shows it.
                 self.cam.alt = self.alt_for_eye_height(altitude_km);
+                // Far out the view levels, as when zooming out (the lock of 2026-11-17).
+                self.cam.clamp_tilt();
                 self.touch();
                 self.windows.altitude_editor = None;
                 ctx.request_repaint();

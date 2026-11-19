@@ -8,7 +8,9 @@ use super::theme::{Tokens, regular, semibold};
 use crate::app::App;
 use eframe::egui::{self, Align2, Pos2, Rect, Sense, Ui, vec2};
 use globecraft_core::layers::MapLayer;
-use globecraft_core::time::{DAY_SECS, HOUR_SECS, date_utc, format_utc, parse_iso};
+use globecraft_core::time::{
+    DAY_SECS, HOUR_SECS, civil_from_days, date_utc, days_from_civil, format_utc, parse_iso,
+};
 use globecraft_data::tiles::Provider;
 use serde_json::{Value, json};
 
@@ -121,10 +123,8 @@ impl App {
             egui::Stroke::new(3.0, t.text_dim.gamma_multiply(0.35)),
         );
         // Ticks across the line, dates under them where there is room.
-        let tick = tick_secs(span);
-        let mut at = (start / tick).ceil() * tick;
         let mut free_from = f32::MIN;
-        while at <= end {
+        for at in tick_times(start, end, span) {
             let x = x_of(at);
             painter.line_segment(
                 [
@@ -148,7 +148,6 @@ impl App {
                 );
                 free_from = x + label_w / 2.0 + TICK_LABEL_GAP;
             }
-            at += tick;
         }
         // Where dated data changes, just under the line.
         let below = line.top() + 6.0;
@@ -259,14 +258,60 @@ fn tick_label(time: f64, span: f64) -> String {
     }
 }
 
+/// The ticks between `start` and `end`: every few hours or every day from midnight
+/// UTC, and on the first of each month or of each year across longer spans (fixed
+/// 30- and 365-day steps drifted off them).
+fn tick_times(start: f64, end: f64, span: f64) -> Vec<f64> {
+    let days = span / DAY_SECS;
+    if days <= 62.0 {
+        let tick = tick_secs(span);
+        let first = (start / tick).ceil() * tick;
+        return (0..)
+            .map(|i| first + f64::from(i) * tick)
+            .take_while(|at| *at <= end)
+            .collect();
+    }
+    let months_apart = if days <= 400.0 { 1 } else { 12 };
+    let (mut year, month, _) = civil_from_days((start / DAY_SECS).floor() as i64);
+    // The first tick's month: the next month (or year) to begin after `start`.
+    let mut month = i64::from(month);
+    if months_apart == 12 {
+        month = 1;
+        year += 1;
+    }
+    let mut ticks = Vec::new();
+    loop {
+        let at = days_from_civil(year, month, 1) as f64 * DAY_SECS;
+        if at > end {
+            return ticks;
+        }
+        if at >= start {
+            ticks.push(at);
+        }
+        month += months_apart;
+        if month > 12 {
+            (year, month) = (year + (month - 1) / 12, (month - 1) % 12 + 1);
+        }
+    }
+}
+
 /// Date and time without the zone, for the window's start.
 fn short_utc(time: f64) -> String {
     format_utc(time)[..16].to_owned()
 }
 
-/// One step back or forward on the timeline: a tick of the track.
-pub(super) fn step_secs(span: f64) -> f64 {
-    tick_secs(span)
+/// One step back or forward on the timeline from `unix`: the track's next tick that
+/// way (the 1st of a month or year across long spans, as the ticks).
+pub(super) fn step_to(unix: f64, span: f64, forward: bool) -> f64 {
+    /// A time this close to a tick is on it.
+    const ON_TICK_SECS: f64 = 1.0;
+    let ticks = tick_times(unix - span, unix + span, span);
+    let next = if forward {
+        ticks.into_iter().find(|t| *t > unix + ON_TICK_SECS)
+    } else {
+        ticks.into_iter().rev().find(|t| *t < unix - ON_TICK_SECS)
+    };
+    next.unwrap_or(unix)
 }
 
 /// The step between the track's ticks for a span: hours across a day, days across a
@@ -303,6 +348,56 @@ mod tests {
         );
         let ahead = track_end(now + 3.0 * DAY_SECS, now, span, None);
         assert!(ahead > now + 3.0 * DAY_SECS);
+    }
+
+    #[test]
+    fn long_spans_tick_on_the_first_of_the_month_or_year() {
+        let at = |date: &str| parse_iso(date).unwrap();
+        let ticks = tick_times(at("2026-01-15"), at("2026-05-20"), 365.0 * DAY_SECS);
+        let dates: Vec<String> = ticks.iter().map(|t| date_utc(*t)).collect();
+        assert_eq!(
+            dates,
+            ["2026-02-01", "2026-03-01", "2026-04-01", "2026-05-01"]
+        );
+        let ticks = tick_times(at("2019-06-01"), at("2022-02-01"), 3650.0 * DAY_SECS);
+        let dates: Vec<String> = ticks.iter().map(|t| date_utc(*t)).collect();
+        assert_eq!(dates, ["2020-01-01", "2021-01-01", "2022-01-01"]);
+        // Across December into January.
+        let ticks = tick_times(at("2025-11-20"), at("2026-02-10"), 365.0 * DAY_SECS);
+        let dates: Vec<String> = ticks.iter().map(|t| date_utc(*t)).collect();
+        assert_eq!(dates, ["2025-12-01", "2026-01-01", "2026-02-01"]);
+        // A week ticks every day at midnight.
+        let ticks = tick_times(
+            at("2026-03-01T12:00"),
+            at("2026-03-04T12:00"),
+            7.0 * DAY_SECS,
+        );
+        assert_eq!(ticks.len(), 3);
+        assert_eq!(date_utc(ticks[0]), "2026-03-02");
+    }
+
+    #[test]
+    fn the_steps_go_from_tick_to_tick() {
+        let at = |date: &str| parse_iso(date).unwrap();
+        let year = 365.0 * DAY_SECS;
+        assert_eq!(
+            date_utc(step_to(at("2026-03-15"), year, true)),
+            "2026-04-01"
+        );
+        assert_eq!(
+            date_utc(step_to(at("2026-03-15"), year, false)),
+            "2026-03-01"
+        );
+        // From a tick to the one beyond.
+        assert_eq!(
+            date_utc(step_to(at("2026-03-01"), year, false)),
+            "2026-02-01"
+        );
+        let day = DAY_SECS;
+        assert_eq!(
+            format_utc(step_to(at("2026-03-15T10:20"), day, true)),
+            "2026-03-15 12:00 UTC"
+        );
     }
 
     #[test]

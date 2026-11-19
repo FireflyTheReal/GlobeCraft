@@ -125,17 +125,15 @@ impl LiveMaps {
         &mut self,
         ctx: &egui::Context,
         runtime: &globecraft_data::runtime::ServiceRuntime,
-        clouds: bool,
-        cloud_time: Option<f64>,
+        clouds: globecraft_data::live_maps::CloudWish,
         radar: bool,
         water: bool,
     ) {
         let wake = ctx.clone();
-        self.service
-            .update(runtime, clouds, cloud_time, radar, water, move || {
-                wake.request_repaint()
-            });
-        if clouds || radar {
+        self.service.update(runtime, clouds, radar, water, move || {
+            wake.request_repaint()
+        });
+        if clouds.shown || radar {
             ctx.request_repaint_after(Duration::from_secs(60));
         }
     }

@@ -27,6 +27,11 @@ week as `archive-YYYY-Www`, whose zip of 2048 × 1024 frames is read in two rang
 directory, then the one frame nearest the time) rather than whole (about 30 MB). The
 maps repeat where the source did not update (several days in November 2026), and a
 missed run is filled by the nearest frame. Back at the present, the live map returns.
+Before 9 March 2026 (the archive's first week) the status says no clouds were kept.
+While the timeline plays, the next two moments in the direction it plays load ahead,
+and the maps loaded last are kept (up to about 96 MB) so stepping through them shows
+them at once. **Cloud Detail** (Live › Weather, `layer.cloudResolution`) keeps maps at
+most 2048, 4096 or 8192 pixels wide: coarser loads, uploads and plays faster.
 
 **Required source attribution:** Contains modified EUMETSAT data
 

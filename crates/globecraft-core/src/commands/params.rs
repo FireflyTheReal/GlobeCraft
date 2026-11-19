@@ -329,6 +329,11 @@ params! {
         pub visible: Option<bool>,
     }
 
+    /// `layer.cloudResolution`
+    pub struct CloudResolution {
+        pub pixels: u64,
+    }
+
     /// `layer.opacity`
     pub struct LayerOpacity {
         pub layer: String,

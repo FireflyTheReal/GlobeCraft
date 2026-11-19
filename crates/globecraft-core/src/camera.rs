@@ -243,15 +243,30 @@ impl Cam {
     /// out, down to none at `LEVEL_VIEW_ALTITUDE_KM` (zooming out levels the view).
     pub fn max_tilt(&self) -> f64 {
         let height_ratio = (MIN_TILTED_HEIGHT_KM / self.alt.max(MIN_TILTED_HEIGHT_KM)).min(1.0);
-        let far = ((self.alt - TILT_EASES_FROM_ALTITUDE_KM)
-            / (LEVEL_VIEW_ALTITUDE_KM - TILT_EASES_FROM_ALTITUDE_KM))
-            .clamp(0.0, 1.0);
-        let far_limit = MAX_TILT_DEG * (1.0 - far * far * (3.0 - 2.0 * far));
+        let far_limit = MAX_TILT_DEG * self.lean_allowed();
         height_ratio
             .acos()
             .to_degrees()
             .min(MAX_TILT_DEG)
             .min(far_limit)
+    }
+    /// How much of its lean the view keeps at this distance: all of it up to
+    /// `TILT_EASES_FROM_ALTITUDE_KM`, easing to none at `LEVEL_VIEW_ALTITUDE_KM`.
+    fn lean_allowed(&self) -> f64 {
+        let far = ((self.alt - TILT_EASES_FROM_ALTITUDE_KM)
+            / (LEVEL_VIEW_ALTITUDE_KM - TILT_EASES_FROM_ALTITUDE_KM))
+            .clamp(0.0, 1.0);
+        1.0 - far * far * (3.0 - 2.0 * far)
+    }
+    /// The most the view can be raised into the sky at this distance: it eases out
+    /// with the tilt, so far out the view stays level however it is dragged (the
+    /// lock agreed on 2026-11-17; looking up had slipped past it, user 2026-11-19).
+    pub fn max_look_up(&self) -> f64 {
+        MAX_LOOK_UP_DEG * self.lean_allowed()
+    }
+    /// The steepest the tilt controls lean the view here: tilt and look-up together.
+    pub fn max_view_tilt(&self) -> f64 {
+        MAX_TILT_DEG * self.lean_allowed() + self.max_look_up()
     }
     /// Sets the tilt, kept between straight down and `max_tilt`.
     pub fn set_tilt(&mut self, degrees: f64) {
@@ -291,14 +306,14 @@ impl Cam {
         }
         let degrees = degrees.clamp(0.0, MAX_TILT_DEG + MAX_LOOK_UP_DEG);
         if self.look_up > 0.0 && degrees >= self.tilt {
-            self.look_up = (degrees - self.tilt).min(MAX_LOOK_UP_DEG);
+            self.look_up = (degrees - self.tilt).min(self.max_look_up());
             return;
         }
         self.look_up = 0.0;
         self.tilt_zooming_out(degrees.min(MAX_TILT_DEG));
         // What leaning about the ground could not reach.
         if degrees > self.tilt + 1e-9 {
-            self.look_up = (degrees - self.tilt).min(MAX_LOOK_UP_DEG);
+            self.look_up = (degrees - self.tilt).min(self.max_look_up());
         }
     }
     /// Moves the looked-at point `rise_km` up along the line of sight, keeping the
@@ -388,6 +403,7 @@ impl Cam {
         if self.tilt > max + TILT_TOLERANCE_DEG || self.tilt < 0.0 {
             self.tilt = self.tilt.clamp(0.0, max);
         }
+        self.look_up = self.look_up.clamp(0.0, self.max_look_up());
     }
     /// This camera with `clamp_tilt` applied.
     pub fn with_tilt_clamped(mut self) -> Self {

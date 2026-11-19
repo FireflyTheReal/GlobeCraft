@@ -121,16 +121,19 @@ impl App {
         })
     }
 
+    /// The moment frames are drawn for (`globecraft_render::view::frame_time`).
+    pub(super) fn frame_time(&self) -> f64 {
+        globecraft_render::view::frame_time(self.scene_unix(), self.time.speed() != 0.0)
+    }
+
     /// How the cloud layer is lit: as the globe is (`RenderCfg::sun`, night everywhere
     /// with the night lights and no sun).
     pub(super) fn cloud_light(&self) -> globecraft_render::clouds::CloudLight {
         use globecraft_render::clouds::CloudLight;
         if self.layer(MapLayer::Sunlight) {
-            // The sun in the frame's steps of time, so that a still view keeps its
-            // cloud mesh (`LiveMaps::draw_clouds`).
-            let step = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-            let (lat, lon) =
-                globecraft_core::math::subsolar((self.scene_unix() / step).floor() * step);
+            // The sun of the frame's moment, so that a still view keeps its cloud
+            // mesh (`LiveMaps::draw_clouds`).
+            let (lat, lon) = globecraft_core::math::subsolar(self.frame_time());
             CloudLight::Sun(globecraft_core::math::ll_to_v3(lat, lon))
         } else if self.layer(MapLayer::NightLights) {
             CloudLight::Night

@@ -681,9 +681,14 @@ impl eframe::App for App {
         self.live.maps.update(
             ui,
             &self.runtime,
-            self.layer(MapLayer::Clouds),
-            // Set back, the app's time shows the clouds kept for it.
-            (!self.time.is_live()).then(|| self.scene_unix()),
+            globecraft_data::live_maps::CloudWish {
+                shown: self.layer(MapLayer::Clouds),
+                // Set back, the app's time shows the clouds kept for it.
+                time: (!self.time.is_live()).then(|| self.scene_unix()),
+                // Playing, the moments ahead load meanwhile.
+                playing: self.time.speed(),
+                max_px: self.settings.layers.cloud_resolution_px,
+            },
             self.layer(MapLayer::Radar),
             // The sun's glint on the water.
             self.layer(MapLayer::Sunlight) && self.explorer.on_earth(),

@@ -51,7 +51,7 @@ impl Cam {
             if turn_deg != 0.0 && !orbit.look_over_ground(turn_deg, 0.0, model, ground_km) {
                 return false;
             }
-            orbit.look_up = raised.min(MAX_LOOK_UP_DEG);
+            orbit.look_up = raised.min(orbit.max_look_up());
             *self = orbit;
             return true;
         }
@@ -79,7 +79,7 @@ impl Cam {
                 high = middle;
             }
         }
-        best.look_up = (over_ground - low).min(MAX_LOOK_UP_DEG);
+        best.look_up = (over_ground - low).min(best.max_look_up());
         *self = best;
         true
     }
@@ -307,6 +307,38 @@ mod tests {
         assert_eq!((cam.tilt, cam.look_up), (30.0, 0.0));
         cam.tilt_view(f64::NAN);
         assert_eq!(cam.tilt, 30.0);
+    }
+
+    #[test]
+    fn far_out_the_view_stays_level_however_it_is_leaned() {
+        let model = EarthModel::Wgs84;
+        let mut cam = Cam {
+            lat: 10.0,
+            lon: 20.0,
+            heading: 0.0,
+            alt: 20_000.0,
+            tilt: 0.0,
+            look_up: 0.0,
+        };
+        // Beyond the level view's altitude neither the tilt nor a look up moves it.
+        assert_eq!(cam.max_view_tilt(), 0.0);
+        cam.tilt_view(150.0);
+        assert_eq!((cam.tilt, cam.look_up), (0.0, 0.0));
+        let _ = cam.look_around(0.0, 40.0, model, 0.0);
+        assert_eq!(cam.look_up, 0.0);
+        // Between, both ease out together; close in, the whole lean is there.
+        cam.alt = 10_000.0;
+        let between = cam.max_view_tilt();
+        assert!(between > 0.0 && between < MAX_TILT_DEG + MAX_LOOK_UP_DEG);
+        cam.tilt_view(175.0);
+        assert!((cam.view_tilt() - between).abs() < 1e-6, "{cam:?}");
+        cam.alt = 50.0;
+        assert_eq!(cam.max_view_tilt(), MAX_TILT_DEG + MAX_LOOK_UP_DEG);
+        // Zooming out from a raised view lowers it with the tilt.
+        cam.tilt_view(150.0);
+        cam.alt = 20_000.0;
+        cam.clamp_tilt();
+        assert_eq!((cam.tilt, cam.look_up), (0.0, 0.0));
     }
 
     #[test]

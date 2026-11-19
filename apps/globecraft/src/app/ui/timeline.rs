@@ -64,19 +64,15 @@ impl App {
                                     ("time.play", Value::Null)
                                 });
                             }
-                            // One step back and forward: a tick of the track.
-                            let step = super::timeline_track::step_secs(
-                                self.timeline.range_days * DAY_SECS,
-                            );
-                            for (icon, sign, key) in [
-                                ("time_prev", -1.0, "timeline-step-back-help"),
-                                ("time_next", 1.0, "timeline-step-forward-help"),
+                            // One step back and forward: to the track's next tick.
+                            let span = self.timeline.range_days * DAY_SECS;
+                            for (icon, forward, key) in [
+                                ("time_prev", false, "timeline-step-back-help"),
+                                ("time_next", true, "timeline-step-forward-help"),
                             ] {
                                 if icon_button(ui, &t, icon, lang.text(key), false) {
-                                    run = Some((
-                                        "time.step",
-                                        json!({"hours": sign * step / HOUR_SECS}),
-                                    ));
+                                    let to = super::timeline_track::step_to(unix, span, forward);
+                                    run = Some(("time.set", json!({ "time": to })));
                                 }
                             }
                             ui.add_space(8.0);

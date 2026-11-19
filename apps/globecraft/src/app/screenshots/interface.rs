@@ -119,6 +119,16 @@ fn navigator_tilt_sweep() {
             save(&mut h, &dir, &format!("nav-{alt}-{tilt}"));
         }
     }
+    // The arc's sky end, and how far it reaches where the view levels out.
+    for (alt, lean) in [(2.0, 150.0), (10_000.0, 175.0)] {
+        let _ = h.state_mut().run(
+            "camera.set",
+            json!({"lat": 30.0, "lon": 105.0, "altitude_km": alt, "heading_deg": 15.0, "tilt_deg": 0.0}),
+        );
+        h.state_mut().cam.tilt_view(lean);
+        settle(&mut h, 0.2);
+        save(&mut h, &dir, &format!("nav-lean-{alt}-{lean}"));
+    }
 }
 
 /// Settings → Network at the window's minimum size, in both languages, with a

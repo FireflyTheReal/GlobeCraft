@@ -247,6 +247,7 @@ impl App {
                     app.layer_big(ui, MapLayer::Radar);
                     app.layer_big(ui, MapLayer::Clouds);
                     app.layer_big(ui, MapLayer::Aurora);
+                    col(ui, |ui| app.cloud_resolution_menu(ui));
                 },
             );
             group(
@@ -356,6 +357,35 @@ impl App {
                 big(ui, app, "ui.navigationControls", Value::Null);
             },
         );
+    }
+
+    /// The cloud map's width, a small menu in the Weather group.
+    fn cloud_resolution_menu(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
+        let mut picked = None;
+        small_menu(
+            ui,
+            "cloud_resolution",
+            lang.text("cmd-layer-cloud-resolution"),
+            lang.text("cmd-layer-cloud-resolution-help"),
+            |ui| {
+                for pixels in globecraft_data::settings::layers::CLOUD_RESOLUTIONS_PX {
+                    let params = json!({ "pixels": pixels });
+                    let on = self.command_state("layer.cloudResolution", &params).checked;
+                    let label = lang.format(
+                        "cloud-resolution-option",
+                        &[("pixels", pixels.into()), ("height", (pixels / 2).into())],
+                    );
+                    if ui.radio(on, label).clicked() {
+                        picked = Some(params);
+                        ui.close();
+                    }
+                }
+            },
+        );
+        if let Some(params) = picked {
+            self.run_reporting("layer.cloudResolution", params);
+        }
     }
 
     /// The ruler's unit, a small menu in the Measure group.

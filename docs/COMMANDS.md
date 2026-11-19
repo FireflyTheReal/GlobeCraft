@@ -73,6 +73,7 @@ Parameters are a JSON object; none is required unless marked.
 
 | Command | Name | What it does | Parameters | Assistant |
 | --- | --- | --- | --- | --- |
+| `layer.cloudResolution` | Cloud Detail | How fine a cloud map is kept: finer shows more detail close in, coarser loads and plays faster on the timeline. | `pixels` (integer), required: one of `2048`, `4096`, `8192`: The cloud map's width: finer shows more detail close in, coarser loads and plays faster on the timeline | yes |
 | `flight.select` | Select a flight | Follows one plane: its track so far, where it flies from and to, and its position every few seconds. | `callsign` (string): Its callsign, for its route; left out, the one it reports<br>`hex` (string), required: The plane's transponder (ICAO 24-bit) address, 6 hex digits | yes |
 | `satellite.select` | Select a satellite | Shows one full revolution of a satellite's orbit at its height, predicted from its orbital elements, and a card with its height and speed. | `norad` (string), required: The satellite's NORAD catalogue number, e.g. 25544 for the ISS | yes |
 | `satellite.clear` | Close the satellite | Hides the selected satellite's orbit and card. | — | yes |

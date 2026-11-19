@@ -1,23 +1,32 @@
-//! The tilt arc: a short track around the left of the navigator's ring, from straight
-//! down at its top to the steepest tilt at its bottom, as if the thumb were the camera
-//! circling down around the point it looks at. Drag the thumb or click the track to
-//! tilt; double-click for straight down. Shared by both navigator styles.
+//! The tilt arc: a track around the left of the navigator's ring, from straight down
+//! at its top through the steepest tilt to looking straight up into the sky at its end
+//! (the whole lean `Cam::tilt_view` takes), as if the thumb were the camera circling
+//! down around the point it looks at. Drag the thumb or click the track to tilt;
+//! double-click for straight down. Far out, where the view is held level, the part out
+//! of reach is drawn faint and the thumb stops at its edge. Shared by both navigator
+//! styles.
 use crate::app::App;
 use eframe::egui::{self, Pos2, Sense, Stroke, Vec2};
-use globecraft_core::camera::MAX_TILT_DEG;
+use globecraft_core::camera::{MAX_LOOK_UP_DEG, MAX_TILT_DEG};
 
 /// The arc's distance outside the ring's edge.
 const ARC_GAP_POINTS: f32 = 10.0;
 /// Where straight down sits on the arc, in degrees from the ring's top toward its
-/// left; the steepest tilt sits `MAX_TILT_DEG` further round.
+/// left, and how far round the arc goes to its end (it was the 85° of tilt alone
+/// before looking up joined it, user 2026-11-19).
 const ARC_START_DEG: f32 = 32.0;
-const ARC_SAMPLES: usize = 24;
+const ARC_SPAN_DEG: f32 = 115.0;
+/// The whole lean the arc covers, degrees from straight down.
+const MAX_VIEW_TILT_DEG: f64 = MAX_TILT_DEG + MAX_LOOK_UP_DEG;
+const ARC_SAMPLES: usize = 32;
+/// The tick where the view leaves the ground for the sky, its length.
+const SKY_TICK_POINTS: f32 = 5.0;
 const TRACK_OUTER_WIDTH_POINTS: f32 = 7.0;
 const TRACK_INNER_WIDTH_POINTS: f32 = 4.0;
 const THUMB_RADIUS_POINTS: f32 = 6.5;
 /// Hit boxes along the track (it curves around the ring's square drag area, so it
 /// takes clicks in pieces) and their size.
-const HIT_BOXES: usize = 9;
+const HIT_BOXES: usize = 12;
 const HIT_BOX_POINTS: f32 = 15.0;
 /// The lens dot in the thumb and its opacity while not hovered.
 const LENS_POINTS: f32 = 2.4;
@@ -25,9 +34,9 @@ const LENS_OPACITY: f32 = 0.85;
 /// Opacity of the stretch between straight down and the current tilt.
 const TILTED_OPACITY: f32 = 0.55;
 
-/// Where tilt `degrees` sits on the arc around `centre`, `radius` out.
+/// Where lean `degrees` sits on the arc around `centre`, `radius` out.
 fn arc_point(centre: Pos2, radius: f32, degrees: f32) -> Pos2 {
-    let angle = (ARC_START_DEG + degrees).to_radians();
+    let angle = (ARC_START_DEG + degrees / MAX_VIEW_TILT_DEG as f32 * ARC_SPAN_DEG).to_radians();
     centre + Vec2::new(-angle.sin(), -angle.cos()) * radius
 }
 
@@ -38,11 +47,12 @@ fn tilt_at(centre: Pos2, p: Pos2) -> f64 {
     // Degrees from the top toward the left, as `arc_point` measures them, from the
     // arc's start.
     let along = f64::from((-v.x).atan2(-v.y).to_degrees() - ARC_START_DEG).rem_euclid(360.0);
-    let past_the_end = MAX_TILT_DEG + (360.0 - MAX_TILT_DEG) / 2.0;
+    let span = f64::from(ARC_SPAN_DEG);
+    let past_the_end = span + (360.0 - span) / 2.0;
     if along > past_the_end {
         0.0
     } else {
-        along.min(MAX_TILT_DEG)
+        along.min(span) / span * MAX_VIEW_TILT_DEG
     }
 }
 
@@ -64,7 +74,7 @@ impl App {
         let mut active = false;
         let mut hot = self.nav.tilt_drag;
         let mut tooltip_shown = false;
-        let max = MAX_TILT_DEG as f32;
+        let max = MAX_VIEW_TILT_DEG as f32;
         for i in 0..HIT_BOXES {
             let at = arc_point(centre, radius, max * i as f32 / (HIT_BOXES - 1) as f32);
             let response = ui.interact(
@@ -110,20 +120,43 @@ impl App {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
 
-        // The track, as the zoom slider's, and the stretch tilted so far.
-        let track: Vec<Pos2> = (0..=ARC_SAMPLES)
-            .map(|i| arc_point(centre, radius, max * i as f32 / ARC_SAMPLES as f32))
-            .collect();
+        // The track, as the zoom slider's, and the stretch tilted so far. Out of reach
+        // here (the view levels as it zooms out) it is only its dark edge.
+        let along = |from: f32, to: f32| -> Vec<Pos2> {
+            (0..=ARC_SAMPLES)
+                .map(|i| {
+                    arc_point(
+                        centre,
+                        radius,
+                        from + (to - from) * i as f32 / ARC_SAMPLES as f32,
+                    )
+                })
+                .collect()
+        };
         let fill = t.ribbon.gamma_multiply(super::CONTROL_FILL_OPACITY);
         let ring_bg = t.pane_header.gamma_multiply(super::RING_OPACITY);
         painter.add(egui::Shape::line(
-            track.clone(),
+            along(0.0, max),
             Stroke::new(TRACK_OUTER_WIDTH_POINTS * k, ring_bg),
         ));
-        painter.add(egui::Shape::line(
-            track,
-            Stroke::new(TRACK_INNER_WIDTH_POINTS * k, fill),
-        ));
+        let reach = (self.cam.max_view_tilt() as f32).clamp(0.0, max);
+        if reach > 0.0 {
+            painter.add(egui::Shape::line(
+                along(0.0, reach),
+                Stroke::new(TRACK_INNER_WIDTH_POINTS * k, fill),
+            ));
+        }
+        // Where the view leaves the ground for the sky.
+        let sky = MAX_TILT_DEG as f32;
+        let inward = (centre - arc_point(centre, radius, sky)).normalized();
+        let tick = arc_point(centre, radius, sky);
+        painter.line_segment(
+            [
+                tick - inward * SKY_TICK_POINTS * k,
+                tick + inward * SKY_TICK_POINTS * k,
+            ],
+            Stroke::new(1.0, t.text_dim.gamma_multiply(TILTED_OPACITY)),
+        );
         let tilt = (self.cam.view_tilt() as f32).clamp(0.0, max);
         let samples = ((ARC_SAMPLES as f32 * tilt / max).ceil() as usize).max(1);
         let tilted: Vec<Pos2> = (0..=samples)
@@ -167,18 +200,20 @@ mod tests {
     #[test]
     fn the_arc_maps_tilts_and_back() {
         let centre = Pos2::new(100.0, 100.0);
-        for degrees in [0.0, 20.0, 45.0, 80.0] {
+        for degrees in [0.0, 20.0, 45.0, 80.0, 120.0, 175.0] {
             let p = arc_point(centre, 50.0, degrees);
             assert!((tilt_at(centre, p) - f64::from(degrees)).abs() < 1e-3);
         }
-        // Straight down is up and to the left of the centre, the steepest tilt below
-        // the middle on the left.
+        // Straight down is up and to the left of the centre, the steepest tilt on the
+        // left, straight up into the sky below the middle on the left.
         let top = arc_point(centre, 50.0, 0.0);
         assert!(top.x < centre.x && top.y < centre.y);
         let steep = arc_point(centre, 50.0, MAX_TILT_DEG as f32);
-        assert!(steep.x < centre.x && steep.y > centre.y);
+        assert!(steep.x < centre.x);
+        let up = arc_point(centre, 50.0, MAX_VIEW_TILT_DEG as f32);
+        assert!(up.x < centre.x && up.y > centre.y);
         // Beyond either end the pointer keeps the nearest end.
         assert_eq!(tilt_at(centre, Pos2::new(100.0, 40.0)), 0.0);
-        assert_eq!(tilt_at(centre, Pos2::new(100.0, 160.0)), MAX_TILT_DEG);
+        assert_eq!(tilt_at(centre, Pos2::new(110.0, 160.0)), MAX_VIEW_TILT_DEG);
     }
 }

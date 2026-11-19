@@ -158,7 +158,7 @@ impl App {
         // The app's time, not the clock's: moved on the timeline or played, the sun,
         // the night and the clouds change with it while the camera holds (they changed
         // only while it moved, user 2026-11-19).
-        .keys(self.scene_unix());
+        .keys(self.frame_time());
         let state = keys.state.wrapping_add(relief_step);
         let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;
