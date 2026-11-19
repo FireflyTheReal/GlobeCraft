@@ -386,6 +386,12 @@ params! {
         pub time: TimeValue,
     }
 
+    /// `time.loop`
+    pub struct TimeLoop {
+        pub from: Option<TimeValue>,
+        pub to: Option<TimeValue>,
+    }
+
     /// `time.step` and `time.window`
     pub struct Hours {
         pub hours: f64,

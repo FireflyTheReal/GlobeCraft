@@ -26,6 +26,9 @@ pub(super) struct LiveMaps {
     projected_for: Option<ProjectionKey>,
     /// The cloud map's levels as textures, for the map they were made from.
     cloud_textures: Option<CloudTextures>,
+    /// The map shown before, drawn until a level of the new one is on the graphics
+    /// card: a new map left the layer empty for a moment (user, 2026-11-19).
+    previous_clouds: Option<CloudTextures>,
     /// The clouds' mesh as last drawn, while the view, light and opacity hold.
     cloud_mesh: Option<(CloudMeshKey, Arc<Mesh>)>,
 }
@@ -79,6 +82,18 @@ impl CloudTextures {
 
     fn ready(&self, level: usize) -> bool {
         self.textures[level].is_some()
+    }
+
+    /// The levels the graphics card takes (`max_side` wide at most) and the one for a
+    /// pixel `pixel_km` wide, as indices into the map's levels.
+    fn levels_for(&self, max_side: usize, pixel_km: f64) -> Option<(Vec<usize>, usize)> {
+        let levels = &self.map.levels;
+        let usable: Vec<usize> = (0..levels.len())
+            .filter(|&level| levels[level].width() as usize <= max_side)
+            .collect();
+        let widths: Vec<u32> = usable.iter().map(|&l| levels[l].width()).collect();
+        let wanted = *usable.get(cloud_level(&widths, pixel_km))?;
+        Some((usable, wanted))
     }
 
     /// The texture of `wanted`, asking for it when it is not made yet, or meanwhile the
@@ -230,7 +245,14 @@ impl LiveMaps {
             .as_ref()
             .is_some_and(|textures| Arc::ptr_eq(&textures.map, &map))
         {
-            self.cloud_textures = Some(CloudTextures::new(map.clone()));
+            let shown = self.cloud_textures.replace(CloudTextures::new(map.clone()));
+            // Kept while it showed something (not a moment without clouds).
+            if shown
+                .as_ref()
+                .is_some_and(|old| old.textures.iter().any(Option::is_some))
+            {
+                self.previous_clouds = shown;
+            }
             self.cloud_mesh = None;
         }
         let textures = self.cloud_textures.as_mut().expect("set above");
@@ -257,15 +279,29 @@ impl LiveMaps {
         };
         // Levels wider than the graphics card takes are left out.
         let max_side = ctx.input(|i| i.max_texture_side);
-        let usable: Vec<usize> = (0..map.levels.len())
-            .filter(|&level| map.levels[level].width() as usize <= max_side)
-            .collect();
-        let widths: Vec<u32> = usable.iter().map(|&l| map.levels[l].width()).collect();
-        let Some(&wanted) = usable.get(cloud_level(&widths, shell.pixel_km)) else {
+        let Some((usable, wanted)) = textures.levels_for(max_side, shell.pixel_km) else {
+            // A moment without clouds kept: none drawn, nor the map before.
+            self.previous_clouds = None;
             return;
         };
-        let Some(texture) = textures.texture(wanted, &usable, &ctx) else {
-            return;
+        let texture = match textures.texture(wanted, &usable, &ctx) {
+            Some(texture) => {
+                self.previous_clouds = None;
+                texture
+            }
+            // None of the new map's levels is in yet: the map before meanwhile.
+            None => {
+                let Some(previous) = self.previous_clouds.as_mut() else {
+                    return;
+                };
+                let Some((usable, wanted)) = previous.levels_for(max_side, shell.pixel_km) else {
+                    return;
+                };
+                let Some(texture) = previous.texture(wanted, &usable, &ctx) else {
+                    return;
+                };
+                texture
+            }
         };
         let alpha = opacity * CLOUD_OPACITY * shell.fade;
         let mut mesh = Mesh::with_texture(texture);

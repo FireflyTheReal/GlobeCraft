@@ -688,6 +688,7 @@ impl eframe::App for App {
                 // Playing, the moments ahead load meanwhile.
                 playing: self.time.speed(),
                 max_px: self.settings.layers.cloud_resolution_px,
+                loop_range: self.time.loop_range(),
             },
             self.layer(MapLayer::Radar),
             // The sun's glint on the water.

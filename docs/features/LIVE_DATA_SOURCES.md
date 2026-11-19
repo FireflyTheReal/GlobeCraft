@@ -31,7 +31,11 @@ Before 9 March 2026 (the archive's first week) the status says no clouds were ke
 While the timeline plays, the next two moments in the direction it plays load ahead,
 and the maps loaded last are kept (up to about 96 MB) so stepping through them shows
 them at once. **Cloud Detail** (Live › Weather, `layer.cloudResolution`) keeps maps at
-most 2048, 4096 or 8192 pixels wide: coarser loads, uploads and plays faster.
+most 2048, 4096 or 8192 pixels wide (its menu opens from the Clouds button's label):
+coarser loads, uploads and plays faster. With a loop on the timeline (`time.loop`, the
+loop button and the handles under the track), the loop's moments load ahead at 2048 ×
+1024, three at a time from the time shown onward, and up to about 190 MB of them are
+kept (some 70 moments, eight and a half days); the status line counts them in.
 
 **Required source attribution:** Contains modified EUMETSAT data
 

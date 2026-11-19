@@ -61,8 +61,14 @@ pub struct AircraftGeometry {
     pub labels: Vec<usize>,
 }
 impl AircraftGeometry {
+    /// Whether the planes as projected at `self.unix_secs` may still show at
+    /// `unix_secs`: for `MAX_PRESENTATION_AGE_SECS` past the end of their motion step.
+    /// A step is projected once (its geometry reused through it), and far out a step
+    /// lasts up to 5 s: aged out after 2 s, every plane vanished for the rest of each
+    /// step above about 2,500 km (user, 2026-11-19).
     pub fn is_recent(&self, unix_secs: f64) -> bool {
-        (0.0..=MAX_PRESENTATION_AGE_SECS).contains(&(unix_secs - self.unix_secs))
+        let max_age = self.view.motion_step() + MAX_PRESENTATION_AGE_SECS;
+        (0.0..=max_age).contains(&(unix_secs - self.unix_secs))
     }
     pub fn matches(&self, view: ProjectionView, data: &Arc<AircraftSnapshot>) -> bool {
         self.view == view && Arc::ptr_eq(&self.data, data)

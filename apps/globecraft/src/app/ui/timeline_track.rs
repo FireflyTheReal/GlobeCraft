@@ -4,6 +4,7 @@
 //! dates under its ticks, and marks where dated data changes: Wayback releases with Wayback imagery,
 //! night-light editions with the night lights, and the stretch of kept clouds with
 //! the clouds. Dragging runs `time.set` and `time.window` as the bar's buttons do.
+//! With a loop (`time.loop`), a second row under the dates holds its two handles.
 use super::theme::{Tokens, regular, semibold};
 use crate::app::App;
 use eframe::egui::{self, Align2, Pos2, Rect, Sense, Ui, vec2};
@@ -24,6 +25,11 @@ const TICK_LABEL_Y: f32 = 42.0;
 const TICK_LABEL_GAP: f32 = 10.0;
 const HANDLE_RADIUS: f32 = 7.0;
 const MARK_HEIGHT: f32 = 5.0;
+/// The loop's row under the dates, while there is a loop: its height, the middle of
+/// its line from the track's top, and its handles' size.
+const LOOP_ROW_HEIGHT: f32 = 16.0;
+const LOOP_Y: f32 = TRACK_HEIGHT + 6.0;
+const LOOP_HANDLE: egui::Vec2 = vec2(7.0, 13.0);
 /// A time moved off the track brings it along, the time this share from its end.
 const REFOCUS_FROM_END: f64 = 0.2;
 /// A drag lands on whole minutes.
@@ -69,10 +75,15 @@ impl App {
         let end = track_end(unix, now, span, self.timeline.track_end);
         let start = end - span;
         let mut kept_end = (end != now).then_some(end);
-        let (rect, response) = ui.allocate_exact_size(
-            vec2(width.max(200.0), TRACK_HEIGHT),
-            Sense::click_and_drag(),
-        );
+        let looped = self.time.loop_range();
+        let height = TRACK_HEIGHT
+            + if looped.is_some() {
+                LOOP_ROW_HEIGHT
+            } else {
+                0.0
+            };
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(width.max(200.0), height), Sense::click_and_drag());
         let line = Rect::from_min_max(
             Pos2::new(rect.left() + HANDLE_RADIUS, rect.top() + LINE_Y),
             Pos2::new(rect.right() - HANDLE_RADIUS, rect.top() + LINE_Y),
@@ -235,9 +246,48 @@ impl App {
             // Held on the track: it does not move under the pointer.
             kept_end = Some(end);
         }
+        if let Some((from, to)) = looped {
+            // The loop's row: its stretch and a handle at each end, over the track.
+            let y = rect.top() + LOOP_Y;
+            let (from_x, to_x) = (x_of(from), x_of(to));
+            painter.line_segment(
+                [Pos2::new(line.left(), y), Pos2::new(line.right(), y)],
+                egui::Stroke::new(2.0, t.text_dim.gamma_multiply(0.25)),
+            );
+            painter.rect_filled(
+                Rect::from_min_max(Pos2::new(from_x, y - 2.0), Pos2::new(to_x, y + 2.0)),
+                2.0,
+                t.accent.gamma_multiply(0.6),
+            );
+            for (at, other, id) in [(from_x, to, "loop_from"), (to_x, from, "loop_to")] {
+                let handle = Rect::from_center_size(Pos2::new(at, y), LOOP_HANDLE);
+                let held = ui.interact(handle.expand(3.0), response.id.with(id), Sense::drag());
+                painter.rect_filled(handle, 2.0, t.pane);
+                painter.rect_stroke(
+                    handle,
+                    2.0,
+                    egui::Stroke::new(2.0, t.accent),
+                    egui::StrokeKind::Inside,
+                );
+                if held.dragged()
+                    && let Some(p) = held.interact_pointer_pos()
+                {
+                    *run = Some(("time.loop", json!({"from": time_at(p.x), "to": other})));
+                    kept_end = Some(end);
+                }
+                held.on_hover_text(lang.text("timeline-loop-track-help"))
+                    .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            }
+        }
         response.on_hover_text(lang.text("timeline-track-help"));
         kept_end
     }
+}
+
+/// A new loop around `unix`: an eighth of the track's span before and after it.
+pub(super) fn loop_around(unix: f64, span: f64) -> (f64, f64) {
+    let half = span / 8.0;
+    (unix - half, unix + half)
 }
 
 /// A handle on the track, round as Map Viewer's thumbs.

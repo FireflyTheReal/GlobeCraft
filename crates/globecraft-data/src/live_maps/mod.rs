@@ -29,6 +29,15 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 /// pixel): an 8192 map with its levels is about 42 MB, so two of those, or many
 /// 2048 ones.
 const KEPT_CLOUD_BYTES: usize = 96 * 1024 * 1024;
+/// With a loop on the timeline, its moments are loaded ahead at this width (the
+/// archive keeps finished weeks at it anyway; only this week's maps are wider) and
+/// kept up to this many bytes: about 70 moments, eight and a half days of maps.
+const LOOP_CLOUD_PX: u32 = 2048;
+const LOOP_CLOUD_BYTES: usize = 192 * 1024 * 1024;
+/// A 2048 map with its two smaller levels, bytes.
+const LOOP_MAP_BYTES: usize = 2048 * 1024 + 1024 * 512 + 512 * 256;
+/// Moments loaded ahead at once.
+const MAX_LOADS_AHEAD: usize = 3;
 /// Moments loaded ahead of a playing timeline, in the direction it plays.
 const CLOUD_SLOTS_AHEAD: i64 = 2;
 
@@ -44,6 +53,8 @@ pub struct CloudWish {
     pub playing: f64,
     /// The widest level kept (pixels).
     pub max_px: u32,
+    /// The timeline's loop (Unix seconds), whose moments load ahead.
+    pub loop_range: Option<(f64, f64)>,
 }
 
 /// The clouds' opacity over the whole Earth (equirectangular, north up, from 180° W),
@@ -176,8 +187,12 @@ pub struct LiveMaps {
     cloud_loading: Option<i64>,
     /// Maps of earlier moments already loaded, by slot (see `KEPT_CLOUD_BYTES`).
     kept_clouds: Vec<(i64, Arc<CloudMap>)>,
-    /// A moment ahead of a playing timeline being loaded.
-    cloud_ahead: Option<(i64, mpsc::Receiver<Result<CloudMap, crate::Error>>)>,
+    /// Moments ahead of a playing timeline (or in its loop) being loaded.
+    cloud_ahead: Vec<(i64, mpsc::Receiver<Result<CloudMap, crate::Error>>)>,
+    /// How many bytes of maps are kept (`KEPT_CLOUD_BYTES`, more with a loop).
+    kept_limit: usize,
+    /// The loop's moments being loaded ahead, for the status line.
+    loop_slots: Vec<i64>,
     /// The widest level the maps were kept at.
     cloud_max_px: u32,
     radar: Feed<RadarFrame>,
@@ -199,12 +214,21 @@ impl LiveMaps {
     ) {
         let repaint = Arc::new(repaint);
         let clouds = wish.shown;
-        let max_px = wish.max_px;
+        let looping = wish.loop_range.filter(|_| clouds);
+        let max_px = match looping {
+            Some(_) => wish.max_px.min(LOOP_CLOUD_PX),
+            None => wish.max_px,
+        };
+        self.kept_limit = if looping.is_some() {
+            LOOP_CLOUD_BYTES
+        } else {
+            KEPT_CLOUD_BYTES
+        };
         // Another width: the maps are loaded again at it.
         if max_px != self.cloud_max_px {
             self.cloud_max_px = max_px;
             self.kept_clouds.clear();
-            self.cloud_ahead = None;
+            self.cloud_ahead.clear();
             // A map loading arrives at the old width: loaded again instead.
             self.cloud.receiver = None;
             (self.cloud.attempt, self.cloud.error) = (None, None);
@@ -261,8 +285,35 @@ impl LiveMaps {
         if idle && self.cloud.receiver.is_some() {
             self.cloud_loading = wanted;
         }
-        if clouds && let Some(slot) = wanted {
-            self.load_ahead(slot, wish.playing, now, runtime, &repaint);
+        match looping {
+            Some(range) => {
+                self.loop_slots = loop_slots(
+                    range,
+                    wanted,
+                    wish.playing,
+                    now,
+                    LOOP_CLOUD_BYTES / LOOP_MAP_BYTES,
+                );
+                for slot in self.loop_slots.clone() {
+                    if self.cloud_ahead.len() >= MAX_LOADS_AHEAD {
+                        break;
+                    }
+                    if !self.has_cloud(slot) {
+                        self.load_cloud(slot, now, runtime, &repaint);
+                    }
+                }
+            }
+            None => {
+                self.loop_slots.clear();
+                if clouds
+                    && let Some(slot) = wanted
+                    && self.cloud_ahead.is_empty()
+                    && let Some(next) =
+                        slot_ahead(slot, wish.playing, now, |next| self.has_cloud(next))
+                {
+                    self.load_cloud(next, now, runtime, &repaint);
+                }
+            }
         }
         self.radar
             .refresh(radar, RADAR_INTERVAL, runtime, &repaint, download_radar);
@@ -276,18 +327,26 @@ impl LiveMaps {
     /// Takes in a moment loaded ahead, if it is in (a failure is passed over: the
     /// moment is loaded again when it is shown).
     fn receive_ahead(&mut self) {
-        let Some((slot, receiver)) = &self.cloud_ahead else {
-            return;
-        };
-        let slot = *slot;
-        match receiver.try_recv() {
-            Err(mpsc::TryRecvError::Empty) => {}
-            Ok(Ok(map)) => {
-                self.cloud_ahead = None;
-                self.keep_cloud(slot, Arc::new(map));
-            }
-            Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => self.cloud_ahead = None,
+        let mut arrived = Vec::new();
+        self.cloud_ahead
+            .retain(|(slot, receiver)| match receiver.try_recv() {
+                Err(mpsc::TryRecvError::Empty) => true,
+                Ok(Ok(map)) => {
+                    arrived.push((*slot, Arc::new(map)));
+                    false
+                }
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => false,
+            });
+        for (slot, map) in arrived {
+            self.keep_cloud(slot, map);
         }
+    }
+
+    /// Whether the map of `slot` is kept, shown or loading.
+    fn has_cloud(&self, slot: i64) -> bool {
+        Some(slot) == self.cloud_loading
+            || self.kept_clouds.iter().any(|(kept, _)| *kept == slot)
+            || self.cloud_ahead.iter().any(|(loading, _)| *loading == slot)
     }
 
     /// Keeps `map` of `slot`, the least recently used going past `KEPT_CLOUD_BYTES`
@@ -298,7 +357,8 @@ impl LiveMaps {
         let bytes = |kept: &[(i64, Arc<CloudMap>)]| -> usize {
             kept.iter().map(|(_, map)| map.bytes()).sum()
         };
-        while self.kept_clouds.len() > 1 && bytes(&self.kept_clouds) > KEPT_CLOUD_BYTES {
+        let limit = self.kept_limit.max(KEPT_CLOUD_BYTES);
+        while self.kept_clouds.len() > 1 && bytes(&self.kept_clouds) > limit {
             self.kept_clouds.remove(0);
         }
     }
@@ -315,31 +375,22 @@ impl LiveMaps {
         Some(map)
     }
 
-    /// While the time plays from `slot`, loads the next moment it reaches that is not
-    /// kept or loading (one at a time, at most `CLOUD_SLOTS_AHEAD` ahead, never past
-    /// the current three hours, which show the live map).
-    fn load_ahead(
+    /// Loads the map of `slot` ahead, kept when it is in.
+    fn load_cloud(
         &mut self,
         slot: i64,
-        playing: f64,
         now: f64,
         runtime: &crate::runtime::ServiceRuntime,
         repaint: &Arc<impl Fn() + Send + Sync + 'static>,
     ) {
-        if self.cloud_ahead.is_some() || !crate::live::ENABLED {
+        if !crate::live::ENABLED {
             return;
         }
-        let Some(next) = slot_ahead(slot, playing, now, |next| {
-            Some(next) == self.cloud_loading
-                || self.kept_clouds.iter().any(|(kept, _)| *kept == next)
-        }) else {
-            return;
-        };
         let (sender, receiver) = mpsc::channel();
-        self.cloud_ahead = Some((next, receiver));
+        self.cloud_ahead.push((slot, receiver));
         let (repaint, max_px) = (repaint.clone(), self.cloud_max_px);
         runtime.spawn(async move {
-            let map = archive::download(next, now).await;
+            let map = archive::download(slot, now).await;
             let _ = sender.send(map.map(|map| map.capped(max_px)));
             repaint();
         });
@@ -386,6 +437,20 @@ impl LiveMaps {
                 "live-clouds-loading",
             ));
         }
+        if clouds && !self.loop_slots.is_empty() {
+            let loaded = self
+                .loop_slots
+                .iter()
+                .filter(|slot| self.kept_clouds.iter().any(|(kept, _)| kept == *slot))
+                .count();
+            lines.push(lang.format(
+                "live-clouds-loop-loaded",
+                &[
+                    ("loaded", loaded.into()),
+                    ("total", self.loop_slots.len().into()),
+                ],
+            ));
+        }
         if radar {
             let now = unix_now() as i64;
             let age = self
@@ -403,6 +468,30 @@ impl LiveMaps {
         lines.join("\n")
     }
 }
+/// The moments of the loop `range` with clouds kept (before the current three hours),
+/// from `wanted` on in the direction the time plays and round the loop, at most `max`.
+fn loop_slots(
+    range: (f64, f64),
+    wanted: Option<i64>,
+    playing: f64,
+    now: f64,
+    max: usize,
+) -> Vec<i64> {
+    let slot = |time: f64| (time / archive::SLOT_SECS as f64).floor() as i64;
+    let (first, last) = (slot(range.0), slot(range.1).min(slot(now) - 1));
+    if last < first {
+        return Vec::new();
+    }
+    let count = last - first + 1;
+    let start = wanted
+        .filter(|s| (first..=last).contains(s))
+        .unwrap_or(first);
+    let step = if playing < 0.0 { -1 } else { 1 };
+    (0..count.min(max as i64))
+        .map(|k| first + (start - first + k * step).rem_euclid(count))
+        .collect()
+}
+
 /// The moment to load ahead of a time playing (`playing` seconds a second) from
 /// `slot`: the first of the next `CLOUD_SLOTS_AHEAD` in the direction it plays that is
 /// not `had` already, and never the current three hours or later (the live map).
@@ -478,6 +567,29 @@ mod tests {
             }),
         );
         assert_eq!(maps.kept_clouds.len(), 1);
+    }
+
+    #[test]
+    fn a_loop_loads_its_moments_from_the_time_on_and_round() {
+        let slot_secs = archive::SLOT_SECS as f64;
+        let now = 100.5 * slot_secs;
+        let range = (90.0 * slot_secs, 94.5 * slot_secs);
+        // From the time shown, forward and round to the loop's start.
+        assert_eq!(
+            loop_slots(range, Some(92), 1.0, now, 10),
+            [92, 93, 94, 90, 91]
+        );
+        // Backwards, the other way round.
+        assert_eq!(
+            loop_slots(range, Some(92), -1.0, now, 10),
+            [92, 91, 90, 94, 93]
+        );
+        // At most `max`; from the loop's start when the time is outside it.
+        assert_eq!(loop_slots(range, Some(50), 1.0, now, 2), [90, 91]);
+        // Not the current three hours or later (the live map).
+        let into_now = (98.0 * slot_secs, 103.0 * slot_secs);
+        assert_eq!(loop_slots(into_now, None, 1.0, now, 10), [98, 99]);
+        assert!(loop_slots((101.0 * slot_secs, 102.0 * slot_secs), None, 1.0, now, 10).is_empty());
     }
 
     #[test]

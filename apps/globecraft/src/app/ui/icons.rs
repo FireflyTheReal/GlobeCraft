@@ -820,6 +820,20 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
                 accent,
             );
         }
+        // Two arrows chasing each other round: the timeline's loop.
+        "loop" => {
+            for (from, to) in [(200.0f32, 340.0f32), (20.0, 160.0)] {
+                p.arc(12.0, 12.0, 8.0, from, to, 1.6, ink);
+                let end = to.to_radians();
+                p.head(
+                    12.0 + 8.0 * end.cos(),
+                    12.0 + 8.0 * end.sin(),
+                    to + 90.0,
+                    3.0,
+                    accent,
+                );
+            }
+        }
         "goto_xy" => {
             p.pin_shape(12.0, 2.0, 6.5, Some(accent), None);
             p.circle(12.0, 8.5, 2.4, Some(W), None);

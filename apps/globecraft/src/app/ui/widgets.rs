@@ -203,6 +203,39 @@ pub(in crate::app) fn big_with(
     resp
 }
 
+/// Where a large button's label begins below its top: with a drop-down, the label and
+/// its caret open the menu.
+const BIG_LABEL_TOP_POINTS: f32 = 38.0;
+
+/// A large command button with a drop-down (the Clouds layer and its detail): its
+/// label and caret open `menu`, the rest of it runs the command.
+pub(in crate::app) fn big_with_menu(
+    ui: &mut Ui,
+    app: &mut App,
+    id: &str,
+    params: Value,
+    look: Look<'_>,
+    menu: impl FnOnce(&mut Ui, &mut App),
+) -> Response {
+    let r = resolve(app, id, &params, &look);
+    if !app.list_tool(id, &params, r.icon, r.label, r.enabled, r.checked) {
+        return ui.response();
+    }
+    let resp = paint_big(ui, &r, true);
+    let enabled = r.enabled;
+    // Over the button, so its clicks go to the menu.
+    let label = Rect::from_min_max(
+        pos2(resp.rect.min.x, resp.rect.min.y + BIG_LABEL_TOP_POINTS),
+        resp.rect.max,
+    );
+    let opener = ui.interact(label, resp.id.with("menu"), Sense::click());
+    egui::Popup::menu(&opener).show(|ui| menu(ui, app));
+    if resp.clicked() && enabled {
+        app.run_reporting(id, params);
+    }
+    resp
+}
+
 /// One option of a choice (a basemap, a theme, a world): a command with parameters.
 pub(in crate::app) struct Choice<'a> {
     pub id: &'a str,

@@ -757,6 +757,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"days":{"type":"number","description":"How many days the timeline's track spans, 1 to 3650"}},"required":["days"]}"#
     ),
     command!(
+        "time.loop",
+        "time-loop",
+        "loop",
+        Live,
+        View,
+        r#"{"type":"object","properties":{"from":{"description":"The loop's start: an ISO 8601 date or seconds since 1970"},"to":{"description":"The loop's end"}},"description":"While playing, the time goes round from 'from' to 'to'; without both, the loop ends"}"#
+    ),
+    command!(
         "ui.tileDiagnostics",
         "ui-tile-diagnostics",
         "stats",

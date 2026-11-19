@@ -2,10 +2,11 @@
 //! Each group shows at most one large button and two columns of small ones; its other
 //! tools are in the group's menu (`tools::EXTRAS`). A set of choices is one button.
 use super::widgets::{
-    Choice, Look, big, big_with, choice_big, col, group, small, small_menu, small_with,
+    Choice, Look, big, big_with, big_with_menu, choice_big, col, group, small, small_menu,
+    small_with,
 };
 use crate::app::App;
-use eframe::egui::Ui;
+use eframe::egui::{self, Ui};
 use globecraft_core::{layers::MapLayer, units::RulerUnit};
 use serde_json::{Value, json};
 
@@ -245,9 +246,8 @@ impl App {
                 lang.text("sidebar-weather-title"),
                 |ui, app| {
                     app.layer_big(ui, MapLayer::Radar);
-                    app.layer_big(ui, MapLayer::Clouds);
+                    app.clouds_big(ui);
                     app.layer_big(ui, MapLayer::Aurora);
-                    col(ui, |ui| app.cloud_resolution_menu(ui));
                 },
             );
             group(
@@ -359,33 +359,42 @@ impl App {
         );
     }
 
-    /// The cloud map's width, a small menu in the Weather group.
-    fn cloud_resolution_menu(&mut self, ui: &mut Ui) {
+    /// The Clouds layer's button: a click shows or hides them, its label opens the
+    /// cloud map's detail (user, 2026-11-19).
+    fn clouds_big(&mut self, ui: &mut Ui) {
+        let layer = MapLayer::Clouds;
+        if !Self::offers(layer) {
+            return;
+        }
         let lang = self.lang;
-        let mut picked = None;
-        small_menu(
+        big_with_menu(
             ui,
-            "cloud_resolution",
-            lang.text("cmd-layer-cloud-resolution"),
-            lang.text("cmd-layer-cloud-resolution-help"),
-            |ui| {
+            self,
+            "layer.show",
+            json!({"layer": layer.code()}),
+            Look {
+                icon: Some(layer.icon()),
+                label: Some(short_layer_label(lang, layer)),
+                help: Some(lang.text(layer.label_key())),
+                ..Look::default()
+            },
+            |ui, app| {
+                ui.label(egui::RichText::new(lang.text("cmd-layer-cloud-resolution")).strong())
+                    .on_hover_text(lang.text("cmd-layer-cloud-resolution-help"));
                 for pixels in globecraft_data::settings::layers::CLOUD_RESOLUTIONS_PX {
                     let params = json!({ "pixels": pixels });
-                    let on = self.command_state("layer.cloudResolution", &params).checked;
+                    let on = app.command_state("layer.cloudResolution", &params).checked;
                     let label = lang.format(
                         "cloud-resolution-option",
                         &[("pixels", pixels.into()), ("height", (pixels / 2).into())],
                     );
                     if ui.radio(on, label).clicked() {
-                        picked = Some(params);
+                        app.run_reporting("layer.cloudResolution", params);
                         ui.close();
                     }
                 }
             },
         );
-        if let Some(params) = picked {
-            self.run_reporting("layer.cloudResolution", params);
-        }
     }
 
     /// The ruler's unit, a small menu in the Measure group.

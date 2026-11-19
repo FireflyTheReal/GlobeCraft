@@ -19,6 +19,9 @@ pub struct AppTime {
     /// Timed points show when they happened within this many seconds before the
     /// scene time; `None` shows all.
     window_secs: Option<f64>,
+    /// While playing, the time goes round between these two moments (Unix seconds,
+    /// the first earlier).
+    loop_range: Option<(f64, f64)>,
 }
 
 impl AppTime {
@@ -33,11 +36,35 @@ impl AppTime {
     pub fn window_secs(&self) -> Option<f64> {
         self.window_secs
     }
-    /// The scene time (seconds since 1970) at real time `wall`.
+    /// The scene time (seconds since 1970) at real time `wall`. Playing with a loop,
+    /// it goes round within the loop (starting into it from wherever it was).
     pub fn now(&self, wall: f64) -> f64 {
         match self.fixed {
             None => wall,
-            Some(fixed) => fixed + (wall - self.anchor_wall) * self.speed,
+            Some(fixed) => {
+                let time = fixed + (wall - self.anchor_wall) * self.speed;
+                match self.loop_range {
+                    Some((from, to)) if self.speed != 0.0 => {
+                        from + (time - from).rem_euclid(to - from)
+                    }
+                    _ => time,
+                }
+            }
+        }
+    }
+    /// The loop the time plays round, if any.
+    pub fn loop_range(&self) -> Option<(f64, f64)> {
+        self.loop_range
+    }
+    /// Plays round between `from` and `to` (either order; `None`, or two equal
+    /// moments, ends the loop). The time shown stays where it is.
+    pub fn set_loop(&mut self, range: Option<(f64, f64)>, wall: f64) {
+        let now = self.now(wall);
+        self.loop_range = range
+            .filter(|(a, b)| a.is_finite() && b.is_finite() && a != b)
+            .map(|(a, b)| (a.min(b), a.max(b)));
+        if self.fixed.is_some() {
+            self.set(now, wall);
         }
     }
     /// Shows the moment `unix`, keeping the speed.
@@ -201,6 +228,30 @@ mod tests {
         assert_eq!(time.now(WALL + 1_000.0), WALL - DAY_SECS + 10.0 * HOUR_SECS);
         time.go_live();
         assert_eq!((time.now(WALL), time.speed()), (WALL, 0.0));
+    }
+
+    #[test]
+    fn a_loop_plays_round_and_holds_still_when_paused() {
+        let wall = 1_000.0;
+        let mut time = AppTime::default();
+        time.set(500.0, wall);
+        time.set_loop(Some((600.0, 400.0)), wall);
+        assert_eq!(time.loop_range(), Some((400.0, 600.0)));
+        // Held, the time stays where it was set.
+        assert_eq!(time.now(wall + 50.0), 500.0);
+        time.play(10.0, wall);
+        assert_eq!(time.now(wall + 5.0), 550.0);
+        // Past the end it goes on from the start.
+        assert_eq!(time.now(wall + 15.0), 450.0);
+        // Backwards past the start it comes in at the end.
+        time.play(-10.0, wall + 15.0);
+        assert_eq!(time.now(wall + 21.0), 590.0);
+        // Ended, the time runs on.
+        time.set_loop(None, wall + 21.0);
+        time.play(10.0, wall + 21.0);
+        assert_eq!(time.now(wall + 31.0), 690.0);
+        time.set_loop(Some((5.0, 5.0)), wall);
+        assert_eq!(time.loop_range(), None);
     }
 
     #[test]

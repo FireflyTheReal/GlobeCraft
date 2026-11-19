@@ -22,7 +22,7 @@ const SIDE_MARGIN: f32 = 24.0;
 const MIN_WIDTH: f32 = 480.0;
 const MAX_WIDTH: f32 = 980.0;
 /// Room the buttons left and right of the track take.
-const LEFT_CONTROLS: f32 = PLAY + 2.0 * ICON + 24.0;
+const LEFT_CONTROLS: f32 = PLAY + 3.0 * ICON + 28.0;
 const RIGHT_CONTROLS: f32 = 2.0 * ICON + 16.0;
 
 impl App {
@@ -74,6 +74,17 @@ impl App {
                                     let to = super::timeline_track::step_to(unix, span, forward);
                                     run = Some(("time.set", json!({ "time": to })));
                                 }
+                            }
+                            // The loop: on around the time, off again.
+                            let looped = self.time.loop_range().is_some();
+                            if icon_button(ui, &t, "loop", lang.text("timeline-loop-help"), looped)
+                            {
+                                run = Some(if looped {
+                                    ("time.loop", json!({}))
+                                } else {
+                                    let (from, to) = super::timeline_track::loop_around(unix, span);
+                                    ("time.loop", json!({ "from": from, "to": to }))
+                                });
                             }
                             ui.add_space(8.0);
                             let track_w = width - LEFT_CONTROLS - RIGHT_CONTROLS;

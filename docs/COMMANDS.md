@@ -78,6 +78,7 @@ Parameters are a JSON object; none is required unless marked.
 | `satellite.select` | Select a satellite | Shows one full revolution of a satellite's orbit at its height, predicted from its orbital elements, and a card with its height and speed. | `norad` (string), required: The satellite's NORAD catalogue number, e.g. 25544 for the ISS | yes |
 | `satellite.clear` | Close the satellite | Hides the selected satellite's orbit and card. | — | yes |
 | `flight.clear` | Close the flight | Stops following the selected plane. | — | yes |
+| `time.loop` | Loop | While playing, go round between two moments; the clouds of the moments in it load ahead. | `from`: The loop's start: an ISO 8601 date or seconds since 1970<br>`to`: The loop's end | yes |
 
 ## View
 

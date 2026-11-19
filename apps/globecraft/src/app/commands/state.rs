@@ -136,6 +136,7 @@ impl App {
             "ui.timeline" => on(self.timeline.open),
             "ui.legend" => on(self.legend_open()),
             "time.play" => on(self.time.speed() != 0.0),
+            "time.loop" => on(self.time.loop_range().is_some()),
             "time.pause" => CommandState {
                 enabled: self.time.speed() != 0.0,
                 checked: false,

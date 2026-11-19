@@ -137,6 +137,23 @@ impl App {
                 }
             }
             TimeCommand::Window(p) => self.time.set_window(Some(p.hours * HOUR_SECS)),
+            TimeCommand::Loop(p) => {
+                let moment = |value: TimeValue| match value {
+                    TimeValue::Number(unix) => Some(unix),
+                    TimeValue::Text(text) if text.eq_ignore_ascii_case("now") => Some(wall),
+                    TimeValue::Text(text) => parse_iso(&text),
+                };
+                let range = match (p.from, p.to) {
+                    (None, None) => None,
+                    (Some(from), Some(to)) => Some(
+                        moment(from)
+                            .zip(moment(to))
+                            .ok_or("from and to must be ISO 8601 dates or seconds since 1970")?,
+                    ),
+                    _ => return Err("give both from and to, or neither to end the loop".into()),
+                };
+                self.time.set_loop(range, wall);
+            }
             TimeCommand::Range(p) => {
                 if !p.days.is_finite() {
                     return Err("days must be a number".into());
@@ -157,6 +174,10 @@ impl App {
             "hours_per_second": self.time.speed() / HOUR_SECS,
             "window_hours": self.time.window_secs().map(|s| s / HOUR_SECS),
             "range_days": self.timeline.range_days,
+            "loop": self.time.loop_range().map(|(from, to)| json!({
+                "from": globecraft_core::time::format_utc(from),
+                "to": globecraft_core::time::format_utc(to),
+            })),
         })
     }
 }

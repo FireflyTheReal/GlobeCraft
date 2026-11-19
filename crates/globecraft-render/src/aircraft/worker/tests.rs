@@ -53,10 +53,12 @@ fn unchanged_view_reuses_geometry_and_time_data_dpi_and_scale_invalidate_it() {
     let mut preparer = AircraftPreparer::default();
     let mut request = input();
     let first = preparer.prepare(request.clone());
-    assert!(first.is_recent(1010.1) && first.is_recent(1011.9));
-    assert!(!first.is_recent(1009.9) && !first.is_recent(1012.2));
-    // Within the view's motion step the geometry is reused; the next step makes new.
+    // Shown through its motion step and a little past it.
     let step = request.view.motion_step();
+    let shown_for = step + MAX_PRESENTATION_AGE_SECS;
+    assert!(first.is_recent(1010.1) && first.is_recent(1010.1 + shown_for - 0.1));
+    assert!(!first.is_recent(1009.9) && !first.is_recent(1010.1 + shown_for + 0.1));
+    // Within the view's motion step the geometry is reused; the next step makes new.
     let start = (1010.1 / step).floor() * step;
     request.unix_secs = start + step * 0.999;
     assert!(Arc::ptr_eq(&first, &preparer.prepare(request.clone())));
@@ -128,4 +130,15 @@ fn background_projection_coalesces_pending_views_and_uses_the_latest_displayed_c
     let wrong = input();
     assert!(!geometry.matches(wrong.view, &request.data));
     release.send(()).unwrap();
+}
+
+#[test]
+fn far_out_the_planes_show_through_their_whole_motion_step() {
+    // From 10,000 km a step lasts seconds: the geometry reused through it stays shown.
+    let mut request = input();
+    request.view.altitude_km = 10_000.0;
+    let step = request.view.motion_step();
+    assert!(step > MAX_PRESENTATION_AGE_SECS, "{step}");
+    let geometry = AircraftPreparer::default().prepare(request);
+    assert!(geometry.is_recent(1010.1 + step));
 }

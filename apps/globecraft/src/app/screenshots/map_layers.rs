@@ -1200,3 +1200,53 @@ fn timeline_playback_frames() {
         (h.state().scene_unix() - started_at) / 60.0
     );
 }
+
+/// The timeline with a loop (its row of handles under the dates), and the Clouds
+/// button's drop-down of the cloud map's detail (user, 2026-11-19).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn loop_and_cloud_detail_screenshots() {
+    use egui_kittest::kittest::Queryable;
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.settings.workspace.ribbon_tab = globecraft_core::commands::Tab::Live;
+    for (id, params) in [
+        ("ui.timeline", json!({"on": true})),
+        ("time.step", json!({"hours": -72.0})),
+    ] {
+        app.run(id, params)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+    let unix = app.scene_unix();
+    app.run(
+        "time.loop",
+        json!({"from": unix - 86_400.0, "to": unix + 43_200.0}),
+    )
+    .expect("loop");
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "timeline-loop");
+    // The Clouds button's label opens its menu.
+    let clouds = h.get_by_label("Clouds").rect();
+    let at = egui::pos2(clouds.center().x, clouds.max.y - 6.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.event(egui::Event::PointerMoved(at));
+    h.step();
+    h.event(button(true));
+    h.step();
+    h.event(button(false));
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "clouds-detail-menu");
+    assert!(
+        !h.state().layer(globecraft_core::layers::MapLayer::Clouds),
+        "opening the menu does not switch the layer"
+    );
+}
