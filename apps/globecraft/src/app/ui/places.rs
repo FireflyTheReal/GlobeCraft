@@ -331,6 +331,7 @@ fn add_center_placemark(
         desc: String::new(),
         lat: center.0,
         lon: center.1,
+        time: None,
     });
     *selection = Some(node.id());
     places.insert(parent, node);

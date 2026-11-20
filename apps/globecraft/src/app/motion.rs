@@ -6,6 +6,10 @@
 pub(super) struct MotionState {
     pub(super) fly: Option<globecraft_core::flight::Flight>,
     pub(super) auto_rotate: bool,
+    /// A scripted tour sets the looked-at point's ground itself (screenshot tours):
+    /// following the ground under it as well moved the target every frame and the
+    /// camera wobbled and sank between the scripted positions.
+    pub(super) scripted: bool,
     /// The terrain height (km, exaggerated) the camera looks at: the first ground
     /// along the line of sight.
     pub(super) ground_km: f64,

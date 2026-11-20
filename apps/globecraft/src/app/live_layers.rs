@@ -191,7 +191,8 @@ impl App {
                 heights: !self.settings.layers.flat_live_objects,
             },
             data: self.aircraft_snapshot(),
-            unix_secs: now_unix(),
+            // Replayed planes are drawn as at the time shown, live ones flown on to now.
+            unix_secs: self.aircraft_replay_time().unwrap_or_else(now_unix),
             clouds: self.frame_clouds(),
         }
     }
@@ -210,11 +211,15 @@ impl App {
             // A selected flight's track, route and plane go above the other planes,
             // which are dimmed so they stand out; the hover card goes above all.
             let selected = self.picked.flight.selected().is_some();
-            let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 };
+            // Aircraft away from now: replayed from the last hour seen, dimmed before it.
+            let dim = self.time_dim(MapLayer::Flights);
+            let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 } * dim;
             self.live
                 .aircraft_overlay
                 .draw(painter, input, self.lang, opacity);
-            self.paint_selected_flight(painter, basis, rect);
+            let mut dimmed = painter.clone();
+            dimmed.multiply_opacity(dim);
+            self.paint_selected_flight(&dimmed, basis, rect);
             self.live.aircraft_overlay.hover(painter, self.lang);
             // The selected flight's card counts on.
             let step = if selected {
@@ -229,7 +234,10 @@ impl App {
         if self.layer(MapLayer::Vessels)
             && let Some(geometry) = geometry
         {
-            self.draw_vessel_overlay(painter, geometry);
+            // Ships have only the present: dimmed while another time is shown.
+            let mut dimmed = painter.clone();
+            dimmed.multiply_opacity(self.time_dim(MapLayer::Vessels));
+            self.draw_vessel_overlay(&dimmed, geometry);
             painter
                 .ctx()
                 .request_repaint_after(motion::repaint_after(geometry.input.view.vessel_step()));
@@ -320,7 +328,12 @@ fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) 
             ),
             (
                 "age",
-                format!("{:.0}", (now_unix() - sample.observed_unix).max(0.0)).into(),
+                // From the time drawn: a replayed plane's report is of then.
+                format!(
+                    "{:.0}",
+                    (geometry.unix_secs - sample.observed_unix).max(0.0)
+                )
+                .into(),
             ),
         ],
     );
@@ -509,7 +522,8 @@ impl App {
         }
         Some(globecraft_render::aurora::AuroraCfg {
             grid,
-            opacity: self.settings.layers.opacity.get(MapLayer::Aurora),
+            opacity: self.settings.layers.opacity.get(MapLayer::Aurora)
+                * self.time_dim(MapLayer::Aurora),
         })
     }
 }

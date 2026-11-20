@@ -52,6 +52,7 @@ impl App {
                     desc: p.description.unwrap_or_default(),
                     lat,
                     lon,
+                    time: None,
                 });
                 self.places.selection = Some(node.id());
                 self.places.items.insert(parent, node);

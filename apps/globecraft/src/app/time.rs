@@ -6,6 +6,15 @@ use globecraft_core::time::{HOUR_SECS, parse_iso};
 use globecraft_data::tiles::Provider;
 use serde_json::{Value, json};
 
+/// How far from the real time the app's time may be before the layers that have only
+/// the present are dimmed: their data is minutes old anyway.
+const PRESENT_TOLERANCE_SECS: f64 = 15.0 * 60.0;
+/// How far a radar frame may be from the time shown and still count as of it: a
+/// frame covers its ten minutes.
+const RADAR_MATCH_SECS: f64 = 15.0 * 60.0;
+/// Those layers' opacity, as a share of their own, while another time is shown.
+pub(super) const PRESENT_ONLY_DIMMED: f32 = 0.3;
+
 /// The timeline bar (roadmap 10.2: one of the feature states split out of `App`).
 pub(super) struct TimelineState {
     /// The timeline bar is open, and the speed its play button runs at (scene
@@ -76,6 +85,59 @@ impl App {
     /// The moment the globe shows (seconds since 1970).
     pub(super) fn scene_unix(&self) -> f64 {
         self.time.now(now_unix())
+    }
+
+    /// Whether the app shows another time than now, beyond a few minutes: the layers
+    /// that have only the present are dimmed then (`MapLayer::present_only`).
+    pub(super) fn away_from_now(&self) -> bool {
+        self.scene_offset_secs().abs() > PRESENT_TOLERANCE_SECS
+    }
+
+    /// What a layer's opacity is multiplied by for the time shown: dimmed when it
+    /// has only the present and the app shows another time, 1 otherwise.
+    pub(super) fn time_dim(&self, layer: globecraft_core::layers::MapLayer) -> f32 {
+        if !self.away_from_now() {
+            return 1.0;
+        }
+        let shows_the_time = if layer == globecraft_core::layers::MapLayer::Flights {
+            // The planes of the last hour this session saw are replayed.
+            self.aircraft_replay_time().is_some()
+        } else if layer == globecraft_core::layers::MapLayer::Satellites {
+            // Orbits are worked out up to 14 days from their elements (nearly now).
+            self.scene_offset_secs().abs() <= globecraft_data::satellites::MAX_EPOCH_AGE_SECS
+        } else if layer == globecraft_core::layers::MapLayer::Radar {
+            // The radar keeps two hours: dimmed when its frame is not of the time shown.
+            self.live
+                .maps
+                .radar_time()
+                .is_some_and(|time| (time as f64 - self.scene_unix()).abs() <= RADAR_MATCH_SECS)
+        } else {
+            !layer.present_only()
+        };
+        if shows_the_time {
+            1.0
+        } else {
+            PRESENT_ONLY_DIMMED
+        }
+    }
+
+    /// The time the planes are shown for when the app's time is not live (also a
+    /// few minutes back: they are where they were then), while this session's
+    /// history of them reaches back to it.
+    pub(super) fn aircraft_replay_time(&self) -> Option<f64> {
+        let time = self.scene_unix();
+        (!self.time.is_live() && self.live.aircraft.replays(time)).then_some(time)
+    }
+
+    /// The app's time less the wall clock, 0 while live: what satellites are drawn
+    /// ahead or behind by, so the timeline moves them (`LiveInput::scene_offset_secs`).
+    pub(super) fn scene_offset_secs(&self) -> f64 {
+        if self.time.is_live() {
+            0.0
+        } else {
+            let wall = now_unix();
+            self.time.now(wall) - wall
+        }
     }
 
     /// The moment dated imagery (`{date}` tiles) shows: the app's time, moved at most

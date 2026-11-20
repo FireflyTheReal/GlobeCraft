@@ -864,7 +864,6 @@ sky-help = A Via Láctea é o mapa difuso da NASA, preparado como fundo SDR 4K; 
 sky-loading = Preparando fundo celeste…
 sky-retry = Tentar carregar o fundo novamente
 sky-short-credit = Céu: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
-    { $sky }
 sky-software-credits = Licenças do software de transformação celeste
 
 # Relevo diretamente no motor Rust (sem navegador)
@@ -1290,6 +1289,7 @@ ribbon-layer-peaks = Picos
 ribbon-layer-waters = Rios e águas
 ribbon-layer-parks = Parques
 ribbon-layer-traffic = Trânsito
+present-only-dimmed = Sem dados para este horário, esmaecidos: { $layers }
 statusbar-tiles-ready = Blocos prontos
 assistant-settings-title = Configurações do assistente
 pane-measure-title = Medição

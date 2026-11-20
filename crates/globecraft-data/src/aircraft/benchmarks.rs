@@ -44,6 +44,8 @@ fn aircraft_snapshot_cost() {
         control,
         updates,
         latest: prepared.snapshot,
+        history: Default::default(),
+        replayed: Default::default(),
         stopped: false,
         _unused_publisher: None,
     };

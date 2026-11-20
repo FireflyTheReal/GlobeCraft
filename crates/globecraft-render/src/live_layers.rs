@@ -126,6 +126,10 @@ pub struct LiveInput {
     /// The place names on screen, which keep their places (`poi::PoiShown`).
     pub poi_shown: Option<Arc<poi::PoiShown>>,
     pub unix_secs: f64,
+    /// The app's time less the wall clock (0 when live): satellites are drawn where
+    /// they are at the app's time, so the timeline moves them; ships, reported
+    /// live, age by the wall clock.
+    pub scene_offset_secs: f64,
     /// When the input was made: building tiles fade in and out by it.
     pub now: std::time::Instant,
     /// Satellites at their height; off, on the ground below them.
@@ -196,7 +200,11 @@ impl LiveInput {
     }
     fn same_satellite_time(&self, other: &Self) -> bool {
         let step = self.view.satellite_step();
-        motion::tick(self.unix_secs, step) == motion::tick(other.unix_secs, step)
+        motion::tick(self.satellite_unix(), step) == motion::tick(other.satellite_unix(), step)
+    }
+    /// The moment satellites are drawn for: the app's time.
+    pub fn satellite_unix(&self) -> f64 {
+        self.unix_secs + self.scene_offset_secs
     }
 }
 
@@ -455,7 +463,7 @@ fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
     let now: Vec<(usize, globecraft_data::satellites::SatellitePosition)> = satellites
         .iter()
         .enumerate()
-        .filter_map(|(index, sat)| sat.position(input.unix_secs).map(|at| (index, at)))
+        .filter_map(|(index, sat)| sat.position(input.satellite_unix()).map(|at| (index, at)))
         .collect();
     let positions: Vec<_> = now.iter().map(|(_, at)| *at).collect();
     let norads: Vec<&str> = now

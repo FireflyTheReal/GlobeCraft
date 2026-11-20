@@ -412,6 +412,7 @@ impl App {
         super::ui::surface::remember_globe_rect(ui.ctx(), rect);
 
         self.paint_scale_bar(&painter, rect, &display_basis, display_cam);
+        self.paint_present_only_note(&painter, rect);
         self.compare_split(ui, &painter, rect);
         let credits = self.map_credits(lg, &display_basis, rect);
         self.paint_credits(&painter, rect, &credits);
@@ -748,9 +749,18 @@ impl App {
     ) {
         // Layers with an opacity (roadmap 6.1) draw through a faded painter.
         let opacity = self.settings.layers.opacity;
+        // Traffic has only the present, the radar its last two hours: dimmed while
+        // another time is shown that they do not have.
+        let traffic_dim = self.time_dim(MapLayer::Traffic);
+        let radar_dim = self.time_dim(MapLayer::Radar);
         let faded = |layer: MapLayer| {
             let mut faded = painter.clone();
-            faded.multiply_opacity(opacity.get(layer));
+            let dim = if layer == MapLayer::Traffic {
+                traffic_dim
+            } else {
+                1.0
+            };
+            faded.multiply_opacity(opacity.get(layer) * dim);
             faded
         };
         self.live.maps.draw(
@@ -760,7 +770,7 @@ impl App {
             self.layer(MapLayer::Clouds)
                 .then(|| opacity.get(MapLayer::Clouds)),
             self.layer(MapLayer::Radar)
-                .then(|| opacity.get(MapLayer::Radar)),
+                .then(|| opacity.get(MapLayer::Radar) * radar_dim),
             self.cloud_light(),
             self.frame.last_interact.elapsed() <= IDLE_RENDER_DELAY,
         );
@@ -882,6 +892,37 @@ impl App {
             live_geometry.as_deref(),
         );
         self.draw_tile_diagnostics(painter, &display_basis, rect);
+    }
+
+    /// While another time is shown, which of the visible layers do not have it and are
+    /// dimmed for it, above the scale bar.
+    fn paint_present_only_note(&self, painter: &egui::Painter, rect: Rect) {
+        if !self.away_from_now() {
+            return;
+        }
+        let names: Vec<&str> = MapLayer::ALL
+            .into_iter()
+            .filter(|&layer| self.layer(layer) && self.time_dim(layer) < 1.0)
+            .map(|layer| super::ui::short_layer_label(self.lang, layer))
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        let text = self.lang.format(
+            "present-only-dimmed",
+            &[("layers", names.join(" · ").into())],
+        );
+        let scale = self.settings.map_scale;
+        let galley = painter.layout_no_wrap(
+            text,
+            FontId::proportional(12.0 * scale),
+            Color32::from_gray(225),
+        );
+        let x = rect.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
+        let at = Pos2::new(x, rect.bottom() - 52.0 * scale - galley.size().y);
+        let back = Rect::from_min_size(at, galley.size()).expand2(egui::vec2(8.0, 4.0) * scale);
+        painter.rect_filled(back, 6.0 * scale, Color32::from_black_alpha(150));
+        painter.galley(at, galley, Color32::from_gray(225));
     }
 
     /// The scale bar at the bottom left.

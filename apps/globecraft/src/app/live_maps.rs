@@ -141,14 +141,14 @@ impl LiveMaps {
         ctx: &egui::Context,
         runtime: &globecraft_data::runtime::ServiceRuntime,
         clouds: globecraft_data::live_maps::CloudWish,
-        radar: bool,
+        radar: globecraft_data::live_maps::RadarWish,
         water: bool,
     ) {
         let wake = ctx.clone();
         self.service.update(runtime, clouds, radar, water, move || {
             wake.request_repaint()
         });
-        if clouds.shown || radar {
+        if clouds.shown || radar.shown {
             ctx.request_repaint_after(Duration::from_secs(60));
         }
     }
@@ -340,6 +340,30 @@ impl LiveMaps {
     }
 
     /// The cloud map, once loaded.
+    /// Whether the clouds drawn are the current map's, not the map before (drawn
+    /// while the new one's textures are made): scripted tours wait for it.
+    #[cfg(test)]
+    pub fn clouds_drawn(&self) -> bool {
+        let Some(map) = self.service.cloud() else {
+            return false;
+        };
+        self.previous_clouds.is_none()
+            && self.cloud_textures.as_ref().is_some_and(|textures| {
+                Arc::ptr_eq(&textures.map, map) && textures.textures.iter().any(Option::is_some)
+            })
+    }
+
+    /// When the radar shown was measured (Unix seconds).
+    pub fn radar_time(&self) -> Option<i64> {
+        self.service.radar_time()
+    }
+
+    /// See `globecraft_data::live_maps::LiveMaps::clouds_settled`.
+    #[cfg(test)]
+    pub fn clouds_settled(&self, time: Option<f64>) -> bool {
+        self.service.clouds_settled(time)
+    }
+
     pub fn cloud_map(&self) -> Option<Arc<CloudMap>> {
         self.service.cloud().cloned()
     }

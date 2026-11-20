@@ -211,6 +211,7 @@ mod tests {
             desc: String::new(),
             lat: 27.0,
             lon: 86.0,
+            time: None,
         });
         let mark_id = mark.id();
         let nested = PlaceNode::folder("Asia".into(), String::new(), false, vec![mark]);

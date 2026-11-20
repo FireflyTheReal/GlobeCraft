@@ -471,6 +471,7 @@ pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
         },
         poi_shown: None,
         unix_secs: 0.0,
+        scene_offset_secs: 0.0,
         now: std::time::Instant::now(),
         satellite_heights: true,
     };

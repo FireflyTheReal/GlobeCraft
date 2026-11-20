@@ -864,7 +864,6 @@ sky-help = The Milky Way is NASA’s diffuse map, prepared as a 4K SDR backgroun
 sky-loading = Preparing celestial background…
 sky-retry = Retry background loading
 sky-short-credit = Sky: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
-    { $sky }
 sky-software-credits = Celestial transform software licenses
 
 # Native Rust renderer terrain (no browser)
@@ -1290,6 +1289,7 @@ ribbon-layer-peaks = Peaks
 ribbon-layer-waters = Rivers & waters
 ribbon-layer-parks = Parks
 ribbon-layer-traffic = Traffic
+present-only-dimmed = No data for this time, shown dimmed: { $layers }
 statusbar-tiles-ready = Tiles ready
 assistant-settings-title = Assistant settings
 pane-measure-title = Measure

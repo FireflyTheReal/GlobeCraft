@@ -84,6 +84,8 @@ fn snapshot_reads_share_the_same_data_and_a_stopped_service_reports_an_error() {
         control,
         updates,
         latest,
+        history: Default::default(),
+        replayed: Default::default(),
         stopped: false,
         _unused_publisher: None,
     };
@@ -317,4 +319,50 @@ fn a_build_without_live_feeds_asks_for_nothing() {
     assert!(snapshot.aircraft.is_empty());
     assert!(snapshot.error.is_none(), "the service is idle, not stopped");
     assert!(snapshot.global.loaded.is_none() && snapshot.local.loaded.is_none());
+}
+
+#[test]
+fn the_timeline_replays_the_planes_this_session_saw() {
+    let (control, _) = watch::channel(AircraftQuery::default());
+    let latest = Arc::new(AircraftSnapshot::default());
+    let (_publish, updates) = watch::channel(latest.clone());
+    let mut service = LiveAircraft {
+        control,
+        updates,
+        latest,
+        history: Default::default(),
+        replayed: Default::default(),
+        stopped: false,
+        _unused_publisher: None,
+    };
+    let now = globecraft_core::math::now_unix();
+    let plane = |lat: f64, observed_unix: f64| Aircraft {
+        hex: "3c6444".into(),
+        callsign: "DLH9".into(),
+        latitude: lat,
+        longitude: 8.0,
+        heading_deg: 0.0,
+        speed_knots: Some(450.0),
+        altitude_feet: Some(36_000.0),
+        vertical_rate_fpm: None,
+        turn_rate_deg_s: None,
+        observed_unix,
+        details: None,
+        class: AircraftClass::Airliner,
+    };
+    service
+        .history
+        .record(&[plane(50.0, now - 600.0)], now - 600.0);
+    service
+        .history
+        .record(&[plane(51.0, now - 300.0)], now - 300.0);
+    // Before the session saw anything: nothing to replay.
+    assert!(service.replay(now - 900.0).is_none());
+    let second = (now - 450.0).floor();
+    let first = service.replay(second + 0.2).expect("replayed");
+    assert_eq!(first.aircraft.len(), 1);
+    assert!((first.aircraft[0].latitude - 50.5).abs() < 0.01);
+    // The same second: the same snapshot (projected once); the next: a new one.
+    assert!(Arc::ptr_eq(&first, &service.replay(second + 0.7).unwrap()));
+    assert!(!Arc::ptr_eq(&first, &service.replay(second + 1.0).unwrap()));
 }

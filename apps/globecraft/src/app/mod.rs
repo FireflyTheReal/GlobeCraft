@@ -690,7 +690,18 @@ impl eframe::App for App {
                 max_px: self.settings.layers.cloud_resolution_px,
                 loop_range: self.time.loop_range(),
             },
-            self.layer(MapLayer::Radar),
+            globecraft_data::live_maps::RadarWish {
+                shown: self.layer(MapLayer::Radar),
+                // Away from now, the frame of that time, within the two hours kept;
+                // further back the newest, dimmed.
+                time: self
+                    .away_from_now()
+                    .then(|| self.scene_unix())
+                    .filter(|time| {
+                        let back = globecraft_core::math::now_unix() - time;
+                        (0.0..=globecraft_data::live_maps::RADAR_PAST_SECS).contains(&back)
+                    }),
+            },
             // The sun's glint on the water.
             self.layer(MapLayer::Sunlight) && self.explorer.on_earth(),
         );

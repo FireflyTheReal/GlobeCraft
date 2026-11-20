@@ -159,6 +159,7 @@ impl App {
             poi_layers: self.poi_layers(),
             poi_shown: Some(self.map_data.poi_shapes.shown()),
             unix_secs: now_unix(),
+            scene_offset_secs: self.scene_offset_secs(),
             now: std::time::Instant::now(),
             satellite_heights: !self.settings.layers.flat_live_objects,
         }
@@ -238,6 +239,7 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            scene_offset_secs: 0.0,
             now: std::time::Instant::now(),
             satellite_heights: true,
         };
@@ -308,6 +310,7 @@ mod tests {
             poi_layers: Default::default(),
             poi_shown: None,
             unix_secs: 1_700_000_000.0,
+            scene_offset_secs: 0.0,
             now: std::time::Instant::now(),
             satellite_heights: true,
         };

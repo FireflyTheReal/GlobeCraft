@@ -24,6 +24,13 @@ pub const CLOUDS_KEPT_SINCE_UNIX: f64 = 1_773_014_400.0;
 const CLOUD_INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 const RADAR_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60);
+/// RainViewer's frames are ten minutes apart.
+const RADAR_STEP_SECS: f64 = 600.0;
+/// How far back RainViewer's frames reach (two hours) and a step more: an older time
+/// is not asked for, its newest frame would come back for every step.
+pub const RADAR_PAST_SECS: f64 = 2.0 * 3600.0 + RADAR_STEP_SECS;
+/// Radar frames of other moments kept (16 MB each): an hour of them.
+const RADAR_KEPT: usize = 6;
 /// Kept cloud maps of earlier moments, the last used last: a playing timeline steps
 /// through them without loading them again. Bounded by their pixels (bytes, one a
 /// pixel): an 8192 map with its levels is about 42 MB, so two of those, or many
@@ -55,6 +62,21 @@ pub struct CloudWish {
     pub max_px: u32,
     /// The timeline's loop (Unix seconds), whose moments load ahead.
     pub loop_range: Option<(f64, f64)>,
+}
+
+/// Which rain radar the view wants.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RadarWish {
+    /// The radar layer shows.
+    pub shown: bool,
+    /// The app's time when it is away from now (Unix seconds): RainViewer keeps the
+    /// last two hours, in ten-minute frames, and the one for that time is shown.
+    pub time: Option<f64>,
+}
+
+/// The ten-minute step a radar frame is wanted for; `None` for the newest.
+fn radar_step(time: Option<f64>) -> Option<i64> {
+    time.map(|t| (t / RADAR_STEP_SECS).floor() as i64 * RADAR_STEP_SECS as i64)
 }
 
 /// The clouds' opacity over the whole Earth (equirectangular, north up, from 180° W),
@@ -196,6 +218,14 @@ pub struct LiveMaps {
     /// The widest level the maps were kept at.
     cloud_max_px: u32,
     radar: Feed<RadarFrame>,
+    /// The ten-minute step the radar shown was wanted for, and the one loading
+    /// (`None`: the newest).
+    radar_for: Option<i64>,
+    radar_loading_for: Option<i64>,
+    /// Radar frames of earlier steps shown, the newest last (at most
+    /// [`RADAR_KEPT`]): a timeline playing or looping over them shows them again
+    /// without downloading them again.
+    radar_kept: std::collections::VecDeque<(i64, RadarFrame)>,
     water: Feed<Arc<GrayImage>>,
     generation: u64,
 }
@@ -208,7 +238,7 @@ impl LiveMaps {
         &mut self,
         runtime: &crate::runtime::ServiceRuntime,
         wish: CloudWish,
-        radar: bool,
+        radar: RadarWish,
         water: bool,
         repaint: impl Fn() + Send + Sync + 'static,
     ) {
@@ -246,9 +276,15 @@ impl LiveMaps {
             (self.cloud.value, self.cloud_slot) = (None, None);
             self.generation += 1;
         }
+        let wanted_radar = radar_step(radar.time);
+        let mut radar_arrived = self.receive_radar(wanted_radar);
+        // A step kept: shown at once.
+        if radar.shown && self.show_kept_radar(wanted_radar) {
+            radar_arrived = true;
+        }
         let arrived = [
             cloud_arrived,
-            self.radar.receive("Radar download interrupted"),
+            radar_arrived,
             self.water.receive("Water map download interrupted"),
         ];
         if arrived.contains(&true) {
@@ -315,8 +351,24 @@ impl LiveMaps {
                 }
             }
         }
+        // Another moment wanted (the timeline moved, or back to now): its frame at once.
+        let wanted = wanted_radar;
+        if radar.shown
+            && wanted != self.radar_for
+            && wanted != self.radar_loading_for
+            && self.radar.receiver.is_none()
+        {
+            // At once, unless the last download failed: then after its pause.
+            if self.radar.error.is_none() {
+                self.radar.attempt = None;
+            }
+            self.radar_loading_for = wanted;
+        }
+        let for_step = self.radar_loading_for;
         self.radar
-            .refresh(radar, RADAR_INTERVAL, runtime, &repaint, download_radar);
+            .refresh(radar.shown, RADAR_INTERVAL, runtime, &repaint, move || {
+                download_radar(for_step)
+            });
         // The water's shine is the clouds' companion: as often, from the same source.
         self.water
             .refresh(water, CLOUD_INTERVAL, runtime, &repaint, || async {
@@ -400,8 +452,76 @@ impl LiveMaps {
     pub fn cloud(&self) -> Option<&Arc<CloudMap>> {
         self.cloud.value.as_ref()
     }
+    /// Whether the map shown is the one for the app's `time` (`CloudWish::time`) and
+    /// nothing is loading: scripted tours wait for it before drawing a frame.
+    pub fn clouds_settled(&self, time: Option<f64>) -> bool {
+        self.cloud.receiver.is_none()
+            && self.cloud.value.is_some()
+            && self.cloud_slot == archive::earlier_slot(time, unix_now())
+    }
     pub fn radar(&self) -> Option<&RgbaImage> {
         self.radar.value.as_ref().map(|frame| &frame.image)
+    }
+    /// Takes in a finished radar download; whether the frame shown changed. The
+    /// frame it replaces is kept; one for a step no longer wanted (a kept frame came
+    /// on while it loaded) is kept instead of shown.
+    fn receive_radar(&mut self, wanted: Option<i64>) -> bool {
+        let shown = self.radar.value.take();
+        if !self.radar.receive("Radar download interrupted") {
+            self.radar.value = shown;
+            return false;
+        }
+        let came_for = self.radar_loading_for;
+        if came_for != wanted && shown.is_some() && self.radar_for == wanted {
+            let came = self.radar.value.take();
+            self.radar.value = shown;
+            self.keep_radar(came_for, came);
+            return false;
+        }
+        self.keep_radar(self.radar_for, shown);
+        self.radar_for = came_for;
+        true
+    }
+
+    /// Shows the kept frame of step `wanted`, if there is one: whether it did.
+    fn show_kept_radar(&mut self, wanted: Option<i64>) -> bool {
+        if wanted.is_none() || wanted == self.radar_for {
+            return false;
+        }
+        let Some(index) = self
+            .radar_kept
+            .iter()
+            .position(|(step, _)| Some(*step) == wanted)
+        else {
+            return false;
+        };
+        let Some((_, frame)) = self.radar_kept.remove(index) else {
+            return false;
+        };
+        let replaced = self.radar.value.replace(frame);
+        self.keep_radar(self.radar_for, replaced);
+        self.radar_for = wanted;
+        if self.radar.receiver.is_none() {
+            self.radar_loading_for = wanted;
+        }
+        true
+    }
+
+    /// Keeps a radar frame of a past step (not the newest, which is fetched again).
+    fn keep_radar(&mut self, step: Option<i64>, frame: Option<RadarFrame>) {
+        let (Some(step), Some(frame)) = (step, frame) else {
+            return;
+        };
+        self.radar_kept.retain(|(kept, _)| *kept != step);
+        self.radar_kept.push_back((step, frame));
+        while self.radar_kept.len() > RADAR_KEPT {
+            self.radar_kept.pop_front();
+        }
+    }
+
+    /// The moment the radar shown was measured (Unix seconds).
+    pub fn radar_time(&self) -> Option<i64> {
+        self.radar.value.as_ref().map(|frame| frame.time)
     }
     /// How much the water shines (0 to 255; land and cloud dark), equirectangular from
     /// 180° W, north up.
@@ -521,6 +641,67 @@ fn refresh_due(last: Option<Instant>, loaded: bool, interval: Duration) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn radar_frame(time: i64) -> RadarFrame {
+        RadarFrame {
+            image: RgbaImage::new(1, 1),
+            time,
+        }
+    }
+
+    #[test]
+    fn radar_frames_shown_before_come_back_without_a_download() {
+        let mut maps = LiveMaps::default();
+        // Steps 0..8 shown one after the other, as a playing timeline does.
+        for step in 0..8 {
+            let shown = maps.radar.value.take();
+            maps.keep_radar(maps.radar_for, shown);
+            maps.radar.value = Some(radar_frame(step * 600));
+            maps.radar_for = Some(step * 600);
+        }
+        // The last six before the one shown are kept, the oldest gone.
+        let kept: Vec<i64> = maps.radar_kept.iter().map(|(step, _)| *step).collect();
+        assert_eq!(kept, [600, 1200, 1800, 2400, 3000, 3600]);
+        // Back to a kept step: shown at once, the one shown kept instead.
+        assert!(maps.show_kept_radar(Some(1200)));
+        assert_eq!(maps.radar_time(), Some(1200));
+        assert_eq!(maps.radar_for, Some(1200));
+        assert!(maps.radar_kept.iter().any(|(step, _)| *step == 4200));
+        assert!(!maps.radar_kept.iter().any(|(step, _)| *step == 1200));
+        // Not kept, the one shown, or the newest: nothing to show.
+        assert!(!maps.show_kept_radar(Some(0)));
+        assert!(!maps.show_kept_radar(Some(1200)));
+        assert!(!maps.show_kept_radar(None));
+        // The newest (live) frame is not kept: it is fetched again anyway.
+        maps.keep_radar(None, Some(radar_frame(9_999)));
+        assert!(!maps.radar_kept.iter().any(|(_, frame)| frame.time == 9_999));
+    }
+
+    #[test]
+    fn a_radar_download_for_a_moment_left_is_kept_not_shown() {
+        let mut maps = LiveMaps::default();
+        maps.radar.value = Some(radar_frame(600));
+        maps.radar_for = Some(600);
+        // Step 1800 was loading when the timeline went back to the kept step 600.
+        let (send, receive) = mpsc::channel();
+        maps.radar.receiver = Some(receive);
+        maps.radar_loading_for = Some(1800);
+        send.send(Ok(radar_frame(1800))).unwrap();
+        assert!(!maps.receive_radar(Some(600)));
+        assert_eq!(maps.radar_time(), Some(600));
+        assert!(maps.radar_kept.iter().any(|(step, _)| *step == 1800));
+        // Wanted when it comes: shown, and the one before kept.
+        let (send, receive) = mpsc::channel();
+        maps.radar.receiver = Some(receive);
+        maps.radar_loading_for = Some(2400);
+        send.send(Ok(radar_frame(2400))).unwrap();
+        assert!(maps.receive_radar(Some(2400)));
+        assert_eq!(
+            (maps.radar_time(), maps.radar_for),
+            (Some(2400), Some(2400))
+        );
+        assert!(maps.radar_kept.iter().any(|(step, _)| *step == 600));
+    }
 
     #[test]
     fn maps_keep_their_levels_up_to_the_width_chosen() {

@@ -194,6 +194,13 @@ impl App {
 
     /// The flights to draw: with the selected one's newest position.
     pub(super) fn aircraft_snapshot(&self) -> Arc<AircraftSnapshot> {
+        // Away from now, the planes as they were then, while the history has them.
+        if let Some(replayed) = self
+            .aircraft_replay_time()
+            .and_then(|time| self.live.aircraft.replay(time))
+        {
+            return replayed;
+        }
         let snapshot = self.live.aircraft.snapshot();
         match &self.picked.snapshot {
             Some(shown) if Arc::ptr_eq(&shown.from, &snapshot) => shown.flights.clone(),
@@ -263,12 +270,26 @@ impl App {
             return;
         };
         let scale = self.settings.map_scale;
-        let now = now_unix();
-        let current = flight
-            .position
-            .as_ref()
-            .map(|aircraft| flown_on(aircraft, basis.model, now))
-            .or_else(|| flight.track.last().map(|p| (p.lat, p.lon)));
+        // In a replay the plane is where it was then, and its track ends there.
+        let replay = self.aircraft_replay_time();
+        let (current, track) = match replay {
+            Some(time) => (
+                self.aircraft_snapshot()
+                    .aircraft
+                    .iter()
+                    .find(|aircraft| *aircraft.hex == *flight.hex)
+                    .map(|aircraft| flown_on(aircraft, basis.model, time)),
+                &flight.track[..flight.track.partition_point(|p| p.unix <= time)],
+            ),
+            None => (
+                flight
+                    .position
+                    .as_ref()
+                    .map(|aircraft| flown_on(aircraft, basis.model, now_unix()))
+                    .or_else(|| flight.track.last().map(|p| (p.lat, p.lon))),
+                &flight.track[..],
+            ),
+        };
         let mut shapes = Vec::new();
         let ends_at = TrackEnd {
             ground: current,
@@ -279,7 +300,7 @@ impl App {
             &mut shapes,
             basis,
             rect,
-            &flight.track,
+            track,
             ends_at,
             TrackHeights {
                 heights,

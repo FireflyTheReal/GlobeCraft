@@ -121,9 +121,14 @@ impl App {
         })
     }
 
-    /// The moment frames are drawn for (`globecraft_render::view::frame_time`).
+    /// The moment frames are drawn for (`globecraft_render::view::frame_time`); exact
+    /// in a scripted tour that sets the time itself (its time-lapses step by less than
+    /// a minute a frame), to the minute while the clock runs live.
     pub(super) fn frame_time(&self) -> f64 {
-        globecraft_render::view::frame_time(self.scene_unix(), self.time.speed() != 0.0)
+        globecraft_render::view::frame_time(
+            self.scene_unix(),
+            self.time.speed() != 0.0 || (self.motion.scripted && !self.time.is_live()),
+        )
     }
 
     /// How the cloud layer is lit: as the globe is (`RenderCfg::sun`, night everywhere
@@ -219,6 +224,9 @@ impl App {
     /// Moves the looked-at point onto the terrain under the view centre, and keeps a
     /// tilted camera above the terrain beneath it.
     pub(super) fn follow_ground(&mut self, ctx: &eframe::egui::Context) {
+        if self.motion.scripted {
+            return;
+        }
         let exaggeration = f64::from(self.relief_exaggeration());
         let ground_km = |app: &Self, lat: f64, lon: f64, zoom: u8| {
             app.tiles

@@ -427,7 +427,10 @@ impl App {
 }
 
 /// The ribbon's short caption of a layer (the Layers pane shows the long one).
-fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> &'static str {
+pub(in crate::app) fn short_layer_label(
+    lang: globecraft_core::language::Lang,
+    layer: MapLayer,
+) -> &'static str {
     lang.text(match layer {
         MapLayer::CountryBorders => "ribbon-layer-countries",
         MapLayer::StateBorders => "ribbon-layer-states",

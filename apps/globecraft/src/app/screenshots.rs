@@ -20,6 +20,7 @@ mod live;
 mod map_layers;
 mod performance;
 mod tools;
+mod tour;
 mod user_data;
 
 const SIZE: egui::Vec2 = egui::vec2(1480.0, 900.0);

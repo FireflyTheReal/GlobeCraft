@@ -1,5 +1,5 @@
 //! Service-specific downloads and radar palette decoding.
-use super::{CloudMap, RadarFrame};
+use super::{CloudMap, RADAR_STEP_SECS, RadarFrame};
 use image::{GrayImage, RgbaImage, imageops::FilterType};
 const CLOUD_SOURCE: &str = "https://clouds.matteason.co.uk/images/8192x4096/clouds-alpha.png";
 /// The same service's map of how much the sea shines: water bright, land and cloud
@@ -78,14 +78,33 @@ fn three_hour_slot() -> u64 {
         / (3 * 60 * 60)
 }
 
-pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {
+/// Which of the radar frames (their times, oldest first) to show for the ten-minute
+/// step `wanted`: the last one measured by its end, the oldest when it is earlier
+/// than all of them, the newest for `None`.
+pub(super) fn radar_frame_index(times: &[i64], wanted: Option<i64>) -> Option<usize> {
+    let last = times.len().checked_sub(1)?;
+    let Some(wanted) = wanted else {
+        return Some(last);
+    };
+    let by = wanted + RADAR_STEP_SECS as i64;
+    Some(times.iter().rposition(|&time| time < by).unwrap_or(0))
+}
+
+/// The radar frame for the ten-minute step `wanted` (`None`: the newest).
+pub(super) async fn download_radar(wanted: Option<i64>) -> Result<RadarFrame, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Radar)?;
     let metadata = crate::http::body(client.get(RADAR_API), RADAR_METADATA_MAX_BYTES).await?;
     let json = crate::http::parse_json(metadata).await?;
-    let frame = json
+    let frames = json
         .pointer("/radar/past")
         .and_then(|v| v.as_array())
-        .and_then(|v| v.last())
+        .ok_or_else(|| crate::Error::msg("No radar frames available"))?;
+    let times: Vec<i64> = frames
+        .iter()
+        .map(|f| f.get("time").and_then(|v| v.as_i64()).unwrap_or(i64::MIN))
+        .collect();
+    let frame = radar_frame_index(&times, wanted)
+        .and_then(|index| frames.get(index))
         .ok_or_else(|| crate::Error::msg("No radar frames available"))?;
     let path = frame
         .get("path")
@@ -192,4 +211,37 @@ fn recolor_radar(src: [u8; 4]) -> [u8; 4] {
         .find(|(lowest, _)| dbz >= *lowest)
         .map_or(super::RADAR_BANDS[0].1, |(_, rgb)| *rgb);
     [r, g, b, src[3].min(200)]
+}
+
+#[cfg(test)]
+mod radar_frame_tests {
+    use super::radar_frame_index;
+
+    /// Two hours of frames, on the ten minutes as RainViewer's are.
+    fn times() -> Vec<i64> {
+        (0..13).map(|k| 1_795_099_800 + k * 600).collect()
+    }
+
+    /// The step the app asks for at a time (`super::super::radar_step`).
+    fn step(unix: i64) -> Option<i64> {
+        Some(unix.div_euclid(600) * 600)
+    }
+
+    #[test]
+    fn the_newest_frame_while_live() {
+        assert_eq!(radar_frame_index(&times(), None), Some(12));
+        assert_eq!(radar_frame_index(&[], None), None);
+    }
+
+    #[test]
+    fn the_frame_measured_in_the_wanted_ten_minutes() {
+        let times = times();
+        // A time in a frame's ten minutes, at its start or later: that frame.
+        assert_eq!(radar_frame_index(&times, step(times[4])), Some(4));
+        assert_eq!(radar_frame_index(&times, step(times[4] + 599)), Some(4));
+        assert_eq!(radar_frame_index(&times, step(times[4] + 600)), Some(5));
+        // After the newest: the newest; before the oldest: the oldest.
+        assert_eq!(radar_frame_index(&times, step(times[12] + 7_200)), Some(12));
+        assert_eq!(radar_frame_index(&times, step(times[0] - 7_200)), Some(0));
+    }
 }

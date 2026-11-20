@@ -319,6 +319,17 @@ impl MapLayer {
         )
     }
 
+    /// Whether the layer has only the present: its feed keeps no past, so it cannot
+    /// follow the app's time and is drawn dimmed while another time is shown (user,
+    /// 2026-11-20). Satellites, clouds, imagery and the sun follow the time; the rain
+    /// radar has its last two hours, aircraft the last hour this session saw.
+    pub fn present_only(self) -> bool {
+        matches!(
+            self,
+            Self::Flights | Self::Vessels | Self::Aurora | Self::Traffic
+        )
+    }
+
     /// Whether the layer has its own opacity (roadmap 6.1): the ones laid over the
     /// imagery as a whole picture, where seeing the map through them helps.
     pub fn has_opacity(self) -> bool {

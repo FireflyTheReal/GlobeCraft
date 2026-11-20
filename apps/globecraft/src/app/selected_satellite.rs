@@ -8,7 +8,7 @@
 use super::App;
 use super::live_layers::{satellite_colour, satellite_symbol};
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke};
-use globecraft_core::{camera::Basis, commands::SatelliteCommand, math::now_unix};
+use globecraft_core::{camera::Basis, commands::SatelliteCommand};
 use globecraft_data::satellites::{Satellite, SatellitePosition};
 use serde_json::{Value, json};
 
@@ -144,7 +144,8 @@ impl App {
             return;
         };
         let scale = self.settings.map_scale;
-        let now = now_unix();
+        // The app's time: the timeline moves the satellite along its orbit.
+        let now = self.scene_unix();
         let path: Vec<_> = satellite
             .orbit_path(now, ORBIT_SAMPLES)
             .into_iter()
@@ -188,7 +189,7 @@ impl App {
             return;
         };
         let lang = self.lang;
-        let now = now_unix();
+        let now = self.scene_unix();
         let units = self.distance_units();
         let position = satellite.position(now);
         let mut lines = vec![lang.format(
