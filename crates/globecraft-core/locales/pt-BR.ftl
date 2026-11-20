@@ -213,19 +213,19 @@ flight-card-to-go = Faltam { $distance }
 flight-card-track-loading = Carregando a rota voada…
 flight-card-error = Sem rota voada: { $error }
 flight-card-built = fabricado em { $year }
-flight-card-altitude = { $feet } pés
-flight-card-gps-altitude = GPS { $feet } pés
+flight-card-altitude = { $height }
+flight-card-gps-altitude = GPS { $height }
 flight-card-level = nivelado
-flight-card-vertical-rate = { $rate } pés/min
-flight-card-selected-altitude = piloto automático { $feet } pés
-flight-card-ground-speed = { $knots } nós em relação ao solo
-flight-card-indicated-airspeed = IAS { $knots } nós
-flight-card-true-airspeed = TAS { $knots } nós
+flight-card-vertical-rate = { $rate }
+flight-card-selected-altitude = piloto automático { $height }
+flight-card-ground-speed = { $speed } em relação ao solo
+flight-card-indicated-airspeed = IAS { $speed }
+flight-card-true-airspeed = TAS { $speed }
 flight-card-mach = Mach { $mach }
 flight-card-track = rumo { $degrees }°
 flight-card-selected-heading = proa do piloto automático { $degrees }°
-flight-card-wind = vento de { $degrees }° a { $knots } nós
-flight-card-temperature = { $celsius } °C lá fora
+flight-card-wind = vento de { $degrees }° a { $speed }
+flight-card-temperature = { $temperature } lá fora
 flight-card-squawk = squawk { $code }
 flight-card-category = categoria { $category }
 flight-card-position-source = posição por { $source }
@@ -639,7 +639,7 @@ vessels-hover-tooltip =
        *[unknown] Tipo de navio não informado
     } • Destino: { $destination }
     Tamanho: { $dimensions }  |  Calado: { $draught }
-    { $latitude }°, { $longitude }° • { $course } • { $speed } kt
+    { $latitude }°, { $longitude }° • { $course } • { $speed }
     Último sinal AIS há { $minutes } min • cobertura depende da fonte
 satellites-hover-tooltip =
     { $name } (NORAD { $norad }) • { $group }

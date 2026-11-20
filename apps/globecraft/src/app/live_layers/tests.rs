@@ -255,8 +255,11 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
 
 #[test]
 fn vertical_rate_reads_level_climb_and_descent() {
-    assert_eq!(vertical_rate_text(None), "—");
-    assert_eq!(vertical_rate_text(Some(10.0)), "0 ft/min");
-    assert_eq!(vertical_rate_text(Some(1200.4)), "+1200 ft/min");
-    assert_eq!(vertical_rate_text(Some(-640.0)), "-640 ft/min");
+    use globecraft_core::units::DistanceUnits::{Imperial, Metric};
+    assert_eq!(vertical_rate_text(None, Imperial), "—");
+    assert_eq!(vertical_rate_text(Some(10.0), Imperial), "0 ft/min");
+    assert_eq!(vertical_rate_text(Some(1200.4), Imperial), "+1200 ft/min");
+    assert_eq!(vertical_rate_text(Some(-640.0), Imperial), "-640 ft/min");
+    assert_eq!(vertical_rate_text(Some(10.0), Metric), "0 m/s");
+    assert_eq!(vertical_rate_text(Some(-640.0), Metric), "-3.3 m/s");
 }

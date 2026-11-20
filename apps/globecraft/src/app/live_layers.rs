@@ -1,5 +1,6 @@
 //! Aircraft geometry is prepared in render; styled shapes and hover stay in egui.
 use globecraft_core::layers::MapLayer;
+use globecraft_core::units::{DistanceUnits, KMH_PER_KNOT, MS_PER_FOOT_PER_MINUTE};
 mod aurora;
 pub(super) use aurora::legend_colour as aurora_colour;
 mod fade;
@@ -46,6 +47,8 @@ const HOVER_CORNER_POINTS: f32 = 5.0;
 const HOVER_FILL_RGBA: [u8; 4] = [13, 24, 35, 235];
 /// Climbs and descents below this read as level flight.
 const LEVEL_VERTICAL_RATE_FPM: f64 = 50.0;
+/// Aircraft report heights in feet.
+const FEET_TO_METRES: f64 = 0.3048;
 
 pub(super) struct AircraftOverlay {
     geometry: Option<Arc<AircraftGeometry>>,
@@ -142,9 +145,9 @@ impl AircraftOverlay {
     }
 
     /// The hover card of the plane under the pointer, above everything else.
-    fn hover(&self, painter: &egui::Painter, lang: Lang) {
+    fn hover(&self, painter: &egui::Painter, lang: Lang, units: DistanceUnits) {
         if let Some(geometry) = &self.drawn {
-            draw_hover(painter, geometry, lang);
+            draw_hover(painter, geometry, lang, units);
         }
     }
 
@@ -220,7 +223,9 @@ impl App {
             let mut dimmed = painter.clone();
             dimmed.multiply_opacity(dim);
             self.paint_selected_flight(&dimmed, basis, rect);
-            self.live.aircraft_overlay.hover(painter, self.lang);
+            self.live
+                .aircraft_overlay
+                .hover(painter, self.lang, self.distance_units());
             // The selected flight's card counts on.
             let step = if selected {
                 step.min(motion::SELECTED_MAX_STEP_SECS)
@@ -258,20 +263,30 @@ impl App {
     }
 }
 
-fn vertical_rate_text(rate: Option<f64>) -> String {
-    rate.map_or_else(
+/// A reported climb (ft/min) in the user's units; level below `LEVEL_VERTICAL_RATE_FPM`.
+fn vertical_rate_text(rate_fpm: Option<f64>, units: DistanceUnits) -> String {
+    rate_fpm.map_or_else(
         || "—".to_owned(),
         |rate| {
-            if rate.abs() < LEVEL_VERTICAL_RATE_FPM {
-                "0 ft/min".to_owned()
+            let rate = if rate.abs() < LEVEL_VERTICAL_RATE_FPM {
+                0.0
             } else {
-                format!("{rate:+.0} ft/min")
-            }
+                rate
+            };
+            units
+                .vertical_rate(rate * MS_PER_FOOT_PER_MINUTE)
+                .replace("+0 ", "0 ")
+                .replace("+0.0 ", "0 ")
         },
     )
 }
 
-fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) {
+fn draw_hover(
+    painter: &egui::Painter,
+    geometry: &AircraftGeometry,
+    lang: Lang,
+    units: DistanceUnits,
+) {
     let view = geometry.view;
     let ms = view.map_scale;
     let Some(hover) = painter
@@ -308,14 +323,14 @@ fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) 
                 "altitude",
                 sample
                     .altitude_feet
-                    .map_or("—".into(), |alt| format!("{alt:.0} ft"))
+                    .map_or("—".into(), |feet| units.length(feet * FEET_TO_METRES, 0))
                     .into(),
             ),
             (
                 "speed",
                 sample
                     .speed_knots
-                    .map_or("—".into(), |speed| format!("{speed:.0} kt"))
+                    .map_or("—".into(), |knots| units.speed(knots * KMH_PER_KNOT))
                     .into(),
             ),
             (
@@ -324,7 +339,7 @@ fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) 
             ),
             (
                 "vertical_rate",
-                vertical_rate_text(sample.vertical_rate_fpm).into(),
+                vertical_rate_text(sample.vertical_rate_fpm, units).into(),
             ),
             (
                 "age",
@@ -410,7 +425,7 @@ impl App {
             }
         }
         if let Some((ship, at)) = nearest {
-            let text = world::vessel_tooltip(self.lang, ship);
+            let text = world::vessel_tooltip(self.lang, ship, self.distance_units());
             hover_label(painter, rect, at, &text, ms);
         }
     }
@@ -475,7 +490,13 @@ impl App {
                 .iter()
                 .map(|index| satellites[*index].name.as_str())
                 .collect();
-            let text = world::satellite_tooltip(self.lang, sat, Some(altitude_km), &together);
+            let text = world::satellite_tooltip(
+                self.lang,
+                sat,
+                Some(altitude_km),
+                &together,
+                self.distance_units(),
+            );
             hover_label(painter, rect, at, &text, ms);
         }
     }

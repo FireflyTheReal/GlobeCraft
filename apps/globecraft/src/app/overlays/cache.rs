@@ -330,12 +330,18 @@ impl OverlayCache {
             {
                 self.geometry = Some(completed);
             }
-            let this_view = self
-                .geometry
-                .as_ref()
-                .filter(|prepared| prepared.geometry.view == geometry_view);
-            let current_data = this_view
-                .is_some_and(|prepared| prepared.geometry.matches(geometry_view, boundaries));
+            // The displayed frame's own geometry, moved with its picture while a
+            // sliding pane moves the globe's centre (user, 2026-11-20).
+            let shifted = self.geometry.as_ref().and_then(|prepared| {
+                shift_between(prepared.geometry.view, geometry_view).map(|by| (prepared, by))
+            });
+            let this_view = shifted.map(|(prepared, _)| prepared);
+            let shift = shifted.map_or(egui::Vec2::ZERO, |(_, by)| by);
+            let current_data = this_view.is_some_and(|prepared| {
+                prepared
+                    .geometry
+                    .matches(prepared.geometry.view, boundaries)
+            });
             if let Some(prepared) = this_view {
                 // Geometry for exactly this view. When it was projected from the
                 // previous dataset (a patch arrived while the camera moved), paint it
@@ -347,7 +353,7 @@ impl OverlayCache {
                     .fading_out
                     .as_ref()
                     .filter(|_| style.arrival.exchange < ARRIVAL_FADE_STEPS)
-                    .filter(|old| old.geometry.view == geometry_view);
+                    .filter(|old| old.geometry.view == prepared.geometry.view);
                 let built = projected::build_prepared(
                     painter,
                     prepared,
@@ -358,7 +364,16 @@ impl OverlayCache {
                     &self.place_memory,
                 );
                 self.shapes = built.shapes;
-                self.placed.replace(built.label_rects);
+                let mut label_rects = built.label_rects;
+                if shift != egui::Vec2::ZERO {
+                    self.shapes
+                        .iter_mut()
+                        .for_each(|shape| shape.translate(shift));
+                    label_rects
+                        .iter_mut()
+                        .for_each(|rect| *rect = rect.translate(shift));
+                }
+                self.placed.replace(label_rects);
                 self.place_memory.finish(Instant::now(), built.drawn);
                 if built.labels_pending {
                     // Rebuild next frame to lay out the names left over (cheap: the
@@ -401,6 +416,19 @@ impl OverlayCache {
         // Never paint shapes projected for a different displayed camera or layer set.
         self.key == Some(current)
     }
+}
+
+/// How far `to` lies from `from` when it is the same view moved on screen: the same
+/// camera and size, only its rectangle elsewhere.
+fn shift_between(
+    from: globecraft_render::overlays::OverlayView,
+    to: globecraft_render::overlays::OverlayView,
+) -> Option<egui::Vec2> {
+    let moved = globecraft_render::overlays::OverlayView {
+        rect: to.rect,
+        ..from
+    };
+    (moved == to && from.rect.size() == to.rect.size()).then(|| to.rect.min - from.rect.min)
 }
 
 fn projected_view(

@@ -836,3 +836,51 @@ fn side_pane_screenshots() {
         "the tab goes with its selection"
     );
 }
+
+/// The View tab's Worlds group (its lone button in the group's middle) and the
+/// Settings window's page clear of its sidebar line (user, 2026-11-20).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn view_ribbon_and_settings_screenshots() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.settings.workspace.ribbon_tab = globecraft_core::commands::Tab::View;
+    app.settings.experience = globecraft_data::settings::experience::ExperienceLevel::Advanced;
+    settle(&mut h, 0.5);
+    // Twice: the group centres its tools from their width the frame before.
+    settle(&mut h, 0.2);
+    save(&mut h, &dir, "ribbon-view");
+    let _ = h.state_mut().run("ui.settings", json!({}));
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "settings-general");
+}
+
+/// The side pane mid-slide, closing and opening (user, 2026-11-20): the globe and
+/// its overlays follow the pane's edge, the pane's text keeps its wrap.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn side_pane_slide_screenshots() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    settle(&mut h, 3.0);
+    save(&mut h, &dir, "pane-open");
+    // A slow slide, so a quarter-second step lands mid-way.
+    h.ctx.global_style_mut(|style| style.animation_time = 1.0);
+    for name in ["pane-closing", "pane-closed", "pane-opening", "pane-opened"] {
+        if matches!(name, "pane-closing" | "pane-opening") {
+            let _ = h.state_mut().run("ui.leftPane", json!({}));
+        }
+        h.step();
+        if matches!(name, "pane-closed" | "pane-opened") {
+            settle(&mut h, 1.0);
+        }
+        save(&mut h, &dir, name);
+    }
+}

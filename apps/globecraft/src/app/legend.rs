@@ -8,6 +8,7 @@ use super::live_layers::{
     PoiGroup, VesselClass, aurora_colour, class_symbol, satellite_symbol, vessel_symbol,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
+use globecraft_core::units::DistanceUnits;
 use globecraft_core::{commands::LegendCommand, layers::MapLayer};
 use globecraft_data::settings::workspace::PaneTab;
 use globecraft_data::{
@@ -56,6 +57,31 @@ const RADAR_BAND_KEYS: [&str; 5] = [
 ];
 
 /// A colour bar from `colour(0.0)` to `colour(1.0)`, with labels under it.
+/// The altitude ramp's marks: every 10,000 ft, or every 3 km in metric units (the
+/// ramp itself runs to `TRACK_TOP_FEET`).
+fn altitude_ticks(units: DistanceUnits) -> [(f32, &'static str); 5] {
+    match units {
+        DistanceUnits::Imperial => [
+            (0.0, "0"),
+            (0.25, "10k"),
+            (0.5, "20k"),
+            (0.75, "30k"),
+            (1.0, "40k ft"),
+        ],
+        DistanceUnits::Metric => {
+            const FEET_PER_KM: f64 = 3_280.84;
+            let at = |km: f64| (km * FEET_PER_KM / TRACK_TOP_FEET) as f32;
+            [
+                (0.0, "0"),
+                (at(3.0), "3"),
+                (at(6.0), "6"),
+                (at(9.0), "9"),
+                (at(12.0), "12 km"),
+            ]
+        }
+    }
+}
+
 fn ramp(ui: &mut egui::Ui, colour: impl Fn(f32) -> Color32, ticks: &[(f32, &str)]) {
     let (rect, _) = ui.allocate_exact_size(RAMP_SIZE_POINTS, Sense::hover());
     let painter = ui.painter_at(rect.expand(1.0));
@@ -205,6 +231,7 @@ impl App {
     pub(super) fn legend_pane(&mut self, ui: &mut egui::Ui) {
         let kinds = self.legend_kinds();
         let lang = self.lang;
+        let units = self.distance_units();
         if kinds.is_empty() {
             ui.label(lang.text("legend-empty"));
         }
@@ -257,13 +284,7 @@ impl App {
                                 f64::from(t) * TRACK_TOP_FEET,
                             ))
                         },
-                        &[
-                            (0.0, "0"),
-                            (0.25, "10k"),
-                            (0.5, "20k"),
-                            (0.75, "30k"),
-                            (1.0, "40k ft"),
-                        ],
+                        &altitude_ticks(units),
                     );
                     swatch(
                         ui,

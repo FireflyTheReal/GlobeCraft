@@ -59,7 +59,7 @@ impl App {
     pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         let viewport = ui.available_rect_before_wrap();
-        let rect = self.frame.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = shown_rect(self.frame.renderer.displayed_rect(), viewport);
         let resp = ui.allocate_rect(viewport, Sense::click_and_drag());
         let ppp = ui.pixels_per_point();
         let aspect = (rect.width() / rect.height()) as f64;
@@ -163,7 +163,7 @@ impl App {
         let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;
         self.poll_render(presentation, ui);
-        let rect = self.frame.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = shown_rect(self.frame.renderer.displayed_rect(), viewport);
 
         let pick_basis = self.frame.renderer.picking_basis(basis);
         let ground = self.ground_source();
@@ -1204,5 +1204,31 @@ impl App {
         self.motion.glide = next;
         ui.ctx().request_repaint();
         true
+    }
+}
+
+/// Where the displayed frame is drawn: at its own size (not stretched), centred on
+/// the globe's viewport. While a pane slides the viewport changes every frame; the
+/// last frame then moves with the view's centre until one of the new size arrives,
+/// instead of sitting where it was and jumping (user, 2026-11-20).
+fn shown_rect(displayed: Option<Rect>, viewport: Rect) -> Rect {
+    displayed.map_or(viewport, |displayed| {
+        Rect::from_center_size(viewport.center(), displayed.size())
+    })
+}
+
+#[cfg(test)]
+mod shown_rect_tests {
+    use super::*;
+
+    #[test]
+    fn an_old_frame_follows_the_centre_of_a_resized_globe() {
+        let viewport = Rect::from_min_size(Pos2::new(0.0, 100.0), egui::vec2(1200.0, 800.0));
+        assert_eq!(shown_rect(None, viewport), viewport);
+        assert_eq!(shown_rect(Some(viewport), viewport), viewport);
+        let narrower = Rect::from_min_size(Pos2::new(0.0, 100.0), egui::vec2(900.0, 800.0));
+        let shown = shown_rect(Some(narrower), viewport);
+        assert_eq!(shown.center(), viewport.center());
+        assert_eq!(shown.size(), narrower.size());
     }
 }

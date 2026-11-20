@@ -213,19 +213,19 @@ flight-card-to-go = { $distance } to go
 flight-card-track-loading = Loading the track…
 flight-card-error = No track: { $error }
 flight-card-built = built { $year }
-flight-card-altitude = { $feet } ft
-flight-card-gps-altitude = GPS { $feet } ft
+flight-card-altitude = { $height }
+flight-card-gps-altitude = GPS { $height }
 flight-card-level = level
-flight-card-vertical-rate = { $rate } ft/min
-flight-card-selected-altitude = autopilot { $feet } ft
-flight-card-ground-speed = { $knots } kt over ground
-flight-card-indicated-airspeed = IAS { $knots } kt
-flight-card-true-airspeed = TAS { $knots } kt
+flight-card-vertical-rate = { $rate }
+flight-card-selected-altitude = autopilot { $height }
+flight-card-ground-speed = { $speed } over ground
+flight-card-indicated-airspeed = IAS { $speed }
+flight-card-true-airspeed = TAS { $speed }
 flight-card-mach = Mach { $mach }
 flight-card-track = track { $degrees }°
 flight-card-selected-heading = autopilot heading { $degrees }°
-flight-card-wind = wind from { $degrees }° at { $knots } kt
-flight-card-temperature = { $celsius } °C outside
+flight-card-wind = wind from { $degrees }° at { $speed }
+flight-card-temperature = { $temperature } outside
 flight-card-squawk = squawk { $code }
 flight-card-category = category { $category }
 flight-card-position-source = position by { $source }
@@ -639,7 +639,7 @@ vessels-hover-tooltip =
        *[unknown] Vessel type not reported
     } • Destination: { $destination }
     Size: { $dimensions }  |  Draught: { $draught }
-    { $latitude }°, { $longitude }° • { $course } • { $speed } kt
+    { $latitude }°, { $longitude }° • { $course } • { $speed }
     Last AIS report { $minutes } min ago • coverage varies
 satellites-hover-tooltip =
     { $name } (NORAD { $norad }) • { $group }

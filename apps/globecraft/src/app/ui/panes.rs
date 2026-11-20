@@ -190,19 +190,28 @@ impl App {
             self.places.reveal_requested = false;
         }
         self.sync_details_tabs();
-        let Some(pane) = self.settings.workspace.right_pane else {
+        // The pane slides in and out (user, 2026-11-20); while it closes it still shows
+        // the tab it was on, and the globe beside it follows its edge.
+        let shown_id = egui::Id::new("side_pane_shown_tab");
+        let open = self.settings.workspace.right_pane;
+        if let Some(pane) = open {
+            ui.ctx().data_mut(|d| d.insert_temp(shown_id, pane));
+        }
+        let Some(pane) = open.or_else(|| ui.ctx().data(|d| d.get_temp::<PaneTab>(shown_id))) else {
             return;
         };
         let panel = match self.settings.workspace.pane_side {
             PaneSide::Left => egui::Panel::left("side_pane"),
             PaneSide::Right => egui::Panel::right("side_pane"),
         };
+        let mut expanded = open.is_some();
         let response = panel
             .resizable(true)
+            .drag_to_open(false)
             .default_size(self.settings.workspace.right_width_points)
             .size_range(MIN_RIGHT_PANE_WIDTH_POINTS..=MAX_RIGHT_PANE_WIDTH_POINTS)
             .frame(egui::Frame::NONE.fill(t.pane))
-            .show(ui, |ui| {
+            .show_collapsible(ui, &mut expanded, |ui| {
                 self.pane_header(ui, pane, &t);
                 let rect = ui.available_rect_before_wrap();
                 let mut body =
@@ -213,7 +222,18 @@ impl App {
                 self.pane_body(&mut body, pane, &t);
                 ui.advance_cursor_after_rect(rect);
             });
-        if !ui.input(|i| i.pointer.any_down()) {
+        // Dragged shut past its narrowest: the pane closes as its button would.
+        if open.is_some() && !expanded {
+            self.run_reporting("ui.leftPane", Value::Null);
+        }
+        let settled = ui
+            .ctx()
+            .animate_bool_responsive(egui::Id::new("side_pane").with("animation"), open.is_some());
+        if let Some(response) = response
+            && open.is_some()
+            && settled == 1.0
+            && !ui.input(|i| i.pointer.any_down())
+        {
             self.settings.workspace.right_width_points = response.response.rect.width();
         }
     }

@@ -11,6 +11,8 @@ mod sections;
 mod shortcuts;
 mod sky;
 pub(super) const MAX_UI_SLIDER_SCALE: f32 = 2.0;
+/// Room between the sidebar's line and the page, points.
+const PAGE_MARGIN_POINTS: i8 = 16;
 const WINDOW_SIZE_POINTS: egui::Vec2 = egui::vec2(760.0, 560.0);
 const WINDOW_MIN_SIZE_POINTS: egui::Vec2 = egui::vec2(600.0, 380.0);
 /// The pages' sidebar in the Settings window.
@@ -222,63 +224,78 @@ impl App {
                         }
                     }
                 });
-            let query = fold_name(&state.query);
-            let categories: Vec<_> = Category::ALL
-                .into_iter()
-                .filter(|category| {
-                    if query.is_empty() {
-                        *category == state.category
-                    } else {
-                        category.matches(&query, lang)
-                            || (*category == Category::Data && self.network_dynamic_matches(&query))
-                    }
+            // The page and its buttons keep clear of the sidebar's line (user, 2026-11-20).
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: PAGE_MARGIN_POINTS,
+                    ..egui::Margin::ZERO
                 })
-                .collect();
-            let height = (ui.available_height() - FOOTER_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
-            egui::ScrollArea::vertical()
-                .id_salt("settings-body")
-                .max_height(height)
-                .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    if categories.is_empty() {
-                        ui.label(lang.format(
-                            "settings-search-empty",
-                            &[("query", state.query.as_str().into())],
-                        ));
-                    }
-                    for category in categories {
-                        ui.push_id(category as u8, |ui| {
-                            ui.heading(lang.text(category.name_id()));
-                            ui.add_space(4.0);
-                            self.settings_page(ui, category, &mut state, &mut language_preference);
-                            ui.add_space(ui.spacing().item_spacing.y);
+                    let query = fold_name(&state.query);
+                    let categories: Vec<_> = Category::ALL
+                        .into_iter()
+                        .filter(|category| {
+                            if query.is_empty() {
+                                *category == state.category
+                            } else {
+                                category.matches(&query, lang)
+                                    || (*category == Category::Data
+                                        && self.network_dynamic_matches(&query))
+                            }
+                        })
+                        .collect();
+                    let height =
+                        (ui.available_height() - FOOTER_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
+                    egui::ScrollArea::vertical()
+                        .id_salt("settings-body")
+                        .max_height(height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if categories.is_empty() {
+                                ui.label(lang.format(
+                                    "settings-search-empty",
+                                    &[("query", state.query.as_str().into())],
+                                ));
+                            }
+                            for category in categories {
+                                ui.push_id(category as u8, |ui| {
+                                    ui.heading(lang.text(category.name_id()));
+                                    ui.add_space(4.0);
+                                    self.settings_page(
+                                        ui,
+                                        category,
+                                        &mut state,
+                                        &mut language_preference,
+                                    );
+                                    ui.add_space(ui.spacing().item_spacing.y);
+                                });
+                            }
+                        });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button(lang.text("settings-reset-action")).clicked() {
+                            state.confirm_reset = true;
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(lang.text("settings-close-action")).clicked() {
+                                close_requested = true;
+                            }
+                        });
+                    });
+                    if state.confirm_reset {
+                        ui.label(lang.text("settings-reset-confirm"));
+                        ui.horizontal(|ui| {
+                            if ui.button(lang.text("settings-confirm-action")).clicked() {
+                                self.settings = Settings::default();
+                                self.windows.ui_scale_edit = self.settings.ui_scale;
+                                state.confirm_reset = false;
+                            }
+                            if ui.button(lang.text("settings-cancel-action")).clicked() {
+                                state.confirm_reset = false;
+                            }
                         });
                     }
                 });
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button(lang.text("settings-reset-action")).clicked() {
-                    state.confirm_reset = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(lang.text("settings-close-action")).clicked() {
-                        close_requested = true;
-                    }
-                });
-            });
-            if state.confirm_reset {
-                ui.label(lang.text("settings-reset-confirm"));
-                ui.horizontal(|ui| {
-                    if ui.button(lang.text("settings-confirm-action")).clicked() {
-                        self.settings = Settings::default();
-                        self.windows.ui_scale_edit = self.settings.ui_scale;
-                        state.confirm_reset = false;
-                    }
-                    if ui.button(lang.text("settings-cancel-action")).clicked() {
-                        state.confirm_reset = false;
-                    }
-                });
-            }
         });
         open &= still_open;
         if language_preference != self.locale.preference {

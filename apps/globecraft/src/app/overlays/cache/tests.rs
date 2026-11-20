@@ -627,3 +627,35 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
         assert!(meshes.tinted(colors).is_empty());
     });
 }
+
+#[test]
+fn a_frame_moved_on_screen_keeps_its_lines_moved_with_it() {
+    headless(|painter| {
+        let (view, style, data) = scene();
+        let data = Arc::new(data);
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
+        draw_ready(&mut cache, painter, view, &data, style);
+        let before = cache.shapes.clone();
+        // A pane slides: the same frame, its picture moved 40 points left.
+        let moved = OverlayView {
+            rect: view.rect.translate(vec2(-40.0, 0.0)),
+            ..view
+        };
+        cache.draw(painter, moved, &data, style);
+        assert!(cache.show, "the lines stay on screen");
+        let mut expected = before;
+        expected
+            .iter_mut()
+            .for_each(|shape| shape.translate(vec2(-40.0, 0.0)));
+        assert_eq!(cache.shapes, expected);
+        // Another size is another view: never one moved.
+        let wider = OverlayView {
+            rect: Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0)),
+            ..view
+        };
+        assert_eq!(
+            shift_between(projected_view(view, style), projected_view(wider, style)),
+            None
+        );
+    });
+}

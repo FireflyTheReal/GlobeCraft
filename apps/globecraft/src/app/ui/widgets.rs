@@ -504,15 +504,30 @@ pub(in crate::app) fn group(
     let label_w = label.size().x + GROUP_CARET_W;
     app.chrome.ribbon_tools.begin(id);
     forget_last_column(ui.ctx());
+    // Tools narrower than the title sit in its middle (the lone Earth button under
+    // "Worlds" sat at the left, user 2026-11-20), from their width last frame.
+    let content_key = egui::Id::new(("ribbon_group_content_w", id));
+    let title_w = label_w + 12.0;
+    let pad = ui
+        .ctx()
+        .data(|d| d.get_temp::<f32>(content_key))
+        .map_or(0.0, |content| ((title_w - content) / 2.0).max(0.0).floor());
     let inner = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = vec2(2.0, 1.0);
         let r = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
             ui.set_min_height(CONTENT_H);
             ui.spacing_mut().item_spacing = vec2(2.0, 1.0);
+            if pad > 0.0 {
+                ui.add_space(pad - ui.spacing().item_spacing.x);
+            }
+            let from = ui.cursor().min.x;
             add(ui, app);
             app.group_extras(ui, id);
+            ui.min_rect().max.x - from
         });
-        let w = r.response.rect.width().max(label_w + 12.0);
+        let content_w = r.inner;
+        ui.ctx().data_mut(|d| d.insert_temp(content_key, content_w));
+        let w = (content_w + 2.0 * pad).max(title_w);
         let (_, title_resp) = ui.allocate_exact_size(vec2(w, LABEL_H), Sense::hover());
         (w, title_resp.rect)
     });
