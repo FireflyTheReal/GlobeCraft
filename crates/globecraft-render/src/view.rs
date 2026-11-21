@@ -112,7 +112,11 @@ impl RasterView {
     /// The frame's keys at `frame_time` (see [`frame_time`]). The time is in the state
     /// key only: a frame drawn a moment of scene time ago still shows (as one drawn a
     /// moment of camera motion ago does); in the presentation key every frame of a
-    /// playing timeline was out of date before it finished, and few were shown.
+    /// playing timeline was out of date before it finished, and few were shown. The
+    /// size is in the state key only too: a frame of the size before still shows (at
+    /// that size, centred on the view) while a pane's edge slides or is dragged; in the
+    /// presentation key every frame finished during a resize was thrown away and the
+    /// globe stood still beside black bars until the edge stopped (user, 2026-11-20).
     pub fn keys(&self, frame_time: f64) -> ViewKeys {
         let sun_key = if self.sunlight || self.sky {
             frame_time.to_bits()
@@ -156,9 +160,6 @@ impl RasterView {
             .hash(&mut state);
         let mut presentation = std::collections::hash_map::DefaultHasher::new();
         (
-            self.width,
-            self.height,
-            self.aspect.to_bits(),
             self.provider.id(),
             self.release_index,
             self.compare,
@@ -293,7 +294,10 @@ mod tests {
         // Raster dimensions can round to the same pixels even as the viewport changes.
         view.aspect += 0.0001;
         assert_ne!(view.keys(120.0).state, before_resize.state);
-        assert_ne!(view.keys(120.0).presentation, before_resize.presentation);
+        // A frame of the size before still shows while the view is resized.
+        view.width = 640;
+        assert_ne!(view.keys(120.0).state, before_resize.state);
+        assert_eq!(view.keys(120.0).presentation, before_resize.presentation);
     }
     #[test]
     fn terrain_toggle_and_exaggeration_invalidate_presentation() {

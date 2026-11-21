@@ -1250,3 +1250,115 @@ fn loop_and_cloud_detail_screenshots() {
         "opening the menu does not switch the layer"
     );
 }
+
+/// Terrain shadows at sunrise over the Adamello (user's recording, 2026-11-20 22:48:
+/// "buggy and weird shadow during sunrise/set"): settled at 06:29 UTC, then the
+/// frames while the time plays a few minutes on. Writes `sunrise-*.png`.
+#[test]
+#[ignore = "manual: needs network; terrain shadows at sunrise while the time plays"]
+fn sunrise_shadow_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    let env_f64 = |name: &str, or: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(or)
+    };
+    for (id, params) in [
+        ("layer.show", json!({"layer": "terrain", "visible": true})),
+        (
+            "layer.show",
+            json!({"layer": "sunlight", "visible": std::env::var_os("PROBE_NO_SUN").is_none()}),
+        ),
+        (
+            "camera.set",
+            json!({"lat": 46.0934, "lon": 10.5336, "altitude_km": env_f64("PROBE_ALT_KM", 9.0),
+                "tilt_deg": env_f64("PROBE_TILT", 72.0), "heading_deg": 30.0}),
+        ),
+        (
+            "time.set",
+            json!({"time": env_f64("PROBE_TIME", 1_795_156_140.0)}),
+        ),
+    ] {
+        app.run(id, params)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+    settle(&mut h, 60.0);
+    save(&mut h, &dir, "sunrise-rest");
+    // PROBE_SIZES: the same moment drawn at the full size and a motion frame's.
+    if std::env::var_os("PROBE_SIZES").is_some() {
+        let app = h.state_mut();
+        let (fw, fh) = app
+            .frame
+            .image
+            .as_ref()
+            .map(|f| (f.width, f.height))
+            .expect("a frame");
+        for (name, w, hh) in [("full", fw, fh), ("small", fw * 28 / 100, fh * 28 / 100)] {
+            let basis = app.view_basis(fw as f64 / fh as f64);
+            let cfg = app.frame_config(w, hh, w as f32 / fw as f32);
+            let view = globecraft_render::render_view(w, hh, &basis, &cfg, &app.tiles.cache);
+            image::RgbaImage::from_raw(w as u32, hh as u32, view.pixels)
+                .expect("pixels")
+                .save(dir.join(format!("sizes-{name}.png")))
+                .expect("save");
+            println!("{name}: {w}x{hh}, {} tiles missing", view.requests.len());
+        }
+        return;
+    }
+    // PROBE_MOTION_SCALE: the playing frames' size (1 = as at rest).
+    if let Ok(scale) = std::env::var("PROBE_MOTION_SCALE") {
+        h.state_mut().settings.motion_resolution_relief = scale.parse().ok();
+    }
+    // The recording's pace: about a minute of scene time a second.
+    h.state_mut()
+        .run(
+            "time.play",
+            json!({"hours_per_second": env_f64("PROBE_SPEED", 0.02)}),
+        )
+        .expect("play");
+    for shot in 0..4 {
+        for _ in 0..30 {
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        let app = h.state();
+        println!(
+            "shot {shot}: loading {}, relief generation {}, frame {:?}",
+            app.tiles.cache.inflight(),
+            app.tiles.cache.elevation_generation(),
+            app.frame.image.as_ref().map(|f| (f.width, f.height)),
+        );
+        save(&mut h, &dir, &format!("sunrise-play-{shot}"));
+    }
+    // The globe's own raster of the last playing frame, at its size.
+    if let Some(frame) = &h.state().frame.image {
+        let raw = image::RgbaImage::from_raw(
+            frame.width as u32,
+            frame.height as u32,
+            frame.pixels.to_vec(),
+        )
+        .expect("frame pixels");
+        raw.save(dir.join("sunrise-play-raster.png"))
+            .expect("save raster");
+    }
+    // The last moment at rest, at full size.
+    h.state_mut().run("time.pause", json!({})).expect("pause");
+    settle(&mut h, 30.0);
+    save(&mut h, &dir, "sunrise-after");
+    if let Some(frame) = &h.state().frame.image {
+        image::RgbaImage::from_raw(
+            frame.width as u32,
+            frame.height as u32,
+            frame.pixels.to_vec(),
+        )
+        .expect("frame pixels")
+        .save(dir.join("sunrise-after-raster.png"))
+        .expect("save raster");
+    }
+}

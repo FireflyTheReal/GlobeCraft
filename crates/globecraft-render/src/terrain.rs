@@ -161,6 +161,54 @@ const SHADOW_LIFT_TEXELS: f64 = 1.5;
 const SHADOW_DETAIL_COARSER: f64 = 4.0;
 /// Tiles only the shadows need are asked for after the view's own.
 const SHADOW_REQUEST_PRIORITY: f32 = f32::MAX;
+/// Terrain shadows come in with the sun's height up to this many degrees: a sun on
+/// the horizon lights the ground through so much air that the sky's light is most of
+/// what it gets, which no ridge hides. Shadows at full strength from the first
+/// hundredth of a degree threw whole valleys dark at once at sunrise, and back to
+/// light at once at sunset (user's recording, 2026-11-20 22:48).
+const SHADOW_FULL_SUN_DEG: f64 = 3.0;
+/// The sun's angular radius: a ray this close to a ridge still sees part of the disc.
+const SUN_RADIUS_RAD: f64 = 0.004_65;
+/// How uncertain an elevation texel's height is, as a share of its width: a ray that
+/// clears the ground by less than this sees the sun only in part. With a hard edge,
+/// a low sun cast every far, coarse texel (200–400 m wide at sunrise) as a sharp
+/// strip of shadow kilometres long, which jumped from block to block as the sun
+/// rose (user's recording, 2026-11-20 22:48).
+const SHADOW_SOFT_TEXEL_SHARE: f64 = 0.3;
+
+/// What the march toward the sun learns on its way: the least clearance over the
+/// ground, as a share of the margin within which the sun is partly hidden there (the
+/// disc's own size seen from that far, and the heights' uncertainty). 1 or more: in
+/// full sun.
+pub(super) struct SunMargin {
+    least: f64,
+    /// The heights' share of the margin stays under half the lift the march starts
+    /// with, so open ground in the sun keeps all of it.
+    most_uncertain: f64,
+}
+
+impl SunMargin {
+    fn new(lift: f64) -> Self {
+        Self {
+            least: f64::INFINITY,
+            most_uncertain: lift / 2.0,
+        }
+    }
+    /// The ray passes `clearance` over the ground `along` from where it started, over
+    /// texels `texel` wide (both in Earth radii, the height as exaggerated).
+    fn observe(&mut self, clearance: f64, along: f64, texel: f64, exaggeration: f64) {
+        let margin = along * SUN_RADIUS_RAD
+            + (texel * SHADOW_SOFT_TEXEL_SHARE * exaggeration).min(self.most_uncertain);
+        if margin > 0.0 {
+            self.least = self.least.min(clearance / margin);
+        }
+    }
+    /// The share of the sun's light that gets through (0 to 1, eased).
+    fn light(&self) -> f32 {
+        let x = self.least.clamp(0.0, 1.0) as f32;
+        x * x * (3.0 - 2.0 * x)
+    }
+}
 
 /// The light left at `ground` (a relief hit seen from `camera`, `hit.distance` away)
 /// by the relief between it and the sun (`sun`, a unit vector): `TERRAIN_SHADOW_LIGHT`
@@ -175,7 +223,9 @@ pub(super) fn sun_light(
 ) -> f32 {
     let up = hit.normal;
     // Below the horizon there the night darkens the ground already.
-    if sun.dot(up) <= 0.0 || terrain.fade <= 0.0 {
+    let height = (sun.dot(up) / SHADOW_FULL_SUN_DEG.to_radians().sin()).clamp(0.0, 1.0) as f32;
+    let strength = terrain.fade * height * height * (3.0 - 2.0 * height);
+    if strength <= 0.0 {
         return 1.0;
     }
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
@@ -189,25 +239,23 @@ pub(super) fn sun_light(
         direction: sun,
         ..*hit
     };
-    let shaded = matches!(
-        march(
-            &ray,
-            behind,
-            false,
-            start - sun * behind,
-            geometry,
-            terrain,
-            pixel_angle * SHADOW_DETAIL_COARSER,
-            SHADOW_REQUEST_PRIORITY,
-            loc,
-        ),
-        March::Hit(..)
-    );
-    if shaded {
-        1.0 + (TERRAIN_SHADOW_LIGHT - 1.0) * terrain.fade
-    } else {
-        1.0
-    }
+    let mut margin = SunMargin::new(lift);
+    let sun_seen = match march_near(
+        &ray,
+        behind,
+        false,
+        start - sun * behind,
+        geometry,
+        terrain,
+        pixel_angle * SHADOW_DETAIL_COARSER,
+        SHADOW_REQUEST_PRIORITY,
+        loc,
+        Some(&mut margin),
+    ) {
+        March::Hit(..) => 0.0,
+        March::Floor | March::Miss => margin.light(),
+    };
+    1.0 + (TERRAIN_SHADOW_LIGHT - 1.0) * strength * (1.0 - sun_seen)
 }
 
 /// A loaded elevation tile (by its index in the batch's `Local::dem`) and where it sits.
@@ -723,6 +771,35 @@ pub(super) fn march(
     dist: f32,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
 ) -> March {
+    march_near(
+        ray,
+        start,
+        hits_surface,
+        origin,
+        geometry,
+        terrain,
+        pixel_angle,
+        dist,
+        loc,
+        None,
+    )
+}
+
+/// [`march`], noting in `margin` how near the ground the ray passes (the march
+/// toward the sun).
+#[allow(clippy::too_many_arguments)]
+fn march_near(
+    ray: &rays::RaySample,
+    start: f64,
+    hits_surface: bool,
+    origin: DVec3,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    mut margin: Option<&mut SunMargin>,
+) -> March {
     let direction = ray.direction;
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
     let Some((enter, leave)) = shell_span(geometry, origin, direction, MAX_TERRAIN_M * to_world)
@@ -923,6 +1000,10 @@ pub(super) fn march(
                     );
                 }
                 above = Some((t, height - ground));
+                if let Some(margin) = margin.as_deref_mut() {
+                    let texel = 2.0 * PI * anchor.latitude_cosine / (tile.n * tile.size);
+                    margin.observe(height - ground, t - start, texel, terrain.exaggeration);
+                }
                 // To the texel's edge, or down to the ground's height here when that
                 // comes first (a steep ray barely crosses texels); a step that ends
                 // below the ground is a hit, refined between the two points.
@@ -1236,6 +1317,17 @@ mod march_tests {
         assert_eq!(light(up * low.sin() - east * low.cos()), 1.0);
         assert_eq!(light(up), 1.0);
         assert_eq!(light(-up), 1.0);
+        // Rising behind the cliff, its shadow deepens with the sun's height instead of
+        // falling at once.
+        let rising: Vec<f32> = [0.05f64, 1.0, 2.0, 3.0]
+            .map(|deg| {
+                let rise = deg.to_radians();
+                light(up * rise.sin() + east * rise.cos())
+            })
+            .to_vec();
+        assert!(rising[0] > 0.99, "{rising:?}");
+        assert!(rising.windows(2).all(|w| w[1] < w[0]), "{rising:?}");
+        assert_eq!(rising[3], TERRAIN_SHADOW_LIGHT);
     }
 
     #[test]

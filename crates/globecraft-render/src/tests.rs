@@ -621,7 +621,12 @@ fn terrain_views() {
             });
         Lookup::Ready(tile.clone())
     };
-    let (width, height) = (960, 600);
+    // PROBE_SCALE: a motion frame's size (its level of detail held to the full one's).
+    let scale = std::env::var("PROBE_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(1.0);
+    let (width, height) = ((960.0 * scale) as usize, (600.0 * scale) as usize);
     for (name, alt, tilt, heading) in [
         ("top-16km", 16.0, 0.0, 0.0),
         ("tilt-16km", 16.0, 70.0, 0.0),
@@ -655,12 +660,18 @@ fn terrain_views() {
             let up = globecraft_core::math::ll_to_v3(30.3, 79.8);
             let east = glam::DVec3::Z.cross(up).normalize();
             let north = up.cross(east);
-            let (rise, bearing) = (15f64.to_radians(), 250f64.to_radians());
+            // PROBE_RISE: the sun's height, degrees.
+            let rise = std::env::var("PROBE_RISE")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(15.0);
+            let (rise, bearing) = (rise.to_radians(), 250f64.to_radians());
             cfg.sun = Some(
                 (up * rise.sin() + (north * bearing.cos() + east * bearing.sin()) * rise.cos())
                     .normalize(),
             );
         }
+        cfg.lod_scale = scale;
         // PROBE_SHARP: without smoothing (Settings › Graphics).
         if std::env::var_os("PROBE_SHARP").is_some() {
             cfg.terrain = cfg.terrain.map(crate::TerrainCfg::without_smoothing);
