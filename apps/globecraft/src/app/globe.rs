@@ -18,6 +18,9 @@ mod ruler_input;
 /// (roadmap 1.6: arriving tiles and the sharp frame after motion no longer pop in).
 /// Relief growing in is drawn again this often.
 const RELIEF_FADE_STEP: Duration = Duration::from_millis(40);
+/// A window resize is over once the size has held still this long: then one frame of
+/// the new size is rendered.
+const WINDOW_RESIZE_SETTLE: Duration = Duration::from_millis(120);
 pub(super) const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
@@ -80,22 +83,37 @@ impl App {
                 .request_repaint_after(Duration::from_secs_f64(secs));
         }
         let interacting = self.navigation_input(ui, &resp, rect, ruler_captured, press.swallow);
-        // A resized globe (a pane's edge dragged, the window resized) renders at the
-        // lighter motion size until it settles: at full size each step of the drag
-        // waited for a whole frame and the old view sat clipped (user 2026-11-19).
-        // While the side pane slides the globe renders at the width it has with the
-        // pane shut, centred: one frame covers every width of the slide, which then
-        // needs no new frame and shows no black bars (user, 2026-11-21).
-        let render_rect = if self.frame.pane_sliding {
+        // While the side pane slides or its edge is dragged the globe renders at the
+        // width it has with the pane shut, centred: the view's vertical angle is
+        // fixed, so that one frame is exact for every narrower width, and the slide
+        // or the drag needs no new frame (user, 2026-11-21: a new frame came too late
+        // for a 0.2 s slide, and black bars showed until it did).
+        let render_rect = if self.frame.pane_moving {
             let full = ui.ctx().content_rect().width().max(viewport.width());
             Rect::from_center_size(viewport.center(), egui::vec2(full, viewport.height()))
         } else {
             viewport
         };
         let resized = render_rect.size() != self.frame.last_viewport;
+        if resized && !self.frame.pane_moving && self.frame.texture.is_some() {
+            self.frame.window_resized_at = Some(Instant::now());
+        }
         self.frame.last_viewport = render_rect.size();
         if interacting || resp.dragged() || resized {
             self.touch();
+        }
+        // While the window is being resized no frame is rendered: the last one is
+        // shown scaled to the new size (`shown_rect`), and one frame follows once the
+        // size holds still. A frame for every step of the resize (each a new size,
+        // read back from the graphics card and uploaded again) made the resize lag
+        // (user, 2026-11-21).
+        let window_resizing = self
+            .frame
+            .window_resized_at
+            .map(|at| at.elapsed())
+            .filter(|&since| since < WINDOW_RESIZE_SETTLE);
+        if window_resizing.is_none() {
+            self.frame.window_resized_at = None;
         }
 
         let basis = self.view_basis(aspect);
@@ -280,6 +298,10 @@ impl App {
             self.frame.last_state,
             Some(self.frame.last_render.elapsed()),
         );
+        let outcome = match (outcome, window_resizing) {
+            (WakeOutcome::Submit, Some(since)) => WakeOutcome::Defer(WINDOW_RESIZE_SETTLE - since),
+            (outcome, _) => outcome,
+        };
         match outcome {
             WakeOutcome::Submit => {
                 let lod_scale = globecraft_render::view::render_scale(
@@ -318,8 +340,25 @@ impl App {
         self.pump_warmups(ui, idle, state, h, render_aspect);
 
         // ── drawing
-        ui.painter_at(viewport)
-            .rect_filled(viewport, 0.0, Color32::BLACK);
+        let backdrop = ui.painter_at(viewport);
+        backdrop.rect_filled(viewport, 0.0, Color32::BLACK);
+        // Where the shown frame leaves part of the view open (the window made wider,
+        // the pane shut at once with Reduce Motion on), the same frame enlarged to
+        // cover it fills the gap until the frame of the new size comes, instead of
+        // black bars.
+        if let Some(tex) = &self.frame.texture
+            && !rect.contains_rect(viewport)
+            && rect.width() > 0.0
+            && rect.height() > 0.0
+        {
+            let cover = (viewport.width() / rect.width()).max(viewport.height() / rect.height());
+            backdrop.image(
+                tex.id(),
+                Rect::from_center_size(viewport.center(), rect.size() * cover),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
         // Until a matching frame arrives, clip the previous view at its original
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
@@ -417,24 +456,33 @@ impl App {
 
         // Google Earth style navigation controls (rotate / move / zoom)
         let dt_nav = super::frame_timing::navigation_delta_secs(ui);
-        if self.nav_controls(ui, rect, dt_nav) {
+        if self.nav_controls(ui, viewport, dt_nav) {
             self.touch();
             ui.request_repaint();
         }
-        let timeline = self.timeline_bar(&ui.ctx().clone(), rect);
+        // The controls on the globe (timeline, scale bar, note, credits, navigator)
+        // stand in the globe's area on screen, not on the frame's picture: a frame of
+        // another size (shown while the pane slides or the window is resized) reaches
+        // under the pane or past the window's edge, and the navigator vanished under
+        // the pane until the next frame came (user's recording, 2026-11-21).
+        let timeline = self.timeline_bar(&ui.ctx().clone(), viewport);
         self.legend_watch();
-        super::ui::surface::remember_globe_rect(ui.ctx(), rect);
+        super::ui::surface::remember_globe_rect(ui.ctx(), viewport);
 
         // The scale bar, the note and the credits sit above the open timeline, which
         // would cover them (the credits must stay in sight, HIG: Maps).
-        let above = timeline.map_or(rect, |bar| {
-            Rect::from_min_max(rect.min, Pos2::new(rect.max.x, bar.top().min(rect.max.y)))
+        let above = timeline.map_or(viewport, |bar| {
+            Rect::from_min_max(
+                viewport.min,
+                Pos2::new(viewport.max.x, bar.top().min(viewport.max.y)),
+            )
         });
-        self.paint_scale_bar(&painter, above, &display_basis, display_cam);
-        self.paint_present_only_note(&painter, above);
+        let controls = ui.painter_at(viewport);
+        self.paint_scale_bar(&controls, rect, above, &display_basis, display_cam);
+        self.paint_present_only_note(&controls, above);
         self.compare_split(ui, &painter, rect);
         let credits = self.map_credits(lg, &display_basis, rect);
-        self.paint_credits(&painter, above, &credits);
+        self.paint_credits(&controls, above, &credits);
 
         self.globe_context_menu(ui, &resp, menu_suppressed);
 
@@ -944,11 +992,13 @@ impl App {
         painter.galley(at, galley, Color32::from_gray(225));
     }
 
-    /// The scale bar at the bottom left.
+    /// The scale bar at the bottom left of `area`, measured on the frame shown in
+    /// `rect`.
     fn paint_scale_bar(
         &mut self,
         painter: &egui::Painter,
         rect: Rect,
+        area: Rect,
         display_basis: &Basis,
         display_cam: Cam,
     ) {
@@ -959,8 +1009,8 @@ impl App {
             self.distance_units(),
         ) {
             let len = scale_bar.width_points;
-            let y = rect.bottom() - scale_bar.bottom_inset_points;
-            let x0 = rect.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
+            let y = area.bottom() - scale_bar.bottom_inset_points;
+            let x0 = area.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
             painter.line_segment(
                 [Pos2::new(x0, y), Pos2::new(x0 + len, y)],
                 Stroke::new(3.0_f32, Color32::BLACK),

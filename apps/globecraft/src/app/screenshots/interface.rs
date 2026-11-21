@@ -897,14 +897,27 @@ fn side_pane_slide_screenshots() {
         }
         save(&mut h, &dir, name);
     }
-    // The window made larger (user's recording, 2026-11-21 08:44): the frame before
-    // grows with it until the new one comes.
-    let size = h.ctx.content_rect().size();
-    h.set_size(size + egui::vec2(240.0, 160.0));
+    // Shut at once (Reduce Motion): until the wider frame comes, the gap beside the
+    // frame is filled, not black.
+    h.ctx.global_style_mut(|style| style.animation_time = 0.0);
+    let _ = h.state_mut().run("ui.leftPane", json!({}));
     h.step();
+    save(&mut h, &dir, "pane-shut-at-once");
+    settle(&mut h, 1.0);
+    // The window made larger and wider (user's recording, 2026-11-21 08:44): the
+    // frame before grows with it, the sides filled, and no frame is rendered until
+    // the size holds still.
+    let size = h.ctx.content_rect().size();
+    let before = h.state().frame.last_render;
+    for step in 1..=6 {
+        h.set_size(size + egui::vec2(60.0, 20.0) * step as f32);
+        h.step();
+    }
+    let rendered_while_resizing = h.state().frame.last_render != before;
     save(&mut h, &dir, "window-grown-first");
     settle(&mut h, 2.0);
     save(&mut h, &dir, "window-grown");
+    println!("rendered while resizing: {rendered_while_resizing}");
 }
 
 /// Interface size is egui's zoom, so everything scales together; egui's own zoom keys

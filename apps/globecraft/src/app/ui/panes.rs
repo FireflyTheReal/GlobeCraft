@@ -178,7 +178,7 @@ impl App {
 
     pub(in crate::app) fn side_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
-        self.frame.pane_sliding = false;
+        self.frame.pane_moving = false;
         // A placemark or ruler revealed from elsewhere brings its tab forward.
         if self.measure.reveal_requested {
             self.settings.workspace.open_right(PaneTab::Measure);
@@ -232,7 +232,11 @@ impl App {
         let settled = ui
             .ctx()
             .animate_bool_responsive(egui::Id::new("side_pane").with("animation"), open.is_some());
-        self.frame.pane_sliding = settled > 0.0 && settled < 1.0;
+        // Sliding, or its edge dragged (egui's id for a panel's resize handle).
+        let dragged = ui
+            .ctx()
+            .is_being_dragged(egui::Id::new("side_pane").with("__resize"));
+        self.frame.pane_moving = (settled > 0.0 && settled < 1.0) || dragged;
         if let Some(response) = response
             && open.is_some()
             && settled == 1.0
