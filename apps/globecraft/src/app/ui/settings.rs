@@ -1,7 +1,7 @@
 //! Searchable settings shell; category widgets are separate from persistence.
 use super::super::App;
 use eframe::egui;
-use globecraft_core::language::{Lang, fold_name};
+use globecraft_core::language::{Lang, LanguagePreference, fold_name};
 use globecraft_data::settings::Settings;
 mod controllers;
 mod keys;
@@ -159,6 +159,9 @@ impl Category {
             || (self == Self::Data && network::network_matches(query))
     }
 }
+/// The Settings window's viewport, when it has a window of its own.
+pub(in crate::app) const VIEWPORT: &str = "settings-window";
+
 #[derive(Default)]
 pub(in crate::app) struct SettingsUi {
     category: Category,
@@ -178,127 +181,62 @@ impl App {
         let mut close_requested = false;
         let mut language_preference = self.locale.preference;
         let mut state = std::mem::take(&mut self.panes.settings);
-        let (still_open, _) = super::surface::Surface::dialog(
-            "settings-window",
-            lang.text("settings-title"),
-            super::surface::Width::Large,
-        )
-        .resizable(WINDOW_MIN_SIZE_POINTS)
-        .height(WINDOW_SIZE_POINTS.y)
-        .show(ctx, lang, |ui| {
-            // A sidebar of pages with the search above it; the page on the right.
-            egui::Panel::left("settings-pages")
-                .resizable(false)
-                .exact_size(SIDEBAR_WIDTH_POINTS)
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-                    left: 0,
-                    right: 8,
-                    top: 0,
-                    bottom: 0,
-                }))
-                .show(ui, |ui| {
-                    let search = ui.add(
-                        egui::TextEdit::singleline(&mut state.query)
-                            .hint_text(lang.text("settings-search-placeholder"))
-                            .desired_width(f32::INFINITY),
-                    );
-                    super::widgets::name_field(&search, lang.text("settings-search-placeholder"));
-                    ui.add_space(6.0);
-                    let query = fold_name(&state.query);
-                    for category in Category::ALL {
-                        let shown = query.is_empty()
-                            || category.matches(&query, lang)
-                            || (category == Category::Data && self.network_dynamic_matches(&query));
-                        if !shown {
-                            continue;
-                        }
-                        if super::surface::sidebar_item(
-                            ui,
-                            category.icon(),
-                            lang.text(category.name_id()),
-                            state.category == category,
-                        )
-                        .clicked()
-                        {
-                            state.category = category;
-                            state.query.clear();
-                        }
-                    }
-                });
-            // The page and its buttons keep clear of the sidebar's line (user, 2026-11-20).
-            egui::Frame::NONE
-                .inner_margin(egui::Margin {
-                    left: PAGE_MARGIN_POINTS,
-                    ..egui::Margin::ZERO
-                })
-                .show(ui, |ui| {
-                    let query = fold_name(&state.query);
-                    let categories: Vec<_> = Category::ALL
-                        .into_iter()
-                        .filter(|category| {
-                            if query.is_empty() {
-                                *category == state.category
-                            } else {
-                                category.matches(&query, lang)
-                                    || (*category == Category::Data
-                                        && self.network_dynamic_matches(&query))
-                            }
-                        })
-                        .collect();
-                    let height =
-                        (ui.available_height() - FOOTER_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
-                    egui::ScrollArea::vertical()
-                        .id_salt("settings-body")
-                        .max_height(height)
-                        .auto_shrink([false, false])
+        // Tests and backends without windows of their own draw it as a dialog.
+        if ctx.embed_viewports() {
+            let (still_open, _) = super::surface::Surface::dialog(
+                "settings-window",
+                lang.text("settings-title"),
+                super::surface::Width::Large,
+            )
+            .resizable(WINDOW_MIN_SIZE_POINTS)
+            .height(WINDOW_SIZE_POINTS.y)
+            .show(ctx, lang, |ui| {
+                self.settings_body(
+                    ui,
+                    &mut state,
+                    &mut language_preference,
+                    &mut close_requested,
+                )
+            });
+            open &= still_open;
+        } else {
+            // A window of its own, as Mac apps' settings are (HIG: Settings): it can move to
+            // another display, and its title names the page.
+            let title = if state.query.is_empty() {
+                lang.text(state.category.name_id())
+            } else {
+                lang.text("settings-title")
+            };
+            let builder = egui::ViewportBuilder::default()
+                .with_title(title)
+                .with_inner_size(WINDOW_SIZE_POINTS)
+                .with_min_inner_size(WINDOW_MIN_SIZE_POINTS)
+                .with_minimize_button(false)
+                .with_maximize_button(false);
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of(VIEWPORT),
+                builder,
+                |ui, _| {
+                    let t = super::theme::Tokens::get(ui.ctx());
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE.fill(t.pane).inner_margin(12))
                         .show(ui, |ui| {
-                            if categories.is_empty() {
-                                ui.label(lang.format(
-                                    "settings-search-empty",
-                                    &[("query", state.query.as_str().into())],
-                                ));
-                            }
-                            for category in categories {
-                                ui.push_id(category as u8, |ui| {
-                                    ui.heading(lang.text(category.name_id()));
-                                    ui.add_space(4.0);
-                                    self.settings_page(
-                                        ui,
-                                        category,
-                                        &mut state,
-                                        &mut language_preference,
-                                    );
-                                    ui.add_space(ui.spacing().item_spacing.y);
-                                });
-                            }
+                            self.settings_body(
+                                ui,
+                                &mut state,
+                                &mut language_preference,
+                                &mut close_requested,
+                            )
                         });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button(lang.text("settings-reset-action")).clicked() {
-                            state.confirm_reset = true;
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button(lang.text("settings-close-action")).clicked() {
-                                close_requested = true;
-                            }
-                        });
-                    });
-                    if state.confirm_reset {
-                        ui.label(lang.text("settings-reset-confirm"));
-                        ui.horizontal(|ui| {
-                            if ui.button(lang.text("settings-confirm-action")).clicked() {
-                                self.settings = Settings::default();
-                                self.windows.ui_scale_edit = self.settings.ui_scale;
-                                state.confirm_reset = false;
-                            }
-                            if ui.button(lang.text("settings-cancel-action")).clicked() {
-                                state.confirm_reset = false;
-                            }
-                        });
+                    if ui.input(|i| {
+                        i.viewport().close_requested()
+                            || (i.modifiers.command && i.key_pressed(egui::Key::W))
+                    }) {
+                        open = false;
                     }
-                });
-        });
-        open &= still_open;
+                },
+            );
+        }
         if language_preference != self.locale.preference {
             self.set_language_preference(language_preference);
             ctx.request_repaint();
@@ -311,6 +249,124 @@ impl App {
         self.panes.settings = state;
         self.windows.settings = open && !close_requested;
     }
+
+    /// The settings: a sidebar of pages with the search above it, the page on the right,
+    /// and Restore Defaults and Close below.
+    fn settings_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        state: &mut SettingsUi,
+        language_preference: &mut LanguagePreference,
+        close_requested: &mut bool,
+    ) {
+        let lang = self.lang;
+        // A sidebar of pages with the search above it; the page on the right.
+        egui::Panel::left("settings-pages")
+            .resizable(false)
+            .exact_size(SIDEBAR_WIDTH_POINTS)
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                left: 0,
+                right: 8,
+                top: 0,
+                bottom: 0,
+            }))
+            .show(ui, |ui| {
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut state.query)
+                        .hint_text(lang.text("settings-search-placeholder"))
+                        .desired_width(f32::INFINITY),
+                );
+                super::widgets::name_field(&search, lang.text("settings-search-placeholder"));
+                ui.add_space(6.0);
+                let query = fold_name(&state.query);
+                for category in Category::ALL {
+                    let shown = query.is_empty()
+                        || category.matches(&query, lang)
+                        || (category == Category::Data && self.network_dynamic_matches(&query));
+                    if !shown {
+                        continue;
+                    }
+                    if super::surface::sidebar_item(
+                        ui,
+                        category.icon(),
+                        lang.text(category.name_id()),
+                        state.category == category,
+                    )
+                    .clicked()
+                    {
+                        state.category = category;
+                        state.query.clear();
+                    }
+                }
+            });
+        // The page and its buttons keep clear of the sidebar's line (user, 2026-11-20).
+        egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: PAGE_MARGIN_POINTS,
+                ..egui::Margin::ZERO
+            })
+            .show(ui, |ui| {
+                let query = fold_name(&state.query);
+                let categories: Vec<_> = Category::ALL
+                    .into_iter()
+                    .filter(|category| {
+                        if query.is_empty() {
+                            *category == state.category
+                        } else {
+                            category.matches(&query, lang)
+                                || (*category == Category::Data
+                                    && self.network_dynamic_matches(&query))
+                        }
+                    })
+                    .collect();
+                let height =
+                    (ui.available_height() - FOOTER_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
+                egui::ScrollArea::vertical()
+                    .id_salt("settings-body")
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if categories.is_empty() {
+                            ui.label(lang.format(
+                                "settings-search-empty",
+                                &[("query", state.query.as_str().into())],
+                            ));
+                        }
+                        for category in categories {
+                            ui.push_id(category as u8, |ui| {
+                                ui.heading(lang.text(category.name_id()));
+                                ui.add_space(4.0);
+                                self.settings_page(ui, category, state, language_preference);
+                                ui.add_space(ui.spacing().item_spacing.y);
+                            });
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(lang.text("settings-reset-action")).clicked() {
+                        state.confirm_reset = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(lang.text("settings-close-action")).clicked() {
+                            *close_requested = true;
+                        }
+                    });
+                });
+                if state.confirm_reset {
+                    ui.label(lang.text("settings-reset-confirm"));
+                    ui.horizontal(|ui| {
+                        if ui.button(lang.text("settings-confirm-action")).clicked() {
+                            self.settings = Settings::default();
+                            self.windows.ui_scale_edit = self.settings.ui_scale;
+                            state.confirm_reset = false;
+                        }
+                        if ui.button(lang.text("settings-cancel-action")).clicked() {
+                            state.confirm_reset = false;
+                        }
+                    });
+                }
+            });
+    }
 }
 
 impl App {
@@ -320,7 +376,7 @@ impl App {
         ui: &mut egui::Ui,
         category: Category,
         state: &mut SettingsUi,
-        language_preference: &mut globecraft_core::language::LanguagePreference,
+        language_preference: &mut LanguagePreference,
     ) {
         let lang = self.lang;
         let section = |ui: &mut egui::Ui, title: &str| {

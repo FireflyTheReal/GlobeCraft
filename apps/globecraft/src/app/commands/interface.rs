@@ -176,7 +176,15 @@ impl App {
                 json!({})
             }
             InterfaceCommand::Settings => {
-                self.windows.settings = !self.windows.settings;
+                if self.windows.settings && !ctx.embed_viewports() {
+                    // Open in its own window: Settings… brings it to the front, as on a Mac.
+                    ctx.send_viewport_cmd_to(
+                        egui::ViewportId::from_hash_of(crate::app::ui::settings::VIEWPORT),
+                        egui::ViewportCommand::Focus,
+                    );
+                } else {
+                    self.windows.settings = !self.windows.settings;
+                }
                 json!({})
             }
             InterfaceCommand::Shortcuts => {
