@@ -654,8 +654,18 @@ fn a_frame_moved_on_screen_keeps_its_lines_moved_with_it() {
             ..view
         };
         assert_eq!(
-            shift_between(projected_view(view, style), projected_view(wider, style)),
+            moved_between(projected_view(view, style), projected_view(wider, style)),
             None
         );
+        // The same view half as large again (a window resized in proportion): its
+        // lines scaled about the centres.
+        let larger = OverlayView {
+            rect: Rect::from_center_size(view.rect.center(), view.rect.size() * 1.5),
+            ..view
+        };
+        let by = moved_between(projected_view(view, style), projected_view(larger, style))
+            .expect("same view, scaled");
+        assert_eq!(by.scaling, 1.5);
+        assert_eq!(by * view.rect.center(), larger.rect.center());
     });
 }

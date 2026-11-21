@@ -869,13 +869,27 @@ fn side_pane_slide_screenshots() {
     };
     std::fs::create_dir_all(&dir).expect("screenshot dir");
     let mut h = harness(ThemePreference::Dark);
-    settle(&mut h, 3.0);
+    // PROBE_CITY: over a city, where black bars beside a frame would show (user's
+    // recording, 2026-11-21 08:39).
+    let city = std::env::var_os("PROBE_CITY").is_some();
+    if city {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": 53.0758, "lon": 8.8071, "altitude_km": 2.0}),
+            )
+            .expect("camera");
+    }
+    settle(&mut h, if city { 30.0 } else { 3.0 });
     save(&mut h, &dir, "pane-open");
     // A slow slide, so a quarter-second step lands mid-way.
     h.ctx.global_style_mut(|style| style.animation_time = 1.0);
     for name in ["pane-closing", "pane-closed", "pane-opening", "pane-opened"] {
         if matches!(name, "pane-closing" | "pane-opening") {
             let _ = h.state_mut().run("ui.leftPane", json!({}));
+            // Mid-way, with time for a frame to finish.
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(600));
         }
         h.step();
         if matches!(name, "pane-closed" | "pane-opened") {
@@ -883,4 +897,12 @@ fn side_pane_slide_screenshots() {
         }
         save(&mut h, &dir, name);
     }
+    // The window made larger (user's recording, 2026-11-21 08:44): the frame before
+    // grows with it until the new one comes.
+    let size = h.ctx.content_rect().size();
+    h.set_size(size + egui::vec2(240.0, 160.0));
+    h.step();
+    save(&mut h, &dir, "window-grown-first");
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "window-grown");
 }

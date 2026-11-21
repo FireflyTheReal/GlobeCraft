@@ -1126,11 +1126,19 @@ fn city_turn_frame_times() {
         .image
         .as_ref()
         .map(|f| Arc::as_ptr(&f.pixels));
+    // PROBE_RESIZE: the window grows a few points a step instead (user, 2026-11-21:
+    // "why is making the screen bigger so laggy?").
+    let resize = std::env::var_os("PROBE_RESIZE").is_some();
+    let size = h.ctx.content_rect().size();
     for step in 0..120 {
-        let heading = 30.0 + 0.25 * f64::from(step);
-        h.state_mut()
-            .run("camera.set", json!({"heading_deg": heading}))
-            .expect("turn");
+        if resize {
+            h.set_size(size + egui::vec2(4.0, 3.0) * step as f32);
+        } else {
+            let heading = 30.0 + 0.25 * f64::from(step);
+            h.state_mut()
+                .run("camera.set", json!({"heading_deg": heading}))
+                .expect("turn");
+        }
         let started = std::time::Instant::now();
         h.step();
         times.push(started.elapsed().as_secs_f64() * 1e3);

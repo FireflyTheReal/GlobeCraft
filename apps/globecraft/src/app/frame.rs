@@ -24,6 +24,8 @@ pub(super) struct FrameState {
     /// The globe's size last frame: a pane dragged wider or narrower renders like a
     /// moving camera, so the view follows the edge at once.
     pub(super) last_viewport: egui::Vec2,
+    /// The side pane is sliding open or shut this frame (`ui::panes`).
+    pub(super) pane_sliding: bool,
     pub(super) scale_bar: globecraft_render::scale_bar::ScaleBarCache,
     /// A high-quality screenshot rendering in the background.
     pub(super) still_shot: Option<still_shot::StillShot>,
@@ -60,6 +62,7 @@ impl FrameState {
             last_render: Instant::now(),
             last_interact: Instant::now(),
             last_viewport: egui::Vec2::ZERO,
+            pane_sliding: false,
             scale_bar: Default::default(),
             still_shot: None,
             diagnostics: false,

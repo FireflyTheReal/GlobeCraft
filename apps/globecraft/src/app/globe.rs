@@ -83,8 +83,17 @@ impl App {
         // A resized globe (a pane's edge dragged, the window resized) renders at the
         // lighter motion size until it settles: at full size each step of the drag
         // waited for a whole frame and the old view sat clipped (user 2026-11-19).
-        let resized = viewport.size() != self.frame.last_viewport;
-        self.frame.last_viewport = viewport.size();
+        // While the side pane slides the globe renders at the width it has with the
+        // pane shut, centred: one frame covers every width of the slide, which then
+        // needs no new frame and shows no black bars (user, 2026-11-21).
+        let render_rect = if self.frame.pane_sliding {
+            let full = ui.ctx().content_rect().width().max(viewport.width());
+            Rect::from_center_size(viewport.center(), egui::vec2(full, viewport.height()))
+        } else {
+            viewport
+        };
+        let resized = render_rect.size() != self.frame.last_viewport;
+        self.frame.last_viewport = render_rect.size();
         if interacting || resp.dragged() || resized {
             self.touch();
         }
@@ -111,14 +120,19 @@ impl App {
             && !resp.dragged()
             && self.time.speed() == 0.0
             && relief_step == 0;
-        let render_aspect = (viewport.width() / viewport.height()) as f64;
+        let render_aspect = (render_rect.width() / render_rect.height()) as f64;
         let motion_scale = if relief {
             self.settings.motion_resolution_relief
         } else {
             self.settings.motion_resolution
         };
-        let (w, h) =
-            globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief, motion_scale);
+        let (w, h) = globecraft_render::view::raster_size(
+            render_rect.size(),
+            ppp,
+            idle,
+            relief,
+            motion_scale,
+        );
         let keys = globecraft_render::view::RasterView {
             camera: self.cam,
             model: self.active_earth_model(),
@@ -269,7 +283,7 @@ impl App {
         match outcome {
             WakeOutcome::Submit => {
                 let lod_scale = globecraft_render::view::render_scale(
-                    viewport.size(),
+                    render_rect.size(),
                     ppp,
                     idle,
                     relief,
@@ -283,7 +297,7 @@ impl App {
                     },
                     render_aspect,
                     presentation,
-                    viewport,
+                    render_rect,
                     ppp,
                 );
                 self.frame.last_state = state;
@@ -1207,14 +1221,19 @@ impl App {
     }
 }
 
-/// Where the displayed frame is drawn: at its own size (not stretched), centred on
-/// the globe's viewport. While a pane slides the viewport changes every frame; the
-/// last frame then moves with the view's centre until one of the new size arrives,
-/// instead of sitting where it was and jumping (user, 2026-11-20).
+/// Where the displayed frame is drawn: centred on the globe's viewport, in its own
+/// proportions, scaled to the viewport's height. The view's vertical angle is fixed,
+/// so that is what a frame of the new size will show: while a pane slides or the
+/// window is resized the last frame moves (and grows or shrinks) with the view
+/// instead of sitting where it was, smaller, inside black bars until a new one comes
+/// (user, 2026-11-20/21).
 fn shown_rect(displayed: Option<Rect>, viewport: Rect) -> Rect {
-    displayed.map_or(viewport, |displayed| {
-        Rect::from_center_size(viewport.center(), displayed.size())
-    })
+    displayed
+        .filter(|displayed| displayed.height() > 0.0)
+        .map_or(viewport, |displayed| {
+            let scale = viewport.height() / displayed.height();
+            Rect::from_center_size(viewport.center(), displayed.size() * scale)
+        })
 }
 
 #[cfg(test)]
@@ -1230,5 +1249,10 @@ mod shown_rect_tests {
         let shown = shown_rect(Some(narrower), viewport);
         assert_eq!(shown.center(), viewport.center());
         assert_eq!(shown.size(), narrower.size());
+        // The window made taller: the frame grows with it, in its own proportions.
+        let smaller = Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let shown = shown_rect(Some(smaller), viewport);
+        assert_eq!(shown.center(), viewport.center());
+        assert_eq!(shown.size(), egui::vec2(1200.0, 800.0));
     }
 }

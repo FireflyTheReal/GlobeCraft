@@ -3,7 +3,7 @@ use super::galleys::LabelGalleys;
 use super::meshes::PreparedOverlay;
 use super::place_memory::PlaceNameMemory;
 use super::projected;
-use eframe::egui::{self, Rect, Shape};
+use eframe::egui::{self, Rect, Shape, emath::TSTransform};
 use globecraft_core::{camera::Basis, language::Lang};
 use globecraft_data::boundaries::BoundaryData;
 use globecraft_data::settings::map_style::MapStyle;
@@ -330,13 +330,13 @@ impl OverlayCache {
             {
                 self.geometry = Some(completed);
             }
-            // The displayed frame's own geometry, moved with its picture while a
-            // sliding pane moves the globe's centre (user, 2026-11-20).
-            let shifted = self.geometry.as_ref().and_then(|prepared| {
-                shift_between(prepared.geometry.view, geometry_view).map(|by| (prepared, by))
+            // The displayed frame's own geometry, moved and scaled with its picture
+            // while a pane slides or the window is resized (user, 2026-11-20/21).
+            let moved = self.geometry.as_ref().and_then(|prepared| {
+                moved_between(prepared.geometry.view, geometry_view).map(|by| (prepared, by))
             });
-            let this_view = shifted.map(|(prepared, _)| prepared);
-            let shift = shifted.map_or(egui::Vec2::ZERO, |(_, by)| by);
+            let this_view = moved.map(|(prepared, _)| prepared);
+            let moved = moved.map_or(TSTransform::IDENTITY, |(_, by)| by);
             let current_data = this_view.is_some_and(|prepared| {
                 prepared
                     .geometry
@@ -365,13 +365,13 @@ impl OverlayCache {
                 );
                 self.shapes = built.shapes;
                 let mut label_rects = built.label_rects;
-                if shift != egui::Vec2::ZERO {
+                if moved != TSTransform::IDENTITY {
                     self.shapes
                         .iter_mut()
-                        .for_each(|shape| shape.translate(shift));
+                        .for_each(|shape| shape.transform(moved));
                     label_rects
                         .iter_mut()
-                        .for_each(|rect| *rect = rect.translate(shift));
+                        .for_each(|rect| *rect = moved.mul_rect(*rect));
                 }
                 self.placed.replace(label_rects);
                 self.place_memory.finish(Instant::now(), built.drawn);
@@ -418,17 +418,23 @@ impl OverlayCache {
     }
 }
 
-/// How far `to` lies from `from` when it is the same view moved on screen: the same
-/// camera and size, only its rectangle elsewhere.
-fn shift_between(
+/// How `to` lies on screen from `from` when it is the same view moved or scaled: the
+/// same camera, its rectangle elsewhere or larger in the same proportions (a frame's
+/// picture shown while the globe's size changes, `globe::shown_rect`).
+fn moved_between(
     from: globecraft_render::overlays::OverlayView,
     to: globecraft_render::overlays::OverlayView,
-) -> Option<egui::Vec2> {
-    let moved = globecraft_render::overlays::OverlayView {
+) -> Option<TSTransform> {
+    let same_camera = globecraft_render::overlays::OverlayView {
         rect: to.rect,
         ..from
-    };
-    (moved == to && from.rect.size() == to.rect.size()).then(|| to.rect.min - from.rect.min)
+    } == to;
+    let (a, b) = (from.rect.size(), to.rect.size());
+    let same_shape = a.y > 0.0 && (a.x * b.y - b.x * a.y).abs() <= 1e-3 * a.x * b.y;
+    (same_camera && same_shape).then(|| {
+        let scaling = b.y / a.y;
+        TSTransform::new(to.rect.center() - from.rect.center() * scaling, scaling)
+    })
 }
 
 fn projected_view(
