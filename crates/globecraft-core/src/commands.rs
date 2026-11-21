@@ -782,6 +782,14 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     command!("ui.ribbon", "ui-ribbon", "up", View, Interface, NO_PARAMS),
     command!(
+        "ui.ribbonCompact",
+        "ui-ribbon-compact",
+        "minimize",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
+    command!(
         "ui.focusNext",
         "ui-focus-next",
         "tools",

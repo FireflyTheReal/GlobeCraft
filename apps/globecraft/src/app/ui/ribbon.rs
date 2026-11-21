@@ -26,8 +26,14 @@ impl App {
         let peek_click = self.chrome.ribbon_peek
             && ui.input(|i| i.pointer.any_click())
             && !egui::Popup::is_any_open(ui.ctx());
+        let compact = self.settings.workspace.ribbon_compact;
+        super::widgets::set_compact(ui.ctx(), compact);
         let ribbon = egui::Panel::top("ribbon")
-            .exact_size(CONTENT_H + LABEL_H + 12.0)
+            .exact_size(if compact {
+                super::widgets::COMPACT_H + 8.0
+            } else {
+                CONTENT_H + LABEL_H + 12.0
+            })
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin {
                 left: 8,

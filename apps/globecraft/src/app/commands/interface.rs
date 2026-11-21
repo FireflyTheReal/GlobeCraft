@@ -90,6 +90,12 @@ impl App {
                 self.settings.hide_navigation_controls = false;
                 json!({"style": style.code()})
             }
+            InterfaceCommand::RibbonCompact => {
+                let workspace = &mut self.settings.workspace;
+                workspace.ribbon_compact = !workspace.ribbon_compact;
+                workspace.ribbon_minimized = false;
+                json!({})
+            }
             InterfaceCommand::Ribbon => {
                 self.settings.workspace.ribbon_minimized =
                     !self.settings.workspace.ribbon_minimized;

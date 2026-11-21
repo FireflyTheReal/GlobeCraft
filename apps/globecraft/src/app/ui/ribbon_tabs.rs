@@ -343,6 +343,7 @@ impl App {
                 });
                 col(ui, |ui| {
                     small(ui, app, "ui.pane.assistant", Value::Null);
+                    small(ui, app, "ui.ribbonCompact", Value::Null);
                 });
             },
         );

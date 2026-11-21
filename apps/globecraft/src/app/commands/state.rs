@@ -144,6 +144,7 @@ impl App {
             "ui.navigatorStyle" => on(str_param(params, "style")
                 .is_some_and(|style| style == self.settings.navigation.navigator.code())),
             "ui.ribbon" => on(self.settings.workspace.ribbon_minimized),
+            "ui.ribbonCompact" => on(self.settings.workspace.ribbon_compact),
             "ui.ribbon.pin" => on(str_param(params, "group")
                 .zip(str_param(params, "tool"))
                 .is_some_and(|(g, t)| self.tool_pinned(g, t))),

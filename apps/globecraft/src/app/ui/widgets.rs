@@ -15,6 +15,18 @@ use std::sync::Arc;
 pub(in crate::app) const CONTENT_H: f32 = 72.0;
 /// Tall enough for the group labels' menus to be 20 pt targets.
 pub(in crate::app) const LABEL_H: f32 = 21.0;
+/// The compact ribbon's one row: a small button's height.
+pub(in crate::app) const COMPACT_H: f32 = 22.0;
+const COMPACT_KEY: &str = "ribbon-compact";
+
+/// Whether the ribbon draws as one row of small buttons (`ui.ribbonCompact`), for the
+/// widgets below that have no `App` at hand. Set by the ribbon each frame.
+pub(in crate::app) fn set_compact(ctx: &egui::Context, compact: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(COMPACT_KEY), compact));
+}
+fn compact(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp(egui::Id::new(COMPACT_KEY)).unwrap_or(false))
+}
 
 pub(in crate::app) fn text_w(ui: &Ui, s: &str, font: egui::FontId) -> f32 {
     galley(ui, s, font, egui::Color32::WHITE).size().x
@@ -197,7 +209,11 @@ pub(in crate::app) fn big_with(
     if !app.list_tool(id, &params, r.icon, r.label, r.enabled, r.checked) {
         return ui.response();
     }
-    let resp = paint_big(ui, &r, false);
+    let resp = if compact(ui.ctx()) {
+        paint_small(ui, &r, true, false)
+    } else {
+        paint_big(ui, &r, false)
+    };
     if resp.clicked() && r.enabled {
         app.run_reporting(id, params);
     }
@@ -222,15 +238,26 @@ pub(in crate::app) fn big_with_menu(
     if !app.list_tool(id, &params, r.icon, r.label, r.enabled, r.checked) {
         return ui.response();
     }
-    let resp = paint_big(ui, &r, true);
     let enabled = r.enabled;
-    // Over the button, so its clicks go to the menu.
-    let label = Rect::from_min_max(
-        pos2(resp.rect.min.x, resp.rect.min.y + BIG_LABEL_TOP_POINTS),
-        resp.rect.max,
-    );
-    let opener = ui.interact(label, resp.id.with("menu"), Sense::click());
-    egui::Popup::menu(&opener).show(|ui| menu(ui, app));
+    let resp = if compact(ui.ctx()) {
+        // One row: the button runs the command, its caret opens the menu.
+        let resp = paint_small(ui, &r, true, true);
+        let caret =
+            Rect::from_min_max(pos2(resp.rect.max.x - 16.0, resp.rect.min.y), resp.rect.max);
+        let opener = ui.interact(caret, resp.id.with("menu"), Sense::click());
+        egui::Popup::menu(&opener).show(|ui| menu(ui, app));
+        resp
+    } else {
+        let resp = paint_big(ui, &r, true);
+        // Over the button, so its clicks go to the menu.
+        let label = Rect::from_min_max(
+            pos2(resp.rect.min.x, resp.rect.min.y + BIG_LABEL_TOP_POINTS),
+            resp.rect.max,
+        );
+        let opener = ui.interact(label, resp.id.with("menu"), Sense::click());
+        egui::Popup::menu(&opener).show(|ui| menu(ui, app));
+        resp
+    };
     if resp.clicked() && enabled {
         app.run_reporting(id, params);
     }
@@ -286,7 +313,11 @@ pub(in crate::app) fn choice_big(ui: &mut Ui, app: &mut App, help: &str, choices
         command: "",
         params: None,
     };
-    let resp = paint_big(ui, &r, true);
+    let resp = if compact(ui.ctx()) {
+        paint_small(ui, &r, true, true)
+    } else {
+        paint_big(ui, &r, true)
+    };
     egui::Popup::menu(&resp).show(|ui| choice_menu(ui, app, choices));
 }
 
@@ -501,6 +532,10 @@ pub(in crate::app) fn group(
 ) {
     let t = Tokens::get(ui.ctx());
     let start = ui.cursor().min;
+    if compact(ui.ctx()) {
+        compact_group(ui, app, id, title, add);
+        return;
+    }
     let label = galley(ui, title, regular(11.0), t.group_label);
     let label_w = label.size().x + GROUP_CARET_W;
     app.chrome.ribbon_tools.begin(id);
@@ -583,11 +618,71 @@ pub(in crate::app) fn group(
     ui.add_space(7.0);
 }
 
+/// A group in the compact ribbon: its tools in a row, then a caret for its menu instead
+/// of a title, then the divider.
+fn compact_group(
+    ui: &mut Ui,
+    app: &mut App,
+    id: &'static str,
+    title: &str,
+    add: impl FnOnce(&mut Ui, &mut App),
+) {
+    let t = Tokens::get(ui.ctx());
+    let top = ui.cursor().min.y;
+    app.chrome.ribbon_tools.begin(id);
+    forget_last_column(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+        add(ui, app);
+        app.group_extras(ui, id);
+    });
+    let rows = app.chrome.ribbon_tools.end();
+    if rows.len() >= 2 || super::ribbon_side::has_side_menus(id) {
+        let more = app
+            .lang
+            .format("ribbon-group-more", &[("group", title.into())]);
+        let (rect, resp) = ui.allocate_exact_size(vec2(20.0, COMPACT_H), Sense::click());
+        let resp = resp.on_hover_text(&more);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &more));
+        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+        if resp.hovered() || open {
+            let fill = if open { t.pressed } else { t.hover };
+            ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+        }
+        caret(ui.painter(), rect.center(), t.text_dim);
+        egui::Popup::menu(&resp).show(|ui| app.group_menu(ui, id, &rows));
+    }
+    ui.add_space(4.0);
+    let x = ui.cursor().min.x;
+    ui.painter().line_segment(
+        [pos2(x, top + 3.0), pos2(x, top + COMPACT_H - 3.0)],
+        Stroke::new(1.0, t.border),
+    );
+    ui.add_space(5.0);
+}
+
 /// Room for the caret after a group's title.
 const GROUP_CARET_W: f32 = 11.0;
 
 /// A column of up to three small controls.
 pub(in crate::app) fn col(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    if compact(ui.ctx()) {
+        // Side by side in the one row; pinned tools then start a column of their own.
+        let rect = ui
+            .horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+                add(ui);
+            })
+            .response
+            .rect;
+        let last = LastColumn {
+            rect,
+            rows: COLUMN_ROWS,
+        };
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::new(LAST_COLUMN_KEY), last));
+        return;
+    }
     let rect = ui
         .vertical(|ui| {
             ui.spacing_mut().item_spacing = vec2(1.0, 1.0);

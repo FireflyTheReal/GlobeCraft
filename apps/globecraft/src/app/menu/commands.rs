@@ -111,6 +111,7 @@ const COMMANDS: &[Action] = &[
         Some("menu-navigation-toggle"),
     ),
     toggle(View, "ui.ribbon", None),
+    toggle(View, "ui.ribbonCompact", None),
     item(View, "ui.commandSearch", None),
     toggle(View, "ui.fullscreen", Some("menu-fullscreen-toggle")),
     item(Go, "search.place", None),

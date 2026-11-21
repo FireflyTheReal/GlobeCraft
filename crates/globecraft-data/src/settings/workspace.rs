@@ -99,6 +99,8 @@ pub struct WorkspaceLayout {
     #[serde(serialize_with = "serialize_tab", deserialize_with = "deserialize_tab")]
     pub ribbon_tab: Tab,
     pub ribbon_minimized: bool,
+    /// One row of small buttons instead of the ribbon's large ones and group titles.
+    pub ribbon_compact: bool,
     /// The side pane's tab in view; `None`: the pane is hidden (its tabs stay).
     /// (`right_*`: named when the pane was on the right only; kept for saved files.)
     pub right_pane: Option<PaneTab>,
@@ -122,6 +124,7 @@ impl Default for WorkspaceLayout {
         Self {
             ribbon_tab: Tab::Explore,
             ribbon_minimized: false,
+            ribbon_compact: false,
             right_pane: Some(PaneTab::Places),
             right_open: vec![PaneTab::Layers, PaneTab::Places],
             right_width_points: DEFAULT_RIGHT_PANE_WIDTH_POINTS,
