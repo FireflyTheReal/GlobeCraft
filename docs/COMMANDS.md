@@ -107,6 +107,7 @@ Parameters are a JSON object; none is required unless marked.
 | `ui.tileDiagnostics` | Tile Diagnostics | Show the imagery tiles in view by state, the download queues per source and the download rates. | `on` (boolean): Omit to toggle | yes |
 | `ui.navigatorStyle` | Navigator Style | Choose the navigator with the mini globe or the classic ring, move pad and zoom slider. | `style` (string), required: one of `globe`, `classic`: globe: mini globe in the rotation ring; classic: ring, move pad and zoom slider | yes |
 | `ui.ribbon` | Collapse Ribbon | Collapse or expand the ribbon (Ctrl+F1). | — | no |
+| `ui.ribbonCompact` | Compact Ribbon | Show the ribbon as one row of small buttons, without group titles, to leave more room for the globe. | — | no |
 | `ui.focusNext` | Next Region | Move the keyboard focus to the next part of the window: the ribbon, the left pane, the right pane, the globe. Tab and the arrow keys then move between its controls; Enter or Space presses one. | — | no |
 | `ui.focusPrevious` | Previous Region | Move the keyboard focus to the previous part of the window. | — | no |
 | `ui.ribbon.pin` | Pin to Toolbar | Show a tool of a ribbon group on the ribbon, or keep it in the group's menu only. | `group` (string), required: Ribbon group id, such as home.navigate<br>`on` (boolean): Omit to toggle<br>`tool` (string), required: Command id, then a space and its parameters as JSON when it has any | no |
