@@ -1,5 +1,5 @@
 use super::*;
-use globecraft_core::language::Lang;
+use globecraft_core::{language::Lang, layers::MapLayer};
 
 #[test]
 fn menu_catalog_has_translated_labels_populated_sections_and_unique_shortcuts() {
@@ -7,14 +7,15 @@ fn menu_catalog_has_translated_labels_populated_sections_and_unique_shortcuts() 
     for lang in Lang::ALL {
         for section in Section::ALL {
             assert!(!section.label(lang).is_empty());
-            assert!(Action::ALL.iter().any(|action| action.section() == section));
+            assert!(Action::all().iter().any(|action| action.section == section));
         }
-        for action in Action::ALL {
+        for action in Action::all() {
             assert!(!action.label(lang).is_empty());
+            assert_ne!(action.label(lang), action.id, "{action:?} has no name");
         }
     }
-    let shortcuts: Vec<_> = Action::ALL
-        .into_iter()
+    let shortcuts: Vec<_> = Action::all()
+        .iter()
         .filter_map(|action| action.shortcut())
         .collect();
     for (index, shortcut) in shortcuts.iter().enumerate() {
@@ -23,45 +24,38 @@ fn menu_catalog_has_translated_labels_populated_sections_and_unique_shortcuts() 
 }
 
 #[test]
-fn menu_enablement_and_checkmarks_follow_app_state() {
-    let empty = MenuState::default();
-    assert!(!empty.enabled(Action::Screenshot));
-    assert!(!empty.enabled(Action::Undo));
-    assert!(!empty.enabled(Action::Redo));
-    assert!(empty.enabled(Action::Open));
-    assert!(empty.enabled(Action::Settings));
-    let state = MenuState {
-        image: true,
-        undo: true,
-        redo: true,
-        sidebar: true,
-        ruler: true,
-        grid: true,
-        navigation: true,
-        ..MenuState::default()
-    };
-    assert!(state.enabled(Action::Screenshot));
-    assert!(state.enabled(Action::Undo));
-    assert!(state.enabled(Action::Redo));
-    for action in [
-        Action::Sidebar,
-        Action::Ruler,
-        Action::Grid,
-        Action::NavigationControls,
-    ] {
-        assert_eq!(state.checked(action), Some(true));
-        assert_eq!(empty.checked(action), Some(false));
-    }
-    assert_eq!(state.checked(Action::Placemark), None);
-}
-
-#[test]
 fn every_menu_action_runs_a_known_command() {
-    for action in Action::ALL {
+    for action in Action::all() {
         let (id, _) = action.command();
         assert!(
             globecraft_core::commands::find(id).is_some(),
             "{action:?} runs unknown command {id}"
         );
     }
+}
+
+/// The menu bar lists every layer, as Mac users look there first (HIG: The menu bar).
+#[test]
+fn every_offered_layer_has_a_menu_item_and_menus_keep_their_order() {
+    for layer in MapLayer::ALL
+        .into_iter()
+        .filter(|l| crate::app::App::offers(*l))
+    {
+        assert!(
+            Action::all()
+                .iter()
+                .any(|action| action.layer == Some(layer)),
+            "{layer:?}"
+        );
+    }
+    let sections: Vec<_> = Action::all().iter().map(|action| action.section).collect();
+    let mut sorted = sections.clone();
+    sorted.dedup();
+    let mut unique = sorted.clone();
+    unique.sort_by_key(|s| commands::Section::ALL.iter().position(|x| x == s));
+    unique.dedup();
+    assert_eq!(
+        sorted, unique,
+        "each menu's items are together, in menu order"
+    );
 }

@@ -1,9 +1,8 @@
 //! Runs commands by id. The ribbon, menus, keyboard shortcuts, the command palette and the AI
 //! assistant all come through [`App::run`], so each action has one implementation.
 use super::App;
-use eframe::egui;
-use globecraft_core::{commands::Command, layers::MapLayer};
-use serde_json::{Value, json};
+use globecraft_core::commands::Command;
+use serde_json::Value;
 
 mod camera;
 mod files;
@@ -96,21 +95,6 @@ impl App {
         self.measure.reveal_requested = self.measure.on;
         if self.measure.on {
             self.places.reveal_requested = false;
-        }
-    }
-    /// A check box that shows or hides `layer` through its command.
-    pub(in crate::app) fn layer_checkbox(
-        &mut self,
-        ui: &mut egui::Ui,
-        layer: MapLayer,
-        label: &str,
-    ) {
-        if !Self::offers(layer) {
-            return;
-        }
-        let mut on = self.layer(layer);
-        if ui.checkbox(&mut on, label).changed() {
-            self.run_reporting("layer.show", json!({"layer": layer.code(), "visible": on}));
         }
     }
 }

@@ -7,6 +7,7 @@
 //! With a loop (`time.loop`), a second row under the dates holds its two handles.
 use super::theme::{Tokens, regular, semibold};
 use crate::app::App;
+use crate::app::time::format_zoned;
 use eframe::egui::{self, Align2, Pos2, Rect, Sense, Ui, vec2};
 use globecraft_core::layers::MapLayer;
 use globecraft_core::time::{
@@ -98,24 +99,32 @@ impl App {
         let small = regular(10.5);
         // Above: the span's ends, and the time (with the window of events) between.
         let label_y = rect.top() + LABEL_Y;
+        // Dates, times and ticks in this computer's time zone (or UTC, as set): shifted by
+        // the offset of the time shown. shortcut: one offset for the whole span, so ticks
+        // across a daylight-saving change sit an hour off until the time moves past it.
+        let zone = self.time_zone_secs(unix);
         painter.text(
             Pos2::new(rect.left(), label_y),
             Align2::LEFT_CENTER,
-            date_utc(start),
+            date_utc(start + zone),
             small.clone(),
             t.text_dim,
         );
         painter.text(
             Pos2::new(rect.right(), label_y),
             Align2::RIGHT_CENTER,
-            date_utc(end),
+            date_utc(end + zone),
             small.clone(),
             t.text_dim,
         );
         let window = self.time.window_secs().filter(|secs| *secs > 0.0);
         let shown = match window {
-            Some(secs) => format!("{} – {}", short_utc(unix - secs), format_utc(unix)),
-            None => format_utc(unix),
+            Some(secs) => format!(
+                "{} – {}",
+                short_utc(unix - secs + zone),
+                format_zoned(unix, zone)
+            ),
+            None => format_zoned(unix, zone),
         };
         let shown = if live {
             format!("{shown} · {}", lang.text("timeline-live"))
@@ -135,7 +144,8 @@ impl App {
         );
         // Ticks across the line, dates under them where there is room.
         let mut free_from = f32::MIN;
-        for at in tick_times(start, end, span) {
+        for at in tick_times(start + zone, end + zone, span) {
+            let at = at - zone;
             let x = x_of(at);
             painter.line_segment(
                 [
@@ -144,7 +154,7 @@ impl App {
                 ],
                 egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.6)),
             );
-            let label = tick_label(at, span);
+            let label = tick_label(at + zone, span);
             let label_w = super::widgets::text_w(ui, &label, small.clone());
             if x - label_w / 2.0 >= free_from
                 && x - label_w / 2.0 >= rect.left()
@@ -351,15 +361,18 @@ fn short_utc(time: f64) -> String {
 }
 
 /// One step back or forward on the timeline from `unix`: the track's next tick that
-/// way (the 1st of a month or year across long spans, as the ticks).
-pub(super) fn step_to(unix: f64, span: f64, forward: bool) -> f64 {
+/// way (the 1st of a month or year across long spans, as the ticks), with the ticks in a
+/// time zone `zone` seconds ahead of UTC.
+pub(super) fn step_to(unix: f64, span: f64, forward: bool, zone: f64) -> f64 {
     /// A time this close to a tick is on it.
     const ON_TICK_SECS: f64 = 1.0;
-    let ticks = tick_times(unix - span, unix + span, span);
+    let ticks = tick_times(unix - span + zone, unix + span + zone, span)
+        .into_iter()
+        .map(|tick| tick - zone);
     let next = if forward {
         ticks.into_iter().find(|t| *t > unix + ON_TICK_SECS)
     } else {
-        ticks.into_iter().rev().find(|t| *t < unix - ON_TICK_SECS)
+        ticks.rev().find(|t| *t < unix - ON_TICK_SECS)
     };
     next.unwrap_or(unix)
 }
@@ -431,21 +444,21 @@ mod tests {
         let at = |date: &str| parse_iso(date).unwrap();
         let year = 365.0 * DAY_SECS;
         assert_eq!(
-            date_utc(step_to(at("2026-03-15"), year, true)),
+            date_utc(step_to(at("2026-03-15"), year, true, 0.0)),
             "2026-04-01"
         );
         assert_eq!(
-            date_utc(step_to(at("2026-03-15"), year, false)),
+            date_utc(step_to(at("2026-03-15"), year, false, 0.0)),
             "2026-03-01"
         );
         // From a tick to the one beyond.
         assert_eq!(
-            date_utc(step_to(at("2026-03-01"), year, false)),
+            date_utc(step_to(at("2026-03-01"), year, false, 0.0)),
             "2026-02-01"
         );
         let day = DAY_SECS;
         assert_eq!(
-            format_utc(step_to(at("2026-03-15T10:20"), day, true)),
+            format_utc(step_to(at("2026-03-15T10:20"), day, true, 0.0)),
             "2026-03-15 12:00 UTC"
         );
     }

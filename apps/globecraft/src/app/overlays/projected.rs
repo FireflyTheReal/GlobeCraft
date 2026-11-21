@@ -17,6 +17,15 @@ use globecraft_data::settings::map_style::MapStyle;
 use globecraft_render::overlays::{BorderKind, LabelIndex, LabelSpace, MAX_VISIBLE_LABELS};
 const LABEL_PADDING_POINTS: f32 = 2.0;
 const LABEL_HIGHLIGHT_OFFSET_POINTS: f32 = -0.5;
+/// The colour of a name's halo.
+pub(super) const LABEL_HALO: Color32 = Color32::from_black_alpha(150);
+/// Where the halo's dark copies of a name sit around it, points.
+const LABEL_HALO_OFFSETS: [Vec2; 4] = [
+    Vec2::new(-1.0, 0.0),
+    Vec2::new(1.0, 0.0),
+    Vec2::new(0.0, -1.0),
+    Vec2::new(0.0, 1.0),
+];
 const GRID_LABEL_FONT_POINTS: f32 = 12.0;
 const GRID_LABEL_BACKGROUND_ALPHA: u8 = 180;
 
@@ -438,15 +447,18 @@ fn build_labels<'a>(
                 continue;
             }
             let top_left = Align2::CENTER_CENTER.anchor_size(pos, galley.size()).min;
+            let text_at = top_left + Vec2::new(0.0, LABEL_HIGHLIGHT_OFFSET_POINTS);
+            // A dark halo all round, so names stay readable where border lines and bright
+            // imagery run through them (HIG: Maps, contrast over the map).
+            for offset in LABEL_HALO_OFFSETS {
+                shapes.push(Shape::galley_with_override_text_color(
+                    text_at + offset,
+                    galley.clone(),
+                    LABEL_HALO,
+                ));
+            }
             shapes.push(Shape::galley_with_override_text_color(
-                top_left,
-                galley.clone(),
-                Color32::from_black_alpha(180),
-            ));
-            shapes.push(Shape::galley_with_override_text_color(
-                top_left + Vec2::new(0.0, LABEL_HIGHLIGHT_OFFSET_POINTS),
-                galley,
-                color,
+                text_at, galley, color,
             ));
         }
     }

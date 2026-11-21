@@ -27,6 +27,8 @@ assistant = ["dep:globecraft-assistant"]
 profiling = ["globecraft-data/profiling", "globecraft-render/profiling"]
 
 [dependencies]
+# Local time for the timeline ("clock": the system time zone).
+chrono = { workspace = true, features = ["clock"] }
 globecraft-core.workspace = true
 globecraft-data.workspace = true
 globecraft-render.workspace = true
@@ -88,4 +90,5 @@ espeak-ng = "*"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda.workspace = true
+objc2-app-kit.workspace = true
 raw-window-handle.workspace = true

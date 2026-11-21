@@ -169,6 +169,7 @@ impl App {
                         .desired_width(width - 30.0)
                         .frame(egui::Frame::NONE),
                 );
+                super::widgets::name_field(&edit, lang.text("palette-hint"));
                 edit.request_focus();
                 if edit.changed() {
                     state.selected = 0;

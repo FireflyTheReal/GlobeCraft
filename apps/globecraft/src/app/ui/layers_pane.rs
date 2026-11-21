@@ -304,6 +304,7 @@ impl App {
                     .hint_text(lang.text("layers-search-placeholder"))
                     .desired_width(width),
             );
+            super::widgets::name_field(&response, lang.text("layers-search-placeholder"));
             if !self.panes.layers.query.is_empty()
                 && icons::icon_button(ui, "close", lang.text("layers-search-clear")).clicked()
             {
@@ -358,7 +359,7 @@ impl App {
             ui.label(
                 egui::RichText::new(lang.text("layers-earth-only"))
                     .size(11.5)
-                    .color(t.amber),
+                    .color(t.amber_text),
             );
         }
         let basemap_title = lang.text("sidebar-imagery-title");
@@ -901,16 +902,22 @@ impl App {
                 );
                 credit(ui, "TomTom Traffic", "https://developer.tomtom.com/");
             }
-            MapLayer::Radar => credit(
-                ui,
-                lang.text("sidebar-radar-source"),
-                "https://www.rainviewer.com/",
-            ),
-            MapLayer::Clouds => credit(
-                ui,
-                lang.text("sidebar-cloud-source"),
-                "https://github.com/matteason/live-cloud-maps",
-            ),
+            MapLayer::Radar => {
+                note(ui, t, &self.live.maps.status(false, true, lang));
+                credit(
+                    ui,
+                    lang.text("sidebar-radar-source"),
+                    "https://www.rainviewer.com/",
+                );
+            }
+            MapLayer::Clouds => {
+                note(ui, t, &self.live.maps.status(true, false, lang));
+                credit(
+                    ui,
+                    lang.text("sidebar-cloud-source"),
+                    "https://github.com/matteason/live-cloud-maps",
+                );
+            }
             MapLayer::Flights => {
                 self.flat_live_objects_control(ui);
                 ui.horizontal(|ui| {

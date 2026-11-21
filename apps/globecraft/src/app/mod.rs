@@ -10,6 +10,7 @@ mod screenshots;
 mod test_ui;
 use eframe::egui;
 use globecraft_core::{camera::Cam, language::Lang};
+use globecraft_data::settings::{MAX_UI_SCALE, MIN_UI_SCALE};
 use globecraft_data::{
     boundaries::{BoundaryUpdates, StatusLog, load_boundaries_async},
     search::Suggestion,
@@ -72,6 +73,7 @@ mod selected_flight;
 mod selected_satellite;
 mod sky_layer;
 mod still_shot;
+mod system_access;
 mod time;
 mod timezones;
 mod tools;
@@ -629,13 +631,30 @@ impl eframe::App for App {
         self.chrome.font_atlas_fill = atlas_fill;
         ui.set_theme(egui_theme(self.settings.appearance.theme));
         let dt = frame_timing::animation_delta_secs(ui);
+        // Interface size is egui's zoom, so text, icons, spacing and hit areas all scale.
+        // egui's own zoom keys (⌘+, ⌘−, ⌘0) change the zoom too: keep that as the setting.
+        let zoom = ui.zoom_factor();
+        if let Some(styled) = self.chrome.styled_scale
+            && (zoom - styled).abs() > 1e-4
+            && (self.settings.ui_scale - styled).abs() <= 1e-4
+        {
+            self.settings.ui_scale = zoom.clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+            self.windows.ui_scale_edit = self.settings.ui_scale;
+            self.chrome.styled_scale = Some(zoom);
+        }
         if self
             .chrome
             .styled_scale
             .is_none_or(|scale| (self.settings.ui_scale - scale).abs() > 1e-4)
         {
-            ui::theme::apply(ui, self.settings.ui_scale);
+            ui.set_zoom_factor(self.settings.ui_scale);
             self.chrome.styled_scale = Some(self.settings.ui_scale);
+        }
+        self.chrome.access = system_access::read();
+        let look = (self.chrome.access.increase_contrast, self.reduce_motion());
+        if self.chrome.styled_look != Some(look) {
+            ui::theme::apply(ui, look.0, look.1);
+            self.chrome.styled_look = Some(look);
         }
         // persist settings once a slider is released; frames with no input (animation)
         // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more

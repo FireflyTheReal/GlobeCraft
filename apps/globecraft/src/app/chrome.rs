@@ -8,8 +8,12 @@ const TRAFFIC_LIGHTS_WIDTH_FALLBACK_POINTS: f32 = 78.0;
 
 /// What the window's header and the ribbon keep between frames.
 pub(super) struct ChromeState {
-    /// The UI scale the style was last built for.
+    /// The UI scale the zoom was last set for.
     pub(super) styled_scale: Option<f32>,
+    /// The system's Reduce Motion and Increase Contrast, read each frame.
+    pub(super) access: super::system_access::SystemAccess,
+    /// The (increase contrast, reduce motion) the style was last built for.
+    pub(super) styled_look: Option<(bool, bool)>,
     /// egui's font atlas fill at the start of the last frame (see `ui`).
     pub(super) font_atlas_fill: f32,
     /// The ribbon group being drawn, and the shortcut dialog.
@@ -30,6 +34,8 @@ impl ChromeState {
     pub(super) fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self {
             styled_scale: None,
+            access: Default::default(),
+            styled_look: None,
             font_atlas_fill: 0.0,
             ribbon_tools: Default::default(),
             ribbon_peek: false,

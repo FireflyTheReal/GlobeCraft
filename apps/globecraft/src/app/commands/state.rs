@@ -31,11 +31,11 @@ impl App {
             "ruler.enable" => on(self.measure.on),
             "ruler.closeShape" => on(self.measure.paths.closed()),
             "edit.undo" => CommandState {
-                enabled: self.measure.paths.can_undo(),
+                enabled: self.can_undo(),
                 checked: false,
             },
             "edit.redo" => CommandState {
-                enabled: self.measure.paths.can_redo(),
+                enabled: self.can_redo(),
                 checked: false,
             },
             "file.screenshot" => CommandState {

@@ -58,7 +58,7 @@ fn texts(shapes: &[Shape]) -> Vec<&str> {
     shapes
         .iter()
         .filter_map(|shape| match shape {
-            Shape::Text(text) if text.fallback_color != Color32::from_black_alpha(180) => {
+            Shape::Text(text) if text.fallback_color != super::super::projected::LABEL_HALO => {
                 Some(text.galley.job.text.as_str())
             }
             _ => None,

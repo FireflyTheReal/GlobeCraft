@@ -87,6 +87,11 @@ impl App {
                     }
                 });
         });
+        ui.checkbox(
+            &mut self.settings.appearance.reduce_motion,
+            lg.text("settings-reduce-motion-label"),
+        );
+        ui.weak(lg.text("settings-reduce-motion-help"));
         for (id, label, selected) in [
             (
                 "ui-font",
@@ -199,6 +204,11 @@ impl App {
                 });
         });
         super::super::coordinate_display::controls(ui, &mut self.settings.coordinate_display, lg);
+        ui.checkbox(
+            &mut self.settings.utc_times,
+            lg.text("settings-utc-times-label"),
+        );
+        ui.weak(lg.text("settings-utc-times-help"));
     }
     pub(super) fn settings_earth_model(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;

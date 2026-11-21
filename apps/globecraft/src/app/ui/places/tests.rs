@@ -209,7 +209,8 @@ fn nested_tree_fits_default_sidebar_with_compact_rows_and_vector_icons() {
                 });
                 assert!(
                     bounds.height()
-                        <= 8.0 * (ui.text_style_height(&egui::TextStyle::Body) + 2.0) + 1.0,
+                        <= 8.0 * (ui.text_style_height(&egui::TextStyle::Body) + 2.0).max(20.0)
+                            + 1.0,
                     "{bounds:?}"
                 );
             },

@@ -29,10 +29,10 @@ impl App {
     /// Returns true while the user is operating a control.
     pub(super) fn classic_nav_controls(&mut self, ui: &mut egui::Ui, rect: Rect, dt: f64) -> bool {
         let lg = self.lang;
-        let k = self
-            .settings
-            .ui_scale
-            .clamp(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE);
+        // The zoom already scales the controls by Interface size; this keeps them within
+        // MIN..MAX_CONTROL_SCALE of their design size.
+        let scale = self.settings.ui_scale;
+        let k = scale.clamp(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE) / scale;
         let painter = ui.painter_at(rect);
         let base = ui.id().with("nav");
         let mut active = false;

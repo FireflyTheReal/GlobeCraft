@@ -91,6 +91,8 @@ pub struct Settings {
     pub uncap_fps: bool,
     /// Work offline: no request leaves GlobeCraft; tiles and data come from disk only.
     pub offline: bool,
+    /// Show the timeline's times in UTC instead of this computer's time zone.
+    pub utc_times: bool,
     /// Keep service and assistant keys in the system keychain (Settings › Keys).
     pub keys_in_keychain: bool,
     /// Lets the globe use the GPU renderer where it is on by default (Apple
@@ -181,6 +183,7 @@ impl Default for Settings {
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             offline: false,
+            utc_times: false,
             keys_in_keychain: false,
             gpu_globe: true,
             motion_resolution: None,
@@ -892,6 +895,7 @@ mod tests {
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             offline: false,
+            utc_times: false,
             keys_in_keychain: false,
             gpu_globe: true,
             motion_resolution: None,

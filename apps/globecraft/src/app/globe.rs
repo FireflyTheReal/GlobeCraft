@@ -421,15 +421,20 @@ impl App {
             self.touch();
             ui.request_repaint();
         }
-        self.timeline_bar(&ui.ctx().clone(), rect);
+        let timeline = self.timeline_bar(&ui.ctx().clone(), rect);
         self.legend_watch();
         super::ui::surface::remember_globe_rect(ui.ctx(), rect);
 
-        self.paint_scale_bar(&painter, rect, &display_basis, display_cam);
-        self.paint_present_only_note(&painter, rect);
+        // The scale bar, the note and the credits sit above the open timeline, which
+        // would cover them (the credits must stay in sight, HIG: Maps).
+        let above = timeline.map_or(rect, |bar| {
+            Rect::from_min_max(rect.min, Pos2::new(rect.max.x, bar.top().min(rect.max.y)))
+        });
+        self.paint_scale_bar(&painter, above, &display_basis, display_cam);
+        self.paint_present_only_note(&painter, above);
         self.compare_split(ui, &painter, rect);
         let credits = self.map_credits(lg, &display_basis, rect);
-        self.paint_credits(&painter, rect, &credits);
+        self.paint_credits(&painter, above, &credits);
 
         self.globe_context_menu(ui, &resp, menu_suppressed);
 
@@ -1187,7 +1192,7 @@ impl App {
     fn glide(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect) -> bool {
         let turn_deg_per_point =
             DRAG_HEADING_DEG_PER_POINT * self.settings.navigation.rotation_sensitivity;
-        if resp.drag_stopped() {
+        if resp.drag_stopped() && !self.reduce_motion() {
             let pan_sensitivity = self.settings.navigation.pan_sensitivity as f32;
             let velocity = ui.input(|i| i.pointer.velocity());
             self.motion.glide = self.motion.last_drag.take().and_then(|kind| {

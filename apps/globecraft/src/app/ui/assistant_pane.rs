@@ -296,7 +296,7 @@ impl App {
                 .color(t.text_dim),
         );
         if let Some(why) = cfg.missing() {
-            ui.label(RichText::new(why).small().color(t.amber));
+            ui.label(RichText::new(why).small().color(t.amber_text));
         }
         if self.settings.assistant.remember_keys != remember_before {
             self.save_assistant_keys();
@@ -399,7 +399,7 @@ impl App {
             .id_salt("assistant_input_scroll")
             .max_height(INPUT_MAX_HEIGHT)
             .show(ui, |ui| {
-                ui.add(
+                let input = ui.add(
                     egui::TextEdit::multiline(&mut self.assistant.input)
                         .id(id)
                         .desired_rows(2)
@@ -408,6 +408,7 @@ impl App {
                         .font(regular(13.0))
                         .hint_text(lang.text("assistant-input-hint")),
                 );
+                super::widgets::name_field(&input, lang.text("assistant-input-hint"));
             });
         ui.horizontal(|ui| {
             let w = (ui.available_width() - 84.0).max(0.0);

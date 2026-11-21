@@ -19,7 +19,8 @@ const HEADER_H: f32 = 32.0;
 const PINNED_PLACES_MAX_HEIGHT_FRACTION: f32 = 0.65;
 /// Room around a tab's name, its ✕, and a tab shown as its icon.
 const TAB_PAD: f32 = 9.0;
-const CLOSE_W: f32 = 20.0;
+/// The close cross's target, above Apple's 20 pt minimum.
+const CLOSE_W: f32 = 24.0;
 const ICON_TAB_W: f32 = 30.0;
 /// The button that moves the pane to the other side, and the Places pin.
 const HEADER_BUTTON_W: f32 = 28.0;
@@ -98,6 +99,7 @@ fn header_tab(
 ) -> egui::Response {
     let resp = ui.interact(r, id, Sense::click_and_drag());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
+    super::widgets::tab_role(&resp, on);
     let p = ui.painter();
     if resp.hovered() && !on {
         p.rect_filled(r.shrink2(vec2(1.0, 5.0)), CornerRadius::same(4), t.hover);
@@ -130,13 +132,13 @@ fn header_tab(
 
 /// A small ✕ at `center`; returns whether it was clicked.
 fn close_cross(ui: &mut Ui, t: &Tokens, center: egui::Pos2, id: egui::Id, tip: &str) -> bool {
-    let cr = Rect::from_center_size(center, vec2(18.0, 18.0));
+    let cr = Rect::from_center_size(center, vec2(CLOSE_W, CLOSE_W));
     let resp = ui.interact(cr, id, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
     if resp.hovered() {
         ui.painter().rect_filled(cr, CornerRadius::same(3), t.hover);
     }
-    icons::paint(ui.painter(), cr.shrink(4.0), "close", t.text_dim, t.accent);
+    icons::paint(ui.painter(), cr.shrink(7.0), "close", t.text_dim, t.accent);
     resp.on_hover_text(tip).clicked()
 }
 
@@ -443,7 +445,7 @@ impl App {
                 if close_cross(
                     ui,
                     t,
-                    pos2(place.right() - CLOSE_W / 2.0 - 1.0, r.center().y),
+                    pos2(place.right() - CLOSE_W / 2.0, r.center().y),
                     egui::Id::new(("side_pane_close", tab.code())),
                     &tip,
                 ) {

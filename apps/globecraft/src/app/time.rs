@@ -1,5 +1,6 @@
 //! The app's time (roadmap 4.H): `time.*` commands and what the scene reads.
 use super::App;
+use chrono::TimeZone as _;
 use globecraft_core::commands::{TimeCommand, params::TimeValue};
 use globecraft_core::math::now_unix;
 use globecraft_core::time::{HOUR_SECS, parse_iso};
@@ -241,5 +242,59 @@ impl App {
                 "to": globecraft_core::time::format_utc(to),
             })),
         })
+    }
+}
+
+impl App {
+    /// How far this computer's clock is ahead of UTC at `unix`, or 0 when times show in UTC.
+    pub(super) fn time_zone_secs(&self, unix: f64) -> f64 {
+        if self.settings.utc_times {
+            return 0.0;
+        }
+        chrono::DateTime::from_timestamp(unix as i64, 0).map_or(0.0, |at| {
+            f64::from(
+                chrono::Local
+                    .offset_from_utc_datetime(&at.naive_utc())
+                    .local_minus_utc(),
+            )
+        })
+    }
+}
+
+/// `2026-11-20 23:28 UTC+1` for a moment `zone_secs` ahead of UTC, or `… UTC` at 0.
+pub(super) fn format_zoned(unix: f64, zone_secs: f64) -> String {
+    let utc = globecraft_core::time::format_utc(unix + zone_secs);
+    format!("{} {}", &utc[..16], zone_label(zone_secs))
+}
+
+/// `UTC`, `UTC+1`, `UTC−3` or `UTC+5:30`.
+pub(super) fn zone_label(zone_secs: f64) -> String {
+    let minutes = (zone_secs / 60.0).round() as i64;
+    if minutes == 0 {
+        return "UTC".into();
+    }
+    let sign = if minutes > 0 { '+' } else { '−' };
+    let (hours, minutes) = (minutes.abs() / 60, minutes.abs() % 60);
+    if minutes == 0 {
+        format!("UTC{sign}{hours}")
+    } else {
+        format!("UTC{sign}{hours}:{minutes:02}")
+    }
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    #[test]
+    fn zoned_times_name_their_offset() {
+        const WALL: f64 = 1_793_785_080.0; // 2026-11-04 09:38 UTC
+        assert_eq!(format_zoned(WALL, 0.0), "2026-11-04 09:38 UTC");
+        assert_eq!(format_zoned(WALL, 3600.0), "2026-11-04 10:38 UTC+1");
+        assert_eq!(format_zoned(WALL, -3.0 * 3600.0), "2026-11-04 06:38 UTC−3");
+        assert_eq!(
+            format_zoned(WALL, 5.5 * 3600.0),
+            "2026-11-04 15:08 UTC+5:30"
+        );
     }
 }

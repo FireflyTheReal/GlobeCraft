@@ -14,6 +14,9 @@ pub(super) struct NavState {
     pub(super) ring_drag: bool,
     /// The navigator's tilt thumb is being dragged.
     pub(super) tilt_drag: bool,
+    /// The tilt arc's centre and radius as last drawn, for tests to aim at.
+    #[cfg(test)]
+    pub(super) tilt_arc: Option<(eframe::egui::Pos2, f32)>,
     /// A navigator cardinal button turns the view to this heading, easing in.
     pub(super) snap_heading: Option<f64>,
 }
@@ -55,10 +58,22 @@ impl App {
         heading_deg: Option<f64>,
         tilt_deg: Option<f64>,
     ) {
-        self.motion.fly = Some(
-            Flight::new_for_model(self.cam, lat, lon, alt, self.active_earth_model())
-                .with_orientation(heading_deg, tilt_deg),
-        );
+        let mut flight = Flight::new_for_model(self.cam, lat, lon, alt, self.active_earth_model())
+            .with_orientation(heading_deg, tilt_deg);
+        if self.reduce_motion() {
+            // Arrive at once instead of flying (HIG: Accessibility, Reduce Motion).
+            self.cam = flight.advance(f64::INFINITY);
+            self.motion.fly = None;
+            self.touch();
+        } else {
+            self.motion.fly = Some(flight);
+        }
+    }
+
+    /// Whether to leave out motion people did not drive themselves: the setting, or the
+    /// system's Reduce Motion.
+    pub(super) fn reduce_motion(&self) -> bool {
+        self.settings.appearance.reduce_motion || self.chrome.access.reduce_motion
     }
 
     pub(super) fn step_fly(&mut self, dt: f64) {

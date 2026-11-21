@@ -42,6 +42,8 @@ pub(in crate::app) struct Tokens {
     pub green: Color32,
     pub red: Color32,
     pub amber: Color32,
+    /// Amber for text: `amber` itself is too light on the light surfaces for small text.
+    pub amber_text: Color32,
 }
 
 impl Tokens {
@@ -67,7 +69,7 @@ impl Tokens {
             accent_text: Color32::from_rgb(0x1D, 0x4E, 0xC4),
             input: Color32::WHITE,
             input_border: Color32::from_rgb(0xC6, 0xCD, 0xD7),
-            group_label: Color32::from_rgb(0x70, 0x7A, 0x88),
+            group_label: Color32::from_rgb(0x5F, 0x6B, 0x7A),
             status_bar: Color32::from_rgb(0xF3, 0xF5, 0xF8),
             selection: Color32::from_rgb(0xCF, 0xE0, 0xFC),
             menu: Color32::WHITE,
@@ -75,6 +77,7 @@ impl Tokens {
             green: Color32::from_rgb(0x16, 0x9A, 0x5A),
             red: Color32::from_rgb(0xD1, 0x3C, 0x3C),
             amber: Color32::from_rgb(0xE5, 0x9E, 0x1A),
+            amber_text: Color32::from_rgb(0x9A, 0x5B, 0x00),
         }
     }
 
@@ -108,18 +111,47 @@ impl Tokens {
             green: Color32::from_rgb(0x3F, 0xC2, 0x82),
             red: Color32::from_rgb(0xF0, 0x6A, 0x6A),
             amber: Color32::from_rgb(0xF2, 0xB8, 0x48),
+            amber_text: Color32::from_rgb(0xF2, 0xB8, 0x48),
         }
     }
 
-    /// The tokens of the theme the context is painted in.
+    /// The tokens of the theme the context is painted in, with more contrast when the
+    /// system asks for it.
     pub(in crate::app) fn get(ctx: &egui::Context) -> Tokens {
-        if ctx.global_style().visuals.dark_mode {
+        let tokens = if ctx.global_style().visuals.dark_mode {
             Tokens::dark()
         } else {
             Tokens::light()
+        };
+        if ctx.data(|d| {
+            d.get_temp(egui::Id::new(INCREASE_CONTRAST))
+                .unwrap_or(false)
+        }) {
+            tokens.increased_contrast()
+        } else {
+            tokens
+        }
+    }
+
+    /// For Increase Contrast: secondary text as strong as primary text, and borders at
+    /// least 3:1 (HIG: Color, an increased contrast variant for each colour).
+    fn increased_contrast(self) -> Self {
+        Tokens {
+            text_dim: self.text,
+            group_label: self.text,
+            border: self.text_dim,
+            border_strong: self.icon,
+            input_border: self.icon,
+            ..self
         }
     }
 }
+
+/// egui's default `Style::animation_time`.
+const EGUI_ANIMATION_SECS: f32 = 0.2;
+
+/// Where `apply` leaves the system's Increase Contrast for `Tokens::get`.
+const INCREASE_CONTRAST: &str = "globecraft-increase-contrast";
 
 pub(in crate::app) fn regular(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
@@ -129,26 +161,37 @@ pub(in crate::app) fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SEMIBOLD_FAMILY.into()))
 }
 
-/// Installs both themes' visuals and the text styles at `ui_scale`. egui switches between the
-/// two themes itself (following the system when asked), so this runs only when the scale changes.
-pub(in crate::app) fn apply(ctx: &egui::Context, ui_scale: f32) {
-    ctx.set_visuals_of(egui::Theme::Dark, visuals(&Tokens::dark()));
-    ctx.set_visuals_of(egui::Theme::Light, visuals(&Tokens::light()));
-    let k = ui_scale;
+/// Installs both themes' visuals and the text styles: egui switches between the two themes
+/// itself (following the system when asked), and Interface size is egui's zoom. Runs again
+/// when Increase Contrast or Reduce Motion change.
+pub(in crate::app) fn apply(ctx: &egui::Context, increase_contrast: bool, reduce_motion: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(INCREASE_CONTRAST), increase_contrast));
+    let pick = |t: Tokens| {
+        if increase_contrast {
+            t.increased_contrast()
+        } else {
+            t
+        }
+    };
+    ctx.set_visuals_of(egui::Theme::Dark, visuals(&pick(Tokens::dark())));
+    ctx.set_visuals_of(egui::Theme::Light, visuals(&pick(Tokens::light())));
     ctx.all_styles_mut(|s| {
+        // egui's own easing: menus, collapsing sections, scrolling.
+        s.animation_time = if reduce_motion {
+            0.0
+        } else {
+            EGUI_ANIMATION_SECS
+        };
         s.spacing.item_spacing = egui::vec2(6.0, 5.0);
         s.spacing.button_padding = egui::vec2(8.0, 3.0);
-        s.spacing.interact_size.y = (22.0 * k).max(18.0);
+        s.spacing.interact_size.y = 22.0;
+        s.text_styles.insert(egui::TextStyle::Body, regular(12.5));
+        s.text_styles.insert(egui::TextStyle::Button, regular(12.5));
+        s.text_styles.insert(egui::TextStyle::Small, regular(10.5));
         s.text_styles
-            .insert(egui::TextStyle::Body, regular(12.5 * k));
+            .insert(egui::TextStyle::Heading, semibold(17.0));
         s.text_styles
-            .insert(egui::TextStyle::Button, regular(12.5 * k));
-        s.text_styles
-            .insert(egui::TextStyle::Small, regular(10.5 * k));
-        s.text_styles
-            .insert(egui::TextStyle::Heading, semibold(17.0 * k));
-        s.text_styles
-            .insert(egui::TextStyle::Monospace, FontId::monospace(12.0 * k));
+            .insert(egui::TextStyle::Monospace, FontId::monospace(12.0));
     });
 }
 
@@ -206,4 +249,62 @@ fn visuals(t: &Tokens) -> Visuals {
         color: t.shadow,
     };
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WCAG 2 contrast ratio, as Accessibility Inspector measures it.
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let luminance = |c: Color32| {
+            let linear = |v: u8| {
+                let v = f32::from(v) / 255.0;
+                if v <= 0.040_45 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+        };
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn text_colours_reach_4_5_to_1_on_every_surface_in_both_themes() {
+        for t in [Tokens::light(), Tokens::dark()]
+            .into_iter()
+            .flat_map(|t| [t, t.increased_contrast()])
+        {
+            let text = [
+                ("text", t.text),
+                ("text_dim", t.text_dim),
+                ("group_label", t.group_label),
+                ("accent_text", t.accent_text),
+                ("amber_text", t.amber_text),
+            ];
+            let surfaces = [
+                ("header", t.header),
+                ("ribbon", t.ribbon),
+                ("pane", t.pane),
+                ("pane_header", t.pane_header),
+                ("status_bar", t.status_bar),
+                ("menu", t.menu),
+            ];
+            for (name, colour) in text {
+                for (surface, fill) in surfaces {
+                    let border = contrast(t.increased_contrast().border, fill);
+                    assert!(border >= 3.0, "contrast border on {surface}: {border:.2}:1");
+                    let ratio = contrast(colour, fill);
+                    assert!(
+                        ratio >= 4.5,
+                        "{name} on {surface} (dark: {}): {ratio:.2}:1",
+                        t.dark
+                    );
+                }
+            }
+        }
+    }
 }

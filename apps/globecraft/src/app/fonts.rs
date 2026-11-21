@@ -60,6 +60,7 @@ impl FontService {
             .spawn(move || {
                 let mut db = Database::new();
                 db.load_system_fonts();
+                use_system_ui_font(&mut db);
                 let mut families: Vec<_> = db
                     .faces()
                     .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
@@ -171,6 +172,27 @@ impl FontService {
         changed
     }
 }
+/// Makes the default interface font the system's: on macOS SF Pro (`SFNS.ttf`, listed
+/// under a hidden name), where fontdb's generic sans-serif is Arial (HIG: Typography).
+fn use_system_ui_font(db: &mut Database) {
+    #[cfg(target_os = "macos")]
+    {
+        let system = db
+            .faces()
+            .find(|face| {
+                matches!(&face.source, fontdb::Source::File(path)
+                    if path.file_name().is_some_and(|name| name == "SFNS.ttf"))
+            })
+            .and_then(|face| face.families.first())
+            .map(|(name, _)| name.clone());
+        if let Some(name) = system {
+            db.set_sans_serif_family(name);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = db;
+}
+
 /// The installed faces that cover the scripts the bundled fonts lack, best first.
 fn fallback_faces(db: &Database) -> Vec<Face> {
     let mut faces: Vec<Face> = Vec::new();

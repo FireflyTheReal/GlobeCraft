@@ -31,7 +31,7 @@ impl Item {
             Self::Toggle(item) => item.set_accelerator(accelerator),
         };
     }
-    fn update(&self, label: &str, enabled: bool, checked: Option<bool>) {
+    fn update(&self, label: &str, enabled: bool, checked: bool) {
         match self {
             Self::Plain(item) => {
                 item.set_text(label);
@@ -40,9 +40,7 @@ impl Item {
             Self::Toggle(item) => {
                 item.set_text(label);
                 item.set_enabled(enabled);
-                if let Some(checked) = checked {
-                    item.set_checked(checked);
-                }
+                item.set_checked(checked);
             }
         }
     }
@@ -61,16 +59,26 @@ pub(in crate::app) struct NativeMenu {
 impl NativeMenu {
     pub(super) fn new(cc: &eframe::CreationContext<'_>, lang: Lang) -> Result<Self, String> {
         let menu = Menu::new();
-        let state = MenuState::default();
+        let state: MenuState = Vec::new();
         let mut items = Vec::new();
         let mut sections = Vec::new();
+        let separator = |submenu: &Submenu| {
+            submenu
+                .append(&PredefinedMenuItem::separator())
+                .map_err(|error| error.to_string())
+        };
         for section in Section::ALL {
             let submenu = Submenu::new(section.label(lang), true);
-            for action in Action::ALL
-                .into_iter()
-                .filter(|action| action.section() == section)
+            let mut previous = None;
+            for &action in Action::all()
+                .iter()
+                .filter(|action| action.section == section)
             {
-                if action == Action::Quit {
+                if action.starts_group(previous) {
+                    separator(&submenu)?;
+                }
+                previous = Some(action);
+                if action.id == "app.quit" {
                     submenu
                         .append_items(&[
                             &PredefinedMenuItem::separator(),
@@ -81,20 +89,17 @@ impl NativeMenu {
                         ])
                         .map_err(|error| error.to_string())?;
                 }
+                // The first `update` sets the real states.
                 let accelerator = accelerator(action);
-                let item = if let Some(checked) = state.checked(action) {
+                let item = if action.toggle {
                     Item::Toggle(CheckMenuItem::new(
                         action.label(lang),
-                        state.enabled(action),
-                        checked,
+                        true,
+                        false,
                         accelerator,
                     ))
                 } else {
-                    Item::Plain(MenuItem::new(
-                        action.label(lang),
-                        state.enabled(action),
-                        accelerator,
-                    ))
+                    Item::Plain(MenuItem::new(action.label(lang), true, accelerator))
                 };
                 submenu
                     .append(item.menu_item())
@@ -145,12 +150,8 @@ impl NativeMenu {
             }
         }
         if lang != self.lang || state != self.state {
-            for (action, item) in &self.items {
-                item.update(
-                    action.label(lang),
-                    state.enabled(*action),
-                    state.checked(*action),
-                );
+            for ((action, item), now) in self.items.iter().zip(&state) {
+                item.update(action.label(lang), now.enabled, now.checked);
             }
             self.lang = lang;
             self.state = state;
@@ -252,7 +253,7 @@ mod tests {
     use super::*;
     #[test]
     fn every_catalog_shortcut_has_a_native_accelerator() {
-        for action in Action::ALL {
+        for &action in Action::all() {
             assert_eq!(
                 accelerator(action).is_some(),
                 action.shortcut().is_some(),

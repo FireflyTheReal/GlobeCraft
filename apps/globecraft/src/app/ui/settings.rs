@@ -197,11 +197,12 @@ impl App {
                     bottom: 0,
                 }))
                 .show(ui, |ui| {
-                    ui.add(
+                    let search = ui.add(
                         egui::TextEdit::singleline(&mut state.query)
                             .hint_text(lang.text("settings-search-placeholder"))
                             .desired_width(f32::INFINITY),
                     );
+                    super::widgets::name_field(&search, lang.text("settings-search-placeholder"));
                     ui.add_space(6.0);
                     let query = fold_name(&state.query);
                     for category in Category::ALL {

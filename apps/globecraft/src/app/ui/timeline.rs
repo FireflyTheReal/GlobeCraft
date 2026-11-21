@@ -26,9 +26,14 @@ const LEFT_CONTROLS: f32 = PLAY + 3.0 * ICON + 28.0;
 const RIGHT_CONTROLS: f32 = 2.0 * ICON + 16.0;
 
 impl App {
-    pub(in crate::app) fn timeline_bar(&mut self, ctx: &egui::Context, globe: Rect) {
+    /// The timeline over the globe's bottom, when it is open: where it is drawn.
+    pub(in crate::app) fn timeline_bar(
+        &mut self,
+        ctx: &egui::Context,
+        globe: Rect,
+    ) -> Option<Rect> {
         if !self.timeline.open {
-            return;
+            return None;
         }
         let lang = self.lang;
         let mut run: Option<(&'static str, Value)> = None;
@@ -37,7 +42,7 @@ impl App {
         let playing = self.time.speed() != 0.0;
         let width = (globe.width() - 2.0 * SIDE_MARGIN).clamp(MIN_WIDTH, MAX_WIDTH);
         let mut track_end = self.timeline.track_end;
-        egui::Area::new(egui::Id::new("timeline_bar"))
+        let bar = egui::Area::new(egui::Id::new("timeline_bar"))
             .order(egui::Order::Middle)
             .pivot(Align2::CENTER_BOTTOM)
             .fixed_pos(Pos2::new(globe.center().x, globe.bottom() - BOTTOM_INSET))
@@ -71,7 +76,12 @@ impl App {
                                 ("time_next", true, "timeline-step-forward-help"),
                             ] {
                                 if icon_button(ui, &t, icon, lang.text(key), false) {
-                                    let to = super::timeline_track::step_to(unix, span, forward);
+                                    let to = super::timeline_track::step_to(
+                                        unix,
+                                        span,
+                                        forward,
+                                        self.time_zone_secs(unix),
+                                    );
                                     run = Some(("time.set", json!({ "time": to })));
                                 }
                             }
@@ -96,7 +106,9 @@ impl App {
                             }
                         });
                     });
-            });
+            })
+            .response
+            .rect;
         self.timeline.track_end = track_end;
         if let Some((id, params)) = run {
             // A changed time renders like a moving camera until it settles.
@@ -104,6 +116,7 @@ impl App {
             self.run_reporting(id, params);
             ctx.request_repaint();
         }
+        Some(bar)
     }
 
     /// The settings menu at the bar's right: back to now, speed, window of events, span.

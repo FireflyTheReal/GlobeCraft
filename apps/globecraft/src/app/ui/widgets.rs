@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 /// Height of the ribbon's control area (without group labels).
 pub(in crate::app) const CONTENT_H: f32 = 72.0;
-pub(in crate::app) const LABEL_H: f32 = 18.0;
+/// Tall enough for the group labels' menus to be 20 pt targets.
+pub(in crate::app) const LABEL_H: f32 = 21.0;
 
 pub(in crate::app) fn text_w(ui: &Ui, s: &str, font: egui::FontId) -> f32 {
     galley(ui, s, font, egui::Color32::WHITE).size().x
@@ -544,8 +545,14 @@ pub(in crate::app) fn group(
         // The title is a button: hovered, it is filled like the tools above it.
         // The whole title row is the button, as wide as the group.
         let hit = Rect::from_min_size(pos2(start.x, title_rect.min.y), vec2(w, LABEL_H - 1.0));
-        let resp = ui.interact(hit, ui.id().with(("ribbon_group", id)), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+        // Named and explained as a menu of more tools, which the caret alone only hints at.
+        let more = app
+            .lang
+            .format("ribbon-group-more", &[("group", title.into())]);
+        let resp = ui
+            .interact(hit, ui.id().with(("ribbon_group", id)), Sense::click())
+            .on_hover_text(&more);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &more));
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
         if resp.hovered() || open {
             ui.painter().rect_filled(
@@ -662,6 +669,23 @@ pub(in crate::app) fn primary_button(
     } else {
         resp
     }
+}
+
+/// Tells screen readers a tab is a tab, selected or not ("Map, tab, 2 of 4"): egui has
+/// no tab widget, so it reports tabs as buttons.
+pub(in crate::app) fn tab_role(tab: &Response, selected: bool) {
+    tab.ctx.accesskit_node_builder(tab.id, |node| {
+        node.set_role(egui::accesskit::Role::Tab);
+        node.set_selected(selected);
+    });
+}
+
+/// Names a text field for screen readers after its hint: egui hands the hint on only as a
+/// placeholder, which leaves the field itself without a name.
+pub(in crate::app) fn name_field(field: &Response, name: &str) {
+    field
+        .ctx
+        .accesskit_node_builder(field.id, |node| node.set_label(name));
 }
 
 /// A small icon button (close, settings…), drawn with the app's own icons.

@@ -66,8 +66,16 @@ impl App {
                 let drag = ui.interact(full, egui::Id::new("header_drag"), Sense::click_and_drag());
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                    self.file_button(ui);
-                    ui.add_space(6.0);
+                    // On a Mac the menu bar's File menu holds all of it; a second File in
+                    // the window is a Windows habit (HIG: Branding, familiar components).
+                    #[cfg(target_os = "macos")]
+                    let menu_bar = self.chrome.native_menu.is_some();
+                    #[cfg(not(target_os = "macos"))]
+                    let menu_bar = false;
+                    if !menu_bar {
+                        self.file_button(ui);
+                        ui.add_space(6.0);
+                    }
                     // Right side, measured from the window edge: collapse button, command
                     // search, place search and the Quick Access Toolbar.
                     let right = full.max.x;
@@ -93,7 +101,7 @@ impl App {
                         + qat_width
                         + 8.0;
                     let room = right - left - fixed - tabs_min;
-                    let wanted_search = PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0);
+                    let wanted_search = PLACE_SEARCH_WIDTH;
                     let cmd_w = if room >= full_cmd_w + wanted_search {
                         full_cmd_w
                     } else {
@@ -411,7 +419,7 @@ impl App {
                                     "statusbar-tiles-loading",
                                     &[("count", n.to_string().into())],
                                 ),
-                                t.amber,
+                                t.amber_text,
                             )
                         } else {
                             (lang.text("statusbar-tiles-ready").to_string(), t.text_dim)
@@ -429,7 +437,7 @@ impl App {
                                     egui::Label::new(
                                         egui::RichText::new(lang.text("statusbar-offline"))
                                             .size(11.0)
-                                            .color(t.amber),
+                                            .color(t.amber_text),
                                     )
                                     .sense(Sense::click()),
                                 )

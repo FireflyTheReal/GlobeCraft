@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreference {
-    System,
+    /// Follows macOS, Windows or the desktop's light or dark appearance (HIG: Dark Mode).
     #[default]
+    System,
     Dark,
     Light,
 }
@@ -17,6 +18,9 @@ pub struct AppearancePreferences {
     pub theme: ThemePreference,
     pub ui_font: String,
     pub map_font: String,
+    /// Fly to places without the flight and stop the globe from coasting after a drag.
+    /// macOS's own Reduce Motion turns this on as well.
+    pub reduce_motion: bool,
 }
 impl AppearancePreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {

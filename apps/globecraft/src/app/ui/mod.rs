@@ -24,6 +24,8 @@ mod places_pane;
 mod ribbon;
 mod ribbon_side;
 mod ribbon_tabs;
+#[cfg(test)]
+pub(in crate::app) use navigation::tilt_arc_point;
 pub(in crate::app) use ribbon_tabs::short_layer_label;
 pub(in crate::app) mod ribbon_tools;
 pub(in crate::app) mod ruler;

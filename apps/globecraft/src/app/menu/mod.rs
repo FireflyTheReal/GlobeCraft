@@ -12,6 +12,7 @@ pub(super) use native::NativeMenu;
 
 mod commands;
 pub(super) use commands::Action;
+#[cfg(target_os = "macos")]
 use commands::MenuState;
 #[cfg(test)]
 mod tests;
@@ -19,9 +20,9 @@ mod tests;
 /// Whether the native menu owns the shortcut of command `id` (its accelerator consumes the keys).
 #[cfg(target_os = "macos")]
 pub(super) fn native_shortcut(id: &str) -> bool {
-    Action::ALL
-        .into_iter()
-        .any(|action| action.command().0 == id && native::accelerator(action).is_some())
+    Action::all()
+        .iter()
+        .any(|action| action.id == id && native::accelerator(*action).is_some())
 }
 
 #[cfg(target_os = "macos")]
@@ -60,10 +61,11 @@ impl App {
     }
     #[cfg(target_os = "macos")]
     pub(super) fn run_menu_action(&mut self, action: Action, ctx: &egui::Context) {
-        if matches!(action, Action::Undo | Action::Redo) && ctx.egui_wants_keyboard_input() {
+        let history = matches!(action.id, "edit.undo" | "edit.redo");
+        if history && ctx.egui_wants_keyboard_input() {
             // Native accelerators consume their key events. Hand text edits the corresponding
             // egui event so their own undo history wins.
-            let command = if action == Action::Undo {
+            let command = if action.id == "edit.undo" {
                 super::ruler_history::HistoryCommand::Undo
             } else {
                 super::ruler_history::HistoryCommand::Redo
@@ -81,22 +83,17 @@ impl App {
 
     #[cfg(target_os = "macos")]
     fn menu_state(&self, ctx: &egui::Context) -> MenuState {
-        let checked = |action: Action| {
-            let (id, params) = action.command();
-            self.command_state(id, &params).checked
-        };
-        MenuState {
-            image: self.frame.image.is_some(),
-            undo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_undo(),
-            redo: ctx.egui_wants_keyboard_input() || self.measure.paths.can_redo(),
-            sidebar: checked(Action::Sidebar),
-            navigation: checked(Action::NavigationControls),
-            grid: checked(Action::Grid),
-            atmosphere: checked(Action::Atmosphere),
-            sunlight: checked(Action::Sunlight),
-            ruler: checked(Action::Ruler),
-            explorer: checked(Action::Explorer),
-            fullscreen: checked(Action::Fullscreen),
-        }
+        Action::all()
+            .iter()
+            .map(|action| {
+                let (id, params) = action.command();
+                let mut state = self.command_state(id, &params);
+                // A text edit has its own history, which Undo and Redo then reach.
+                if matches!(id, "edit.undo" | "edit.redo") && ctx.egui_wants_keyboard_input() {
+                    state.enabled = true;
+                }
+                state
+            })
+            .collect()
     }
 }

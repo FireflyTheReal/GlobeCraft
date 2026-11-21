@@ -15,9 +15,15 @@ pub(in crate::app) fn tool_shortcut_text(key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Keys as the interface shows them (⌘⇧E on macOS, Ctrl+Shift+E elsewhere).
+/// Keys as the interface shows them: ⇧⌘E as in the macOS menu bar, Ctrl+Shift+E elsewhere.
 fn keys_label(shortcut: &egui::KeyboardShortcut) -> String {
-    shortcut.format(&egui::ModifierNames::NAMES, cfg!(target_os = "macos"))
+    let mac = cfg!(target_os = "macos");
+    let names = if mac {
+        &egui::ModifierNames::SYMBOLS
+    } else {
+        &egui::ModifierNames::NAMES
+    };
+    shortcut.format(names, mac)
 }
 
 /// The keyboard shortcut of a command: the user's, or the default.

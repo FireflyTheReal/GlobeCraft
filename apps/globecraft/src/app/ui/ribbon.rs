@@ -158,6 +158,7 @@ impl App {
                                 *caption,
                             )
                         });
+                        super::widgets::tab_role(&resp, active);
                         let body = Rect::from_min_max(pos2(r.min.x, r.min.y + 3.0), r.max);
                         let top = CornerRadius {
                             nw: 6,

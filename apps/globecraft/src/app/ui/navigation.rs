@@ -16,6 +16,8 @@ use mini_globe::{MiniGlobe, nearest_heading, screen_axes, view_cap_fraction};
 mod classic;
 mod mini_globe;
 mod tilt;
+#[cfg(test)]
+pub(in crate::app) use tilt::arc_point as tilt_arc_point;
 
 // Geometry in egui points before UI scaling, matching the classic navigator.
 const MIN_CONTROL_SCALE: f32 = 0.8;
@@ -102,10 +104,10 @@ impl App {
 
     fn globe_nav_controls(&mut self, ui: &mut egui::Ui, rect: Rect, dt: f64) -> bool {
         let lg = self.lang;
-        let k = self
-            .settings
-            .ui_scale
-            .clamp(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE);
+        // The zoom already scales the controls by Interface size; this keeps them within
+        // MIN..MAX_CONTROL_SCALE of their design size.
+        let scale = self.settings.ui_scale;
+        let k = scale.clamp(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE) / scale;
         let painter = ui.painter_at(rect);
         let base = ui.id().with("nav");
         let mut active = false;

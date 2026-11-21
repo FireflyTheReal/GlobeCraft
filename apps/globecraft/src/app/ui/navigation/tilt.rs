@@ -35,7 +35,7 @@ const LENS_OPACITY: f32 = 0.85;
 const TILTED_OPACITY: f32 = 0.55;
 
 /// Where lean `degrees` sits on the arc around `centre`, `radius` out.
-fn arc_point(centre: Pos2, radius: f32, degrees: f32) -> Pos2 {
+pub(in crate::app) fn arc_point(centre: Pos2, radius: f32, degrees: f32) -> Pos2 {
     let angle = (ARC_START_DEG + degrees / MAX_VIEW_TILT_DEG as f32 * ARC_SPAN_DEG).to_radians();
     centre + Vec2::new(-angle.sin(), -angle.cos()) * radius
 }
@@ -71,6 +71,10 @@ impl App {
         let lg = self.lang;
         let t = crate::app::ui::theme::Tokens::get(ui.ctx());
         let radius = r_ring + ARC_GAP_POINTS * k;
+        #[cfg(test)]
+        {
+            self.nav.tilt_arc = Some((centre, radius));
+        }
         let mut active = false;
         let mut hot = self.nav.tilt_drag;
         let mut tooltip_shown = false;

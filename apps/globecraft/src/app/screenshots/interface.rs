@@ -906,3 +906,74 @@ fn side_pane_slide_screenshots() {
     settle(&mut h, 2.0);
     save(&mut h, &dir, "window-grown");
 }
+
+/// Interface size is egui's zoom, so everything scales together; egui's own zoom keys
+/// change the setting too (design review 2026-11-20).
+#[test]
+fn interface_size_is_the_zoom() {
+    let mut h = harness_with(Settings {
+        ui_scale: 2.0,
+        ..Settings::default()
+    });
+    h.step();
+    assert_eq!(h.ctx.zoom_factor(), 2.0);
+    h.ctx.set_zoom_factor(1.5);
+    h.step();
+    assert_eq!(h.state().settings.ui_scale, 1.5);
+}
+
+/// With Reduce motion on, a flight arrives at once (HIG: Accessibility).
+#[test]
+fn reduce_motion_arrives_without_flying() {
+    let mut settings = Settings::default();
+    settings.appearance.reduce_motion = true;
+    let mut h = harness_with(settings);
+    let _ = h.state_mut().run(
+        "camera.flyTo",
+        json!({"lat": 48.85, "lon": 2.35, "altitude_km": 50.0}),
+    );
+    let app = h.state();
+    assert!(app.motion.fly.is_none());
+    assert!((app.cam.lat - 48.85).abs() < 1e-6 && (app.cam.lon - 2.35).abs() < 1e-6);
+}
+
+/// Undo brings back a deleted folder with what was in it, in turn with the ruler's
+/// edits; Redo deletes it again (design review 2026-11-20).
+#[test]
+fn undo_brings_back_deleted_places_in_turn_with_ruler_edits() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    let run = |app: &mut App, id: &str, params: Value| app.run(id, params).expect(id);
+    run(app, "places.addFolder", json!({"name": "Trip"}));
+    run(
+        app,
+        "places.add",
+        json!({"lat": 1.0, "lon": 2.0, "name": "Inside", "folder": "Trip"}),
+    );
+    run(app, "ruler.addPoint", json!({"lat": 10.0, "lon": 10.0}));
+    run(app, "places.remove", json!({"name": "Trip"}));
+    // Not a step of its own: Undo leaves it alone.
+    run(
+        app,
+        "places.add",
+        json!({"lat": 3.0, "lon": 4.0, "name": "Later"}),
+    );
+    run(app, "ruler.addPoint", json!({"lat": 11.0, "lon": 11.0}));
+    let found = |app: &App, name: &str| app.places.items.find_by_name(name).is_some();
+    let points = |app: &App| app.measure.paths.paths().map(<[_]>::len).sum::<usize>();
+    assert!(!found(app, "Trip") && points(app) == 2);
+    // The newest step first: the ruler point, then the folder, then the first point.
+    run(app, "edit.undo", Value::Null);
+    assert!(!found(app, "Trip") && points(app) == 1);
+    run(app, "edit.undo", Value::Null);
+    assert!(found(app, "Trip") && found(app, "Inside") && points(app) == 1);
+    run(app, "edit.undo", Value::Null);
+    assert!(found(app, "Trip") && points(app) == 0);
+    // Redo in the same order back.
+    run(app, "edit.redo", Value::Null);
+    assert!(found(app, "Trip") && points(app) == 1);
+    run(app, "edit.redo", Value::Null);
+    assert!(!found(app, "Trip") && points(app) == 1);
+    run(app, "edit.redo", Value::Null);
+    assert!(points(app) == 2 && found(app, "Later"));
+}
