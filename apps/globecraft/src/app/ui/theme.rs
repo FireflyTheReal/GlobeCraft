@@ -123,13 +123,64 @@ impl Tokens {
         } else {
             Tokens::light()
         };
-        if ctx.data(|d| {
-            d.get_temp(egui::Id::new(INCREASE_CONTRAST))
-                .unwrap_or(false)
-        }) {
+        let look: Look = ctx.data(|d| d.get_temp(egui::Id::new(LOOK)).unwrap_or_default());
+        tokens.with(look)
+    }
+
+    /// These tokens with the system's accent colour and Increase Contrast.
+    fn with(self, look: Look) -> Self {
+        let tokens = match look.accent {
+            Some(accent) => self.with_accent(accent),
+            None => self,
+        };
+        if look.increase_contrast {
             tokens.increased_contrast()
         } else {
             tokens
+        }
+    }
+
+    /// The user's accent colour for selections, switches and links (HIG: Color, App accent
+    /// colors), kept readable: dark enough for white labels on it, and its text colour
+    /// mixed toward the text colour until it reads at 4.5:1 on every surface.
+    fn with_accent(self, accent: Color32) -> Self {
+        let towards = |from: Color32, to: Color32, amount: f32| {
+            let mix = |a: u8, b: u8| {
+                (f32::from(a) + (f32::from(b) - f32::from(a)) * amount).round() as u8
+            };
+            Color32::from_rgb(
+                mix(from.r(), to.r()),
+                mix(from.g(), to.g()),
+                mix(from.b(), to.b()),
+            )
+        };
+        let surfaces = [
+            self.header,
+            self.ribbon,
+            self.pane,
+            self.pane_header,
+            self.status_bar,
+            self.menu,
+        ];
+        let first = |from: Color32, to: Color32, ok: &dyn Fn(Color32) -> bool| {
+            (0..=10)
+                .map(|step| towards(from, to, step as f32 / 10.0))
+                .find(|c| ok(*c))
+                .unwrap_or(to)
+        };
+        let accent = first(accent, Color32::BLACK, &|c| {
+            contrast(Color32::WHITE, c) >= 3.0
+        });
+        let accent_text = first(accent, self.text, &|c| {
+            surfaces.iter().all(|surface| contrast(c, *surface) >= 4.5)
+        });
+        let (checked, selection) = if self.dark { (0.2, 0.3) } else { (0.16, 0.22) };
+        Tokens {
+            accent,
+            accent_text,
+            checked: towards(self.ribbon, accent, checked),
+            selection: towards(self.ribbon, accent, selection),
+            ..self
         }
     }
 
@@ -150,8 +201,33 @@ impl Tokens {
 /// egui's default `Style::animation_time`.
 const EGUI_ANIMATION_SECS: f32 = 0.2;
 
-/// Where `apply` leaves the system's Increase Contrast for `Tokens::get`.
-const INCREASE_CONTRAST: &str = "globecraft-increase-contrast";
+/// What the system asks of the look: Increase Contrast, Reduce Motion, an accent colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::app) struct Look {
+    pub increase_contrast: bool,
+    pub reduce_motion: bool,
+    pub accent: Option<Color32>,
+}
+
+/// Where `apply` leaves the `Look` for `Tokens::get`.
+const LOOK: &str = "globecraft-look";
+
+/// WCAG 2 contrast ratio, as Accessibility Inspector measures it.
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let luminance = |c: Color32| {
+        let linear = |v: u8| {
+            let v = f32::from(v) / 255.0;
+            if v <= 0.040_45 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
 
 pub(in crate::app) fn regular(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
@@ -163,21 +239,14 @@ pub(in crate::app) fn semibold(size: f32) -> FontId {
 
 /// Installs both themes' visuals and the text styles: egui switches between the two themes
 /// itself (following the system when asked), and Interface size is egui's zoom. Runs again
-/// when Increase Contrast or Reduce Motion change.
-pub(in crate::app) fn apply(ctx: &egui::Context, increase_contrast: bool, reduce_motion: bool) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(INCREASE_CONTRAST), increase_contrast));
-    let pick = |t: Tokens| {
-        if increase_contrast {
-            t.increased_contrast()
-        } else {
-            t
-        }
-    };
-    ctx.set_visuals_of(egui::Theme::Dark, visuals(&pick(Tokens::dark())));
-    ctx.set_visuals_of(egui::Theme::Light, visuals(&pick(Tokens::light())));
+/// when the system's `Look` changes.
+pub(in crate::app) fn apply(ctx: &egui::Context, look: Look) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(LOOK), look));
+    ctx.set_visuals_of(egui::Theme::Dark, visuals(&Tokens::dark().with(look)));
+    ctx.set_visuals_of(egui::Theme::Light, visuals(&Tokens::light().with(look)));
     ctx.all_styles_mut(|s| {
         // egui's own easing: menus, collapsing sections, scrolling.
-        s.animation_time = if reduce_motion {
+        s.animation_time = if look.reduce_motion {
             0.0
         } else {
             EGUI_ANIMATION_SECS
@@ -255,29 +324,33 @@ fn visuals(t: &Tokens) -> Visuals {
 mod tests {
     use super::*;
 
-    /// WCAG 2 contrast ratio, as Accessibility Inspector measures it.
-    fn contrast(a: Color32, b: Color32) -> f32 {
-        let luminance = |c: Color32| {
-            let linear = |v: u8| {
-                let v = f32::from(v) / 255.0;
-                if v <= 0.040_45 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
-        };
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
-
     #[test]
     fn text_colours_reach_4_5_to_1_on_every_surface_in_both_themes() {
-        for t in [Tokens::light(), Tokens::dark()]
-            .into_iter()
-            .flat_map(|t| [t, t.increased_contrast()])
-        {
+        // macOS's accent colours, from the lightest (yellow) to graphite.
+        let accents = [
+            None,
+            Some(0xFFCC00),
+            Some(0xFF2D55),
+            Some(0x8E8E93),
+            Some(0x28CD41),
+            Some(0x007AFF),
+        ]
+        .map(|rgb| {
+            rgb.map(|rgb: u32| Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8))
+        });
+        let looks = accents.into_iter().flat_map(|accent| {
+            [false, true].map(|increase_contrast| Look {
+                increase_contrast,
+                reduce_motion: false,
+                accent,
+            })
+        });
+        for t in looks.flat_map(|look| [Tokens::light().with(look), Tokens::dark().with(look)]) {
+            assert!(
+                contrast(Color32::WHITE, t.accent) >= 3.0,
+                "white on accent {:?}",
+                t.accent
+            );
             let text = [
                 ("text", t.text),
                 ("text_dim", t.text_dim),

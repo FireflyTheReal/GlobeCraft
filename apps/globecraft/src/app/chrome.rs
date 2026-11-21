@@ -12,8 +12,8 @@ pub(super) struct ChromeState {
     pub(super) styled_scale: Option<f32>,
     /// The system's Reduce Motion and Increase Contrast, read each frame.
     pub(super) access: super::system_access::SystemAccess,
-    /// The (increase contrast, reduce motion) the style was last built for.
-    pub(super) styled_look: Option<(bool, bool)>,
+    /// The system look the style was last built for.
+    pub(super) styled_look: Option<super::ui::theme::Look>,
     /// egui's font atlas fill at the start of the last frame (see `ui`).
     pub(super) font_atlas_fill: f32,
     /// The ribbon group being drawn, and the shortcut dialog.

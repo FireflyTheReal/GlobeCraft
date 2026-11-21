@@ -651,9 +651,13 @@ impl eframe::App for App {
             self.chrome.styled_scale = Some(self.settings.ui_scale);
         }
         self.chrome.access = system_access::read();
-        let look = (self.chrome.access.increase_contrast, self.reduce_motion());
+        let look = ui::theme::Look {
+            increase_contrast: self.chrome.access.increase_contrast,
+            reduce_motion: self.reduce_motion(),
+            accent: self.chrome.access.accent,
+        };
         if self.chrome.styled_look != Some(look) {
-            ui::theme::apply(ui, look.0, look.1);
+            ui::theme::apply(ui, look);
             self.chrome.styled_look = Some(look);
         }
         // persist settings once a slider is released; frames with no input (animation)
