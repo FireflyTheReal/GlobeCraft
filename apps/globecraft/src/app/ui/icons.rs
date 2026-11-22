@@ -24,6 +24,11 @@ pub(in crate::app) fn set_mono(ctx: &egui::Context, mono: Option<Color32>) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(MONO_KEY), mono));
 }
 
+/// The one colour icons draw in, if Monochrome Icons is on.
+pub(in crate::app) fn mono(ctx: &egui::Context) -> Option<Color32> {
+    ctx.data(|d| d.get_temp(egui::Id::new(MONO_KEY)).flatten())
+}
+
 impl P<'_> {
     /// A colour as drawn: in monochrome, a hue becomes the monochrome colour, with its
     /// opacity; greys, white and black stay.
@@ -603,9 +608,7 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
         r,
         ink,
         acc: accent,
-        mono: painter
-            .ctx()
-            .data(|d| d.get_temp(egui::Id::new(MONO_KEY)).flatten()),
+        mono: mono(painter.ctx()),
     };
     let green = Color32::from_rgb(0x16, 0x9A, 0x5A);
     let red = Color32::from_rgb(0xD1, 0x3C, 0x3C);

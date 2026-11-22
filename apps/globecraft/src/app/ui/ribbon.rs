@@ -82,7 +82,15 @@ impl App {
         let pw = text_w(ui, file, semibold(12.5)) + 26.0;
         let (pr, presp) = ui.allocate_exact_size(vec2(pw, 26.0), Sense::click());
         presp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, file));
-        let fill = if presp.hovered() { BRAND_DARK } else { BRAND };
+        // Monochrome: the accent (already the own colour, if one is set), darkened for white text.
+        let (fill, hover) = match super::icons::mono(ui.ctx()) {
+            Some(_) => {
+                let t = Tokens::get(ui.ctx());
+                (t.accent, t.accent.lerp_to_gamma(egui::Color32::BLACK, 0.2))
+            }
+            None => (BRAND, BRAND_DARK),
+        };
+        let fill = if presp.hovered() { hover } else { fill };
         ui.painter().rect_filled(pr, CornerRadius::same(6), fill);
         ui.painter().text(
             pr.center(),
