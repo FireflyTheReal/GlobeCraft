@@ -215,8 +215,10 @@ pub(super) fn sun_light(
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
 ) -> f32 {
     let up = hit.normal;
-    // Below the horizon there is no direct light to hide.
-    if terrain.fade <= 0.0 || sun.dot(up) <= SUN_RISE_START_COSINE {
+    // Below the ground's own horizon there is no direct light to hide.
+    if terrain.fade <= 0.0
+        || sun.dot(up) + horizon_dip(hit, geometry, terrain) <= SUN_RISE_START_COSINE
+    {
         return 1.0;
     }
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
@@ -565,6 +567,20 @@ fn shell_span(
     let root = disc.sqrt();
     let (near, far) = ((-b - root) / a, (-b + root) / a);
     (far > 0.0).then_some((near.max(0.0), far))
+}
+
+/// How far below the level horizon the horizon of the ground at `hit` lies (radians):
+/// from a height h over the sea it dips by √(2h/R), 2.9° from 8,000 m, so the peaks
+/// take the sun minutes before the plain (alpenglow). Real heights, not exaggerated
+/// ones; it fades with the relief.
+pub(super) fn horizon_dip(
+    hit: &rays::RaySample,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+) -> f64 {
+    let height = height_above(hit.point, geometry.inverse_axes_squared())
+        / terrain.exaggeration.max(f64::MIN_POSITIVE);
+    (2.0 * height.max(0.0)).sqrt() * f64::from(terrain.fade)
 }
 
 /// Height above the surface (world units) of `point`: the algebraic distance to the

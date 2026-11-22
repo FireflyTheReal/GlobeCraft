@@ -194,7 +194,8 @@ pub(super) fn surface<const ELLIPSOID: bool>(
 /// which it meets at a grazing angle, stays blue; as the sun climbs the sky's light
 /// grows and the sun's eases, so midday contrast is low (`SHADE_DAY`). `eye` (0–1) is how
 /// far the eye is adapted to twilight (`atmosphere::eye_weight`): it keeps the blue
-/// hour readable. The GPU's `overview.wgsl` does the same.
+/// hour readable. The GPU's `overview.wgsl` does the same. High ground sees the sun
+/// before the plain (`raised`): first light reaches the peaks (Julien, 2026-11-22).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Daylight {
     /// Flat ground's brightness in the open: night's floor to one at noon.
@@ -207,25 +208,43 @@ pub(crate) struct Daylight {
     pub(crate) direct: f32,
     /// The cosine between flat ground and the sun (none below the horizon).
     pub(crate) flat_cosine: f32,
+    sun_cosine: f64,
+    eye: f32,
 }
 
 impl Daylight {
     pub(crate) fn at(sun_cosine: f64, eye: f32) -> Self {
+        Self::below(sun_cosine, 0.0, eye)
+    }
+    /// The daylight on ground whose own horizon lies `dip` (radians) below the level
+    /// one: the sun rises and the sky brightens that much earlier there, as on a peak
+    /// over the plain; its height above the level, and so its light on a surface, are
+    /// the same.
+    pub(crate) fn raised(self, dip: f64) -> Self {
+        if dip > 0.0 {
+            Self::below(self.sun_cosine, dip, self.eye)
+        } else {
+            self
+        }
+    }
+    fn below(sun_cosine: f64, dip: f64, eye: f32) -> Self {
+        // The sine of the sun's height above this ground's own horizon.
+        let over_horizon = sun_cosine + dip;
         let night_end = TWILIGHT_OFFSET + (EYE_TWILIGHT_COSINE - TWILIGHT_OFFSET) * f64::from(eye);
-        let shade = if sun_cosine <= SUN_RISE_START_COSINE {
+        let shade = if over_horizon <= SUN_RISE_START_COSINE {
             NIGHT_BRIGHTNESS
                 + (SHADE_RISE - NIGHT_BRIGHTNESS)
-                    * smooth((sun_cosine + night_end) / (SUN_RISE_START_COSINE + night_end))
+                    * smooth((over_horizon + night_end) / (SUN_RISE_START_COSINE + night_end))
         } else {
             SHADE_RISE
                 + (SHADE_DAY - SHADE_RISE)
                     * smooth(
-                        (sun_cosine - SUN_RISE_START_COSINE)
+                        (over_horizon - SUN_RISE_START_COSINE)
                             / (SKY_DAY_COSINE - SUN_RISE_START_COSINE),
                     )
         };
         let risen = smooth(
-            (sun_cosine - SUN_RISE_START_COSINE) / (SUN_RISE_FULL_COSINE - SUN_RISE_START_COSINE),
+            (over_horizon - SUN_RISE_START_COSINE) / (SUN_RISE_FULL_COSINE - SUN_RISE_START_COSINE),
         );
         let day_direct = 1.0 - SHADE_DAY;
         let direct = risen
@@ -239,10 +258,12 @@ impl Daylight {
         let colour = colour / colour.dot(glam::Vec3::from(LUMINANCE));
         Self {
             exposure: shade + direct * flat_cosine,
-            darkness: 1.0 - smooth((sun_cosine + TWILIGHT_OFFSET) / TWILIGHT_WIDTH),
+            darkness: 1.0 - smooth((over_horizon + TWILIGHT_OFFSET) / TWILIGHT_WIDTH),
             sky: Vec4::from((colour * shade, 0.0)),
             direct,
             flat_cosine,
+            sun_cosine,
+            eye,
         }
     }
     /// The light on a surface lit by the sun in `sun` colour whose normal meets the sun
@@ -505,6 +526,20 @@ mod tests {
 #[cfg(test)]
 mod daylight_tests {
     use super::Daylight;
+
+    /// A peak 8 km up takes the sun while the plain is still in twilight; by day it
+    /// is lit as the plain is.
+    #[test]
+    fn high_ground_takes_the_first_light() {
+        let dip = (2.0 * 8_000.0 / globecraft_core::EARTH_RADIUS_M).sqrt();
+        let dawn = Daylight::at((-1.5f64).to_radians().sin(), 1.0);
+        let peak = dawn.raised(dip);
+        assert!(dawn.direct < 1e-3 && peak.direct > 0.2, "{dawn:?} {peak:?}");
+        assert!(peak.sky.x > dawn.sky.x);
+        let noon = Daylight::at(0.9, 1.0);
+        assert!((noon.raised(dip).direct - noon.direct).abs() < 1e-3);
+        assert_eq!(noon.raised(dip).flat_cosine, noon.flat_cosine);
+    }
 
     /// Flat ground in the open and in shade both only brighten as the sun rises, from
     /// space and with the eye adapted, so nothing is darker just before sunset than

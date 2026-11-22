@@ -323,6 +323,9 @@ pub(crate) struct Relief {
     sun_cosine: Option<f64>,
     sky: f32,
     seen: f32,
+    /// How far the ground's own horizon lies below the level one (radians,
+    /// `terrain::horizon_dip`).
+    dip: f64,
 }
 
 impl Relief {
@@ -331,6 +334,7 @@ impl Relief {
         sun_cosine: None,
         sky: 1.0,
         seen: 1.0,
+        dip: 0.0,
     };
 }
 
@@ -406,7 +410,9 @@ fn finish_surface(mut col: Vec4, surface: Surface, relief: Relief, lights: Optio
             let gain = relief
                 .sun_cosine
                 .map_or(daylight.flat_cosine, |cosine| cosine as f32);
-            daylight.light(sun, gain, relief.seen, relief.sky)
+            daylight
+                .raised(relief.dip)
+                .light(sun, gain, relief.seen, relief.sky)
         }
         None => Vec4::splat(surface.shade * relief.chart),
     };
@@ -536,6 +542,7 @@ fn render_row<const ELLIPSOID: bool>(
                                         pixel_angle,
                                         loc,
                                     ),
+                                    dip: terrain::horizon_dip(&ground, geometry, relief),
                                 },
                                 None => Relief {
                                     chart: slope.chart_light(relief.fade),

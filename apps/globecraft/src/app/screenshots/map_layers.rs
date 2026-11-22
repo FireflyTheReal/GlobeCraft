@@ -1394,7 +1394,43 @@ fn bing_sun_comparison() {
     // name, centre, altitude km, tilt, heading, Unix time
     // Julien's recording of 2026-11-22 09:21 (Manhattan from 139 m, looking south-west)
     // and his screenshot from 12,695 km come first.
-    let views: [(&str, f64, f64, f64, f64, f64, f64); 31] = [
+    let views: [(&str, f64, f64, f64, f64, f64, f64); 35] = [
+        (
+            "julien-fuji-0727",
+            35.38737,
+            138.63678,
+            5.0,
+            82.0,
+            231.0,
+            1_795_246_020.0,
+        ),
+        (
+            "julien-midtown-1157",
+            40.766722,
+            -73.989692,
+            0.292,
+            78.0,
+            306.0,
+            1_795_348_620.0,
+        ),
+        (
+            "julien-midtown-1210",
+            40.766722,
+            -73.989692,
+            0.292,
+            78.0,
+            306.0,
+            1_795_349_400.0,
+        ),
+        (
+            "julien-midtown-1230",
+            40.766722,
+            -73.989692,
+            0.292,
+            78.0,
+            306.0,
+            1_795_350_600.0,
+        ),
         (
             "julien-nyc-1215",
             40.722_97,
