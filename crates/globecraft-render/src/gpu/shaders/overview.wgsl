@@ -146,6 +146,16 @@ const TWILIGHT_WIDTH: f32 = __TWILIGHT_WIDTH__;
 const NIGHT_BRIGHTNESS: f32 = __NIGHT_BRIGHTNESS__;
 const DAY_RANGE: f32 = __DAY_RANGE__;
 const NIGHT_BLUE: f32 = __NIGHT_BLUE__;
+const DIRECT_SHARE: f32 = __DIRECT_SHARE__;
+const SUN_RISE_START: f32 = __SUN_RISE_START__;
+const SUN_RISE_FULL: f32 = __SUN_RISE_FULL__;
+const DIRECT_FLOOR: f32 = __DIRECT_FLOOR__;
+const MAX_DIRECT_GAIN: f32 = __MAX_DIRECT_GAIN__;
+const SKY_DAY: f32 = __SKY_DAY__;
+const EXPOSURE_OFFSET: f32 = __EXPOSURE_OFFSET__;
+const EXPOSURE_WIDTH: f32 = __EXPOSURE_WIDTH__;
+const TWILIGHT_SKY: vec3<f32> = __TWILIGHT_SKY__;
+const DAY_SKY: vec3<f32> = __DAY_SKY__;
 const AIR_GROUND: f32 = __AIR_GROUND__;
 const AIR_TOP: f32 = __AIR_TOP__;
 const AIR_HEIGHT: f32 = __AIR_HEIGHT__;
@@ -373,14 +383,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let sunlit = view.effects.x != 0u;
     var shade = 1.0; var night = 0.0; var darkness = 0.0;
+    // With the sun, its light and the sky's apart (the CPU's `pixel::Daylight`).
+    var sky = vec3<f32>(0.0); var direct = 0.0;
     if sunlit {
-        var k = clamp((dot(normal,view.sun.xyz)+TWILIGHT_OFFSET)/TWILIGHT_WIDTH,0.0,1.0);
+        let e = dot(normal,view.sun.xyz);
+        var k = clamp((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH,0.0,1.0);
         k = k*k*(3.0-2.0*k);
         shade = NIGHT_BRIGHTNESS+DAY_RANGE*k; night = NIGHT_BLUE*(1.0-k); darkness = 1.0-k;
+        var exposure = clamp((e+EXPOSURE_OFFSET)/EXPOSURE_WIDTH,0.0,1.0);
+        exposure = NIGHT_BRIGHTNESS+DAY_RANGE*exposure*exposure*(3.0-2.0*exposure);
+        var risen = clamp((e-SUN_RISE_START)/(SUN_RISE_FULL-SUN_RISE_START),0.0,1.0);
+        let share = DIRECT_SHARE*risen*risen*(3.0-2.0*risen);
+        var blue = clamp(e/SKY_DAY,0.0,1.0);
+        blue = blue*blue*(3.0-2.0*blue);
+        sky = mix(TWILIGHT_SKY,DAY_SKY,blue)*(exposure*(1.0-share));
+        direct = exposure*share*clamp(e/max(e,DIRECT_FLOOR),0.0,MAX_DIRECT_GAIN);
     }
     // Night lights without the sun: night everywhere (`RenderCfg::night_everywhere`).
     let all_night = !sunlit && view.lights.x != 0u;
-    if all_night { shade = NIGHT_BRIGHTNESS; night = NIGHT_BLUE; darkness = 1.0; }
+    if all_night {
+        shade = NIGHT_BRIGHTNESS; night = NIGHT_BLUE; darkness = 1.0;
+        sky = TWILIGHT_SKY*NIGHT_BRIGHTNESS;
+    }
     // As the CPU's `night_lights` and `finish_surface`: the lights glow where it is dark.
     var lights = vec4<f32>(0.0);
     if view.lights.x != 0u && darkness >= MIN_LIGHTS_DARKNESS { lights = chain(1u,lights_zoom,uv,distance,z,fraction); }
@@ -388,6 +412,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // `finish_surface`): low sunlight is orange, the air dims and adds its glow.
     let airy = view.effects.y != 0u;
     var sunlight = vec3<f32>(1.0);
+    var sun_tint = vec3<f32>(1.0);
     var glow = vec3<f32>(0.0);
     var crossed = vec3<f32>(1.0);
     if airy {
@@ -403,6 +428,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let red = max(lit.x,AIR_TINY);
             let tint = vec3<f32>(1.0,sqrt(min(lit.y/red*AIR_NOON_GREEN,1.0)),sqrt(min(lit.z/red*AIR_NOON_BLUE,1.0)));
             sunlight = vec3<f32>(1.0) + (tint - vec3<f32>(1.0))*(1.0-darkness);
+            sun_tint = tint*tint;
         }
         glow = air_scattered(up,mu_s,nu);
     }
@@ -416,7 +442,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             glint = water_at(degrees(lat), degrees(lon)) * GLINT_STRENGTH * highlight * up * up * (3.0 - 2.0 * up);
         }
     }
-    color = color*sunlight*shade + vec3<f32>(0.0,0.0,night) + sunlight*glint;
+    var light = vec3<f32>(shade);
+    if sunlit || all_night { light = sky + sun_tint*direct; }
+    color = color*light + vec3<f32>(0.0,0.0,night) + sunlight*glint;
     if lights.w > 0.0 { color += lights.rgb*darkness; }
     if airy {
         let grazing = (1.0-incidence)*(1.0-incidence);

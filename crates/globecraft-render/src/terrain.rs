@@ -12,7 +12,7 @@
 //! This replaced a 2.5D displacement (2026-10-26) that smeared imagery on tilted
 //! views, had no occlusion and switched off toward the horizon.
 use super::{Local, LocalTile, Lookup, Provider, TileKey, make_key, rays};
-use crate::tuning::WEB_MERCATOR_MAX_LATITUDE_DEG;
+use crate::tuning::{SUN_RISE_START_COSINE, WEB_MERCATOR_MAX_LATITUDE_DEG};
 use glam::DVec3;
 use globecraft_core::{EARTH_RADIUS_M, earth_model::SurfaceGeometry};
 use globecraft_data::tiles::{Elevation, Tile};
@@ -109,7 +109,7 @@ pub struct TerrainCfg {
     exaggeration: f64,
     /// `relief_fade`: the hill shading fades with the heights, or the view darkened
     /// and the shading appeared at once where relief switched on (user, 2026-11-17).
-    fade: f32,
+    pub(crate) fade: f32,
     /// Heights and shading blend between elevation levels, and arriving tiles grow
     /// in; off, each level and tile shows at once (Settings › Graphics, for speed).
     smooth: bool,
@@ -137,8 +137,8 @@ impl TerrainCfg {
 
 /// What a view ray met.
 pub(super) enum March {
-    /// The ground: the ray moved to the hit, and the hill-shading factor there.
-    Hit(rays::RaySample, f32),
+    /// The ground: the ray moved to the hit, and the relief's slope there.
+    Hit(rays::RaySample, Slope),
     /// No relief in the way before the globe's surface (sea level, or no elevation
     /// loaded): the ellipsoid hit stands.
     Floor,
@@ -146,10 +146,6 @@ pub(super) enum March {
     Miss,
 }
 
-/// Relief casts shadows with the sun on (roadmap C5): ground behind a ridge, seen
-/// from the sun, keeps this share of its light. The air's own twilight darkens it
-/// further where the sun is low.
-const TERRAIN_SHADOW_LIGHT: f32 = 0.6;
 /// The march toward the sun starts this high over the ground (metres, before
 /// exaggeration), so the slope it leaves does not shade itself.
 const SHADOW_LIFT_M: f64 = 20.0;
@@ -161,12 +157,6 @@ const SHADOW_LIFT_TEXELS: f64 = 1.5;
 const SHADOW_DETAIL_COARSER: f64 = 4.0;
 /// Tiles only the shadows need are asked for after the view's own.
 const SHADOW_REQUEST_PRIORITY: f32 = f32::MAX;
-/// Terrain shadows come in with the sun's height up to this many degrees: a sun on
-/// the horizon lights the ground through so much air that the sky's light is most of
-/// what it gets, which no ridge hides. Shadows at full strength from the first
-/// hundredth of a degree threw whole valleys dark at once at sunrise, and back to
-/// light at once at sunset (user's recording, 2026-11-20 22:48).
-const SHADOW_FULL_SUN_DEG: f64 = 3.0;
 /// The sun's angular radius: a ray this close to a ridge still sees part of the disc.
 const SUN_RADIUS_RAD: f64 = 0.004_65;
 /// How uncertain an elevation texel's height is, as a share of its width: a ray that
@@ -210,9 +200,12 @@ impl SunMargin {
     }
 }
 
-/// The light left at `ground` (a relief hit seen from `camera`, `hit.distance` away)
-/// by the relief between it and the sun (`sun`, a unit vector): `TERRAIN_SHADOW_LIGHT`
-/// in the shadow, all of it (1) in the sun, with the shadow faded as the relief is.
+/// The share of the sun's disc seen from `ground` (a relief hit, `hit.distance` from
+/// the camera) past the relief toward the sun (`sun`, a unit vector): 0 in the
+/// shadow, 1 in the sun, with the shadow faded as the relief is. Relief hides only the
+/// sun's direct light (`pixel::Daylight`), which comes in as the sun rises, so the
+/// shadows deepen with it instead of throwing whole valleys dark at once at sunrise
+/// (user's recording, 2026-11-20 22:48).
 pub(super) fn sun_light(
     hit: &rays::RaySample,
     sun: DVec3,
@@ -222,10 +215,8 @@ pub(super) fn sun_light(
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
 ) -> f32 {
     let up = hit.normal;
-    // Below the horizon there the night darkens the ground already.
-    let height = (sun.dot(up) / SHADOW_FULL_SUN_DEG.to_radians().sin()).clamp(0.0, 1.0) as f32;
-    let strength = terrain.fade * height * height * (3.0 - 2.0 * height);
-    if strength <= 0.0 {
+    // Below the horizon there is no direct light to hide.
+    if terrain.fade <= 0.0 || sun.dot(up) <= SUN_RISE_START_COSINE {
         return 1.0;
     }
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
@@ -255,7 +246,7 @@ pub(super) fn sun_light(
         March::Hit(..) => 0.0,
         March::Floor | March::Miss => margin.light(),
     };
-    1.0 + (TERRAIN_SHADOW_LIGHT - 1.0) * strength * (1.0 - sun_seen)
+    1.0 - terrain.fade * (1.0 - sun_seen)
 }
 
 /// A loaded elevation tile (by its index in the batch's `Local::dem`) and where it sits.
@@ -454,19 +445,19 @@ impl DemTile {
             held.placed[below].top_between_at(held, from, to, depth + 1)
         })
     }
-    /// The hill shading at `uv`, on the way from the stand-in's while growing.
-    fn shade(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64) -> f32 {
+    /// The slope at `uv`, on the way from the stand-in's while growing.
+    fn shade(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64) -> Slope {
         self.shade_at(held, uv, up, to_world, 0)
     }
-    fn shade_at(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64, depth: u8) -> f32 {
-        let own = hill_shade(&self.grid, self.elevation(held.tiles), uv, up, to_world);
+    fn shade_at(&self, held: Held, uv: (f64, f64), up: DVec3, to_world: f64, depth: u8) -> Slope {
+        let own = slope(&self.grid, self.elevation(held.tiles), uv, up, to_world);
         let Some(morph) = self.morph_at(depth) else {
             return own;
         };
-        let before = morph.from.map_or(SHADE_BASE as f32, |from| {
+        let before = morph.from.map_or(Slope::FLAT, |from| {
             held.placed[from].shade_at(held, uv, up, to_world, depth + 1)
         });
-        before + (own - before) * morph.grown
+        before.lerp(own, f64::from(morph.grown))
     }
 }
 
@@ -963,7 +954,7 @@ fn march_near(
                     let normal = geometry.normal(point).normalize();
                     let uv = anchor.uv(t);
                     let mut shade = if grown {
-                        hill_shade(&tile.grid, elevation, uv, normal, to_world)
+                        slope(&tile.grid, elevation, uv, normal, to_world)
                     } else {
                         tile.shade(held, uv, normal, to_world)
                     };
@@ -984,10 +975,8 @@ fn march_near(
                     {
                         let held = Held::of(loc);
                         let before = coarser.shade(held, uv, normal, to_world);
-                        shade = before + (shade - before) * toward;
+                        shade = before.lerp(shade, f64::from(toward));
                     }
-                    // Flat ground shades darker than the flat globe (`SHADE_BASE`).
-                    let shade = 1.0 + (shade - 1.0) * terrain.fade;
                     return March::Hit(
                         rays::RaySample {
                             distance: t,
@@ -1060,9 +1049,60 @@ fn refine(above: Option<(f64, f64)>, t: f64, below: f64, clearance: impl Fn(f64)
     t1
 }
 
-/// Brightness from the slope at `uv`, so ridges and valleys read without sunlight.
-/// 1 on flat ground.
-fn hill_shade(tile: &Grid, elevation: &Elevation, uv: (f64, f64), up: DVec3, to_world: f64) -> f32 {
+/// The relief's slope at a point: its rise over run eastward and northward (as
+/// exaggerated, capped at `MAX_SLOPE`). The relief normal in the local frame (east,
+/// north, up) is (-east, -north, 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Slope {
+    east: f64,
+    north: f64,
+}
+
+impl Slope {
+    const FLAT: Self = Self {
+        east: 0.0,
+        north: 0.0,
+    };
+    fn lerp(self, to: Self, t: f64) -> Self {
+        Self {
+            east: self.east + (to.east - self.east) * t,
+            north: self.north + (to.north - self.north) * t,
+        }
+    }
+    fn faded(self, fade: f32) -> Self {
+        Self::FLAT.lerp(self, f64::from(fade))
+    }
+    fn length(self) -> f64 {
+        (1.0 + self.east * self.east + self.north * self.north).sqrt()
+    }
+    /// Hill shading without the sun, so ridges and valleys read: a fixed light from
+    /// the north-west and above, 1 on the flat globe (flat relief shades darker,
+    /// `SHADE_BASE`), faded with the relief.
+    pub(crate) fn chart_light(self, fade: f32) -> f32 {
+        let light_length =
+            (LIGHT_UP * LIGHT_UP + LIGHT_NORTH * LIGHT_NORTH + LIGHT_WEST * LIGHT_WEST).sqrt();
+        let flat = LIGHT_UP / light_length;
+        let relief = ((LIGHT_UP + self.east * LIGHT_WEST - self.north * LIGHT_NORTH)
+            / (self.length() * light_length))
+            .max(0.0);
+        let shade = (SHADE_BASE + SHADE_GAIN * (relief - flat)).clamp(MIN_SHADE, MAX_SHADE) as f32;
+        1.0 + (shade - 1.0) * fade
+    }
+    /// The cosine between the relief's normal at `up` (the globe's there) and `sun`.
+    pub(crate) fn sun_cosine(self, up: DVec3, sun: DVec3, fade: f32) -> f64 {
+        let slope = self.faded(fade);
+        let east = DVec3::Z.cross(up).normalize_or(DVec3::X);
+        let north = up.cross(east);
+        (sun.dot(up) - slope.east * sun.dot(east) - slope.north * sun.dot(north)) / slope.length()
+    }
+    /// The share of the sky the relief faces (1 on flat ground): the sky's light on a
+    /// slope, which keeps the relief readable in shadows and twilight.
+    pub(crate) fn sky_share(self, fade: f32) -> f32 {
+        (0.5 + 0.5 / self.faded(fade).length()) as f32
+    }
+}
+
+fn slope(tile: &Grid, elevation: &Elevation, uv: (f64, f64), up: DVec3, to_world: f64) -> Slope {
     let (x, y) = tile.texel(uv);
     let (east, north) = elevation.slopes_m(x, y);
     let latitude_cosine = (up.x * up.x + up.y * up.y).sqrt().max(MIN_LATITUDE_COSINE);
@@ -1072,15 +1112,10 @@ fn hill_shade(tile: &Grid, elevation: &Elevation, uv: (f64, f64), up: DVec3, to_
     let slope_east = (f64::from(east) / (2.0 * run_m) * exaggeration).clamp(-MAX_SLOPE, MAX_SLOPE);
     let slope_north =
         (f64::from(north) / (2.0 * run_m) * exaggeration).clamp(-MAX_SLOPE, MAX_SLOPE);
-    // In the local frame (east, north, up) the relief normal is (-east slope, -north
-    // slope, 1) and the light (-west, north, up): their cosine needs no vectors.
-    let light_length =
-        (LIGHT_UP * LIGHT_UP + LIGHT_NORTH * LIGHT_NORTH + LIGHT_WEST * LIGHT_WEST).sqrt();
-    let flat = LIGHT_UP / light_length;
-    let relief = ((LIGHT_UP + slope_east * LIGHT_WEST - slope_north * LIGHT_NORTH)
-        / ((1.0 + slope_east * slope_east + slope_north * slope_north).sqrt() * light_length))
-        .max(0.0);
-    (SHADE_BASE + SHADE_GAIN * (relief - flat)).clamp(MIN_SHADE, MAX_SHADE) as f32
+    Slope {
+        east: slope_east,
+        north: slope_north,
+    }
 }
 
 #[cfg(test)]
@@ -1309,25 +1344,22 @@ mod march_tests {
         };
         let low = 10f64.to_radians();
         // Low in the east, behind the cliff: in its shadow.
-        assert_eq!(
-            light(up * low.sin() + east * low.cos()),
-            TERRAIN_SHADOW_LIGHT
-        );
+        assert_eq!(light(up * low.sin() + east * low.cos()), 0.0);
         // Low in the west, or high: in the sun; below the horizon: left to the night.
         assert_eq!(light(up * low.sin() - east * low.cos()), 1.0);
         assert_eq!(light(up), 1.0);
         assert_eq!(light(-up), 1.0);
         // Rising behind the cliff, its shadow deepens with the sun's height instead of
-        // falling at once.
-        let rising: Vec<f32> = [0.05f64, 1.0, 2.0, 3.0]
+        // falling at once: it hides the direct light, which comes in as the sun rises.
+        let hidden: Vec<f32> = [0.05f64, 0.5, 1.0, 3.0]
             .map(|deg| {
                 let rise = deg.to_radians();
-                light(up * rise.sin() + east * rise.cos())
+                let daylight = crate::pixel::Daylight::at(rise.sin());
+                daylight.direct * (1.0 - light(up * rise.sin() + east * rise.cos()))
             })
             .to_vec();
-        assert!(rising[0] > 0.99, "{rising:?}");
-        assert!(rising.windows(2).all(|w| w[1] < w[0]), "{rising:?}");
-        assert_eq!(rising[3], TERRAIN_SHADOW_LIGHT);
+        assert!(hidden[0] < 0.2 * hidden[3], "{hidden:?}");
+        assert!(hidden.windows(2).all(|w| w[1] > w[0]), "{hidden:?}");
     }
 
     #[test]
@@ -1375,7 +1407,7 @@ mod march_tests {
             ) else {
                 panic!("no hit");
             };
-            shade
+            shade.chart_light(1.0)
         };
         let flat_shade = SHADE_BASE as f32;
         let full = shade_at(6.5);

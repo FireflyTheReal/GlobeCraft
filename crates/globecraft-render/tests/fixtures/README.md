@@ -112,3 +112,14 @@ sky's moment. The batch references were rendered with the old stars on; only
 `odd-satellite.rgba` showed any, and exactly its 2 star pixels changed to space
 when regenerated (`GLOBECRAFT_RECORD_FIXTURES=1 cargo test -p globecraft-render
 ray_batches`). Every other fixture is byte-identical.
+
+## Sun and sky light apart, multiple scattering, twilight adaptation (2026-11-22)
+
+Daylight now comes in two parts (`pixel::Daylight`): the sun's direct light, coloured
+by the air it crossed, and the sky's, cool; relief and shadows hide only the first,
+and the scene's exposure follows the eye's adaptation into the blue hour. The air's
+tables gained Hillaire's multiple-scattering term, and inside the air its light is
+adapted to twilight (`atmosphere::adaptation`). Every fixture with the sun or the
+atmosphere changed (`GLOBECRAFT_RECORD_FIXTURES=1 cargo test -p globecraft-render --lib
+-- raster_matches ray_batches`); checked against Bing Maps' sunrise recordings with
+the `bing_sun_comparison` probe.

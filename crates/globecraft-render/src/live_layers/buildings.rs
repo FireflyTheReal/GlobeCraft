@@ -408,12 +408,12 @@ fn block(
     };
     // The imagery is already lit by the sun of its day; only dusk dims it.
     let (roof, roof_light) = match photo {
-        Some(photo) => (photo, light.daylight),
+        Some(photo) => (photo, light.on_imagery()),
         None => (
             building
                 .roof_colour
                 .map_or(ROOF, |mapped| toned(ROOF, mapped)),
-            light.on(up),
+            light.on(up, up),
         ),
     };
     // Its shadow on the ground, under everything else of the block (C3).
@@ -459,7 +459,7 @@ fn block(
             if normal.dot(camera - middle) <= 0.0 {
                 continue;
             }
-            let shade = colour(wall, light.on(normal), alpha);
+            let shade = colour(wall, light.on(normal, up), alpha);
             let length_m = (scratch.base[b] - scratch.base[a]).length() * METRES_PER_RADIUS;
             let pieces = (length_m / WALL_PIECE_M).ceil().max(1.0) as usize;
             // Each piece's corners: its ends at the base and the top, on screen.
@@ -754,30 +754,30 @@ fn lifted(colour: [f32; 3], min_luminance: f32) -> [f32; 3] {
     colour.map(|channel| (channel + lift).min(1.0))
 }
 
-fn colour(base: [f32; 3], brightness: f32, alpha: u8) -> [u8; 4] {
-    let [r, g, b] = base.map(|channel| (channel * brightness * 255.0).clamp(0.0, 255.0) as u8);
+fn colour(base: [f32; 3], light: [f32; 3], alpha: u8) -> [u8; 4] {
+    let [r, g, b] = std::array::from_fn(|i| (base[i] * light[i] * 255.0).clamp(0.0, 255.0) as u8);
     [r, g, b, alpha]
 }
 
-/// How a block is lit: the light's direction and, with the sun, how much daylight
-/// there is where it stands (dusk dims blocks as it dims the ground).
+/// How a block is lit: with the sun as the ground is (`pixel::Daylight`, the sky's
+/// light and the sun's apart, so walls facing a low sun glow and the others go
+/// blue), without it from a fixed light.
 struct Light {
     direction: DVec3,
-    daylight: f32,
+    sun: Option<(crate::pixel::Daylight, glam::Vec4)>,
 }
 
 impl Light {
     fn at(sun: Option<DVec3>, up: DVec3) -> Self {
         match sun {
             Some(sun) => {
-                let k = ((up.dot(sun) + crate::tuning::TWILIGHT_OFFSET)
-                    / crate::tuning::TWILIGHT_WIDTH)
-                    .clamp(0.0, 1.0) as f32;
-                let k = k * k * (3.0 - 2.0 * k);
+                let cosine = up.dot(sun);
                 Self {
                     direction: sun,
-                    daylight: crate::tuning::NIGHT_BRIGHTNESS
-                        + (1.0 - crate::tuning::NIGHT_BRIGHTNESS) * k,
+                    sun: Some((
+                        crate::pixel::Daylight::at(cosine),
+                        crate::atmosphere::ground_sunlight(cosine as f32).powf(2.0),
+                    )),
                 }
             }
             None => {
@@ -786,14 +786,33 @@ impl Light {
                 let [e, n, u] = UNLIT_LIGHT;
                 Self {
                     direction: (east * e + north * n + up * u).normalize(),
-                    daylight: 1.0,
+                    sun: None,
                 }
             }
         }
     }
-    /// The brightness of a face with this outward normal.
-    fn on(&self, normal: DVec3) -> f32 {
-        (AMBIENT + DIRECT * normal.dot(self.direction).max(0.0) as f32) * self.daylight
+    /// The light on a face with this outward normal (`up` for a roof).
+    fn on(&self, normal: DVec3, up: DVec3) -> [f32; 3] {
+        let cosine = normal.dot(self.direction);
+        match self.sun {
+            Some((daylight, tint)) => {
+                // A wall sees half the sky; the sky's light is mostly from above.
+                let sky = (0.5 + 0.5 * normal.dot(up)) as f32;
+                let gain = crate::pixel::Daylight::gain(cosine, daylight.sun_cosine);
+                daylight.light(tint, gain, 1.0, sky).truncate().to_array()
+            }
+            None => [AMBIENT + DIRECT * cosine.max(0.0) as f32; 3],
+        }
+    }
+    /// The light on imagery of a roof, which shows the sun of its own day already: the
+    /// ground's under the same sun (none without it).
+    fn on_imagery(&self) -> [f32; 3] {
+        self.sun.map_or([1.0; 3], |(daylight, tint)| {
+            daylight
+                .light(tint, daylight.flat_gain, 1.0, 1.0)
+                .truncate()
+                .to_array()
+        })
     }
 }
 
@@ -1144,10 +1163,16 @@ mod tests {
     fn sunlit_walls_are_brighter_than_shaded_ones() {
         let up = DVec3::Z;
         let light = Light::at(Some(DVec3::new(0.0, 0.6, 0.8)), up);
-        assert!(light.on(DVec3::Y) > light.on(DVec3::NEG_Y));
+        assert!(light.on(DVec3::Y, up)[0] > light.on(DVec3::NEG_Y, up)[0]);
         // At night the blocks are dim whatever they face.
         let night = Light::at(Some(DVec3::new(0.0, 0.0, -1.0)), up);
-        assert!(night.on(DVec3::Y) < 0.2);
+        assert!(night.on(DVec3::Y, up).iter().all(|&c| c < 0.2));
+        // A low sun: the wall facing it glows warm, the one turned away goes blue.
+        let low = Light::at(Some(DVec3::new(0.0, 0.996, 0.087)), up);
+        let [r, _, b] = low.on(DVec3::Y, up);
+        assert!(r > b, "lit {r} {b}");
+        let [r, _, b] = low.on(DVec3::NEG_Y, up);
+        assert!(b > r, "shaded {r} {b}");
     }
 
     #[test]

@@ -41,6 +41,10 @@ use tuning::{
     TILE_FILTER_RATIO_EXONENT_MAX, TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET,
     TWILIGHT_WIDTH, WEB_MERCATOR_MAX_LATITUDE_DEG,
 };
+use tuning::{
+    DAY_SKY, DIRECT_FLOOR_COSINE, DIRECT_SHARE, EXPOSURE_OFFSET, EXPOSURE_WIDTH, MAX_DIRECT_GAIN,
+    SKY_DAY_COSINE, SUN_RISE_FULL_COSINE, SUN_RISE_START_COSINE, TWILIGHT_SKY,
+};
 const GRID_STEPS_DEG: [f64; 12] = [
     30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.01, 0.005, 0.001,
 ];
@@ -274,7 +278,7 @@ fn shade_surface(
     cfg: &RenderCfg,
     rel: u16,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
-    terrain_light: f32,
+    relief: Relief,
 ) -> Vec4 {
     if !cfg.level_blend {
         let natural = natural_level(&surface);
@@ -284,12 +288,7 @@ fn shade_surface(
         };
         let (col, _) = sample_chain(loc, cfg.provider, rel, level, &surface);
         let col = with_polar_cap(loc, cfg, &surface, col);
-        return finish_surface(
-            col,
-            surface,
-            terrain_light,
-            night_lights(loc, cfg, &surface),
-        );
+        return finish_surface(col, surface, relief, night_lights(loc, cfg, &surface));
     }
     let (mut col, _) = sample_chain(loc, cfg.provider, rel, surface.z0, &surface);
     let blend = if cfg.provider.is_imagery() {
@@ -311,12 +310,28 @@ fn shade_surface(
         }
     }
     let col = with_polar_cap(loc, cfg, &surface, col);
-    finish_surface(
-        col,
-        surface,
-        terrain_light,
-        night_lights(loc, cfg, &surface),
-    )
+    finish_surface(col, surface, relief, night_lights(loc, cfg, &surface))
+}
+
+/// The relief's part in a surface pixel's light.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Relief {
+    /// Hill shading without the sun (`terrain::Slope::chart_light`).
+    chart: f32,
+    /// With the sun: the cosine between the relief and the sun, its share of the sky,
+    /// and the share of the sun's disc not hidden by relief.
+    sun_cosine: Option<f64>,
+    sky: f32,
+    seen: f32,
+}
+
+impl Relief {
+    pub(crate) const FLAT: Self = Self {
+        chart: 1.0,
+        sun_cosine: None,
+        sky: 1.0,
+        seen: 1.0,
+    };
 }
 
 /// Past the Web Mercator limit the polar imagery (see `polar`) takes over, fading in
@@ -374,12 +389,7 @@ pub fn dominant_level(w: usize, h: usize, basis: &Basis, cfg: &RenderCfg) -> Opt
 }
 
 /// Grid, lighting and the air over the imagery colour of a surface pixel.
-fn finish_surface(
-    mut col: Vec4,
-    surface: Surface,
-    terrain_light: f32,
-    lights: Option<Vec4>,
-) -> Vec4 {
+fn finish_surface(mut col: Vec4, surface: Surface, relief: Relief, lights: Option<Vec4>) -> Vec4 {
     if surface.grid {
         col = col.lerp_monotonic(GRID_COLOR, GRID_BLEND);
     }
@@ -388,7 +398,23 @@ fn finish_surface(
     let sunlight = surface.air.map_or(Vec4::ONE, |(air, _)| {
         Vec4::ONE + (air.sunlight - Vec4::ONE) * (1.0 - surface.darkness)
     });
-    col = col * sunlight * (surface.shade * terrain_light)
+    let light = match surface.daylight {
+        // Sun and sky apart: relief and shadows hide the sun's (`pixel::Daylight`).
+        Some(daylight) => {
+            // The air's tint is softened (a square root) for what the eye sees of
+            // the ground's own colours; the direct light gets it in full, deep orange
+            // to red on the horizon, which the sky's blue turns pink on snow.
+            let sun = surface
+                .air
+                .map_or(Vec4::ONE, |(air, _)| air.sunlight * air.sunlight);
+            let gain = relief.sun_cosine.map_or(daylight.flat_gain, |cosine| {
+                pixel::Daylight::gain(cosine, daylight.sun_cosine)
+            });
+            daylight.light(sun, gain, relief.seen, relief.sky)
+        }
+        None => Vec4::splat(surface.shade * relief.chart),
+    };
+    col = col * light
         + Vec4::new(0.0, 0.0, surface.night, 0.0)
         + sunlight * Vec4::new(surface.glint, surface.glint, surface.glint, 0.0);
     // The lights glow where it is dark: the night side, or everywhere without the sun.
@@ -496,10 +522,31 @@ fn render_row<const ELLIPSOID: bool>(
                         priority,
                         loc,
                     ) {
-                        terrain::March::Hit(ground, light) => {
-                            let shadow = cfg.sun.map_or(1.0, |sun| {
-                                terrain::sun_light(&ground, sun, geometry, relief, pixel_angle, loc)
-                            });
+                        terrain::March::Hit(ground, slope) => {
+                            let light = match cfg.sun {
+                                Some(sun) => Relief {
+                                    chart: 1.0,
+                                    sun_cosine: Some(slope.sun_cosine(
+                                        ground.normal,
+                                        sun,
+                                        relief.fade,
+                                    )),
+                                    sky: slope.sky_share(relief.fade),
+                                    seen: terrain::sun_light(
+                                        &ground,
+                                        sun,
+                                        geometry,
+                                        relief,
+                                        pixel_angle,
+                                        loc,
+                                    ),
+                                },
+                                None => Relief {
+                                    chart: slope.chart_light(relief.fade),
+                                    sky: slope.sky_share(relief.fade),
+                                    ..Relief::FLAT
+                                },
+                            };
                             shade_surface(
                                 with_air(
                                     surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
@@ -509,7 +556,7 @@ fn render_row<const ELLIPSOID: bool>(
                                 cfg,
                                 cfg.rel,
                                 loc,
-                                light * shadow,
+                                light,
                             )
                         }
                         terrain::March::Floor => shade_surface(
@@ -521,7 +568,7 @@ fn render_row<const ELLIPSOID: bool>(
                             cfg,
                             cfg.rel,
                             loc,
-                            1.0,
+                            Relief::FLAT,
                         ),
                         terrain::March::Miss => {
                             let sky = sky(&ray, rays, air, cfg);
@@ -539,7 +586,7 @@ fn render_row<const ELLIPSOID: bool>(
                     cfg,
                     cfg.rel,
                     loc,
-                    1.0,
+                    Relief::FLAT,
                 ),
                 None => {
                     let sky = sky(&ray, rays, air, cfg);

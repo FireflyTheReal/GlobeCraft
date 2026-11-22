@@ -9,9 +9,11 @@
 //! Atmospheric Scattering" (2008), in Bruneton's 2017 form: distances to the ground
 //! and to the top of the air instead of angles, which keeps the horizon sharp.
 //!
-//! shortcut: light scattered more than once is left out (twilight and shadowed air
-//! come out a little darker and bluer than real), add a multiple-scattering term if
-//! the dusk sky looks too dark.
+//! Light scattered more than once is added as Hillaire's "A Scalable and Production
+//! Ready Sky and Atmosphere Rendering Technique" (2020) does: a small table of the
+//! light that reaches a point after any number of bounces, isotropic, by height and
+//! sun angle (`multiple`). It keeps the twilight sky deep blue, lights the air in the
+//! Earth's shadow, and is folded into the scattering table, so the GPU reads it too.
 use glam::Vec4;
 use globecraft_core::EARTH_RADIUS_KM;
 use rayon::prelude::*;
@@ -57,6 +59,23 @@ pub(crate) const SCATTERING_PHASES: usize = 8;
 /// Steps along a ray when the tables are computed.
 const TRANSMITTANCE_STEPS: usize = 200;
 const SCATTERING_STEPS: usize = 50;
+/// The multiple-scattering table: by height and sun cosine (-1 to 1); directions
+/// around each point, and steps along each, when it is computed.
+const MULTIPLE_HEIGHTS: usize = 32;
+const MULTIPLE_SUNS: usize = 64;
+const MULTIPLE_DIRECTIONS: usize = 64;
+const MULTIPLE_STEPS: usize = 24;
+/// The share of light the ground sends back (a mean over land and sea).
+const GROUND_ALBEDO: f32 = 0.3;
+/// The eye adapts to twilight (Bing Maps' blue hour, Julien's recordings of
+/// 2026-11-21): from inside the air, the air's light is drawn up to this many times
+/// brighter and bluer as the sun goes from this sine (6° up) to this one (8° down);
+/// from the camera's height in the air on, less, and not at all from space.
+const MAX_ADAPTATION: f32 = 24.0;
+const ADAPT_FROM_SUN_COSINE: f32 = 0.105;
+const ADAPT_TO_SUN_COSINE: f32 = -0.139;
+const BLUE_HOUR: [f32; 3] = [0.6, 0.8, 1.5];
+const ADAPT_FADE_KM: [f32; 2] = [20.0, 80.0];
 
 /// How bright scattered sunlight is drawn: radiance for a sun of irradiance one, times
 /// this, then compressed to the screen's range (`tone`).
@@ -138,6 +157,12 @@ pub(crate) fn ground_share(view_cosine: f32) -> f32 {
 /// The tables, computed on first use (a fraction of a second).
 pub(crate) static TABLES: LazyLock<Tables> = LazyLock::new(Tables::compute);
 
+/// The colour of the sunlight on the ground where the sun's cosine is `sun_cosine`
+/// (as `Air::sunlight`), for what is lit outside the raster (buildings).
+pub(crate) fn ground_sunlight(sun_cosine: f32) -> Vec4 {
+    TABLES.sunlight(TABLES.to_top(GROUND_KM, sun_cosine.max(0.0)))
+}
+
 pub(crate) struct Tables {
     /// The distance from the top of the air to its horizon: √(top² − ground²).
     pub(crate) horizon: f32,
@@ -151,6 +176,9 @@ pub(crate) struct Tables {
     /// Sunlight scattered toward the eye along a ray, before the phase functions:
     /// air in the first three channels, haze (its red) in the fourth.
     scattering: Vec<Vec4>,
+    /// Light reaching a point after two or more bounces, per unit of scattering, by
+    /// height (rows) and sun cosine (columns); only while the tables are computed.
+    multiple: Vec<Vec4>,
 }
 
 /// Air and haze density (relative to sea level) and ozone (relative to its layer's
@@ -254,6 +282,7 @@ impl Tables {
             noon: [1.0; 2],
             transmittance: Vec::new(),
             scattering: Vec::new(),
+            multiple: Vec::new(),
         };
         tables.transmittance = (0..TRANSMITTANCE_HEIGHTS * TRANSMITTANCE_ANGLES)
             .into_par_iter()
@@ -275,6 +304,15 @@ impl Tables {
             .collect();
         let noon = tables.transmittance[0];
         tables.noon = [noon.x / noon.y, noon.x / noon.z];
+        tables.multiple = (0..MULTIPLE_HEIGHTS * MULTIPLE_SUNS)
+            .into_par_iter()
+            .map(|index| {
+                let height =
+                    HEIGHT_KM * (index / MULTIPLE_SUNS) as f32 / (MULTIPLE_HEIGHTS - 1) as f32;
+                let mu_s = 2.0 * (index % MULTIPLE_SUNS) as f32 / (MULTIPLE_SUNS - 1) as f32 - 1.0;
+                tables.multiple_at(GROUND_KM + height, mu_s)
+            })
+            .collect();
         let views = SCATTERING_VIEWS / 2;
         tables.scattering = (0..SCATTERING_HEIGHTS * SCATTERING_VIEWS * SCATTERING_SUNS)
             .into_par_iter()
@@ -350,11 +388,13 @@ impl Tables {
             distance_to_top(r, mu)
         };
         let step = length / SCATTERING_STEPS as f32;
-        let (mut air, mut haze) = (Vec4::ZERO, 0.0);
+        let (mut air, mut haze, mut multiple) = (Vec4::ZERO, 0.0, Vec4::ZERO);
+        let rayleigh = Vec4::from((glam::Vec3::from(RAYLEIGH_SCATTERING_PER_KM), 0.0));
         for index in 0..=SCATTERING_STEPS {
             let d = step * index as f32;
             let (r_d, _, mu_s_d) = along(r, mu, mu_s, nu, d);
-            let light = self.between(r, mu, d, to_ground) * self.to_sun(r_d, mu_s_d);
+            let crossed = self.between(r, mu, d, to_ground);
+            let light = crossed * self.to_sun(r_d, mu_s_d);
             let (air_density, haze_density, _) = densities(r_d - GROUND_KM);
             let weight = if index == 0 || index == SCATTERING_STEPS {
                 0.5
@@ -363,13 +403,107 @@ impl Tables {
             };
             air += light * (air_density * weight);
             haze += light.x * haze_density * weight;
+            if !self.multiple.is_empty() {
+                let scattering =
+                    rayleigh * air_density + Vec4::splat(MIE_SCATTERING_PER_KM * haze_density);
+                multiple += crossed * scattering * self.multiple(r_d, mu_s_d) * weight;
+            }
         }
         let [red, green, blue] = RAYLEIGH_SCATTERING_PER_KM;
+        // Light from many bounces comes from all around: the table's entries are
+        // drawn with the air's phase function (`radiance`), which this undoes.
+        let (air_phase, _) = phases(nu);
+        let multiple = multiple * (step / air_phase);
         Vec4::new(
-            air.x * red * step,
-            air.y * green * step,
-            air.z * blue * step,
+            air.x * red * step + multiple.x,
+            air.y * green * step + multiple.y,
+            air.z * blue * step + multiple.z,
             haze * MIE_SCATTERING_PER_KM * step,
+        )
+    }
+
+    /// The light reaching radius `r` (sun cosine `mu_s`) after two or more bounces,
+    /// per unit of scattering there (Hillaire 2020, his Ψ_ms): the light of second
+    /// order from all around, through an isotropic phase, divided by 1 − f_ms, the
+    /// share each further order keeps.
+    fn multiple_at(&self, r: f32, mu_s: f32) -> Vec4 {
+        let isotropic = 1.0 / (4.0 * std::f32::consts::PI);
+        let sun = glam::Vec3::new((1.0 - mu_s * mu_s).max(0.0).sqrt(), 0.0, mu_s);
+        let (mut second, mut kept) = (Vec4::ZERO, Vec4::ZERO);
+        for direction in 0..MULTIPLE_DIRECTIONS {
+            // Spread evenly over the sphere (a Fibonacci lattice).
+            let mu = 1.0 - 2.0 * (direction as f32 + 0.5) / MULTIPLE_DIRECTIONS as f32;
+            let turn = direction as f32 * 2.399_963;
+            let across = (1.0 - mu * mu).max(0.0).sqrt();
+            let view = glam::Vec3::new(across * turn.cos(), across * turn.sin(), mu);
+            let nu = view.dot(sun);
+            let to_ground = meets_ground(r, mu);
+            let length = if to_ground {
+                distance_to_ground(r, mu)
+            } else {
+                distance_to_top(r, mu)
+            };
+            let step = length / MULTIPLE_STEPS as f32;
+            let mut depth = Vec4::ZERO;
+            for index in 0..MULTIPLE_STEPS {
+                let d = step * (index as f32 + 0.5);
+                let (r_d, _, mu_s_d) = along(r, mu, mu_s, nu, d);
+                let (air, haze, ozone) = densities(r_d - GROUND_KM);
+                let scattering = Vec4::new(
+                    RAYLEIGH_SCATTERING_PER_KM[0] * air + MIE_SCATTERING_PER_KM * haze,
+                    RAYLEIGH_SCATTERING_PER_KM[1] * air + MIE_SCATTERING_PER_KM * haze,
+                    RAYLEIGH_SCATTERING_PER_KM[2] * air + MIE_SCATTERING_PER_KM * haze,
+                    0.0,
+                );
+                let extinction = Vec4::new(
+                    RAYLEIGH_SCATTERING_PER_KM[0] * air
+                        + MIE_EXTINCTION_PER_KM * haze
+                        + OZONE_ABSORPTION_PER_KM[0] * ozone,
+                    RAYLEIGH_SCATTERING_PER_KM[1] * air
+                        + MIE_EXTINCTION_PER_KM * haze
+                        + OZONE_ABSORPTION_PER_KM[1] * ozone,
+                    RAYLEIGH_SCATTERING_PER_KM[2] * air
+                        + MIE_EXTINCTION_PER_KM * haze
+                        + OZONE_ABSORPTION_PER_KM[2] * ozone,
+                    0.0,
+                );
+                let middle = depth + extinction * (0.5 * step);
+                let crossed =
+                    Vec4::new((-middle.x).exp(), (-middle.y).exp(), (-middle.z).exp(), 0.0);
+                second += crossed * scattering * self.to_sun(r_d, mu_s_d) * (isotropic * step);
+                kept += crossed * scattering * step;
+                depth += extinction * step;
+            }
+            if to_ground {
+                let crossed = Vec4::new((-depth.x).exp(), (-depth.y).exp(), (-depth.z).exp(), 0.0);
+                let (_, _, mu_s_g) = along(r, mu, mu_s, nu, length);
+                second += crossed
+                    * self.to_sun(GROUND_KM, mu_s_g)
+                    * (mu_s_g.max(0.0) * GROUND_ALBEDO / std::f32::consts::PI);
+            }
+        }
+        // The means over the sphere, each direction weighed by the isotropic phase.
+        let directions = MULTIPLE_DIRECTIONS as f32;
+        let (second, kept) = (second / directions, kept / directions);
+        let most = Vec4::splat(0.99);
+        second / (Vec4::ONE - kept.min(most))
+    }
+
+    /// The multiple-scattering table's entry at radius `r` and sun cosine `mu_s`.
+    fn multiple(&self, r: f32, mu_s: f32) -> Vec4 {
+        let (height, height_step) = cell(
+            (r - GROUND_KM) / HEIGHT_KM * (MULTIPLE_HEIGHTS - 1) as f32,
+            MULTIPLE_HEIGHTS,
+        );
+        let (sun, sun_step) = cell(
+            (mu_s + 1.0) * 0.5 * (MULTIPLE_SUNS - 1) as f32,
+            MULTIPLE_SUNS,
+        );
+        let at = |height: usize, sun: usize| self.multiple[height * MULTIPLE_SUNS + sun];
+        lerp(
+            lerp(at(height, sun), at(height, sun + 1), sun_step),
+            lerp(at(height + 1, sun), at(height + 1, sun + 1), sun_step),
+            height_step,
         )
     }
 
@@ -631,6 +765,28 @@ pub(crate) struct Frame {
     sun: Option<glam::DVec3>,
     sun_cosine: f32,
     inside: Option<Inside>,
+    /// The eye's adaptation to twilight, on the air's light (`adaptation`).
+    adapt: Vec4,
+}
+
+/// How far the eye has adapted to twilight (0: day, 1: fully) for a camera `height_km`
+/// up where the sun's cosine is `sun_cosine`.
+fn adaptation_share(height_km: f32, sun_cosine: f32) -> f32 {
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let low = smooth(
+        (ADAPT_FROM_SUN_COSINE - sun_cosine) / (ADAPT_FROM_SUN_COSINE - ADAPT_TO_SUN_COSINE),
+    );
+    let [from, to] = ADAPT_FADE_KM;
+    low * (1.0 - smooth((height_km - from) / (to - from)))
+}
+
+/// The factor on the air's light for an adaptation `share`: brighter and bluer.
+fn adaptation(share: f32) -> Vec4 {
+    let tint = Vec4::ONE.lerp(Vec4::from((glam::Vec3::from(BLUE_HOUR), 1.0)), share);
+    tint * MAX_ADAPTATION.powf(share)
 }
 
 /// The tables at a camera inside the air.
@@ -715,6 +871,10 @@ impl Frame {
                 transmittance,
             }
         });
+        let adapt = match (&inside, sun) {
+            (Some(_), Some(_)) => adaptation(adaptation_share(radius_km - GROUND_KM, sun_cosine)),
+            _ => Vec4::ONE,
+        };
         Self {
             tables,
             radius_km,
@@ -722,6 +882,7 @@ impl Frame {
             sun,
             sun_cosine,
             inside,
+            adapt,
         }
     }
 
@@ -740,7 +901,7 @@ impl Frame {
             let nu = self.phase(direction, mu);
             let way = inside.way_out(self.tables, r, mu);
             return Some(Air {
-                scattered: radiance(inside.scattered(way, false, nu), nu),
+                scattered: radiance(inside.scattered(way, false, nu), nu) * self.adapt,
                 transmitted: inside.crossed(way),
                 sunlight: Vec4::ONE,
             });
@@ -818,7 +979,7 @@ impl Frame {
             near = (near - beyond * reached).max(Vec4::ZERO);
         }
         Air {
-            scattered: radiance(near, nu),
+            scattered: radiance(near, nu) * self.adapt,
             transmitted,
             sunlight: match self.sun {
                 Some(_) => tables.sunlight(tables.to_top(r_d, mu_s_d.max(0.0))),
@@ -912,6 +1073,29 @@ mod tests {
         // Along the horizon the sun is red: blue is all but gone.
         let low = TABLES.to_top(GROUND_KM, 0.0);
         assert!(low.x > 3.0 * low.y && low.z < 0.01, "{low:?}");
+    }
+
+    #[test]
+    #[ignore = "manual: prints twilight sky colours"]
+    fn twilight_sky_probe() {
+        for deg in [5.0f64, 0.0, -2.0, -4.0, -6.0, -9.0] {
+            let sun = deg.to_radians().sin();
+            for (name, side, up) in [
+                ("toward", 1.0, 0.03),
+                ("toward", 1.0, 0.3),
+                ("away", -1.0, 0.03),
+                ("away", -1.0, 0.3),
+                ("zenith", 1.0, 0.99),
+            ] {
+                let up: f64 = up;
+                let direction = DVec3::new(side * (1.0 - up * up).sqrt(), 0.0, up);
+                let air = frame(0.1, sun).sky(direction, up as f32).unwrap();
+                let c = tone(air.scattered * EXPOSURE);
+                let c = c.max(Vec4::ZERO);
+                let c = c.truncate().to_array().map(|v| (v.sqrt() * 255.0) as u8);
+                println!("sun {deg:>4}° {name:>6} up {up:.2}: {c:?}");
+            }
+        }
     }
 
     #[test]

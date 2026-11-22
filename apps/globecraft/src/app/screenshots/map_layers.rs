@@ -1370,3 +1370,175 @@ fn sunrise_shadow_screenshots() {
         .expect("save raster");
     }
 }
+
+/// GlobeCraft at the places and moments of Julien's Bing Maps sun recordings
+/// (2026-11-21): the standard to reach. Writes `bing-<view>.png`; `PROBE_ONLY`
+/// keeps the views whose name starts with it.
+#[test]
+#[ignore = "manual: needs network; compare with the Bing recordings"]
+fn bing_sun_comparison() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let only = std::env::var("PROBE_ONLY").unwrap_or_default();
+    // name, centre, altitude km, tilt, heading, Unix time
+    let views: [(&str, f64, f64, f64, f64, f64, f64); 15] = [
+        (
+            "nyc-skyline-0628",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_260_480.0,
+        ),
+        (
+            "nyc-skyline-0642",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_261_320.0,
+        ),
+        (
+            "nyc-skyline-0651",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_261_860.0,
+        ),
+        (
+            "nyc-skyline-1355",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_287_300.0,
+        ),
+        (
+            "nyc-skyline-1619",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_295_940.0,
+        ),
+        (
+            "nyc-skyline-1631",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_296_660.0,
+        ),
+        (
+            "nyc-midtown-0642",
+            40.752,
+            -73.985,
+            1.2,
+            70.0,
+            330.0,
+            1_795_261_320.0,
+        ),
+        (
+            "nyc-midtown-0651",
+            40.752,
+            -73.985,
+            1.2,
+            70.0,
+            330.0,
+            1_795_261_860.0,
+        ),
+        (
+            "nyc-midtown-0658",
+            40.752,
+            -73.985,
+            1.2,
+            70.0,
+            330.0,
+            1_795_262_280.0,
+        ),
+        (
+            "berlin-0719",
+            52.5208,
+            13.4094,
+            1.5,
+            72.0,
+            20.0,
+            1_795_241_940.0,
+        ),
+        (
+            "berlin-0742",
+            52.5208,
+            13.4094,
+            1.5,
+            72.0,
+            20.0,
+            1_795_243_320.0,
+        ),
+        (
+            "annapurna-0620",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_221_300.0,
+        ),
+        (
+            "annapurna-0635",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_222_200.0,
+        ),
+        (
+            "annapurna-0645",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_222_800.0,
+        ),
+        (
+            "annapurna-0700",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_223_700.0,
+        ),
+    ];
+    let mut h = harness(ThemePreference::Dark);
+    for layer in ["terrain", "buildings", "sunlight"] {
+        h.state_mut()
+            .run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect(layer);
+    }
+    for (name, lat, lon, alt, tilt, heading, time) in views {
+        if !name.starts_with(&only) {
+            continue;
+        }
+        let app = h.state_mut();
+        app.run(
+            "camera.set",
+            json!({"lat": lat, "lon": lon, "altitude_km": alt, "tilt_deg": tilt,
+                "heading_deg": heading}),
+        )
+        .expect("camera");
+        app.run("time.set", json!({"time": time})).expect("time");
+        settle(&mut h, 45.0);
+        save(&mut h, &dir, &format!("bing-{name}"));
+    }
+}

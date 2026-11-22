@@ -55,7 +55,7 @@ pub(super) fn pixels(
                                 &request.cfg,
                                 request.cfg.rel,
                                 &mut local,
-                                1.0,
+                                crate::Relief::FLAT,
                             )
                             .with_w(1.0)
                         } else {
