@@ -1,13 +1,15 @@
-//! The timeline's track (roadmap C4, laid out as ArcGIS Map Viewer's time slider): a
-//! span of time (`time.range`) with the app's time and the start of the window of
-//! events as round handles, the interval between filled, the span's ends as dates,
-//! dates under its ticks, and marks where dated data changes: Wayback releases with Wayback imagery,
-//! night-light editions with the night lights, and the stretch of kept clouds with
-//! the clouds. Dragging runs `time.set` and `time.window` as the bar's buttons do.
-//! With a loop (`time.loop`), a second row under the dates holds its two handles.
-use super::theme::{Tokens, regular, semibold};
+//! The timeline's track (roadmap C4; since 2026-11-22 after Bing Maps' sun slider):
+//! a span of time (`time.range`, a day by default: the place's own day), its line
+//! coloured by day and night at the place in view, with the app's time as a round
+//! handle holding the sun as it stands there, the window of events' start as a
+//! smaller one and the interval between filled, dates or times under its ticks, the
+//! real time as a thin mark, and marks where dated data changes: Wayback releases
+//! with Wayback imagery, night-light editions with the night lights, and the stretch
+//! of kept clouds with the clouds. Dragging runs `time.set` and `time.window` as the
+//! bar's buttons do. With a loop (`time.loop`), a row under the dates holds its two
+//! handles.
+use super::theme::{Tokens, regular};
 use crate::app::App;
-use crate::app::time::format_zoned;
 use eframe::egui::{self, Align2, Pos2, Rect, Sense, Ui, vec2};
 use globecraft_core::layers::MapLayer;
 use globecraft_core::time::{
@@ -16,20 +18,37 @@ use globecraft_core::time::{
 use globecraft_data::tiles::Provider;
 use serde_json::{Value, json};
 
-/// The track's rows from its top (points): the labels above, the line, the dates
-/// under the ticks.
-const TRACK_HEIGHT: f32 = 50.0;
-const LABEL_Y: f32 = 8.0;
-const LINE_Y: f32 = 25.0;
-const TICK_LABEL_Y: f32 = 42.0;
+/// The track's rows from its top (points): the marks, the line, the dates under the
+/// ticks.
+const TRACK_HEIGHT: f32 = 40.0;
+const LINE_Y: f32 = 15.0;
+const TICK_LABEL_Y: f32 = 32.0;
+/// Half the line's thickness, and half the real time's mark across it.
+const LINE_HALF: f32 = 2.5;
+const NOW_MARK_HALF: f32 = 7.0;
 /// Room between two tick dates.
 const TICK_LABEL_GAP: f32 = 10.0;
-const HANDLE_RADIUS: f32 = 7.0;
+/// The time's handle (it holds the sun) and the window of events' handle.
+const HANDLE_RADIUS: f32 = 11.0;
+const WINDOW_HANDLE_RADIUS: f32 = 6.0;
 const MARK_HEIGHT: f32 = 5.0;
+/// The line shows day and night across spans up to this many days, in pieces this
+/// many points long.
+const DAYLIGHT_SPAN_DAYS: f64 = 7.0;
+const DAYLIGHT_PIECE_POINTS: f32 = 3.0;
+/// The line's colours: night, the sun on the horizon, day; night past this cosine
+/// below the horizon (12°, nautical twilight's end), day above this one (10°).
+const NIGHT_COLOUR: [u8; 3] = [52, 66, 112];
+const HORIZON_COLOUR: [u8; 3] = [232, 130, 104];
+const DAY_COLOUR: [u8; 3] = [246, 204, 110];
+const TWILIGHT_COSINE: f64 = 0.208;
+const LOW_SUN_COSINE: f64 = 0.174;
+/// The handle shows the moon once the sun is this far down (its disc gone, 0.8°).
+const SUN_SET_COSINE: f64 = -0.014;
 /// The loop's row under the dates, while there is a loop: its height, the middle of
 /// its line from the track's top, and its handles' size.
 const LOOP_ROW_HEIGHT: f32 = 16.0;
-const LOOP_Y: f32 = TRACK_HEIGHT + 6.0;
+const LOOP_Y: f32 = TRACK_HEIGHT + 4.0;
 const LOOP_HANDLE: egui::Vec2 = vec2(7.0, 13.0);
 /// A time moved off the track brings it along, the time this share from its end.
 const REFOCUS_FROM_END: f64 = 0.2;
@@ -57,25 +76,32 @@ pub(super) fn track_end(unix: f64, now: f64, span: f64, kept: Option<f64>) -> f6
 }
 
 impl App {
-    /// Draws the track, `width` wide: the time (and the window of events) above its
-    /// middle, the span's start and end dates above its ends, the line with its
-    /// handles and marks, and dates under its ticks. Dragging fills `run`. Returns
-    /// where the track ends (kept in `TimelineState::track_end`).
+    /// Draws the track, `width` wide, its times in a zone `zone` seconds ahead of UTC:
+    /// the line coloured by the sun's height at the place in view (night, twilight,
+    /// day), ticks with their times or dates under it, the real time as a thin mark,
+    /// the marks of dated data, and the time's handle, which shows the sun as it
+    /// stands there (as Bing Maps' sun slider). A day's span is the place's own day,
+    /// midnight to midnight. Dragging or clicking fills `run`; the time under the
+    /// pointer shows beside it. Returns where the track ends while kept away from the
+    /// real time (`TimelineState::track_end`).
     pub(in crate::app) fn timeline_track(
         &self,
         ui: &mut Ui,
         width: f32,
-        unix: f64,
-        live: bool,
+        (unix, zone): (f64, f64),
         run: &mut Option<(&'static str, Value)>,
     ) -> Option<f64> {
         let t = Tokens::get(ui.ctx());
         let lang = self.lang;
         let now = globecraft_core::math::now_unix();
         let span = self.timeline.range_days * DAY_SECS;
-        let end = track_end(unix, now, span, self.timeline.track_end);
-        let start = end - span;
-        let mut kept_end = (end != now).then_some(end);
+        let (start, end, mut kept_end) = if span <= DAY_SECS {
+            let start = local_midnight(unix, zone);
+            (start, start + span, None)
+        } else {
+            let end = track_end(unix, now, span, self.timeline.track_end);
+            (end - span, end, (end != now).then_some(end))
+        };
         let looped = self.time.loop_range();
         let height = TRACK_HEIGHT
             + if looped.is_some() {
@@ -84,7 +110,14 @@ impl App {
                 0.0
             };
         let (rect, response) =
-            ui.allocate_exact_size(vec2(width.max(200.0), height), Sense::click_and_drag());
+            ui.allocate_exact_size(vec2(width.max(160.0), height), Sense::click_and_drag());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Slider,
+                true,
+                lang.text("timeline-track-help"),
+            )
+        });
         let line = Rect::from_min_max(
             Pos2::new(rect.left() + HANDLE_RADIUS, rect.top() + LINE_Y),
             Pos2::new(rect.right() - HANDLE_RADIUS, rect.top() + LINE_Y),
@@ -95,64 +128,45 @@ impl App {
             let at = start + f64::from((x - line.left()) / line.width().max(1.0)) * span;
             (at.clamp(start, end) / MINUTE_SECS).round() * MINUTE_SECS
         };
-        let painter = ui.painter_at(rect.expand(2.0));
+        let painter = ui.painter_at(rect.expand(HANDLE_RADIUS));
         let small = regular(10.5);
-        // Above: the span's ends, and the time (with the window of events) between.
-        let label_y = rect.top() + LABEL_Y;
-        // Dates, times and ticks in this computer's time zone (or UTC, as set): shifted by
-        // the offset of the time shown. shortcut: one offset for the whole span, so ticks
-        // across a daylight-saving change sit an hour off until the time moves past it.
-        let zone = self.time_zone_secs(unix);
-        painter.text(
-            Pos2::new(rect.left(), label_y),
-            Align2::LEFT_CENTER,
-            date_utc(start + zone),
-            small.clone(),
-            t.text_dim,
-        );
-        painter.text(
-            Pos2::new(rect.right(), label_y),
-            Align2::RIGHT_CENTER,
-            date_utc(end + zone),
-            small.clone(),
-            t.text_dim,
-        );
-        let window = self.time.window_secs().filter(|secs| *secs > 0.0);
-        let shown = match window {
-            Some(secs) => format!(
-                "{} – {}",
-                short_utc(unix - secs + zone),
-                format_zoned(unix, zone)
-            ),
-            None => format_zoned(unix, zone),
-        };
-        let shown = if live {
-            format!("{shown} · {}", lang.text("timeline-live"))
+        let place = globecraft_core::math::ll_to_v3(self.cam.lat, self.cam.lon);
+        // The line: day and night at the place in view, while the span shows them.
+        if span <= DAYLIGHT_SPAN_DAYS * DAY_SECS {
+            let pieces = (line.width() / DAYLIGHT_PIECE_POINTS).ceil().max(1.0) as usize;
+            for piece in 0..pieces {
+                let (a, b) = (
+                    piece as f32 / pieces as f32,
+                    (piece + 1) as f32 / pieces as f32,
+                );
+                let middle = start + f64::from((a + b) / 2.0) * span;
+                let colour = daylight_colour(sun_cosine(place, middle));
+                painter.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(line.left() + a * line.width(), line.top() - LINE_HALF),
+                        Pos2::new(line.left() + b * line.width() + 0.5, line.top() + LINE_HALF),
+                    ),
+                    0.0,
+                    colour,
+                );
+            }
         } else {
-            shown
-        };
-        painter.text(
-            Pos2::new(rect.center().x, label_y),
-            Align2::CENTER_CENTER,
-            shown,
-            semibold(12.5),
-            t.text,
-        );
-        painter.line_segment(
-            [line.left_top(), line.right_top()],
-            egui::Stroke::new(3.0, t.text_dim.gamma_multiply(0.35)),
-        );
-        // Ticks across the line, dates under them where there is room.
+            painter.line_segment(
+                [line.left_top(), line.right_top()],
+                egui::Stroke::new(2.0 * LINE_HALF, t.text_dim.gamma_multiply(0.35)),
+            );
+        }
+        // Ticks under the line, their times or dates under them where there is room.
         let mut free_from = f32::MIN;
         for at in tick_times(start + zone, end + zone, span) {
             let at = at - zone;
             let x = x_of(at);
             painter.line_segment(
                 [
-                    Pos2::new(x, line.top() - 4.0),
-                    Pos2::new(x, line.top() + 4.0),
+                    Pos2::new(x, line.top() + LINE_HALF + 1.0),
+                    Pos2::new(x, line.top() + LINE_HALF + 4.0),
                 ],
-                egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.6)),
+                egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.7)),
             );
             let label = tick_label(at + zone, span);
             let label_w = super::widgets::text_w(ui, &label, small.clone());
@@ -170,11 +184,11 @@ impl App {
                 free_from = x + label_w / 2.0 + TICK_LABEL_GAP;
             }
         }
-        // Where dated data changes, just under the line.
-        let below = line.top() + 6.0;
+        // Where dated data changes, just over the line.
+        let above = line.top() - LINE_HALF - 1.0;
         let mark = |x: f32, colour: egui::Color32| {
             painter.line_segment(
-                [Pos2::new(x, below), Pos2::new(x, below + MARK_HEIGHT)],
+                [Pos2::new(x, above - MARK_HEIGHT), Pos2::new(x, above)],
                 egui::Stroke::new(1.5, colour),
             );
         };
@@ -202,32 +216,59 @@ impl App {
         if self.layer(MapLayer::Clouds) {
             let from = globecraft_data::live_maps::CLOUDS_KEPT_SINCE_UNIX.max(start);
             if from < end {
-                let band = Rect::from_min_max(
-                    Pos2::new(x_of(from), line.top() - 1.5),
-                    Pos2::new(x_of(end), line.top() + 1.5),
-                );
                 painter.rect_filled(
-                    band,
+                    Rect::from_min_max(
+                        Pos2::new(x_of(from), above - 2.0),
+                        Pos2::new(x_of(end), above - 0.5),
+                    ),
                     1.0,
                     egui::Color32::from_gray(200).gamma_multiply(0.45),
                 );
             }
         }
-        // The window of events between its two handles, and the time's.
+        // The real time: a thin mark across the line.
+        if (start..=end).contains(&now) {
+            let x = x_of(now);
+            painter.line_segment(
+                [
+                    Pos2::new(x, line.top() - NOW_MARK_HALF),
+                    Pos2::new(x, line.top() + NOW_MARK_HALF),
+                ],
+                egui::Stroke::new(1.5, t.text),
+            );
+        }
+        // The window of events between its handle and the time's.
         let time_x = x_of(unix);
+        let window = self.time.window_secs().filter(|secs| *secs > 0.0);
         let window_x = window.map(|secs| x_of(unix - secs));
         if let Some(window_x) = window_x {
+            // Over the line, see-through: day and night still show under it.
             painter.rect_filled(
                 Rect::from_min_max(
-                    Pos2::new(window_x, line.top() - 2.5),
-                    Pos2::new(time_x, line.top() + 2.5),
+                    Pos2::new(window_x, line.top() - LINE_HALF - 1.0),
+                    Pos2::new(time_x, line.top() + LINE_HALF + 1.0),
                 ),
                 2.0,
-                t.accent,
+                t.accent.gamma_multiply(0.45),
             );
-            handle(&painter, &t, Pos2::new(window_x, line.top()));
+            painter.circle_filled(
+                Pos2::new(window_x, line.top()),
+                WINDOW_HANDLE_RADIUS,
+                t.pane,
+            );
+            painter.circle_stroke(
+                Pos2::new(window_x, line.top()),
+                WINDOW_HANDLE_RADIUS - 1.0,
+                egui::Stroke::new(2.0, t.accent),
+            );
         }
-        handle(&painter, &t, Pos2::new(time_x, line.top()));
+        let lit = self.layer(MapLayer::Sunlight);
+        sun_handle(
+            &painter,
+            &t,
+            Pos2::new(time_x, line.top()),
+            lit.then(|| sun_cosine(place, unix)),
+        );
         // A drag holds the handle nearer where it began; a click sets the time.
         let id = response.id.with("held");
         if response.drag_started()
@@ -254,10 +295,10 @@ impl App {
                 _ => ("time.set", json!({ "time": time })),
             });
             // Held on the track: it does not move under the pointer.
-            kept_end = Some(end);
+            kept_end = kept_end.map(|_| end);
         }
         if let Some((from, to)) = looped {
-            // The loop's row: its stretch and a handle at each end, over the track.
+            // The loop's row: its stretch and a handle at each end, under the track.
             let y = rect.top() + LOOP_Y;
             let (from_x, to_x) = (x_of(from), x_of(to));
             painter.line_segment(
@@ -283,14 +324,97 @@ impl App {
                     && let Some(p) = held.interact_pointer_pos()
                 {
                     *run = Some(("time.loop", json!({"from": time_at(p.x), "to": other})));
-                    kept_end = Some(end);
+                    kept_end = kept_end.map(|_| end);
                 }
                 held.on_hover_text(lang.text("timeline-loop-track-help"))
                     .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             }
         }
-        response.on_hover_text(lang.text("timeline-track-help"));
+        // The time under the pointer, beside it.
+        if let Some(at) = response.hover_pos() {
+            let time = time_at(at.x);
+            response.on_hover_text_at_pointer(format!(
+                "{} {}",
+                date_utc(time + zone),
+                &format_utc(time + zone)[11..16]
+            ));
+        }
         kept_end
+    }
+}
+
+/// The start of the day `unix` falls in, in a zone `zone` seconds ahead of UTC.
+pub(super) fn local_midnight(unix: f64, zone: f64) -> f64 {
+    ((unix + zone) / DAY_SECS).floor() * DAY_SECS - zone
+}
+
+/// The cosine of the sun's angle from the vertical at `place` (a unit vector) at `unix`.
+pub(super) fn sun_cosine(place: glam::DVec3, unix: f64) -> f64 {
+    let (lat, lon) = globecraft_core::math::subsolar(unix);
+    globecraft_core::math::ll_to_v3(lat, lon).dot(place)
+}
+
+/// The track's colour where the sun's cosine is `cosine`: night blue, a warm glow
+/// through twilight and at the horizon, pale gold by day.
+fn daylight_colour(cosine: f64) -> egui::Color32 {
+    let mix = |a: [u8; 3], b: [u8; 3], t: f64| {
+        let t = t.clamp(0.0, 1.0);
+        let [r, g, b] = std::array::from_fn(|i| {
+            (f64::from(a[i]) + (f64::from(b[i]) - f64::from(a[i])) * t).round() as u8
+        });
+        egui::Color32::from_rgb(r, g, b)
+    };
+    if cosine < 0.0 {
+        mix(NIGHT_COLOUR, HORIZON_COLOUR, 1.0 + cosine / TWILIGHT_COSINE)
+    } else {
+        mix(HORIZON_COLOUR, DAY_COLOUR, cosine / LOW_SUN_COSINE)
+    }
+}
+
+/// The time's handle: round, with the sun as it stands at the place (rising or
+/// setting on the horizon, up, or the moon at night) while the sun lights the globe.
+fn sun_handle(painter: &egui::Painter, t: &Tokens, at: Pos2, cosine: Option<f64>) {
+    painter.circle_filled(at, HANDLE_RADIUS, t.pane);
+    painter.circle_stroke(at, HANDLE_RADIUS - 1.0, egui::Stroke::new(2.0, t.accent));
+    let Some(cosine) = cosine else {
+        painter.circle_filled(at, 3.0, t.accent);
+        return;
+    };
+    let sun = egui::Color32::from_rgb(245, 180, 60);
+    if cosine < SUN_SET_COSINE {
+        // A crescent: a disc with a pane-coloured one over its side.
+        painter.circle_filled(at, 4.5, egui::Color32::from_rgb(200, 210, 235));
+        painter.circle_filled(at + vec2(2.2, -1.6), 4.0, t.pane);
+        return;
+    }
+    let low = cosine < LOW_SUN_COSINE;
+    // On the horizon only its upper half shows, over a line.
+    let centre = if low { at + vec2(0.0, 2.5) } else { at };
+    for ray in 0..8 {
+        let angle = (ray as f32 * 45.0).to_radians();
+        let direction = vec2(angle.cos(), -angle.sin());
+        if low && direction.y > 0.1 {
+            continue;
+        }
+        painter.line_segment(
+            [centre + direction * 5.0, centre + direction * 7.5],
+            egui::Stroke::new(1.3, sun),
+        );
+    }
+    if low {
+        let half: Vec<Pos2> = (0..=12)
+            .map(|step| {
+                let angle = std::f32::consts::PI * step as f32 / 12.0;
+                centre + vec2(angle.cos(), -angle.sin()) * 3.6
+            })
+            .collect();
+        painter.add(egui::Shape::convex_polygon(half, sun, egui::Stroke::NONE));
+        painter.line_segment(
+            [centre + vec2(-6.5, 0.8), centre + vec2(6.5, 0.8)],
+            egui::Stroke::new(1.3, t.text),
+        );
+    } else {
+        painter.circle_filled(centre, 3.6, sun);
     }
 }
 
@@ -298,12 +422,6 @@ impl App {
 pub(super) fn loop_around(unix: f64, span: f64) -> (f64, f64) {
     let half = span / 8.0;
     (unix - half, unix + half)
-}
-
-/// A handle on the track, round as Map Viewer's thumbs.
-fn handle(painter: &egui::Painter, t: &Tokens, at: Pos2) {
-    painter.circle_filled(at, HANDLE_RADIUS, t.pane);
-    painter.circle_stroke(at, HANDLE_RADIUS - 1.0, egui::Stroke::new(2.5, t.accent));
 }
 
 /// A tick's date as short as the span allows: the hour across a day or two, the month
@@ -353,11 +471,6 @@ fn tick_times(start: f64, end: f64, span: f64) -> Vec<f64> {
             (year, month) = (year + (month - 1) / 12, (month - 1) % 12 + 1);
         }
     }
-}
-
-/// Date and time without the zone, for the window's start.
-fn short_utc(time: f64) -> String {
-    format_utc(time)[..16].to_owned()
 }
 
 /// One step back or forward on the timeline from `unix`: the track's next tick that

@@ -757,6 +757,7 @@ impl eframe::App for App {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }
         self.log_downloads();
+        self.poll_screen_capture(&ui.ctx().clone());
         self.poll_still_shot();
         self.follow_ground(ui);
         profile_checkpoint!(watchdog, "ui.slow.globe");

@@ -456,7 +456,7 @@ impl App {
 
         // Google Earth style navigation controls (rotate / move / zoom)
         let dt_nav = super::frame_timing::navigation_delta_secs(ui);
-        if self.nav_controls(ui, viewport, dt_nav) {
+        if !self.capturing_globe() && self.nav_controls(ui, viewport, dt_nav) {
             self.touch();
             ui.request_repaint();
         }
@@ -465,7 +465,11 @@ impl App {
         // another size (shown while the pane slides or the window is resized) reaches
         // under the pane or past the window's edge, and the navigator vanished under
         // the pane until the next frame came (user's recording, 2026-11-21).
-        let timeline = self.timeline_bar(&ui.ctx().clone(), viewport);
+        let timeline = if self.capturing_globe() {
+            None
+        } else {
+            self.timeline_bar(&ui.ctx().clone(), viewport)
+        };
         self.legend_watch();
         super::ui::surface::remember_globe_rect(ui.ctx(), viewport);
 

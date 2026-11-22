@@ -262,7 +262,8 @@ impl App {
         let wake = ctx.clone();
         self.live.time_zones.update(
             &self.runtime,
-            earth && self.layer(MapLayer::TimeZones),
+            // The timeline shows the time of the place in view.
+            earth && (self.layer(MapLayer::TimeZones) || self.timeline.open),
             move || wake.request_repaint(),
         );
     }

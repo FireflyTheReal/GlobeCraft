@@ -58,6 +58,18 @@ impl Zone {
         self.bounds
     }
 
+    /// How far this zone's clock is ahead of UTC at `unix` (seconds), and its
+    /// lettered name then (`CET`), when it has one.
+    pub fn offset_at(&self, unix: f64) -> Option<(i32, Option<String>)> {
+        let tz = self.tz?;
+        let at = tz.timestamp_opt(unix.floor() as i64, 0).single()?;
+        let name = at
+            .offset()
+            .abbreviation()
+            .filter(|name| name.chars().all(|c| c.is_ascii_alphabetic()));
+        Some((at.offset().fix().local_minus_utc(), name.map(str::to_owned)))
+    }
+
     /// The local time here at `unix` (seconds since 1970).
     pub fn local_time(&self, unix: f64) -> Option<LocalTime> {
         let tz = self.tz?;

@@ -33,6 +33,8 @@ pub(super) struct FrameState {
     pub(super) scale_bar: globecraft_render::scale_bar::ScaleBarCache,
     /// A high-quality screenshot rendering in the background.
     pub(super) still_shot: Option<still_shot::StillShot>,
+    /// A Normal screenshot waiting to capture the screen.
+    pub(super) capture: Option<still_shot::ScreenCapture>,
     /// The streaming diagnostics overlay shows (`ui.tileDiagnostics`; not saved).
     pub(super) diagnostics: bool,
     pub(super) download_meter: ui::tile_diagnostics::DownloadMeter,
@@ -70,6 +72,7 @@ impl FrameState {
             window_resized_at: None,
             scale_bar: Default::default(),
             still_shot: None,
+            capture: None,
             diagnostics: false,
             download_meter: Default::default(),
             download_log: DownloadLog {

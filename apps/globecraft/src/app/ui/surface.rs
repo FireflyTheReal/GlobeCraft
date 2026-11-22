@@ -162,7 +162,7 @@ impl<'a> Surface<'a> {
 }
 
 /// Where the globe is drawn this frame (see `remember_globe_rect`).
-fn globe_rect(ctx: &egui::Context) -> Option<Rect> {
+pub(in crate::app) fn globe_rect(ctx: &egui::Context) -> Option<Rect> {
     ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(GLOBE_RECT_KEY)))
 }
 

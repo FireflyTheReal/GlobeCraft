@@ -38,11 +38,6 @@ impl ScreenshotQuality {
             Self::ProMax => 8,
         }
     }
-    /// Whether imagery fades between levels as on screen. The larger qualities show
-    /// one level per pixel, so the picture depends only on the downloaded tiles.
-    pub fn level_blend(self) -> bool {
-        self == Self::Normal
-    }
 }
 
 #[cfg(test)]
@@ -60,7 +55,5 @@ mod tests {
         }
         assert_eq!(ScreenshotQuality::Normal.render_scale(), 1);
         assert_eq!(ScreenshotQuality::ProMax.render_scale(), 8);
-        assert!(ScreenshotQuality::Normal.level_blend());
-        assert!(!ScreenshotQuality::Plus.level_blend());
     }
 }

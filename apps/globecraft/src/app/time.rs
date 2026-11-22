@@ -29,6 +29,8 @@ pub(super) struct TimelineState {
     /// is away from it (Unix seconds; `None`: at the real time).
     pub(super) range_days: f64,
     pub(super) track_end: Option<f64>,
+    /// The bar is folded down to the sun, play and the time.
+    pub(super) folded: bool,
 }
 
 impl Default for TimelineState {
@@ -37,8 +39,10 @@ impl Default for TimelineState {
             open: false,
             speed: HOUR_SECS,
             imagery: (0.0, std::time::Instant::now()),
-            range_days: 7.0,
+            // A day, as Bing Maps' sun slider: the most used span, the others in the menu.
+            range_days: 1.0,
             track_end: None,
+            folded: false,
         }
     }
 }
@@ -246,6 +250,31 @@ impl App {
 }
 
 impl App {
+    /// The time zone of the place in view at `unix` (as Bing Maps' time bar): how far
+    /// its clock is ahead of UTC and its name (`EST`, else `UTC−5`). This computer's
+    /// zone until the zones are loaded (and away from any zone); UTC when times show in
+    /// UTC.
+    pub(super) fn place_zone(&self, unix: f64) -> (f64, String) {
+        if self.settings.utc_times {
+            return (0.0, zone_label(0.0));
+        }
+        let zones = self.live.time_zones.zones();
+        match zones
+            .as_ref()
+            .and_then(|zones| zones.zone_at(self.cam.lat, self.cam.lon))
+            .and_then(|zone| zone.offset_at(unix))
+        {
+            Some((secs, name)) => {
+                let secs = f64::from(secs);
+                (secs, name.unwrap_or_else(|| zone_label(secs)))
+            }
+            None => {
+                let secs = self.time_zone_secs(unix);
+                (secs, zone_label(secs))
+            }
+        }
+    }
+
     /// How far this computer's clock is ahead of UTC at `unix`, or 0 when times show in UTC.
     pub(super) fn time_zone_secs(&self, unix: f64) -> f64 {
         if self.settings.utc_times {
@@ -259,12 +288,6 @@ impl App {
             )
         })
     }
-}
-
-/// `2026-11-20 23:28 UTC+1` for a moment `zone_secs` ahead of UTC, or `… UTC` at 0.
-pub(super) fn format_zoned(unix: f64, zone_secs: f64) -> String {
-    let utc = globecraft_core::time::format_utc(unix + zone_secs);
-    format!("{} {}", &utc[..16], zone_label(zone_secs))
 }
 
 /// `UTC`, `UTC+1`, `UTC−3` or `UTC+5:30`.
@@ -287,14 +310,10 @@ mod zone_tests {
     use super::*;
 
     #[test]
-    fn zoned_times_name_their_offset() {
-        const WALL: f64 = 1_793_785_080.0; // 2026-11-04 09:38 UTC
-        assert_eq!(format_zoned(WALL, 0.0), "2026-11-04 09:38 UTC");
-        assert_eq!(format_zoned(WALL, 3600.0), "2026-11-04 10:38 UTC+1");
-        assert_eq!(format_zoned(WALL, -3.0 * 3600.0), "2026-11-04 06:38 UTC−3");
-        assert_eq!(
-            format_zoned(WALL, 5.5 * 3600.0),
-            "2026-11-04 15:08 UTC+5:30"
-        );
+    fn zones_name_their_offset() {
+        assert_eq!(zone_label(0.0), "UTC");
+        assert_eq!(zone_label(3600.0), "UTC+1");
+        assert_eq!(zone_label(-3.0 * 3600.0), "UTC−3");
+        assert_eq!(zone_label(5.5 * 3600.0), "UTC+5:30");
     }
 }
