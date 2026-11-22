@@ -134,3 +134,13 @@ with the sun (`pixel::Daylight`, test `lit_and_shaded_ground_brighten_with_the_s
 shade at 65 % of light by day, the sun's colour no longer squared, a slope's gain at
 most 1.5, and the blue-hour exposure only with the camera in the air. Every fixture
 with the sun changed.
+
+## First light, light on the walls, air toward the horizon (2026-11-22, 10:59 note)
+
+Daylight is now the sky's light plus the sun's on a surface facing it, by the cosine
+(no floor, no cap): at sunrise the sun's is strong against the sky's, so tops and
+walls facing it take the first light while flat ground stays blue (`pixel::Daylight`,
+`SHADE_RISE`, `DIRECT_RISE`). With the camera low in the air, the air toward the ground
+is integrated along the ray per frame (`atmosphere/aerial.rs`) instead of the tables'
+subtraction, which put a band of light along distant ground under the horizon. Every
+fixture with the sun changed.

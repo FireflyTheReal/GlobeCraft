@@ -185,42 +185,52 @@ pub(super) fn surface<const ELLIPSOID: bool>(
     }
 }
 /// The daylight on the ground where the sun stands `sun_cosine` (the sine of its
-/// height) above the horizon, in two parts: the sky's, cool, and the sun's direct
-/// light, which ridges and blocks can hide and whose colour the air gives
-/// (`atmosphere::Air::sunlight`). Two brightness curves set them, both rising with the
-/// sun and meeting below the horizon: `lit_level` for ground the sun lights at least
-/// at `DIRECT_FLOOR_COSINE`, the shaded level for ground only the sky lights (`SHADE_DAY`
-/// of it by day). The direct part is their difference, so it comes in with the sun and
-/// nothing dips across sunset. `eye` (0–1) is how far the eye is adapted to twilight
-/// (`atmosphere::eye_weight`). The GPU's `overview.wgsl` does the same.
+/// height) above the horizon, in two parts: the sky's, cool, on every surface by the
+/// share of the sky it faces, and the sun's, coloured by the air it crossed
+/// (`atmosphere::Air::sunlight`), by the cosine between a surface and the sun and the
+/// share of the sun not hidden. Both only rise with the sun. At sunrise the sun's
+/// light on a surface facing it (`DIRECT_RISE`) is strong against the sky's
+/// (`SHADE_RISE`): tops and walls facing it take the first light while flat ground,
+/// which it meets at a grazing angle, stays blue; as the sun climbs the sky's light
+/// grows and the sun's eases, so midday contrast is low (`SHADE_DAY`). `eye` (0–1) is how
+/// far the eye is adapted to twilight (`atmosphere::eye_weight`): it keeps the blue
+/// hour readable. The GPU's `overview.wgsl` does the same.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Daylight {
-    /// Lit ground's brightness: night's floor to one by day.
+    /// Flat ground's brightness in the open: night's floor to one at noon.
     pub(crate) exposure: f32,
     /// 0 by day, 1 past twilight (the night lights' share).
     pub(crate) darkness: f32,
-    /// The sky's light, coloured, at the shaded level's brightness.
+    /// The sky's light, coloured.
     pub(crate) sky: Vec4,
-    /// The direct sun's light where it meets a surface at `DIRECT_FLOOR_COSINE` or
-    /// more, before its colour.
+    /// The sun's light on a surface facing it, before its colour.
     pub(crate) direct: f32,
-    /// Flat ground's direct light against that (under 1 with the sun low).
-    pub(crate) flat_gain: f32,
-    pub(crate) sun_cosine: f64,
+    /// The cosine between flat ground and the sun (none below the horizon).
+    pub(crate) flat_cosine: f32,
 }
 
 impl Daylight {
     pub(crate) fn at(sun_cosine: f64, eye: f32) -> Self {
-        let lit = lit_level(sun_cosine, eye);
-        let shaded = if sun_cosine <= SUN_RISE_START_COSINE {
-            lit
+        let night_end = TWILIGHT_OFFSET + (EYE_TWILIGHT_COSINE - TWILIGHT_OFFSET) * f64::from(eye);
+        let shade = if sun_cosine <= SUN_RISE_START_COSINE {
+            NIGHT_BRIGHTNESS
+                + (SHADE_RISE - NIGHT_BRIGHTNESS)
+                    * smooth((sun_cosine + night_end) / (SUN_RISE_START_COSINE + night_end))
         } else {
-            let risen = lit_level(SUN_RISE_START_COSINE, eye);
-            let day = smooth(
-                (sun_cosine - SUN_RISE_START_COSINE) / (SKY_DAY_COSINE - SUN_RISE_START_COSINE),
-            );
-            (risen + (SHADE_DAY - risen) * day).min(lit)
+            SHADE_RISE
+                + (SHADE_DAY - SHADE_RISE)
+                    * smooth(
+                        (sun_cosine - SUN_RISE_START_COSINE)
+                            / (SKY_DAY_COSINE - SUN_RISE_START_COSINE),
+                    )
         };
+        let risen = smooth(
+            (sun_cosine - SUN_RISE_START_COSINE) / (SUN_RISE_FULL_COSINE - SUN_RISE_START_COSINE),
+        );
+        let day_direct = 1.0 - SHADE_DAY;
+        let direct = risen
+            * (DIRECT_RISE + (day_direct - DIRECT_RISE) * smooth(sun_cosine / SKY_DAY_COSINE));
+        let flat_cosine = sun_cosine.max(0.0) as f32;
         let colour = glam::Vec3::from(TWILIGHT_SKY).lerp(
             glam::Vec3::from(DAY_SKY),
             smooth(sun_cosine / SKY_DAY_COSINE),
@@ -228,33 +238,19 @@ impl Daylight {
         // The colour carries no brightness of its own.
         let colour = colour / colour.dot(glam::Vec3::from(LUMINANCE));
         Self {
-            exposure: lit,
+            exposure: shade + direct * flat_cosine,
             darkness: 1.0 - smooth((sun_cosine + TWILIGHT_OFFSET) / TWILIGHT_WIDTH),
-            sky: Vec4::from((colour * shaded, 0.0)),
-            direct: lit - shaded,
-            flat_gain: Self::gain(sun_cosine, sun_cosine),
-            sun_cosine,
+            sky: Vec4::from((colour * shade, 0.0)),
+            direct,
+            flat_cosine,
         }
     }
-    /// A surface whose normal meets the sun at `cosine` against flat ground (where it
-    /// meets it at `flat`): one on flat ground by day, more on a slope facing a low sun
-    /// (up to `MAX_DIRECT_GAIN`), none on one turned away.
-    pub(crate) fn gain(cosine: f64, flat: f64) -> f32 {
-        (cosine / flat.max(DIRECT_FLOOR_COSINE)).clamp(0.0, MAX_DIRECT_GAIN) as f32
+    /// The light on a surface lit by the sun in `sun` colour whose normal meets the sun
+    /// at `cosine`, `seen` the share of the sun not hidden (shadows), facing `sky` of
+    /// the sky.
+    pub(crate) fn light(&self, sun: Vec4, cosine: f32, seen: f32, sky: f32) -> Vec4 {
+        self.sky * sky + sun * (self.direct * cosine.max(0.0) * seen)
     }
-    /// The light on a surface lit by the sun in `sun` colour, `gain` times the direct
-    /// light, `seen` the share of the sun not hidden (shadows), facing `sky` of the sky.
-    pub(crate) fn light(&self, sun: Vec4, gain: f32, seen: f32, sky: f32) -> Vec4 {
-        self.sky * sky + sun * (self.direct * gain * seen)
-    }
-}
-
-/// Lit ground's brightness where the sun's sine is `sun_cosine`: the eye adapted to
-/// twilight (`eye` 1) keeps the blue hour readable; from space (0) twilight is short.
-pub(crate) fn lit_level(sun_cosine: f64, eye: f32) -> f32 {
-    let short = smooth((sun_cosine + TWILIGHT_OFFSET) / TWILIGHT_WIDTH);
-    let adapted = smooth((sun_cosine + EXPOSURE_OFFSET) / EXPOSURE_WIDTH);
-    NIGHT_BRIGHTNESS + DAY_BRIGHTNESS_RANGE * (short + (adapted - short) * eye)
 }
 
 fn smooth(x: f64) -> f32 {
@@ -510,10 +506,9 @@ mod tests {
 mod daylight_tests {
     use super::Daylight;
 
-    /// Lit and shaded ground both only brighten as the sun rises, from space and with
-    /// the eye adapted, so nothing is darker just before sunset than just after (the
-    /// band past the terminator, Julien's screenshot of 2026-11-22), and shade never
-    /// outshines light.
+    /// Flat ground in the open and in shade both only brighten as the sun rises, from
+    /// space and with the eye adapted, so nothing is darker just before sunset than
+    /// just after (the band past the terminator, Julien's screenshot of 2026-11-22).
     #[test]
     fn lit_and_shaded_ground_brighten_with_the_sun() {
         for eye in [0.0, 0.5, 1.0] {
@@ -525,7 +520,8 @@ mod daylight_tests {
                     .sky
                     .truncate()
                     .dot(glam::Vec3::from(crate::tuning::LUMINANCE));
-                let lit = shaded + day.direct;
+                // Flat ground in the open: its shade and the sun's light at its angle.
+                let lit = day.exposure;
                 assert!(day.direct >= 0.0, "eye {eye}, sun {sun}");
                 if let Some((last_lit, last_shaded)) = last {
                     assert!(lit >= last_lit - 1e-5, "lit dips: eye {eye}, sun {sun}");
@@ -540,6 +536,22 @@ mod daylight_tests {
             let noon = Daylight::at(1.0, eye);
             assert!((noon.exposure - 1.0).abs() < 1e-5);
             assert!((noon.direct - (1.0 - crate::tuning::SHADE_DAY)).abs() < 1e-4);
+            // The first light: a top facing the rising sun outshines its shade more
+            // than twice over, and nothing in the open burns out.
+            let rise = Daylight::at(2f64.to_radians().sin(), eye);
+            let shade = rise
+                .sky
+                .truncate()
+                .dot(glam::Vec3::from(crate::tuning::LUMINANCE));
+            assert!(shade + rise.direct > 2.2 * shade, "eye {eye}");
+            for step in 0..=90 {
+                let day = Daylight::at(f64::from(step).to_radians().sin(), eye);
+                let shade = day
+                    .sky
+                    .truncate()
+                    .dot(glam::Vec3::from(crate::tuning::LUMINANCE));
+                assert!(shade + day.direct < 1.2, "facing the sun at {step}°");
+            }
         }
     }
 }

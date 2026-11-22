@@ -14,6 +14,8 @@
 //! light that reaches a point after any number of bounces, isotropic, by height and
 //! sun angle (`multiple`). It keeps the twilight sky deep blue, lights the air in the
 //! Earth's shadow, and is folded into the scattering table, so the GPU reads it too.
+mod aerial;
+
 use glam::Vec4;
 use globecraft_core::EARTH_RADIUS_KM;
 use rayon::prelude::*;
@@ -76,6 +78,10 @@ const ADAPT_FROM_SUN_COSINE: f32 = 0.105;
 const ADAPT_TO_SUN_COSINE: f32 = -0.139;
 const BLUE_HOUR: [f32; 3] = [0.6, 0.8, 1.5];
 const ADAPT_FADE_KM: [f32; 2] = [20.0, 80.0];
+/// The air between the camera and the ground is integrated along the ray
+/// (`aerial`) with the camera below the first height (km), the tables' way above the
+/// second, a mix between.
+const AERIAL_FADE_KM: [f32; 2] = [15.0, 30.0];
 
 /// How bright scattered sunlight is drawn: radiance for a sun of irradiance one, times
 /// this, then compressed to the screen's range (`tone`).
@@ -767,6 +773,8 @@ pub(crate) struct Frame {
     inside: Option<Inside>,
     /// The eye's adaptation to twilight, on the air's light (`adaptation`).
     adapt: Vec4,
+    /// The air between the camera and the ground, with the camera inside it and a sun.
+    aerial: Option<std::sync::Arc<aerial::Aerial>>,
 }
 
 /// How far the eye has adapted to twilight (0: day, 1: fully) for a camera `height_km`
@@ -883,6 +891,9 @@ impl Frame {
             (Some(_), Some(_)) => adaptation(adaptation_share(radius_km - GROUND_KM, sun_cosine)),
             _ => Vec4::ONE,
         };
+        let aerial =
+            (inside.is_some() && sun.is_some() && radius_km - GROUND_KM < AERIAL_FADE_KM[1])
+                .then(|| aerial::Aerial::at(tables, radius_km, sun_cosine));
         Self {
             tables,
             radius_km,
@@ -891,6 +902,7 @@ impl Frame {
             sun_cosine,
             inside,
             adapt,
+            aerial,
         }
     }
 
@@ -958,6 +970,24 @@ impl Frame {
         let (tables, r) = (self.tables, self.radius_km);
         let mu = direction.dot(self.up) as f32;
         let nu = self.phase(direction, mu);
+        // Low down, the air integrated along the ray (`aerial`), faded into the
+        // tables' way higher up, where rays rarely skim the horizon.
+        let aerial = self.aerial.as_ref().map(|aerial| {
+            let height = r - GROUND_KM;
+            let [from, to] = AERIAL_FADE_KM;
+            let share = 1.0 - smoothstep((height - from) / (to - from));
+            (aerial.sample(mu, nu, distance_km), share)
+        });
+        if let Some(((light, crossed), share)) = aerial
+            && share >= 1.0
+        {
+            let (r_d, _, mu_s_d) = along(r, mu, self.sun_cosine, nu, distance_km);
+            return Air {
+                scattered: light * self.adapt,
+                transmitted: crossed,
+                sunlight: tables.sunlight(tables.to_top(r_d, mu_s_d.max(0.0))),
+            };
+        }
         let to_ground = meets_ground(r, mu);
         let (r_d, mu_d, mu_s_d) = along(r, mu, self.sun_cosine, nu, distance_km);
         // Light passes the same either way: a ray going down is measured upward.
@@ -986,8 +1016,15 @@ impl Frame {
             let reached = Vec4::new(transmitted.x, transmitted.y, transmitted.z, transmitted.x);
             near = (near - beyond * reached).max(Vec4::ZERO);
         }
+        let (scattered, transmitted) = match aerial {
+            Some(((light, crossed), share)) => (
+                radiance(near, nu).lerp(light, share),
+                transmitted.lerp(crossed, share),
+            ),
+            None => (radiance(near, nu), transmitted),
+        };
         Air {
-            scattered: radiance(near, nu) * self.adapt,
+            scattered: scattered * self.adapt,
             transmitted,
             sunlight: match self.sun {
                 Some(_) => tables.sunlight(tables.to_top(r_d, mu_s_d.max(0.0))),
@@ -1123,6 +1160,46 @@ mod tests {
         assert!(night.max_element() < 1e-6, "night {night:?}");
         // From space, a ray that passes above the air meets none.
         assert!(frame(400.0, 0.5).sky(toward_sun(-0.2), -0.2).is_none());
+    }
+
+    /// Low down the air toward the ground is integrated along the ray (`aerial`): it
+    /// agrees with the tables' way where that is sound (looking down), and toward a
+    /// far mountain just under the horizon it grows steadily with distance instead of
+    /// peaking in a band (Julien's screenshots of 2026-11-22).
+    #[test]
+    fn the_air_to_the_ground_grows_with_distance_and_agrees_with_the_tables() {
+        let height_km = 2.0;
+        let sun_cosine = 0.05;
+        let low = frame(height_km, sun_cosine);
+        let camera = DVec3::new(0.0, 0.0, f64::from(1.0 + height_km / GROUND_KM));
+        let normal = DVec3::Z;
+        // Looking down at 45° toward the sun: both ways agree within a fifth.
+        let down = toward_sun(-0.7);
+        let reach = -camera.dot(down);
+        let distance =
+            (reach - (reach * reach - camera.length_squared() + 1.0).sqrt()) as f32 * GROUND_KM;
+        let integrated = low.ground(down, distance, normal, 0.7);
+        let mut tables = frame(height_km, sun_cosine);
+        tables.aerial = None;
+        let classic = tables.ground(down, distance, normal, 0.7);
+        let close = |a: Vec4, b: Vec4| (a - b).abs().max_element() <= 0.2 * b.max_element();
+        assert!(
+            close(integrated.scattered, classic.scattered),
+            "{integrated:?} {classic:?}"
+        );
+        assert!(
+            close(integrated.transmitted, classic.transmitted),
+            "{integrated:?} {classic:?}"
+        );
+        // Just under the horizon, toward the sun: the light grows with distance.
+        let horizon = -f64::from(1.0 - (GROUND_KM / (GROUND_KM + height_km)).powi(2)).sqrt();
+        let skim = toward_sun(horizon - 0.002);
+        let mut last = Vec4::ZERO;
+        for distance in [5.0, 20.0, 50.0, 90.0, 130.0, 160.0] {
+            let air = low.ground(skim, distance, normal, 0.05);
+            assert!(air.scattered.x >= last.x - 1e-6, "{distance} km: {air:?}");
+            last = air.scattered;
+        }
     }
 
     #[test]

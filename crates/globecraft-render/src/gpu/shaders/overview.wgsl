@@ -40,17 +40,10 @@ const AURORA_DAY_COSINE: f32 = __AURORA_DAY_COSINE__;
 const AURORA_NIGHT_COSINE: f32 = __AURORA_NIGHT_COSINE__;
 const AURORA_SAMPLE_KM: f32 = __AURORA_SAMPLE_KM__;
 const AURORA_MAX_SAMPLES: f32 = __AURORA_MAX_SAMPLES__;
+
 fn smooth01(x: f32) -> f32 {
     let t = clamp(x,0.0,1.0);
     return t*t*(3.0-2.0*t);
-}
-
-// Lit ground's brightness (the CPU's `pixel::lit_level`): the eye adapted to twilight
-// (`view.figure.z`) keeps the blue hour readable; from space twilight is short.
-fn lit_level(e: f32) -> f32 {
-    let short = smooth01((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH);
-    let adapted = smooth01((e+EXPOSURE_OFFSET)/EXPOSURE_WIDTH);
-    return NIGHT_BRIGHTNESS+DAY_RANGE*(short+(adapted-short)*view.figure.z);
 }
 
 fn aurora_node(lon: i32, lat: i32) -> f32 {
@@ -157,16 +150,15 @@ const MAX_AREA_SPAN: i32 = 11;
 const TWILIGHT_OFFSET: f32 = __TWILIGHT_OFFSET__;
 const TWILIGHT_WIDTH: f32 = __TWILIGHT_WIDTH__;
 const NIGHT_BRIGHTNESS: f32 = __NIGHT_BRIGHTNESS__;
-const DAY_RANGE: f32 = __DAY_RANGE__;
 const NIGHT_BLUE: f32 = __NIGHT_BLUE__;
 const SUN_RISE_START: f32 = __SUN_RISE_START__;
+const SUN_RISE_FULL: f32 = __SUN_RISE_FULL__;
+const SHADE_RISE: f32 = __SHADE_RISE__;
 const SHADE_DAY: f32 = __SHADE_DAY__;
+const DIRECT_RISE: f32 = __DIRECT_RISE__;
+const EYE_TWILIGHT: f32 = __EYE_TWILIGHT__;
 const LUMINANCE: vec3<f32> = __LUMINANCE__;
-const DIRECT_FLOOR: f32 = __DIRECT_FLOOR__;
-const MAX_DIRECT_GAIN: f32 = __MAX_DIRECT_GAIN__;
 const SKY_DAY: f32 = __SKY_DAY__;
-const EXPOSURE_OFFSET: f32 = __EXPOSURE_OFFSET__;
-const EXPOSURE_WIDTH: f32 = __EXPOSURE_WIDTH__;
 const TWILIGHT_SKY: vec3<f32> = __TWILIGHT_SKY__;
 const DAY_SKY: vec3<f32> = __DAY_SKY__;
 const AIR_GROUND: f32 = __AIR_GROUND__;
@@ -402,15 +394,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let e = dot(normal,view.sun.xyz);
         let k = smooth01((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH);
         night = NIGHT_BLUE*(1.0-k); darkness = 1.0-k;
-        let lit = lit_level(e);
-        var shaded = lit;
-        if e > SUN_RISE_START {
-            let risen = lit_level(SUN_RISE_START);
-            shaded = min(risen + (SHADE_DAY-risen)*smooth01((e-SUN_RISE_START)/(SKY_DAY-SUN_RISE_START)), lit);
+        // The eye adapted to twilight (`view.figure.z`) keeps the blue hour longer.
+        let night_end = TWILIGHT_OFFSET+(EYE_TWILIGHT-TWILIGHT_OFFSET)*view.figure.z;
+        var shaded = SHADE_RISE+(SHADE_DAY-SHADE_RISE)*smooth01((e-SUN_RISE_START)/(SKY_DAY-SUN_RISE_START));
+        if e <= SUN_RISE_START {
+            shaded = NIGHT_BRIGHTNESS+(SHADE_RISE-NIGHT_BRIGHTNESS)*smooth01((e+night_end)/(SUN_RISE_START+night_end));
         }
+        let risen = smooth01((e-SUN_RISE_START)/(SUN_RISE_FULL-SUN_RISE_START));
+        let facing = risen*(DIRECT_RISE+(1.0-SHADE_DAY-DIRECT_RISE)*smooth01(e/SKY_DAY));
         let colour = mix(TWILIGHT_SKY,DAY_SKY,smooth01(e/SKY_DAY));
         sky = colour/dot(colour,LUMINANCE)*shaded;
-        direct = (lit-shaded)*clamp(e/max(e,DIRECT_FLOOR),0.0,MAX_DIRECT_GAIN);
+        direct = facing*max(e,0.0);
     }
     // Night lights without the sun: night everywhere (`RenderCfg::night_everywhere`).
     let all_night = !sunlit && view.lights.x != 0u;

@@ -34,16 +34,16 @@ use rayon::prelude::*;
 use rays::{RAY_LANES, RayCaster};
 use std::{collections::HashMap, f64::consts::PI, sync::Arc, sync::LazyLock};
 use tuning::{
-    COLOR_CHANNEL_MAX, DAY_BRIGHTNESS_RANGE, GRID_BLEND, GRID_COLOR, GRID_LINE_WIDTH_PX,
-    IMAGERY_ZOOM_FADE_START, LOD_SHARPNESS_BIAS, MIN_LOD_INCIDENCE_COSINE, MIN_LOD_LATITUDE_COSINE,
-    MIN_ZOOM_BLEND_FRACTION, MISSING_TILE_COLOR, NIGHT_BLUE_TINT, NIGHT_BRIGHTNESS, RGBA_CHANNELS,
-    ROWS_PER_TILE_BATCH, SPACE_COLOR, TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS,
-    TILE_FILTER_RATIO_EXONENT_MAX, TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET,
-    TWILIGHT_WIDTH, WEB_MERCATOR_MAX_LATITUDE_DEG,
+    COLOR_CHANNEL_MAX, GRID_BLEND, GRID_COLOR, GRID_LINE_WIDTH_PX, IMAGERY_ZOOM_FADE_START,
+    LOD_SHARPNESS_BIAS, MIN_LOD_INCIDENCE_COSINE, MIN_LOD_LATITUDE_COSINE, MIN_ZOOM_BLEND_FRACTION,
+    MISSING_TILE_COLOR, NIGHT_BLUE_TINT, NIGHT_BRIGHTNESS, RGBA_CHANNELS, ROWS_PER_TILE_BATCH,
+    SPACE_COLOR, TEXT_ZOOM_FADE_START, TILE_EXP2_LUT_STEPS, TILE_FILTER_RATIO_EXONENT_MAX,
+    TILE_FILTER_RATIO_EXONENT_MIN, TILE_SIZE_PX, TWILIGHT_OFFSET, TWILIGHT_WIDTH,
+    WEB_MERCATOR_MAX_LATITUDE_DEG,
 };
 use tuning::{
-    DAY_SKY, DIRECT_FLOOR_COSINE, EXPOSURE_OFFSET, EXPOSURE_WIDTH, LUMINANCE, MAX_DIRECT_GAIN,
-    SHADE_DAY, SKY_DAY_COSINE, SUN_RISE_START_COSINE, TWILIGHT_SKY,
+    DAY_SKY, DIRECT_RISE, EYE_TWILIGHT_COSINE, LUMINANCE, SHADE_DAY, SHADE_RISE, SKY_DAY_COSINE,
+    SUN_RISE_FULL_COSINE, SUN_RISE_START_COSINE, TWILIGHT_SKY,
 };
 const GRID_STEPS_DEG: [f64; 12] = [
     30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.01, 0.005, 0.001,
@@ -403,9 +403,9 @@ fn finish_surface(mut col: Vec4, surface: Surface, relief: Relief, lights: Optio
         Some(daylight) => {
             // Orange to red on the horizon; the sky's blue turns it pink on snow.
             let sun = surface.air.map_or(Vec4::ONE, |(air, _)| air.sunlight);
-            let gain = relief.sun_cosine.map_or(daylight.flat_gain, |cosine| {
-                pixel::Daylight::gain(cosine, daylight.sun_cosine)
-            });
+            let gain = relief
+                .sun_cosine
+                .map_or(daylight.flat_cosine, |cosine| cosine as f32);
             daylight.light(sun, gain, relief.seen, relief.sky)
         }
         None => Vec4::splat(surface.shade * relief.chart),

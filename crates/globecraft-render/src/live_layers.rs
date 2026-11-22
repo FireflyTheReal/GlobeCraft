@@ -1,6 +1,7 @@
 //! Geographic preparation for roads, buildings, AIS, predicted satellites and traffic.
 mod buildings;
 mod poi;
+mod sun_march;
 mod transport;
 mod worker;
 use crate::motion;

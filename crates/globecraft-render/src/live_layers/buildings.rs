@@ -111,6 +111,10 @@ const METRES_PER_RADIUS: f64 = globecraft_core::EARTH_RADIUS_M;
 /// middle: a 100 m wall ordered as one face was drawn over the nearer blocks along
 /// it (screenshots, 2026-11-16).
 const WALL_PIECE_M: f64 = 15.0;
+/// A wall's light is found this far out from it (about a cell of `Heights`), clear of
+/// its own block.
+const WALL_MARCH_OUT_M: f64 = 6.0;
+const DEGREE_M: f64 = METRES_PER_RADIUS * std::f64::consts::PI / 180.0;
 /// Blocks projected per parallel job: enough to outweigh a job's cost.
 const BLOCKS_PER_JOB: usize = 2_048;
 
@@ -141,6 +145,10 @@ pub(super) fn project(
     }
     let visibility = TerrainVisibility::new(&view.basis, ground);
     let reach = view.rect.expand(VIEW_MARGIN_POINTS);
+    // Which part of each wall and roof the sun reaches past the other blocks (C3b).
+    let march = input
+        .sun
+        .map(|sun| super::sun_march::SunMarch::new(&snapshot.tiles, sun));
     // Blocks are projected on every core, a run of them per job, then joined. A tile
     // just shown fades in, one replaced fades out (`TileFade`), instead of popping.
     let runs: Vec<Faces> = snapshot
@@ -165,6 +173,7 @@ pub(super) fn project(
                     ground,
                     imagery,
                     visibility.as_ref(),
+                    march.as_ref(),
                     reach,
                     (fade * 255.0) as u8,
                     &mut scratch,
@@ -301,6 +310,7 @@ fn block(
     ground: Option<&dyn Ground>,
     imagery: Option<(&TileCache, super::BuildingImagery)>,
     visibility: Option<&TerrainVisibility<'_>>,
+    march: Option<&super::sun_march::SunMarch<'_>>,
     reach: Rect,
     alpha: u8,
     scratch: &mut Scratch,
@@ -383,6 +393,8 @@ fn block(
     }
     let camera = basis.c;
     let light = Light::at(input.sun, up);
+    // The march only where the sun's light comes in at all.
+    let march = march.filter(|_| light.has_sun());
     let (west, east) = outline.iter().fold(
         (f64::INFINITY, f64::NEG_INFINITY),
         |(west, east), &(_, lon)| (west.min(lon), east.max(lon)),
@@ -406,14 +418,23 @@ fn block(
         }),
         (None, None) => WALL,
     };
+    // The roof is in the sun when no block toward it rises above its line.
+    let roof_seen = march.map_or(1.0, |march| {
+        let lit_from = march.lit_from(lat, lon, up);
+        if lit_from <= f64::from(building.top_m) {
+            1.0
+        } else {
+            0.0
+        }
+    });
     // The imagery is already lit by the sun of its day; only dusk dims it.
     let (roof, roof_light) = match photo {
-        Some(photo) => (photo, light.on_imagery()),
+        Some(photo) => (photo, light.on_imagery(roof_seen)),
         None => (
             building
                 .roof_colour
                 .map_or(ROOF, |mapped| toned(ROOF, mapped)),
-            light.on(up, up),
+            light.on(up, up, roof_seen),
         ),
     };
     // Its shadow on the ground, under everything else of the block (C3).
@@ -438,6 +459,7 @@ fn block(
     // Walls: each faces the right-hand side of its edge (outlines run anticlockwise,
     // courtyards clockwise, seen from above), and only those facing the camera show.
     let mut first = 0;
+    let (base_m, top_m) = (f64::from(building.base_m), f64::from(building.top_m));
     for (ring, walls) in building.rings.iter().zip(&building.walls) {
         let n = ring.len();
         let turn = if anticlockwise(ring) == (first == 0) {
@@ -459,7 +481,18 @@ fn block(
             if normal.dot(camera - middle) <= 0.0 {
                 continue;
             }
-            let shade = colour(wall, light.on(normal, up), alpha);
+            let lit = colour(wall, light.on(normal, up, 1.0), alpha);
+            let dark = colour(wall, light.on(normal, up, 0.0), alpha);
+            // Only a wall facing the sun has a lit part to find.
+            let march = march.filter(|_| input.sun.is_some_and(|sun| normal.dot(sun) > 0.0));
+            let (start_ll, end_ll) = (ring[index], ring[(index + 1) % n]);
+            // The wall's outward side on the ground, in metres east and north.
+            let outward = {
+                let east = (end_ll.1 - start_ll.1) * start_ll.0.to_radians().cos();
+                let north = end_ll.0 - start_ll.0;
+                let length = east.hypot(north).max(f64::MIN_POSITIVE);
+                (north / length * turn, -east / length * turn)
+            };
             let length_m = (scratch.base[b] - scratch.base[a]).length() * METRES_PER_RADIUS;
             let pieces = (length_m / WALL_PIECE_M).ceil().max(1.0) as usize;
             // Each piece's corners: its ends at the base and the top, on screen.
@@ -488,16 +521,49 @@ fn block(
             let mut start = end(0);
             for piece in 1..=pieces {
                 let stop = end(piece);
-                let middle = (start.0 + start.1 + stop.0 + stop.1) / 4.0;
-                face(
-                    out,
-                    basis,
-                    rect,
-                    (middle - camera).length_squared(),
-                    &[start.0, stop.0, stop.1, start.1],
-                    &[start.2, stop.2, stop.3, start.3],
-                    shade,
-                );
+                // The share of the piece's height up from which the sun reaches it,
+                // marched from just outside its middle.
+                let lit_share = march.map_or(0.0, |march| {
+                    let share = (piece as f64 - 0.5) / pieces as f64;
+                    let lat = start_ll.0
+                        + (end_ll.0 - start_ll.0) * share
+                        + outward.1 * WALL_MARCH_OUT_M / DEGREE_M;
+                    let lon = start_ll.1
+                        + (end_ll.1 - start_ll.1) * share
+                        + outward.0 * WALL_MARCH_OUT_M / (DEGREE_M * lat.to_radians().cos());
+                    ((march.lit_from(lat, lon, up) - base_m) / (top_m - base_m)).clamp(0.0, 1.0)
+                });
+                let mut quad = |from: f64, to: f64, colour: [u8; 4]| {
+                    let corner = |base: DVec3, top: DVec3, at: f64| base.lerp(top, at);
+                    let world = [
+                        corner(start.0, start.1, from),
+                        corner(stop.0, stop.1, from),
+                        corner(stop.0, stop.1, to),
+                        corner(start.0, start.1, to),
+                    ];
+                    let seen = if from == 0.0 && to == 1.0 {
+                        [start.2, stop.2, stop.3, start.3]
+                    } else {
+                        world.map(on_screen)
+                    };
+                    let middle = world.iter().sum::<DVec3>() / 4.0;
+                    face(
+                        out,
+                        basis,
+                        rect,
+                        (middle - camera).length_squared(),
+                        &world,
+                        &seen,
+                        colour,
+                    );
+                };
+                // In the shade below that height, in the sun above it.
+                if lit_share > 0.0 {
+                    quad(0.0, lit_share, dark);
+                }
+                if lit_share < 1.0 {
+                    quad(lit_share, 1.0, lit);
+                }
                 start = stop;
             }
         }
@@ -793,25 +859,32 @@ impl Light {
             }
         }
     }
-    /// The light on a face with this outward normal (`up` for a roof).
-    fn on(&self, normal: DVec3, up: DVec3) -> [f32; 3] {
+    /// Whether the sun's own light comes in (not only the sky's).
+    fn has_sun(&self) -> bool {
+        self.sun.is_some_and(|(daylight, _)| daylight.direct > 0.0)
+    }
+    /// The light on a face with this outward normal (`up` for a roof), `seen` the
+    /// share of the sun other blocks leave it.
+    fn on(&self, normal: DVec3, up: DVec3, seen: f32) -> [f32; 3] {
         let cosine = normal.dot(self.direction);
         match self.sun {
             Some((daylight, tint)) => {
                 // A wall sees half the sky; the sky's light is mostly from above.
                 let sky = (0.5 + 0.5 * normal.dot(up)) as f32;
-                let gain = crate::pixel::Daylight::gain(cosine, daylight.sun_cosine);
-                daylight.light(tint, gain, 1.0, sky).truncate().to_array()
+                daylight
+                    .light(tint, cosine as f32, seen, sky)
+                    .truncate()
+                    .to_array()
             }
             None => [AMBIENT + DIRECT * cosine.max(0.0) as f32; 3],
         }
     }
     /// The light on imagery of a roof, which shows the sun of its own day already: the
     /// ground's under the same sun (none without it).
-    fn on_imagery(&self) -> [f32; 3] {
+    fn on_imagery(&self, seen: f32) -> [f32; 3] {
         self.sun.map_or([1.0; 3], |(daylight, tint)| {
             daylight
-                .light(tint, daylight.flat_gain, 1.0, 1.0)
+                .light(tint, daylight.flat_cosine, seen, 1.0)
                 .truncate()
                 .to_array()
         })
@@ -828,7 +901,10 @@ mod tests {
     /// `buildings` as one tile.
     fn tiles(buildings: Vec<Building>) -> Option<Arc<BuildingSnapshot>> {
         Some(Arc::new(BuildingSnapshot {
-            tiles: vec![Arc::new(BuildingTile { buildings })],
+            tiles: vec![Arc::new(BuildingTile {
+                heights: Default::default(),
+                buildings,
+            })],
             zoom: 14,
             fades: Vec::new(),
         }))
@@ -1165,15 +1241,15 @@ mod tests {
     fn sunlit_walls_are_brighter_than_shaded_ones() {
         let up = DVec3::Z;
         let light = Light::at(Some(DVec3::new(0.0, 0.6, 0.8)), up);
-        assert!(light.on(DVec3::Y, up)[0] > light.on(DVec3::NEG_Y, up)[0]);
+        assert!(light.on(DVec3::Y, up, 1.0)[0] > light.on(DVec3::NEG_Y, up, 1.0)[0]);
         // At night the blocks are dim whatever they face.
         let night = Light::at(Some(DVec3::new(0.0, 0.0, -1.0)), up);
-        assert!(night.on(DVec3::Y, up).iter().all(|&c| c < 0.2));
+        assert!(night.on(DVec3::Y, up, 1.0).iter().all(|&c| c < 0.2));
         // A low sun: the wall facing it glows warm, the one turned away goes blue.
         let low = Light::at(Some(DVec3::new(0.0, 0.996, 0.087)), up);
-        let [r, _, b] = low.on(DVec3::Y, up);
+        let [r, _, b] = low.on(DVec3::Y, up, 1.0);
         assert!(r > b, "lit {r} {b}");
-        let [r, _, b] = low.on(DVec3::NEG_Y, up);
+        let [r, _, b] = low.on(DVec3::NEG_Y, up, 1.0);
         assert!(b > r, "shaded {r} {b}");
     }
 

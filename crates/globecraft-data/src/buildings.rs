@@ -31,6 +31,10 @@ const MAX_HEIGHT_M: f32 = 900.0;
 const EDGE_UNITS: f64 = 0.5;
 /// Rings smaller than this (square tile units) are slivers left by clipping.
 const MIN_RING_AREA: f64 = 0.5;
+/// The cells of a tile's height grid (`Heights`) are about this wide (metres).
+const HEIGHT_CELL_M: f64 = 6.0;
+/// A height grid's heights are kept in steps of this (metres).
+const HEIGHT_STEP_M: f32 = 0.1;
 
 /// Where the archives are: the bucket Overture publishes its tiles in, one folder per
 /// release (`tiles/2026-10-21.0/buildings.pmtiles`). Only the last two or three
@@ -62,6 +66,132 @@ pub struct Building {
 #[derive(Debug, Default)]
 pub struct BuildingTile {
     pub buildings: Vec<Building>,
+    /// The tallest block over each spot, for finding which walls and roofs other
+    /// blocks hide from the sun.
+    pub heights: Heights,
+}
+
+/// The tallest block over each cell of a tile (its top above its ground, metres): a
+/// surface model the renderer marches toward the sun, so the light climbs the walls at
+/// sunset and arrives on the tops first at sunrise (roadmap C3b). Cells are even in
+/// latitude and longitude across the tile; one is about `HEIGHT_CELL_M` wide.
+#[derive(Debug, Default)]
+pub struct Heights {
+    north: f64,
+    west: f64,
+    /// Cells per degree of latitude (south) and longitude (east).
+    rows_per_deg: f64,
+    cols_per_deg: f64,
+    rows: usize,
+    cols: usize,
+    /// Row after row from the north-west corner, in `HEIGHT_STEP_M`.
+    cells: Vec<u16>,
+    /// The tallest block of the tile (metres).
+    pub tallest_m: f32,
+}
+
+impl Heights {
+    /// The tallest block over (`lat`, `lon`) (metres, 0 between blocks); none outside
+    /// the tile.
+    pub fn at(&self, lat: f64, lon: f64) -> Option<f32> {
+        let row = (self.north - lat) * self.rows_per_deg;
+        let col = (lon - self.west) * self.cols_per_deg;
+        if !(0.0..self.rows as f64).contains(&row) || !(0.0..self.cols as f64).contains(&col) {
+            return None;
+        }
+        let cell = self.cells[row as usize * self.cols + col as usize];
+        Some(f32::from(cell) * HEIGHT_STEP_M)
+    }
+
+    /// The grid over the box from `north`-`west` to `south`-`east` (degrees) of
+    /// `blocks`' outlines (their rings' courtyards left open).
+    pub fn of<'a>(
+        (north, west): (f64, f64),
+        (south, east): (f64, f64),
+        blocks: impl IntoIterator<Item = &'a Building>,
+    ) -> Self {
+        let middle = (0.5 * (north + south)).to_radians();
+        let degree_m = globecraft_core::EARTH_RADIUS_M * std::f64::consts::PI / 180.0;
+        let side = |span_m: f64| (span_m / HEIGHT_CELL_M).ceil().clamp(1.0, 1024.0) as usize;
+        let (rows, cols) = (
+            side((north - south) * degree_m),
+            side((east - west) * degree_m * middle.cos()),
+        );
+        let (rows_per_deg, cols_per_deg) =
+            (rows as f64 / (north - south), cols as f64 / (east - west));
+        let mut cells = vec![0u16; rows * cols];
+        let mut tallest_m = 0.0f32;
+        for block in blocks {
+            let Some(outline) = block.rings.first() else {
+                continue;
+            };
+            tallest_m = tallest_m.max(block.top_m);
+            let height = (block.top_m / HEIGHT_STEP_M)
+                .round()
+                .min(f32::from(u16::MAX)) as u16;
+            let (mut south_most, mut north_most) = (f64::MAX, f64::MIN);
+            let (mut west_most, mut east_most) = (f64::MAX, f64::MIN);
+            for &(lat, lon) in outline {
+                (south_most, north_most) = (south_most.min(lat), north_most.max(lat));
+                (west_most, east_most) = (west_most.min(lon), east_most.max(lon));
+            }
+            // The cells whose middles fall within `low..high` (in cells from the edge).
+            let within = |low: f64, high: f64, count: usize| {
+                let first = (low - 0.5).ceil().max(0.0) as usize;
+                let last = ((high - 0.5).floor() + 1.0).clamp(0.0, count as f64) as usize;
+                first..last
+            };
+            let row_span = within(
+                (north - north_most) * rows_per_deg,
+                (north - south_most) * rows_per_deg,
+                rows,
+            );
+            for row in row_span {
+                let lat = north - (row as f64 + 0.5) / rows_per_deg;
+                let col_span = within(
+                    (west_most - west) * cols_per_deg,
+                    (east_most - west) * cols_per_deg,
+                    cols,
+                );
+                for col in col_span {
+                    let lon = west + (col as f64 + 0.5) / cols_per_deg;
+                    // Inside the outline and outside its courtyards (even-odd).
+                    let crossings = block
+                        .rings
+                        .iter()
+                        .filter(|ring| crosses_odd(ring, lon, lat))
+                        .count();
+                    if crossings % 2 == 1 {
+                        let cell = &mut cells[row * cols + col];
+                        *cell = (*cell).max(height);
+                    }
+                }
+            }
+        }
+        Self {
+            north,
+            west,
+            rows_per_deg,
+            cols_per_deg,
+            rows,
+            cols,
+            cells,
+            tallest_m,
+        }
+    }
+}
+
+/// Whether a ray from (`x`, `y`) toward +x crosses `ring` an odd number of times;
+/// `ring` holds (y, x) pairs, as (latitude, longitude).
+fn crosses_odd(ring: &[(f64, f64)], x: f64, y: f64) -> bool {
+    let mut odd = false;
+    for (index, &(ay, ax)) in ring.iter().enumerate() {
+        let (by, bx) = ring[(index + 1) % ring.len()];
+        if (ay > y) != (by > y) && x < ax + (y - ay) / (by - ay) * (bx - ax) {
+            odd = !odd;
+        }
+    }
+    odd
 }
 
 static SPEC: Spec<BuildingTile> = Spec {
@@ -100,7 +230,7 @@ fn size_bytes(tile: &BuildingTile) -> usize {
             std::mem::size_of::<Building>() + rings + walls + building.roof.capacity() * 4
         })
         .sum();
-    std::mem::size_of::<BuildingTile>() + buildings
+    std::mem::size_of::<BuildingTile>() + buildings + tile.heights.cells.capacity() * 2
 }
 
 /// The building tiles around the view, as the projection reads them.
@@ -388,6 +518,7 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
             }
         }
     }
+    tile.heights = Heights::of(key.point(0.0, 0.0), key.point(1.0, 1.0), &tile.buildings);
     Some(tile)
 }
 
@@ -522,6 +653,37 @@ mod tests {
         assert_eq!(cut.rings[0].len(), 4);
         // Exactly one edge lies on the tile's edge (x = 0) and is no wall.
         assert_eq!(cut.walls[0].iter().filter(|&&wall| !wall).count(), 1);
+    }
+
+    #[test]
+    fn the_height_grid_holds_each_block_and_leaves_courtyards_open() {
+        let mut courtyard = square(1200, 1200, 800);
+        courtyard.reverse();
+        let features = [
+            TestFeature {
+                tags: vec![("height", TestValue::Int(40))],
+                kind: 3,
+                parts: vec![square(1000, 1000, 1200), courtyard],
+            },
+            TestFeature {
+                tags: vec![("height", TestValue::Int(120))],
+                kind: 3,
+                parts: vec![square(3000, 3000, 400)],
+            },
+        ];
+        let tile = decode(KEY, &tile(&[layer("building", 4096, &features)])).unwrap();
+        let at = |x: f64, y: f64| {
+            let (lat, lon) = KEY.point(x / 4096.0, y / 4096.0);
+            tile.heights.at(lat, lon)
+        };
+        assert_eq!(at(1100.0, 1100.0), Some(40.0));
+        assert_eq!(at(1600.0, 1600.0), Some(0.0), "the courtyard is open");
+        assert_eq!(at(3200.0, 3200.0), Some(120.0));
+        assert_eq!(at(2500.0, 500.0), Some(0.0));
+        assert_eq!(tile.heights.tallest_m, 120.0);
+        // Off the tile: none.
+        let (north, west) = KEY.point(0.0, 0.0);
+        assert_eq!(tile.heights.at(north + 0.01, west), None);
     }
 
     #[test]

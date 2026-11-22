@@ -45,33 +45,31 @@ pub(super) const GRID_BLEND: f32 = 0.55;
 pub(super) const TWILIGHT_OFFSET: f64 = 0.12;
 pub(super) const TWILIGHT_WIDTH: f64 = 0.30;
 pub(super) const NIGHT_BRIGHTNESS: f32 = 0.10;
-pub(super) const DAY_BRIGHTNESS_RANGE: f32 = 0.90;
 pub(super) const NIGHT_BLUE_TINT: f32 = 0.015;
 // Daylight in two parts, as Bing Maps shows it (Julien's recordings, 2026-11-21): the
 // sun's direct light, warm where it crossed much air, and the sky's, cool. Ridges and
-// blocks hide the first only, so shadows go blue and slopes facing a low sun glow.
-// Both are set by two brightness curves that only rise with the sun (`pixel::Daylight`):
-// ground the sun lights, and ground only the sky lights. A fixed split of one light
-// made shaded ground darker just before sunset than just after (Julien, 2026-11-22).
-/// The direct sun comes in from where the top of its disc rises (refraction included):
-/// the sine of its height there.
+// blocks hide the first only, so shadows go blue, and slopes and walls facing a low sun
+// take the first light while the ground below stays in the blue (`pixel::Daylight`).
+// Both only rise with the sun: a fixed split made shade darker just before sunset than
+// just after (Julien, 2026-11-22 09:48); a direct light capped against flat ground's
+// left no first light on the tops (10:59).
+/// The direct sun comes in as its disc rises: the sine of its height where the top of
+/// the disc shows (refraction included) and where the whole of it does.
 pub(crate) const SUN_RISE_START_COSINE: f64 = -0.008_7;
-/// Ground only the sky lights, against lit ground, by day (and from sunrise up to it):
-/// at least the lit level where the sun rises, so neither curve dips.
+pub(crate) const SUN_RISE_FULL_COSINE: f64 = 0.026;
+/// The sky's light on the ground: as the sun rises, by day (from `SKY_DAY_COSINE` on).
+/// The night side darkens from the first toward `NIGHT_BRIGHTNESS`.
+pub(crate) const SHADE_RISE: f32 = 0.4;
 pub(crate) const SHADE_DAY: f32 = 0.65;
-/// A surface's direct light against flat ground's, which is taken as never below this
-/// sine (8°): under it a slope or wall facing the sun outshines flat ground.
-pub(crate) const DIRECT_FLOOR_COSINE: f64 = 0.139;
-/// The most a slope or wall facing the sun gets against flat ground (images already
-/// hold their own day's light: more burns them out).
-pub(crate) const MAX_DIRECT_GAIN: f64 = 1.5;
-/// How bright lit ground is drawn as the sun sets with the eye adapted (a camera in
-/// the air, `atmosphere::eye_weight`): from night's floor where the sun's sine is this
-/// far below the horizon (12°) to day's full light over this width (to 8.5° up), so
-/// the blue hour stays readable as in Bing Maps. From space the shorter twilight
-/// (`TWILIGHT_OFFSET`, `TWILIGHT_WIDTH`) holds: no bright band past the terminator.
-pub(crate) const EXPOSURE_OFFSET: f64 = 0.208;
-pub(crate) const EXPOSURE_WIDTH: f64 = 0.356;
+/// The sun's light on a surface facing it, as it rises: with the sky's, a peak or wall
+/// in the first light is as bright as by day while the ground below is in the blue.
+/// By day it is what makes flat ground at noon one (`1 - SHADE_DAY`).
+pub(crate) const DIRECT_RISE: f32 = 0.65;
+/// Where twilight ends for the eye in the air (`atmosphere::eye_weight`): the sine of
+/// the sun's depth (12°, nautical) where the night side reaches `NIGHT_BRIGHTNESS`.
+/// From space the shorter `TWILIGHT_OFFSET` (7°) holds: no bright band past the
+/// terminator.
+pub(crate) const EYE_TWILIGHT_COSINE: f64 = 0.208;
 /// The sky's light: blue in twilight, near white by day (from this sine, 20°).
 pub(crate) const TWILIGHT_SKY: [f32; 3] = [0.74, 0.86, 1.26];
 pub(crate) const DAY_SKY: [f32; 3] = [0.95, 1.0, 1.08];
