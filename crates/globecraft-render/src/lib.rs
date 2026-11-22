@@ -42,8 +42,8 @@ use tuning::{
     TWILIGHT_WIDTH, WEB_MERCATOR_MAX_LATITUDE_DEG,
 };
 use tuning::{
-    DAY_SKY, DIRECT_FLOOR_COSINE, DIRECT_SHARE, EXPOSURE_OFFSET, EXPOSURE_WIDTH, MAX_DIRECT_GAIN,
-    SKY_DAY_COSINE, SUN_RISE_FULL_COSINE, SUN_RISE_START_COSINE, TWILIGHT_SKY,
+    DAY_SKY, DIRECT_FLOOR_COSINE, EXPOSURE_OFFSET, EXPOSURE_WIDTH, LUMINANCE, MAX_DIRECT_GAIN,
+    SHADE_DAY, SKY_DAY_COSINE, SUN_RISE_START_COSINE, TWILIGHT_SKY,
 };
 const GRID_STEPS_DEG: [f64; 12] = [
     30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.01, 0.005, 0.001,
@@ -401,12 +401,8 @@ fn finish_surface(mut col: Vec4, surface: Surface, relief: Relief, lights: Optio
     let light = match surface.daylight {
         // Sun and sky apart: relief and shadows hide the sun's (`pixel::Daylight`).
         Some(daylight) => {
-            // The air's tint is softened (a square root) for what the eye sees of
-            // the ground's own colours; the direct light gets it in full, deep orange
-            // to red on the horizon, which the sky's blue turns pink on snow.
-            let sun = surface
-                .air
-                .map_or(Vec4::ONE, |(air, _)| air.sunlight * air.sunlight);
+            // Orange to red on the horizon; the sky's blue turns it pink on snow.
+            let sun = surface.air.map_or(Vec4::ONE, |(air, _)| air.sunlight);
             let gain = relief.sun_cosine.map_or(daylight.flat_gain, |cosine| {
                 pixel::Daylight::gain(cosine, daylight.sun_cosine)
             });

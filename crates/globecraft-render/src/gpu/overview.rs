@@ -253,7 +253,9 @@ impl Overview {
             figure: [
                 figure[0],
                 figure[1],
-                figure[2],
+                crate::atmosphere::eye_weight(
+                    ((request.basis.c.length() - 1.0) * globecraft_core::EARTH_RADIUS_KM) as f32,
+                ),
                 aurora.map_or(0.0, |aurora| aurora.opacity.max(f32::MIN_POSITIVE)),
             ],
             raster: [

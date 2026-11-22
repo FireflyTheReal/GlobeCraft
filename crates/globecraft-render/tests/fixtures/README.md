@@ -123,3 +123,14 @@ adapted to twilight (`atmosphere::adaptation`). Every fixture with the sun or th
 atmosphere changed (`GLOBECRAFT_RECORD_FIXTURES=1 cargo test -p globecraft-render --lib
 -- raster_matches ray_batches`); checked against Bing Maps' sunrise recordings with
 the `bing_sun_comparison` probe.
+
+## Daylight as two rising curves (2026-11-22, later)
+
+The fixed split of daylight (65 % sun, 35 % sky) made shaded ground darker just
+before sunset than just after, and lit ground dimmer at sunrise than in the blue hour
+(a dark band, then a light one, past the terminator; Julien's screenshot and
+recording). Lit and shaded ground now each follow a brightness curve that only rises
+with the sun (`pixel::Daylight`, test `lit_and_shaded_ground_brighten_with_the_sun`),
+shade at 65 % of light by day, the sun's colour no longer squared, a slope's gain at
+most 1.5, and the blue-hour exposure only with the camera in the air. Every fixture
+with the sun changed.

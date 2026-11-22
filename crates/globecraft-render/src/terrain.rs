@@ -1354,7 +1354,7 @@ mod march_tests {
         let hidden: Vec<f32> = [0.05f64, 0.5, 1.0, 3.0]
             .map(|deg| {
                 let rise = deg.to_radians();
-                let daylight = crate::pixel::Daylight::at(rise.sin());
+                let daylight = crate::pixel::Daylight::at(rise.sin(), 1.0);
                 daylight.direct * (1.0 - light(up * rise.sin() + east * rise.cos()))
             })
             .to_vec();

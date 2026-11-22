@@ -775,8 +775,10 @@ impl Light {
                 Self {
                     direction: sun,
                     sun: Some((
-                        crate::pixel::Daylight::at(cosine),
-                        crate::atmosphere::ground_sunlight(cosine as f32).powf(2.0),
+                        // Blocks are drawn only close to the ground: the eye is
+                        // adapted as it is there.
+                        crate::pixel::Daylight::at(cosine, 1.0),
+                        crate::atmosphere::ground_sunlight(cosine as f32),
                     )),
                 }
             }

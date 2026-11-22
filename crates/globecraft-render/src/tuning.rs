@@ -50,26 +50,34 @@ pub(super) const NIGHT_BLUE_TINT: f32 = 0.015;
 // Daylight in two parts, as Bing Maps shows it (Julien's recordings, 2026-11-21): the
 // sun's direct light, warm where it crossed much air, and the sky's, cool. Ridges and
 // blocks hide the first only, so shadows go blue and slopes facing a low sun glow.
-/// The direct sun's share of daylight on flat ground at noon (the sky gives the rest).
-pub(crate) const DIRECT_SHARE: f32 = 0.65;
-/// The direct sun comes in as its disc rises: sine of its height where it starts (its
-/// top edge at the horizon, with refraction) and where it is fully in.
+// Both are set by two brightness curves that only rise with the sun (`pixel::Daylight`):
+// ground the sun lights, and ground only the sky lights. A fixed split of one light
+// made shaded ground darker just before sunset than just after (Julien, 2026-11-22).
+/// The direct sun comes in from where the top of its disc rises (refraction included):
+/// the sine of its height there.
 pub(crate) const SUN_RISE_START_COSINE: f64 = -0.008_7;
-pub(crate) const SUN_RISE_FULL_COSINE: f64 = 0.026;
+/// Ground only the sky lights, against lit ground, by day (and from sunrise up to it):
+/// at least the lit level where the sun rises, so neither curve dips.
+pub(crate) const SHADE_DAY: f32 = 0.65;
 /// A surface's direct light against flat ground's, which is taken as never below this
 /// sine (8°): under it a slope or wall facing the sun outshines flat ground.
 pub(crate) const DIRECT_FLOOR_COSINE: f64 = 0.139;
-/// The most a slope or wall facing a low sun gets against flat ground.
-pub(crate) const MAX_DIRECT_GAIN: f64 = 2.5;
-/// How bright the scene is drawn as the sun sets (the eye's adaptation): from night's
-/// floor where its sine is this far below the horizon (12°) to day's full light over
-/// this width (to 8.5° up), so the blue hour stays readable as in Bing Maps.
+/// The most a slope or wall facing the sun gets against flat ground (images already
+/// hold their own day's light: more burns them out).
+pub(crate) const MAX_DIRECT_GAIN: f64 = 1.5;
+/// How bright lit ground is drawn as the sun sets with the eye adapted (a camera in
+/// the air, `atmosphere::eye_weight`): from night's floor where the sun's sine is this
+/// far below the horizon (12°) to day's full light over this width (to 8.5° up), so
+/// the blue hour stays readable as in Bing Maps. From space the shorter twilight
+/// (`TWILIGHT_OFFSET`, `TWILIGHT_WIDTH`) holds: no bright band past the terminator.
 pub(crate) const EXPOSURE_OFFSET: f64 = 0.208;
 pub(crate) const EXPOSURE_WIDTH: f64 = 0.356;
 /// The sky's light: blue in twilight, near white by day (from this sine, 20°).
 pub(crate) const TWILIGHT_SKY: [f32; 3] = [0.74, 0.86, 1.26];
 pub(crate) const DAY_SKY: [f32; 3] = [0.95, 1.0, 1.08];
 pub(crate) const SKY_DAY_COSINE: f64 = 0.342;
+/// Rec. 709 luminance weights: the sky's colour is scaled to carry no brightness.
+pub(crate) const LUMINANCE: [f32; 3] = [0.2126, 0.7152, 0.0722];
 // Surface rim and atmospheric shell.
 // Space and 8-bit RGBA output.
 pub(super) const SPACE_COLOR: Vec4 = Vec4::new(0.0, 0.0, 0.015, 0.0);

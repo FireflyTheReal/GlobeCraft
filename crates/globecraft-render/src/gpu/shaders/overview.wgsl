@@ -5,7 +5,7 @@ struct View {
     right: vec4<f32>, up: vec4<f32>, forward: vec4<f32>,
     sun: vec4<f32>, // toward the sun; w: the glint on (1) or off (0)
     shape: vec4<f32>, // 1 / the surface's semi-axes squared; the camera in that metric, squared
-    figure: vec4<f32>, // semi-major axis (m), eccentricity squared, unused, aurora opacity (0: off)
+    figure: vec4<f32>, // semi-major axis (m), eccentricity squared, the eye's twilight adaptation (`atmosphere::eye_weight`), aurora opacity (0: off)
     raster: vec4<u32>, // width, height, imagery, provider max zoom
     effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, reserved
     limits: vec4<u32>, // tracked max zoom, dependency count, table mask, water map width
@@ -40,6 +40,19 @@ const AURORA_DAY_COSINE: f32 = __AURORA_DAY_COSINE__;
 const AURORA_NIGHT_COSINE: f32 = __AURORA_NIGHT_COSINE__;
 const AURORA_SAMPLE_KM: f32 = __AURORA_SAMPLE_KM__;
 const AURORA_MAX_SAMPLES: f32 = __AURORA_MAX_SAMPLES__;
+fn smooth01(x: f32) -> f32 {
+    let t = clamp(x,0.0,1.0);
+    return t*t*(3.0-2.0*t);
+}
+
+// Lit ground's brightness (the CPU's `pixel::lit_level`): the eye adapted to twilight
+// (`view.figure.z`) keeps the blue hour readable; from space twilight is short.
+fn lit_level(e: f32) -> f32 {
+    let short = smooth01((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH);
+    let adapted = smooth01((e+EXPOSURE_OFFSET)/EXPOSURE_WIDTH);
+    return NIGHT_BRIGHTNESS+DAY_RANGE*(short+(adapted-short)*view.figure.z);
+}
+
 fn aurora_node(lon: i32, lat: i32) -> f32 {
     let index = u32(((lon % 360) + 360) % 360) * 181u + u32(clamp(lat, 0, 180));
     return f32((aurora[index / 4u] >> ((index % 4u) * 8u)) & 255u);
@@ -146,9 +159,9 @@ const TWILIGHT_WIDTH: f32 = __TWILIGHT_WIDTH__;
 const NIGHT_BRIGHTNESS: f32 = __NIGHT_BRIGHTNESS__;
 const DAY_RANGE: f32 = __DAY_RANGE__;
 const NIGHT_BLUE: f32 = __NIGHT_BLUE__;
-const DIRECT_SHARE: f32 = __DIRECT_SHARE__;
 const SUN_RISE_START: f32 = __SUN_RISE_START__;
-const SUN_RISE_FULL: f32 = __SUN_RISE_FULL__;
+const SHADE_DAY: f32 = __SHADE_DAY__;
+const LUMINANCE: vec3<f32> = __LUMINANCE__;
 const DIRECT_FLOOR: f32 = __DIRECT_FLOOR__;
 const MAX_DIRECT_GAIN: f32 = __MAX_DIRECT_GAIN__;
 const SKY_DAY: f32 = __SKY_DAY__;
@@ -387,23 +400,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var sky = vec3<f32>(0.0); var direct = 0.0;
     if sunlit {
         let e = dot(normal,view.sun.xyz);
-        var k = clamp((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH,0.0,1.0);
-        k = k*k*(3.0-2.0*k);
-        shade = NIGHT_BRIGHTNESS+DAY_RANGE*k; night = NIGHT_BLUE*(1.0-k); darkness = 1.0-k;
-        var exposure = clamp((e+EXPOSURE_OFFSET)/EXPOSURE_WIDTH,0.0,1.0);
-        exposure = NIGHT_BRIGHTNESS+DAY_RANGE*exposure*exposure*(3.0-2.0*exposure);
-        var risen = clamp((e-SUN_RISE_START)/(SUN_RISE_FULL-SUN_RISE_START),0.0,1.0);
-        let share = DIRECT_SHARE*risen*risen*(3.0-2.0*risen);
-        var blue = clamp(e/SKY_DAY,0.0,1.0);
-        blue = blue*blue*(3.0-2.0*blue);
-        sky = mix(TWILIGHT_SKY,DAY_SKY,blue)*(exposure*(1.0-share));
-        direct = exposure*share*clamp(e/max(e,DIRECT_FLOOR),0.0,MAX_DIRECT_GAIN);
+        let k = smooth01((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH);
+        night = NIGHT_BLUE*(1.0-k); darkness = 1.0-k;
+        let lit = lit_level(e);
+        var shaded = lit;
+        if e > SUN_RISE_START {
+            let risen = lit_level(SUN_RISE_START);
+            shaded = min(risen + (SHADE_DAY-risen)*smooth01((e-SUN_RISE_START)/(SKY_DAY-SUN_RISE_START)), lit);
+        }
+        let colour = mix(TWILIGHT_SKY,DAY_SKY,smooth01(e/SKY_DAY));
+        sky = colour/dot(colour,LUMINANCE)*shaded;
+        direct = (lit-shaded)*clamp(e/max(e,DIRECT_FLOOR),0.0,MAX_DIRECT_GAIN);
     }
     // Night lights without the sun: night everywhere (`RenderCfg::night_everywhere`).
     let all_night = !sunlit && view.lights.x != 0u;
     if all_night {
         shade = NIGHT_BRIGHTNESS; night = NIGHT_BLUE; darkness = 1.0;
-        sky = TWILIGHT_SKY*NIGHT_BRIGHTNESS;
+        sky = TWILIGHT_SKY/dot(TWILIGHT_SKY,LUMINANCE)*NIGHT_BRIGHTNESS;
     }
     // As the CPU's `night_lights` and `finish_surface`: the lights glow where it is dark.
     var lights = vec4<f32>(0.0);
@@ -428,7 +441,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let red = max(lit.x,AIR_TINY);
             let tint = vec3<f32>(1.0,sqrt(min(lit.y/red*AIR_NOON_GREEN,1.0)),sqrt(min(lit.z/red*AIR_NOON_BLUE,1.0)));
             sunlight = vec3<f32>(1.0) + (tint - vec3<f32>(1.0))*(1.0-darkness);
-            sun_tint = tint*tint;
+            sun_tint = tint;
         }
         glow = air_scattered(up,mu_s,nu);
     }

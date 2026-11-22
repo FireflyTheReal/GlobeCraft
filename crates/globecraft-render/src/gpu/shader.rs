@@ -82,9 +82,8 @@ pub(super) fn source() -> String {
         ("NIGHT_BRIGHTNESS", tuning::NIGHT_BRIGHTNESS as f64),
         ("DAY_RANGE", tuning::DAY_BRIGHTNESS_RANGE as f64),
         ("NIGHT_BLUE", tuning::NIGHT_BLUE_TINT as f64),
-        ("DIRECT_SHARE", tuning::DIRECT_SHARE as f64),
         ("SUN_RISE_START", tuning::SUN_RISE_START_COSINE),
-        ("SUN_RISE_FULL", tuning::SUN_RISE_FULL_COSINE),
+        ("SHADE_DAY", tuning::SHADE_DAY as f64),
         ("DIRECT_FLOOR", tuning::DIRECT_FLOOR_COSINE),
         ("MAX_DIRECT_GAIN", tuning::MAX_DIRECT_GAIN),
         ("SKY_DAY", tuning::SKY_DAY_COSINE),
@@ -104,6 +103,7 @@ pub(super) fn source() -> String {
     for (name, [r, g, b]) in [
         ("TWILIGHT_SKY", tuning::TWILIGHT_SKY),
         ("DAY_SKY", tuning::DAY_SKY),
+        ("LUMINANCE", tuning::LUMINANCE),
     ] {
         source = source.replace(
             &format!("__{name}__"),

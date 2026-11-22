@@ -772,15 +772,23 @@ pub(crate) struct Frame {
 /// How far the eye has adapted to twilight (0: day, 1: fully) for a camera `height_km`
 /// up where the sun's cosine is `sun_cosine`.
 fn adaptation_share(height_km: f32, sun_cosine: f32) -> f32 {
-    let smooth = |x: f32| {
-        let x = x.clamp(0.0, 1.0);
-        x * x * (3.0 - 2.0 * x)
-    };
-    let low = smooth(
+    let low = smoothstep(
         (ADAPT_FROM_SUN_COSINE - sun_cosine) / (ADAPT_FROM_SUN_COSINE - ADAPT_TO_SUN_COSINE),
     );
+    low * eye_weight(height_km)
+}
+
+/// How far the eye adapts to twilight with the camera `height_km` up: fully in the
+/// lower air, not at all from space (`ADAPT_FADE_KM`). The air's light and the
+/// ground's (`pixel::Daylight`) both follow it.
+pub(crate) fn eye_weight(height_km: f32) -> f32 {
     let [from, to] = ADAPT_FADE_KM;
-    low * (1.0 - smooth((height_km - from) / (to - from)))
+    1.0 - smoothstep((height_km - from) / (to - from))
+}
+
+fn smoothstep(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
 }
 
 /// The factor on the air's light for an adaptation `share`: brighter and bluer.
