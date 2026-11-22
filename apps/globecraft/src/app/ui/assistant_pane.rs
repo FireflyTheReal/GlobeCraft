@@ -211,10 +211,10 @@ impl App {
             .num_columns(2)
             .spacing(vec2(8.0, 6.0))
             .show(ui, |ui| {
-                ui.label(lang.text("assistant-provider-label"));
+                let label = ui.label(lang.text("assistant-provider-label"));
                 let current = provider::preset(&cfg.provider).map_or("", |p| p.label);
                 let mut chosen = None;
-                egui::ComboBox::from_id_salt("assistant_provider")
+                let combo = egui::ComboBox::from_id_salt("assistant_provider")
                     .selected_text(current)
                     .width(180.0)
                     .show_ui(ui, |ui| {
@@ -224,6 +224,8 @@ impl App {
                             }
                         }
                     });
+                // Read out with its label, which egui does not tie to it by itself.
+                combo.response.labelled_by(label.id);
                 if let Some(id) = chosen.filter(|id| *id != cfg.provider) {
                     cfg = self.assistant_config(id);
                 }

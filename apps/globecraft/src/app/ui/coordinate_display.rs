@@ -7,8 +7,8 @@ use globecraft_core::{
 
 pub(super) fn controls(ui: &mut egui::Ui, display: &mut CoordinateDisplay, lang: Lang) {
     ui.horizontal(|ui| {
-        ui.label(lang.text("coordinates-format-label"));
-        egui::ComboBox::from_id_salt("coordinate_format")
+        let label = ui.label(lang.text("coordinates-format-label"));
+        let combo = egui::ComboBox::from_id_salt("coordinate_format")
             .selected_text(lang.text(display.format.name_id()))
             .show_ui(ui, |ui| {
                 super::selection::size_menu(
@@ -31,6 +31,8 @@ pub(super) fn controls(ui: &mut egui::Ui, display: &mut CoordinateDisplay, lang:
                     }
                 }
             });
+        // Read out with its label, which egui does not tie to it by itself.
+        combo.response.labelled_by(label.id);
     });
     ui.horizontal(|ui| {
         ui.label(lang.text(display.format.precision_id()));

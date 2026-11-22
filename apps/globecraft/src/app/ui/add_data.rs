@@ -739,8 +739,8 @@ impl AddDataDialog {
                     }
                 });
                 ui.end_row();
-                ui.label(lang.text("add-data-format-label"));
-                egui::ComboBox::from_id_salt("add_data_format")
+                let label = ui.label(lang.text("add-data-format-label"));
+                let combo = egui::ComboBox::from_id_salt("add_data_format")
                     .selected_text(lang.text(format_name(self.format)))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.format, None, lang.text(format_name(None)));
@@ -752,6 +752,8 @@ impl AddDataDialog {
                             );
                         }
                     });
+                // Read out with its label, which egui does not tie to it by itself.
+                combo.response.labelled_by(label.id);
                 ui.end_row();
                 if is_url(self.location.trim()) {
                     ui.label(lang.text("add-data-refresh-label"));
