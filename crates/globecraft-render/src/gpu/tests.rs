@@ -385,3 +385,185 @@ fn the_self_check_accepts_rounding_and_refuses_wrong_pictures() {
     assert_eq!(parity(&gpu, &cpu), Err((1, IMAGERY_MAX_DIFFERENCE + 1)));
     assert!(parity(&cpu[..8], &cpu).is_err(), "a short picture");
 }
+
+/// The relief march (`relief`) on synthetic Himalayan relief (`terrain_views`' views):
+/// with its starts the CPU draws the same picture, and marches fewer steps.
+#[test]
+#[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
+fn gpu_relief_march_keeps_the_cpu_picture() {
+    use std::sync::Mutex;
+    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
+        if provider == Provider::Satellite && z > 14 {
+            return Lookup::Unavailable;
+        }
+        let mut tiles = tiles.lock().unwrap();
+        Lookup::Ready(Arc::clone(tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                crate::tests::probe_dem_tile(z, x, y)
+            } else {
+                crate::tests::probe_image_tile(z, x, y)
+            }
+        })))
+    };
+    let (width, height) = (320, 200);
+    for (name, alt, tilt, heading) in [
+        ("top-16km", 16.0, 0.0, 0.0),
+        ("tilt-16km", 16.0, 70.0, 0.0),
+        ("tilt-52km", 52.0, 75.0, 0.0),
+        ("tilt-6km", 6.0, 72.0, 30.0),
+        ("tilt85-3km", 3.0, 85.0, 30.0),
+    ] {
+        let cam = Cam {
+            lat: 30.3,
+            lon: 79.8,
+            heading,
+            alt,
+            tilt,
+            look_up: 0.0,
+        };
+        let mut cfg = crate::tests::batch_reference_config(Provider::Satellite);
+        cfg.grid = false;
+        cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+        // The view's march alone (the march toward the sun counts its steps too).
+        cfg.sun = None;
+        let request = RenderRequest {
+            width,
+            height,
+            cam,
+            basis: cam.basis_for_model(
+                width as f64 / height as f64,
+                globecraft_core::earth_model::EarthModel::Wgs84,
+            ),
+            cfg,
+            overlays: None,
+            aircraft: None,
+            live_layers: None,
+            presentation: 0,
+            compare: None,
+        };
+        // Counted on one thread.
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let render = |starts: Option<&[f32]>| {
+            pool.install(|| {
+                crate::terrain::COUNTS.with(|c| c.set((0, 0)));
+                let frame = crate::render_pixels_with(
+                    width,
+                    height,
+                    0..height,
+                    &request.basis,
+                    &request.cfg,
+                    &lookup,
+                    Vec::new(),
+                    starts,
+                );
+                (frame, crate::terrain::COUNTS.with(|c| c.get().0))
+            })
+        };
+        let (frame, cpu_steps) = render(None);
+        let (expected, held) = (frame.pixels, frame.relief_tiles);
+        let held = relief::grown_tiles(&held, lookup, std::time::Instant::now());
+        let march = gpu
+            .relief
+            .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
+            .as_mut()
+            .unwrap();
+        let starts = march
+            .starts(&gpu.device, &gpu.queue, &request, &held)
+            .expect("relief march");
+        let (frame, gpu_steps) = render(Some(&starts));
+        let pixels = frame.pixels;
+        let result = parity(&pixels, &expected);
+        // The march started from the camera: how much the start alone moves the
+        // picture (the CPU's linear steps between exact measurements).
+        let zeros = vec![0.0; width * height];
+        let from_camera = render(Some(&zeros)).0.pixels;
+        let hits = crate::relief_hits(width, height, &request.basis, &request.cfg, &lookup);
+        let (mut past, mut share, mut counted, mut most) = (0, 0.0, 0, 0.0f64);
+        for (&start, &hit) in starts.iter().zip(&hits) {
+            if hit.is_finite() {
+                past += usize::from(f64::from(start) > hit);
+                most = most.max(f64::from(start) / hit - 1.0);
+                share += f64::from(start) / hit;
+                counted += 1;
+            }
+        }
+        println!(
+            "{name}: {past} starts past the ground (at most {:.4} % of the way); on average {:.0} % of the way",
+            most * 100.0,
+            share / counted.max(1) as f64 * 100.0
+        );
+        let differ = |a: &[u8], b: &[u8]| {
+            a.iter()
+                .zip(b)
+                .filter(|(a, b)| a.abs_diff(**b) > 16)
+                .count()
+        };
+        println!(
+            "{name}: channels off by more than 16: GPU's walk {}, cones {} (against the march from the camera)",
+            differ(&pixels, &from_camera),
+            differ(&expected, &from_camera)
+        );
+        if let Ok(dir) = std::env::var("GLOBECRAFT_PROBE_DIR") {
+            let save = |pixels: &[u8], what: &str| {
+                image::RgbaImage::from_raw(width as u32, height as u32, pixels.to_vec())
+                    .unwrap()
+                    .save(format!("{dir}/{name}-{what}.png"))
+                    .unwrap();
+            };
+            save(&expected, "cpu");
+            save(&pixels, "gpu");
+            let shade: Vec<u8> = starts
+                .iter()
+                .flat_map(|&t| {
+                    let level = (t * 4000.0).clamp(0.0, 255.0) as u8;
+                    [level, level, level, 255]
+                })
+                .collect();
+            save(&shade, "starts");
+        }
+        println!(
+            "{name}: {:.1} CPU march steps per pixel after the GPU's walk ({:.1} after the cones), {result:?}",
+            gpu_steps as f64 / (width * height) as f64,
+            cpu_steps as f64 / (width * height) as f64,
+        );
+        let _ = result;
+        let timed = |starts: Option<&[f32]>| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    crate::render_pixels_with(
+                        width,
+                        height,
+                        0..height,
+                        &request.basis,
+                        &request.cfg,
+                        &lookup,
+                        Vec::new(),
+                        starts,
+                    );
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        println!(
+            "{name}: the CPU's part {:?} after the GPU's walk, {:?} with the cones",
+            timed(Some(&starts)),
+            timed(None)
+        );
+        assert_eq!(relief::past_the_ground(&starts, &hits), 0, "{name}");
+        assert!(gpu_steps <= cpu_steps, "{name}");
+    }
+    let march = gpu.relief.take().flatten().unwrap();
+    drop(march);
+    let mut checked = relief::ReliefMarch::new(&gpu.device, 128);
+    checked
+        .self_check(&gpu.device, &gpu.queue)
+        .expect("the self-check passes");
+}

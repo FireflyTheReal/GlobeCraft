@@ -64,12 +64,12 @@ pub const MIN_EXAGGERATION: f32 = 0.5;
 pub const MAX_EXAGGERATION: f32 = 3.0;
 
 /// Finest elevation zoom requested; finer imagery reuses its relief.
-const DEM_MAX_ZOOM: i32 = 15;
+pub(crate) const DEM_MAX_ZOOM: i32 = 15;
 /// Elevation texels per screen pixel along the ray: relief varies slowly, so a texel
 /// may cover two pixels.
-const DEM_PIXELS_PER_TEXEL: f64 = 2.0;
+pub(crate) const DEM_PIXELS_PER_TEXEL: f64 = 2.0;
 /// Above every summit (Everest 8,849 m): rays higher than this cannot hit the ground.
-const MAX_TERRAIN_M: f64 = 8_900.0;
+pub(crate) const MAX_TERRAIN_M: f64 = 8_900.0;
 /// Steps per ray before it gives up and keeps the ellipsoid (a safety bound; typical
 /// rays need tens).
 const MAX_MARCH_STEPS: usize = 512;
@@ -79,7 +79,7 @@ const BLOCK_EXIT_TEXELS: f64 = 1e-3;
 /// barely moves across the map (looking straight down) must not leap past the ground.
 const MAX_NUDGE: f64 = 1e-8;
 /// Elevation tiles are 512 texels across (Mapterhorn).
-const DEM_TILE_TEXELS: f64 = 512.0;
+pub(crate) const DEM_TILE_TEXELS: f64 = 512.0;
 /// Linear steps between exact measurements, in texels.
 const REANCHOR_TEXELS: f64 = 48.0;
 /// Secant refinements of a hit between the last point above and the first below.
@@ -95,7 +95,7 @@ const MAX_SHADE: f64 = 1.25;
 /// Steepest slope (rise over run) the shading uses; cliffs beyond it shade the same.
 const MAX_SLOPE: f64 = 5.0;
 /// Keeps slope distances finite next to the poles.
-const MIN_LATITUDE_COSINE: f64 = 0.015;
+pub(crate) const MIN_LATITUDE_COSINE: f64 = 0.015;
 
 #[cfg(test)]
 thread_local! {
@@ -116,6 +116,16 @@ pub struct TerrainCfg {
 }
 
 impl TerrainCfg {
+    /// The exaggeration the heights stand at (after `fade`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn exaggeration(self) -> f64 {
+        self.exaggeration
+    }
+    /// Whether heights blend between levels (see `without_smoothing`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn smooth(self) -> bool {
+        self.smooth
+    }
     /// Relief with the given vertical exaggeration (clamped to the accepted range),
     /// flattened by `fade` (0–1, `relief_fade`).
     pub fn new(exaggeration: f32, fade: f32) -> Self {
@@ -583,6 +593,29 @@ pub(super) fn horizon_dip(
     (2.0 * height.max(0.0)).sqrt() * f64::from(terrain.fade)
 }
 
+/// Elevation tiles end at Web Mercator's limit (85.05°): past it each tile's edge row
+/// stood for all the land to the pole, as ridges along the meridians that cast long
+/// slabs of shadow (Julien's recording over Antarctica, 2026-11-22). Past the limit
+/// the relief eases down to the globe's surface over this much more of the latitude's
+/// sine (about 1.5°, 170 km: a slope of a degree under Antarctica's plateau), read from
+/// a coarse level (`POLAR_RELIEF_ZOOM`, a texel of about 1.5 km there) whose edge row
+/// changes slowly along the parallel; the polar caps' imagery lies there.
+const POLAR_RELIEF_FADE_SINE: f64 = 0.001_9;
+const POLAR_RELIEF_ZOOM: i32 = 2;
+
+/// How much of its height the relief at `point` stands at (see
+/// `POLAR_RELIEF_FADE_SINE`). Lower ground only: the block maxima still hold above it.
+fn polar_fade(point: DVec3) -> f64 {
+    let limit = WEB_MERCATOR_MAX_LATITUDE_DEG.to_radians().sin();
+    let past = (point.z.abs() / point.length() - limit) / POLAR_RELIEF_FADE_SINE;
+    if past <= 0.0 {
+        return 1.0;
+    }
+    let past = past.min(1.0);
+    // Just past the limit a little less than whole, so the coarse level takes over.
+    (1.0 - past * past * (3.0 - 2.0 * past)).min(1.0 - f64::EPSILON)
+}
+
 /// Height above the surface (world units) of `point`: the algebraic distance to the
 /// ellipsoid scaled to a height, within metres of the geodetic height at every
 /// elevation on Earth.
@@ -706,7 +739,7 @@ impl ZoomTrack {
 /// level's: over the zoom of about 15 % more distance. Blending over the whole level
 /// made relief frames twice as slow; 0.3 cost 12–21 % in tilted views, 0.15 4–12 %
 /// (`terrain_views`, 2026-11-17).
-const HEIGHT_BLEND_LEVELS: f64 = 0.2;
+pub(crate) const HEIGHT_BLEND_LEVELS: f64 = 0.2;
 
 /// The elevation zoom for a point `t` away, before it is rounded down to a level:
 /// texels of about `DEM_PIXELS_PER_TEXEL` pixels, given the angle per pixel
@@ -848,6 +881,12 @@ fn march_near(
         }
         let (zoom, weight) = levels.at(t, pixel_angle, anchor.latitude_cosine);
         let weight = if terrain.smooth { weight } else { 1.0 };
+        // Past Web Mercator's limit only a coarse level's edge row stands for the land.
+        let (zoom, weight) = if polar_fade(point) < 1.0 {
+            (zoom.min(POLAR_RELIEF_ZOOM), 1.0)
+        } else {
+            (zoom, weight)
+        };
         let mut uv = anchor.uv(t);
         // Keep the tile while it covers the point and the wanted zoom holds (it may be
         // a coarser stand-in for a missing tile); look again otherwise.
@@ -960,11 +999,17 @@ fn march_near(
                     }
                     None => own_m(uv),
                 };
-                let ground = f64::from(ground_m(uv)) * to_world;
+                let ground = f64::from(ground_m(uv)) * to_world * polar_fade(point);
                 if height <= ground {
+                    // Toward the sun only whether it is hidden counts: no exact hit,
+                    // no slope (a fifth of that march's cost).
+                    if margin.is_some() {
+                        return March::Hit(*ray, Slope::FLAT);
+                    }
                     let t = refine(above, t, height - ground, |t| {
-                        height_above(origin + direction * t, q)
-                            - f64::from(ground_m(anchor.uv(t))) * to_world
+                        let point = origin + direction * t;
+                        height_above(point, q)
+                            - f64::from(ground_m(anchor.uv(t))) * to_world * polar_fade(point)
                     });
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
@@ -993,6 +1038,7 @@ fn march_near(
                         let before = coarser.shade(held, uv, normal, to_world);
                         shade = before.lerp(shade, f64::from(toward));
                     }
+                    let shade = shade.faded(polar_fade(point) as f32);
                     return March::Hit(
                         rays::RaySample {
                             distance: t,
@@ -1549,6 +1595,45 @@ mod march_tests {
                 assert!((km - ground_km).abs() < 0.01, "{with_stand_in}: {km}");
             }
         }
+    }
+
+    /// Past Web Mercator's limit the plateau eases down to the globe's surface instead
+    /// of standing on its tiles' edge row; just inside it stands at its height.
+    #[test]
+    fn relief_eases_down_past_the_mercator_limit() {
+        let geometry = EarthModel::Wgs84.geometry();
+        let lookup = flat_world(2_000.0);
+        let mut loc = Local {
+            lookup: &lookup,
+            map: HashMap::<_, _, KeyBuild>::default(),
+            dem: Vec::new(),
+            dem_placed: Vec::new(),
+            dem_index: HashMap::default(),
+            now: std::time::Instant::now(),
+        };
+        let mut down_at = |lat: f64| {
+            let up = globecraft_core::math::ll_to_v3(lat, 160.0);
+            let origin =
+                geometry.position(lat, 160.0) + up * (10.0 / globecraft_core::EARTH_RADIUS_KM);
+            let (ray, hits) = ray_from(origin, -up, geometry);
+            match march(
+                &ray,
+                0.0,
+                hits,
+                origin,
+                geometry,
+                TerrainCfg::new(1.0, 1.0),
+                1e-3,
+                0.0,
+                &mut loc,
+            ) {
+                March::Hit(ground, _) => ground.distance * globecraft_core::EARTH_RADIUS_KM,
+                March::Floor => ray.distance * globecraft_core::EARTH_RADIUS_KM,
+                March::Miss => f64::NAN,
+            }
+        };
+        assert!((down_at(-84.0) - 8.0).abs() < 0.05);
+        assert!((down_at(-87.0) - 10.0).abs() < 0.05);
     }
 
     #[test]

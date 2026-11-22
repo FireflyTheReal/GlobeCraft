@@ -1,5 +1,6 @@
 //! GPU sampling and shading of overview frames, without egui dependencies.
 mod overview;
+mod relief;
 mod repair;
 mod shader;
 #[cfg(test)]
@@ -37,6 +38,11 @@ pub(crate) struct GpuRenderer {
     software: bool,
     /// The adapter's name and backend, for diagnostics.
     adapter: String,
+    /// The relief march (`relief`), made with the first relief frame; `None` inside
+    /// once it failed its check on this adapter.
+    relief: Option<Option<relief::ReliefMarch>>,
+    /// The elevation tiles the last relief frame held.
+    relief_tiles: Vec<TileKey>,
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -188,7 +194,55 @@ impl GpuRenderer {
                 adapter.get_info().name,
                 adapter.get_info().backend
             ),
+            relief: None,
+            relief_tiles: Vec::new(),
         })
+    }
+
+    /// Where each pixel's relief march may start (`relief`, row by row); `None` until
+    /// a relief frame told which elevation tiles it held (`relief_frame_held`), or when
+    /// the march failed its check on this adapter.
+    pub(crate) fn relief_starts(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+    ) -> Result<Option<Vec<f32>>, String> {
+        if let Some(error) = self
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            return Err(error);
+        }
+        let (device, queue) = (&self.device, &self.queue);
+        let layers = self.slots.len() as u32;
+        let march = self.relief.get_or_insert_with(|| {
+            let mut march = relief::ReliefMarch::new(device, layers);
+            match march.self_check(device, queue) {
+                Ok(()) => Some(march),
+                Err(error) => {
+                    globecraft_data::log_line!("The CPU marches the relief alone: {error}");
+                    None
+                }
+            }
+        });
+        let Some(march) = march else {
+            return Ok(None);
+        };
+        let tiles = relief::grown_tiles(
+            &self.relief_tiles,
+            |key| cache.lookup(key),
+            std::time::Instant::now(),
+        );
+        if tiles.is_empty() {
+            return Ok(None);
+        }
+        march.starts(device, queue, request, &tiles).map(Some)
+    }
+    /// The elevation tiles a relief frame held: the relief march's for the next.
+    pub(crate) fn relief_frame_held(&mut self, tiles: Vec<TileKey>) {
+        self.relief_tiles = tiles;
     }
 
     /// Draws one small view of a made-up tile on this adapter and on the CPU, and

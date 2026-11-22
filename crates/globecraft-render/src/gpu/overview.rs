@@ -9,7 +9,7 @@ const TILE_TABLE_SIZE: usize = 2048;
 const MAX_RASTER_PIXELS: usize = 2000 * 2000;
 /// How long a frame may take on the GPU before the device counts as failed. Frames
 /// take milliseconds; the slowest software adapter measured took 0.15 s.
-const FRAME_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(super) const FRAME_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Marks the night lights' tiles in the tile table's level word (levels are below 32).
 pub(super) const LIGHTS_TAG: u32 = 0x100;
 
@@ -62,7 +62,7 @@ pub(super) struct Overview {
     dependency_count: usize,
     empty: Vec<u32>,
 }
-fn buffer(
+pub(super) fn buffer(
     device: &wgpu::Device,
     label: &str,
     size: usize,

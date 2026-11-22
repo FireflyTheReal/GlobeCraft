@@ -470,7 +470,7 @@ const NIGHT_LIGHTS_SOUTH_EDGE: [f32; 3] = [43.0, 51.0, 85.0];
 const MIN_NIGHT_LIGHTS_DARKNESS: f32 = 0.01;
 
 /// The view angle per displayed pixel (see `pixel::surface`).
-fn pixel_angle(h: usize, cfg: &RenderCfg) -> f64 {
+pub(crate) fn pixel_angle(h: usize, cfg: &RenderCfg) -> f64 {
     2.0 * VERTICAL_FOV_HALF_TAN * cfg.lod_scale as f64 / h as f64
 }
 
@@ -482,20 +482,109 @@ fn frame_air(rays: &RayCaster, cfg: &RenderCfg) -> Option<atmosphere::Frame> {
     })
 }
 
-/// Renders row `y`. `beams` holds where the relief march of each block of pixels may
-/// start (`terrain::beam_starts`; empty without relief).
+/// The relief's sunlight along a row (`terrain::sun_light`): within a stretch wholly
+/// lit or wholly in shadow every second pixel takes its left neighbour's, at the same
+/// depth. The march toward the sun cost as much as the view's (2026-11-22); edges and
+/// the soft margins round them are still marched for every pixel.
+#[derive(Default)]
+struct SunSeen {
+    /// The last pixel's column, light and distance, and whether its light was its
+    /// left neighbour's too.
+    last: Option<(usize, f32, f64, bool)>,
+}
+
+/// Neighbours count as at the same depth within this share of the distance.
+const SAME_DEPTH_SHARE: f64 = 0.02;
+
+impl SunSeen {
+    fn at(&mut self, x: usize, distance: f64, march: impl FnOnce() -> f32) -> f32 {
+        let left = self.last.filter(|&(last_x, _, last_distance, _)| {
+            last_x + 1 == x && (distance - last_distance).abs() <= distance * SAME_DEPTH_SHARE
+        });
+        let seen = match left {
+            Some((_, value, _, true)) if x % 2 == 1 && (value == 0.0 || value == 1.0) => value,
+            _ => march(),
+        };
+        let same = left.is_some_and(|(_, value, _, _)| value == seen);
+        self.last = Some((x, seen, distance, same));
+        seen
+    }
+}
+
+/// Where a row's relief marches may start.
+#[derive(Clone, Copy)]
+struct MarchStarts<'a> {
+    /// Per block of pixels (`terrain::beam_starts`; empty without relief or with
+    /// `pixels`).
+    beams: &'a [f64],
+    /// Per pixel, from the GPU (`gpu::relief`).
+    pixels: Option<&'a [f32]>,
+}
+
+/// How far each pixel's ray goes before the relief stops it, marched from the camera
+/// (row by row; infinite where it meets none): what a start for the march must not
+/// pass (`gpu::relief`'s self-check).
+#[cfg(feature = "gpu")]
+pub(crate) fn relief_hits(
+    w: usize,
+    h: usize,
+    basis: &Basis,
+    cfg: &RenderCfg,
+    lookup: &(impl Fn(TileKey) -> Lookup + Sync),
+) -> Vec<f64> {
+    let Some(relief) = cfg.terrain else {
+        return vec![f64::INFINITY; w * h];
+    };
+    let rays = RayCaster::new(w, h, basis);
+    let mut loc = Local {
+        lookup,
+        map: HashMap::default(),
+        dem: Vec::new(),
+        dem_placed: Vec::new(),
+        dem_index: HashMap::default(),
+        now: std::time::Instant::now(),
+    };
+    let mut hits = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for first_x in (0..w).step_by(RAY_LANES) {
+            for ray in rays.cast(first_x, y).into_iter().take(w - first_x) {
+                let hits_surface = ray.discriminant >= 0.0 && ray.camera_dot < 0.0;
+                hits.push(
+                    match terrain::march(
+                        &ray,
+                        0.0,
+                        hits_surface,
+                        rays.camera(),
+                        rays.model_geometry(),
+                        relief,
+                        pixel_angle(h, cfg),
+                        0.0,
+                        &mut loc,
+                    ) {
+                        terrain::March::Hit(ground, _) => ground.distance,
+                        terrain::March::Floor | terrain::March::Miss => f64::INFINITY,
+                    },
+                );
+            }
+        }
+    }
+    hits
+}
+
+/// Renders row `y`.
 fn render_row<const ELLIPSOID: bool>(
     y: usize,
     rays: &RayCaster,
     cfg: &RenderCfg,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
-    beams: &[f64],
+    starts: MarchStarts,
     air: Option<&atmosphere::Frame>,
     row: &mut [u8],
 ) {
     let (w, h) = rays.pixels();
     let pixel_angle = pixel_angle(h, cfg);
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
+    let mut sun_seen = SunSeen::default();
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
         let first_x = pack * RAY_LANES;
         let samples = rays.cast_model::<ELLIPSOID>(first_x, y);
@@ -515,7 +604,14 @@ fn render_row<const ELLIPSOID: bool>(
                     let priority = offset.0 * offset.0 + offset.1 * offset.1;
                     match terrain::march(
                         &ray,
-                        beams.get(x / terrain::BEAM_COLUMNS).copied().unwrap_or(0.0),
+                        match starts.pixels {
+                            Some(pixels) => f64::from(pixels[x]),
+                            None => starts
+                                .beams
+                                .get(x / terrain::BEAM_COLUMNS)
+                                .copied()
+                                .unwrap_or(0.0),
+                        },
                         hits_surface,
                         rays.camera(),
                         geometry,
@@ -534,14 +630,16 @@ fn render_row<const ELLIPSOID: bool>(
                                         relief.fade,
                                     )),
                                     sky: slope.sky_share(relief.fade),
-                                    seen: terrain::sun_light(
-                                        &ground,
-                                        sun,
-                                        geometry,
-                                        relief,
-                                        pixel_angle,
-                                        loc,
-                                    ),
+                                    seen: sun_seen.at(x, ground.distance, || {
+                                        terrain::sun_light(
+                                            &ground,
+                                            sun,
+                                            geometry,
+                                            relief,
+                                            pixel_angle,
+                                            loc,
+                                        )
+                                    }),
                                     dip: terrain::horizon_dip(&ground, geometry, relief),
                                 },
                                 None => Relief {
@@ -684,8 +782,51 @@ fn render_rows_into(
     cache: &TileCache,
     buffer: Vec<u8>,
 ) -> RenderedView {
-    let (buf, mut list, waiting) =
-        render_pixels_into(w, h, rows, basis, cfg, &|key| cache.lookup(key), buffer);
+    render_relief_rows_into(w, h, rows, basis, cfg, cache, buffer, None).0
+}
+
+/// A whole view with relief whose marches start at `starts` (one per pixel, row by
+/// row: how far each ray is known to stay above the relief, from the GPU's
+/// `gpu::relief`), and the elevation tiles it held: the GPU's for the next frame.
+#[cfg(feature = "gpu")]
+pub(crate) fn render_relief_view_into(
+    w: usize,
+    h: usize,
+    basis: &Basis,
+    cfg: &RenderCfg,
+    cache: &TileCache,
+    buffer: Vec<u8>,
+    starts: Option<&[f32]>,
+) -> (RenderedView, Vec<TileKey>) {
+    render_relief_rows_into(w, h, 0..h, basis, cfg, cache, buffer, starts)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_relief_rows_into(
+    w: usize,
+    h: usize,
+    rows: std::ops::Range<usize>,
+    basis: &Basis,
+    cfg: &RenderCfg,
+    cache: &TileCache,
+    buffer: Vec<u8>,
+    starts: Option<&[f32]>,
+) -> (RenderedView, Vec<TileKey>) {
+    let Pixels {
+        pixels: buf,
+        misses: mut list,
+        waiting,
+        relief_tiles,
+    } = render_pixels_with(
+        w,
+        h,
+        rows,
+        basis,
+        cfg,
+        &|key| cache.lookup(key),
+        buffer,
+        starts,
+    );
 
     // Request missing tiles: lowest zoom first, then closest to the center.
     list.sort_by(|a, b| {
@@ -695,11 +836,14 @@ fn render_rows_into(
             .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
     });
     let requests = list.into_iter().map(|(key, _)| key).collect();
-    RenderedView {
-        pixels: buf,
-        waiting,
-        requests,
-    }
+    (
+        RenderedView {
+            pixels: buf,
+            waiting,
+            requests,
+        },
+        relief_tiles,
+    )
 }
 
 #[cfg(test)]
@@ -725,6 +869,7 @@ fn render_pixels_tracked(
     render_pixels_into(w, h, 0..h, basis, cfg, lookup, Vec::new())
 }
 
+#[cfg(any(test, feature = "gpu"))]
 fn render_pixels_into(
     w: usize,
     h: usize,
@@ -732,8 +877,34 @@ fn render_pixels_into(
     basis: &Basis,
     cfg: &RenderCfg,
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
-    mut buf: Vec<u8>,
+    buf: Vec<u8>,
 ) -> (Vec<u8>, Vec<(TileKey, f32)>, Vec<TileKey>) {
+    let frame = render_pixels_with(w, h, rows, basis, cfg, lookup, buf, None);
+    (frame.pixels, frame.misses, frame.waiting)
+}
+
+/// A frame's pixels, the tiles it missed (with the nearest pixel's priority) and
+/// waited for, and the elevation tiles it held (`render_pixels_with`).
+pub(crate) struct Pixels {
+    pub(crate) pixels: Vec<u8>,
+    pub(crate) misses: Vec<(TileKey, f32)>,
+    pub(crate) waiting: Vec<TileKey>,
+    pub(crate) relief_tiles: Vec<TileKey>,
+}
+
+/// `render_pixels_into` with the relief's march starts (see `render_relief_view_into`),
+/// and the elevation tiles held.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_pixels_with(
+    w: usize,
+    h: usize,
+    rows: std::ops::Range<usize>,
+    basis: &Basis,
+    cfg: &RenderCfg,
+    lookup: &(impl Fn(TileKey) -> Lookup + Sync),
+    mut buf: Vec<u8>,
+    starts: Option<&[f32]>,
+) -> Pixels {
     let first_row = rows.start;
     buf.resize(w * rows.len() * RGBA_CHANNELS, 0);
     let row_bytes = w * RGBA_CHANNELS;
@@ -741,7 +912,8 @@ fn render_pixels_into(
     let unit_sphere = rays.uses_unit_sphere();
     let air = frame_air(&rays, cfg);
     let now = std::time::Instant::now();
-    let per_batch: Vec<Vec<(TileKey, Option<f32>)>> = buf
+    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() == w * h);
+    let per_batch: Vec<_> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()
         .map(|(batch, rows)| {
@@ -757,9 +929,10 @@ fn render_pixels_into(
             };
             let batch_first = first_row + batch * ROWS_PER_TILE_BATCH;
             let batch_rows = batch_first..batch_first + rows.len() / row_bytes;
-            // Relief: one cone per block of pixels clears the open air first.
+            // Relief: one cone per block of pixels clears the open air first, unless
+            // the GPU did for each pixel.
             let beams = match cfg.terrain {
-                Some(relief) => terrain::beam_starts(
+                Some(relief) if starts.is_none() => terrain::beam_starts(
                     &rays,
                     w,
                     h,
@@ -768,56 +941,53 @@ fn render_pixels_into(
                     pixel_angle(h, cfg),
                     &mut loc,
                 ),
-                None => Vec::new(),
+                _ => Vec::new(),
             };
             for (offset, row) in rows.chunks_mut(row_bytes).enumerate() {
+                let y = first_row + batch * ROWS_PER_TILE_BATCH + offset;
+                let marches = MarchStarts {
+                    beams: &beams,
+                    pixels: starts.map(|starts| &starts[y * w..(y + 1) * w]),
+                };
                 if unit_sphere {
-                    render_row::<false>(
-                        first_row + batch * ROWS_PER_TILE_BATCH + offset,
-                        &rays,
-                        cfg,
-                        &mut loc,
-                        &beams,
-                        air.as_ref(),
-                        row,
-                    );
+                    render_row::<false>(y, &rays, cfg, &mut loc, marches, air.as_ref(), row);
                 } else {
-                    render_row::<true>(
-                        first_row + batch * ROWS_PER_TILE_BATCH + offset,
-                        &rays,
-                        cfg,
-                        &mut loc,
-                        &beams,
-                        air.as_ref(),
-                        row,
-                    );
+                    render_row::<true>(y, &rays, cfg, &mut loc, marches, air.as_ref(), row);
                 }
             }
-            loc.map
+            let relief_tiles: Vec<TileKey> = loc.dem_index.keys().copied().collect();
+            let misses: Vec<(TileKey, Option<f32>)> = loc
+                .map
                 .into_iter()
                 .filter_map(|(key, tile)| match tile {
                     LocalTile::Ready(_) | LocalTile::Unavailable => None,
                     LocalTile::Pending => Some((key, None)),
                     LocalTile::Absent(distance) => Some((key, Some(distance))),
                 })
-                .collect()
+                .collect();
+            (misses, relief_tiles)
         })
         .collect();
 
     let mut misses: HashMap<TileKey, f32> = HashMap::new();
     let mut waiting = std::collections::HashSet::new();
-    for (k, distance) in per_batch.into_iter().flatten() {
-        waiting.insert(k);
-        if let Some(d) = distance {
-            let e = misses.entry(k).or_insert(f32::MAX);
-            *e = e.min(d);
+    let mut relief_tiles = std::collections::HashSet::new();
+    for (batch_misses, batch_tiles) in per_batch {
+        relief_tiles.extend(batch_tiles);
+        waiting.extend(batch_misses.iter().map(|entry| entry.0));
+        for (k, distance) in batch_misses {
+            if let Some(d) = distance {
+                let e = misses.entry(k).or_insert(f32::MAX);
+                *e = e.min(d);
+            }
         }
     }
-    (
-        buf,
-        misses.into_iter().collect(),
-        waiting.into_iter().collect(),
-    )
+    Pixels {
+        pixels: buf,
+        misses: misses.into_iter().collect(),
+        waiting: waiting.into_iter().collect(),
+        relief_tiles: relief_tiles.into_iter().collect(),
+    }
 }
 
 #[cfg(test)]

@@ -1394,7 +1394,18 @@ fn bing_sun_comparison() {
     // name, centre, altitude km, tilt, heading, Unix time
     // Julien's recording of 2026-11-22 09:21 (Manhattan from 139 m, looking south-west)
     // and his screenshot from 12,695 km come first.
-    let views: [(&str, f64, f64, f64, f64, f64, f64); 35] = [
+    let views: [(&str, f64, f64, f64, f64, f64, f64); 36] = [
+        // Julien's recording over Antarctica (2026-11-22 22:50): past Web Mercator's
+        // limit the relief stood on its tiles' edge row.
+        (
+            "julien-pole-2150",
+            -85.38,
+            165.51,
+            21.0,
+            80.0,
+            41.0,
+            1_795_384_200.0,
+        ),
         (
             "julien-fuji-0727",
             35.38737,

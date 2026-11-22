@@ -284,6 +284,37 @@ impl FrameRenderer {
                 buffer,
             )
         };
+        // Relief: the CPU draws it, from where the GPU's walk through the open air
+        // ended (roadmap D1).
+        #[cfg(feature = "gpu")]
+        if request.cfg.terrain.is_some() && self.preference != BackendPreference::Cpu {
+            self.initialize_with(crate::gpu::GpuRenderer::new);
+            let starts =
+                match self.gpu.as_mut().map(|gpu| {
+                    gpu_call(|| gpu.relief_starts(request, cache)).and_then(|result| result)
+                }) {
+                    Some(Ok(starts)) => starts,
+                    Some(Err(error)) => {
+                        self.device_failed(&error);
+                        None
+                    }
+                    None => None,
+                };
+            update_status(|status| status.cpu_frames += 1);
+            let (frame, held) = crate::render_relief_view_into(
+                request.width,
+                request.height,
+                &request.basis,
+                &request.cfg,
+                cache,
+                buffer,
+                starts.as_deref(),
+            );
+            if let Some(gpu) = &mut self.gpu {
+                gpu.relief_frame_held(held);
+            }
+            return frame;
+        }
         #[cfg(feature = "gpu")]
         if self.preference == BackendPreference::Cpu
             || (self.preference == BackendPreference::Auto

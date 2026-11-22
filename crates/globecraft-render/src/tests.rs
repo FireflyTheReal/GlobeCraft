@@ -550,7 +550,7 @@ fn probe_height(lat: f64, lon: f64) -> f32 {
     h.max(0.0) as f32
 }
 
-fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
+pub(crate) fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     let size = 512;
     let n = f64::from(1u32 << z);
     let heights = (0..size * size)
@@ -568,7 +568,7 @@ fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     ))
 }
 
-fn probe_image_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
+pub(crate) fn probe_image_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     let hue = [(200, 80, 60), (60, 160, 80), (70, 90, 200), (190, 170, 60)]
         [((tx + ty + u32::from(z)) % 4) as usize];
     let image = image::RgbaImage::from_fn(256, 256, |x, y| {
