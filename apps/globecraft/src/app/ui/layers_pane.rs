@@ -302,6 +302,7 @@ impl App {
                 egui::TextEdit::singleline(&mut self.panes.layers.query)
                     .id(egui::Id::new("layers-search"))
                     .hint_text(lang.text("layers-search-placeholder"))
+                    .min_size(egui::vec2(0.0, 20.0))
                     .desired_width(width),
             );
             super::widgets::name_field(&response, lang.text("layers-search-placeholder"));

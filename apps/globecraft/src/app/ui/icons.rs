@@ -12,9 +12,30 @@ struct P<'a> {
     r: Rect,
     ink: Color32,
     acc: Color32,
+    /// Monochrome icons (Settings › Appearance): every colour but greys in the accent.
+    mono: bool,
+}
+
+/// Where the app leaves the Monochrome icons setting for `paint`, which has no `App`.
+const MONO_KEY: &str = "icons-mono";
+
+/// Sets whether icons draw in one colour: ink, with the accent for every hue they have.
+pub(in crate::app) fn set_mono(ctx: &egui::Context, mono: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(MONO_KEY), mono));
 }
 
 impl P<'_> {
+    /// A colour as drawn: in monochrome, a hue becomes the accent, with its opacity;
+    /// greys, white and black stay.
+    fn c(&self, c: Color32) -> Color32 {
+        let [r, g, b, a] = c.to_srgba_unmultiplied();
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        if !self.mono || max == 0 || f32::from(max - min) / f32::from(max) < 0.25 {
+            return c;
+        }
+        let [ar, ag, ab, _] = self.acc.to_srgba_unmultiplied();
+        Color32::from_rgba_unmultiplied(ar, ag, ab, a)
+    }
     fn s(&self) -> f32 {
         self.r.width() / 24.0
     }
@@ -26,19 +47,21 @@ impl P<'_> {
     }
     fn line(&self, pts: &[(f32, f32)], w: f32, c: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
-        self.p.add(Shape::line(v, Stroke::new(self.w(w), c)));
+        self.p
+            .add(Shape::line(v, Stroke::new(self.w(w), self.c(c))));
     }
     fn closed(&self, pts: &[(f32, f32)], w: f32, c: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
-        self.p.add(Shape::closed_line(v, Stroke::new(self.w(w), c)));
+        self.p
+            .add(Shape::closed_line(v, Stroke::new(self.w(w), self.c(c))));
     }
     /// A band between two curves of the same length, shaded from `low` along the
     /// first to `high` along the second (aurora light, gradients).
     fn band(&self, lower: &[(f32, f32)], upper: &[(f32, f32)], low: Color32, high: Color32) {
         let mut mesh = egui::Mesh::default();
         for (&(x0, y0), &(x1, y1)) in lower.iter().zip(upper) {
-            mesh.colored_vertex(self.pt(x0, y0), low);
-            mesh.colored_vertex(self.pt(x1, y1), high);
+            mesh.colored_vertex(self.pt(x0, y0), self.c(low));
+            mesh.colored_vertex(self.pt(x1, y1), self.c(high));
         }
         for i in 0..lower.len().min(upper.len()).saturating_sub(1) as u32 {
             let k = 2 * i;
@@ -50,7 +73,8 @@ impl P<'_> {
     /// Convex fill.
     fn fill(&self, pts: &[(f32, f32)], c: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
-        self.p.add(Shape::convex_polygon(v, c, Stroke::NONE));
+        self.p
+            .add(Shape::convex_polygon(v, self.c(c), Stroke::NONE));
     }
     #[expect(
         clippy::too_many_arguments,
@@ -68,13 +92,13 @@ impl P<'_> {
     ) {
         let r = Rect::from_min_max(self.pt(x, y), self.pt(x + w, y + h));
         if let Some(f) = fill {
-            self.p.rect_filled(r, round * self.s(), f);
+            self.p.rect_filled(r, round * self.s(), self.c(f));
         }
         if let Some((sw, c)) = stroke {
             self.p.rect_stroke(
                 r,
                 round * self.s(),
-                Stroke::new(self.w(sw), c),
+                Stroke::new(self.w(sw), self.c(c)),
                 egui::StrokeKind::Middle,
             );
         }
@@ -89,11 +113,11 @@ impl P<'_> {
     ) {
         let c = self.pt(x, y);
         if let Some(f) = fill {
-            self.p.circle_filled(c, rad * self.s(), f);
+            self.p.circle_filled(c, rad * self.s(), self.c(f));
         }
         if let Some((sw, col)) = stroke {
             self.p
-                .circle_stroke(c, rad * self.s(), Stroke::new(self.w(sw), col));
+                .circle_stroke(c, rad * self.s(), Stroke::new(self.w(sw), self.c(col)));
         }
     }
     #[expect(
@@ -120,7 +144,7 @@ impl P<'_> {
         ];
         self.p.extend(Shape::dashed_line(
             &pts,
-            Stroke::new(self.w(1.3), c),
+            Stroke::new(self.w(1.3), self.c(c)),
             2.2 * self.s(),
             1.6 * self.s(),
         ));
@@ -131,7 +155,7 @@ impl P<'_> {
             egui::Align2::CENTER_CENTER,
             s,
             super::theme::semibold(size * self.s()),
-            c,
+            self.c(c),
         );
     }
     fn tint(&self, a: u8) -> Color32 {
@@ -382,9 +406,9 @@ impl P<'_> {
             .iter()
             .fold((0.0, 0.0), |(x, y), (px, py)| (x + px / n, y + py / n));
         let mut mesh = egui::Mesh::default();
-        mesh.colored_vertex(self.pt(cx, cy), c);
+        mesh.colored_vertex(self.pt(cx, cy), self.c(c));
         for &(x, y) in pts {
-            mesh.colored_vertex(self.pt(x, y), c);
+            mesh.colored_vertex(self.pt(x, y), self.c(c));
         }
         let k = pts.len() as u32;
         for i in 0..k {
@@ -578,6 +602,9 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
         r,
         ink,
         acc: accent,
+        mono: painter
+            .ctx()
+            .data(|d| d.get_temp(egui::Id::new(MONO_KEY)).unwrap_or(false)),
     };
     let green = Color32::from_rgb(0x16, 0x9A, 0x5A);
     let red = Color32::from_rgb(0xD1, 0x3C, 0x3C);
@@ -1823,6 +1850,33 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
 
 #[cfg(test)]
 mod tests {
+    /// Monochrome keeps greys (ink, outlines) and alpha; saturated hues become the accent.
+    #[test]
+    fn mono_maps_hues_to_accent() {
+        let ctx = eframe::egui::Context::default();
+        let painter = eframe::egui::Painter::new(
+            ctx,
+            eframe::egui::LayerId::background(),
+            eframe::egui::Rect::EVERYTHING,
+        );
+        let acc = eframe::egui::Color32::from_rgb(0x0A, 0x84, 0xFF);
+        let p = super::P {
+            p: &painter,
+            r: eframe::egui::Rect::EVERYTHING,
+            ink: eframe::egui::Color32::GRAY,
+            acc,
+            mono: true,
+        };
+        let grey = eframe::egui::Color32::from_rgb(0x5F, 0x6B, 0x7A);
+        assert_eq!(p.c(grey), grey);
+        let red = eframe::egui::Color32::from_rgba_unmultiplied(0xD1, 0x3C, 0x3C, 128);
+        assert_eq!(
+            p.c(red),
+            eframe::egui::Color32::from_rgba_unmultiplied(0x0A, 0x84, 0xFF, 128)
+        );
+        assert_eq!(super::P { mono: false, ..p }.c(red), red);
+    }
+
     /// Every icon the interface names draws something other than the fallback square.
     #[test]
     fn named_icons_exist() {

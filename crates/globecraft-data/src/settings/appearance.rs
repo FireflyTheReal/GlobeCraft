@@ -21,6 +21,8 @@ pub struct AppearancePreferences {
     /// Fly to places without the flight and stop the globe from coasting after a drag.
     /// macOS's own Reduce Motion turns this on as well.
     pub reduce_motion: bool,
+    /// Interface icons in one colour (ink and accent) instead of their own colours.
+    pub mono_icons: bool,
 }
 impl AppearancePreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {

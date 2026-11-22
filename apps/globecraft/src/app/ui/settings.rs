@@ -77,6 +77,7 @@ impl Category {
                 "coordinates-format-utm",
                 "coordinates-format-mgrs",
                 "coordinates-input-help",
+                "settings-utc-times-label",
                 "settings-startup-view-label",
                 "settings-startup-help",
             ],
@@ -86,6 +87,8 @@ impl Category {
                 "settings-map-font-label",
                 "settings-ui-scale-label",
                 "settings-map-scale-label",
+                "settings-reduce-motion-label",
+                "settings-mono-icons-label",
             ],
             Self::MapStyle => map_style::KEYWORDS,
             Self::Navigation => &[
@@ -274,6 +277,7 @@ impl App {
                 let search = ui.add(
                     egui::TextEdit::singleline(&mut state.query)
                         .hint_text(lang.text("settings-search-placeholder"))
+                        .min_size(egui::vec2(0.0, 20.0))
                         .desired_width(f32::INFINITY),
                 );
                 super::widgets::name_field(&search, lang.text("settings-search-placeholder"));

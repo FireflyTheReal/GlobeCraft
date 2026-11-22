@@ -660,6 +660,7 @@ impl eframe::App for App {
             ui::theme::apply(ui, look);
             self.chrome.styled_look = Some(look);
         }
+        ui::icons::set_mono(ui, self.settings.appearance.mono_icons);
         // persist settings once a slider is released; frames with no input (animation)
         // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more
         let (pointer_down, had_input) = ui.input(|i| (i.pointer.any_down(), !i.events.is_empty()));
