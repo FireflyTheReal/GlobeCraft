@@ -109,6 +109,7 @@ layers-search-empty-active = Nenhuma camada está ativada.
 wayback-loading-status = Carregando datas disponíveis…
 
 wayback-older-tooltip = Mais antiga
+wayback-date-name = Data das imagens
 
 wayback-newer-tooltip = Mais recente
 
@@ -767,7 +768,9 @@ settings-theme-light = Claro
 settings-reduce-motion-label = Reduzir movimento
 settings-reduce-motion-help = Chegar aos lugares sem voar até eles e impedir que o globo continue girando depois de arrastar. No Mac, Reduzir movimento nos Ajustes do Sistema também faz isso.
 settings-mono-icons-label = Ícones monocromáticos
-settings-mono-icons-help = Desenhar os ícones da faixa de opções e dos menus em uma só cor, a de destaque, em vez das suas próprias cores.
+settings-mono-icons-help = Desenhar os ícones da faixa de opções e dos menus em uma só cor, a de destaque ou a sua, em vez das suas próprias cores.
+settings-mono-icons-own-color-label = Cor própria em vez da de destaque
+settings-mono-icons-color-label = Cor dos ícones
 settings-utc-times-label = Mostrar horários em UTC
 settings-utc-times-help = A linha do tempo mostra os horários no fuso deste computador, a não ser que esta opção esteja ativada.
 settings-ui-font-label = Fonte da interface
@@ -833,6 +836,7 @@ settings-category-controllers = Controles
 controllers-enabled = Ativar controles
 controllers-help = Navegação Explorar: analógico esquerdo move, eixo X direito gira e gatilhos controlam o zoom. Solte os controles após fechar diálogos ou reconectar.
 controllers-disconnected = Dispositivo selecionado desconectado
+controllers-device-name = Controle
 controllers-action-none = Sem vínculo
 controllers-action-cancel = Cancelar movimento da câmera
 controllers-left-x = Analógico esquerdo X
@@ -1396,6 +1400,7 @@ add-data-web-tile-size-label = Tamanho do bloco
 add-data-web-max-zoom-label = Nível mais detalhado
 add-data-web-layer-label = Camada
 add-data-web-no-layers = Carregue antes as camadas do serviço
+add-data-web-layer-name = Camada
 add-data-web-load-layers = Carregar camadas
 add-data-web-default-name = Mapa da web
 add-data-web-test-ok = Chegou um bloco ({ $width } × { $height } pixels).

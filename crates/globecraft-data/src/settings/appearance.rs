@@ -23,6 +23,8 @@ pub struct AppearancePreferences {
     pub reduce_motion: bool,
     /// Interface icons in one colour (ink and accent) instead of their own colours.
     pub mono_icons: bool,
+    /// The monochrome icons' colour; `None` is the system's accent colour.
+    pub mono_icon_color: Option<super::map_style::Rgba>,
 }
 impl AppearancePreferences {
     pub(super) fn apply(&mut self, value: &serde_json::Value) {

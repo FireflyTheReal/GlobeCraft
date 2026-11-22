@@ -44,7 +44,7 @@ impl App {
                                 ),
                                 "search",
                                 t.text_dim,
-                                t.accent,
+                                t.icon_accent,
                             );
                             // Typed part in normal weight, completion in bold (like Google).
                             let font = FontId::proportional(14.0);

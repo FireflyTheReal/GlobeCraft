@@ -120,7 +120,7 @@ impl App {
                         })
                         .unwrap_or_default();
                     let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-                    icons::paint(ui.painter(), r, "assistant", t.text_dim, t.accent);
+                    icons::paint(ui.painter(), r, "assistant", t.text_dim, t.icon_accent);
                     let w = (ui.available_width() - 3.0 * 30.0).max(0.0);
                     let model_label = egui::Label::new(
                         RichText::new(format!("{label} · {model}"))
@@ -230,12 +230,12 @@ impl App {
                     cfg = self.assistant_config(id);
                 }
                 ui.end_row();
-                ui.label(lang.text("assistant-model-label"));
+                let model_label = ui.label(lang.text("assistant-model-label"));
                 ui.horizontal(|ui| {
                     let models = self.assistant.models.clone();
                     ui.add(egui::TextEdit::singleline(&mut cfg.model).desired_width(140.0));
                     if !models.is_empty() {
-                        egui::ComboBox::from_id_salt("assistant_models")
+                        let combo = egui::ComboBox::from_id_salt("assistant_models")
                             .selected_text("")
                             .width(24.0)
                             .height(320.0)
@@ -246,6 +246,7 @@ impl App {
                                     }
                                 }
                             });
+                        combo.response.labelled_by(model_label.id);
                     }
                     let listing = self.assistant.listing_models();
                     if ui
@@ -410,7 +411,7 @@ impl App {
                         .font(regular(13.0))
                         .hint_text(lang.text("assistant-input-hint")),
                 );
-                super::widgets::name_field(&input, lang.text("assistant-input-hint"));
+                super::widgets::name_widget(&input, lang.text("assistant-input-hint"));
             });
         ui.horizontal(|ui| {
             let w = (ui.available_width() - 84.0).max(0.0);

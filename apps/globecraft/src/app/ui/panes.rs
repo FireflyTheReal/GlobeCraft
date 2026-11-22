@@ -111,7 +111,7 @@ fn header_tab(
             Rect::from_center_size(r.center(), vec2(18.0, 18.0)),
             icon,
             ink,
-            t.accent,
+            t.icon_accent,
         ),
         None => {
             p.with_clip_rect(r).text(
@@ -138,7 +138,13 @@ fn close_cross(ui: &mut Ui, t: &Tokens, center: egui::Pos2, id: egui::Id, tip: &
     if resp.hovered() {
         ui.painter().rect_filled(cr, CornerRadius::same(3), t.hover);
     }
-    icons::paint(ui.painter(), cr.shrink(7.0), "close", t.text_dim, t.accent);
+    icons::paint(
+        ui.painter(),
+        cr.shrink(7.0),
+        "close",
+        t.text_dim,
+        t.icon_accent,
+    );
     resp.on_hover_text(tip).clicked()
 }
 
@@ -357,7 +363,7 @@ impl App {
                     if pinned { t.checked } else { t.hover },
                 );
             }
-            icons::paint(ui.painter(), r.shrink(4.0), "pin", t.icon, t.accent);
+            icons::paint(ui.painter(), r.shrink(4.0), "pin", t.icon, t.icon_accent);
             if resp.on_hover_text(tip).clicked() {
                 self.settings.sidebar.places_pinned = !pinned;
             }
@@ -516,7 +522,13 @@ impl App {
             PaneSide::Right => "chevron_left",
             PaneSide::Left => "chevron_right",
         };
-        icons::paint(ui.painter(), br.shrink(4.0), icon, t.text_dim, t.accent);
+        icons::paint(
+            ui.painter(),
+            br.shrink(4.0),
+            icon,
+            t.text_dim,
+            t.icon_accent,
+        );
         let resp = resp.on_hover_text(tip);
         if resp.clicked() {
             self.run_reporting("ui.pane.side", Value::Null);

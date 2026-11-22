@@ -280,7 +280,7 @@ impl App {
                         .min_size(egui::vec2(0.0, 20.0))
                         .desired_width(f32::INFINITY),
                 );
-                super::widgets::name_field(&search, lang.text("settings-search-placeholder"));
+                super::widgets::name_widget(&search, lang.text("settings-search-placeholder"));
                 ui.add_space(6.0);
                 let query = fold_name(&state.query);
                 for category in Category::ALL {

@@ -89,7 +89,7 @@ fn description_editor(
                     .desired_rows(DESCRIPTION_ROWS)
                     .desired_width(f32::INFINITY),
             );
-            super::widgets::name_field(&field, lang.text("places-description-placeholder"));
+            super::widgets::name_widget(&field, lang.text("places-description-placeholder"));
             field
         })
 }
@@ -239,7 +239,7 @@ impl App {
                     .min_size(egui::vec2(0.0, 20.0))
                     .desired_width(110.0),
             );
-            super::widgets::name_field(&name, lang.text("placemarks-name-placeholder"));
+            super::widgets::name_widget(&name, lang.text("placemarks-name-placeholder"));
             if super::icons::button(ui, "point_tool", lang.text("placemarks-add-center-action"))
                 .clicked()
             {

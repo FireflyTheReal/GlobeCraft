@@ -182,7 +182,7 @@ fn side_menu(
         Rect::from_center_size(pos2(rect.min.x + 15.0, rect.center().y), vec2(18.0, 18.0)),
         icon,
         t.icon,
-        t.accent,
+        t.icon_accent,
     );
     ui.painter().text(
         pos2(rect.min.x + 32.0, rect.center().y),
