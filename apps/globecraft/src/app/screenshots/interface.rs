@@ -217,7 +217,8 @@ fn network_settings_screenshots() {
     // The keys section (adapter D), lower on the same page: one field per keyed service.
     settle(&mut h, 0.5);
     assert!(
-        h.query_by_label_contains("TomTom").is_some(),
+        // The key row's label and its field, which is named after it.
+        h.query_all_by_label_contains("TomTom").next().is_some(),
         "no TomTom key row"
     );
     save(&mut h, &dir, "keys-en");
@@ -475,7 +476,11 @@ fn side_menus_screenshot() {
     ] {
         h.state_mut().settings.workspace.ribbon_tab = tab;
         settle(&mut h, 0.3);
-        h.get_by_label(group).click();
+        let more = h
+            .state()
+            .lang
+            .format("ribbon-group-more", &[("group", group.into())]);
+        h.get_by_label(&more).click();
         settle(&mut h, 0.3);
         h.get_by_label_contains(side).hover();
         settle(&mut h, 0.5);
@@ -503,7 +508,11 @@ fn ribbon_menus_screenshot() {
         let mut h = harness(theme);
         settle(&mut h, 0.5);
         save(&mut h, &dir, &format!("ribbon-{name}"));
-        h.get_by_label("Navigate").click();
+        let more = h
+            .state()
+            .lang
+            .format("ribbon-group-more", &[("group", "Navigate".into())]);
+        h.get_by_label(&more).click();
         settle(&mut h, 0.3);
         assert!(
             h.query_by_label("Auto-Rotate").is_some(),
@@ -989,4 +998,34 @@ fn undo_brings_back_deleted_places_in_turn_with_ruler_edits() {
     assert!(!found(app, "Trip") && points(app) == 1);
     run(app, "edit.redo", Value::Null);
     assert!(points(app) == 2 && found(app, "Later"));
+}
+
+#[test]
+fn an_own_monochrome_colour_is_the_accent_everywhere() {
+    let green = globecraft_data::settings::map_style::Rgba([0x1F, 0xA0, 0x3C, 0xFF]);
+    let mut h = harness_with(Settings {
+        appearance: globecraft_data::settings::appearance::AppearancePreferences {
+            mono_icons: true,
+            mono_icon_color: Some(green),
+            ..Default::default()
+        },
+        ..Settings::default()
+    });
+    h.step();
+    let own = egui::Color32::from_rgb(0x1F, 0xA0, 0x3C);
+    assert_eq!(crate::app::ui::icons::mono(&h.ctx), Some(own));
+    // Controls take it too, darkened only as far as white labels need.
+    let accent = crate::app::ui::theme::Tokens::get(&h.ctx).accent;
+    assert!(
+        accent.g() > accent.r() && accent.g() > accent.b(),
+        "{accent:?}"
+    );
+    h.state_mut().settings.appearance.mono_icons = false;
+    h.step();
+    assert_eq!(crate::app::ui::icons::mono(&h.ctx), None);
+    let accent = crate::app::ui::theme::Tokens::get(&h.ctx).accent;
+    assert!(
+        accent.b() > accent.g(),
+        "back to the system's blue: {accent:?}"
+    );
 }

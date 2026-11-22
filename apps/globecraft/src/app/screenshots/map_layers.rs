@@ -397,13 +397,22 @@ fn time_zones_screenshot() {
     )
     .expect("camera");
     settle(&mut h, 3.0);
-    // The pointer near the middle of the globe's view (10° E: the Berlin zone).
+    // The pointer on 10° E (the Berlin zone), found by moving it along the view's
+    // middle row: the globe's place in the window changes with the panes and timeline.
     let size = h.ctx.content_rect().size();
-    let centre = egui::pos2(160.0 + size.x / 2.0, 95.0 + size.y / 2.0);
-    for _ in 0..3 {
-        h.event(egui::Event::PointerMoved(centre));
-        h.step();
+    let lon_at = |h: &mut Harness<'static, App>, x: f32| {
+        for _ in 0..3 {
+            h.event(egui::Event::PointerMoved(egui::pos2(x, size.y / 2.0)));
+            h.step();
+        }
+        h.state().pointer.cursor.expect("pointer over the globe").1
+    };
+    let mut x = size.x / 2.0;
+    for _ in 0..4 {
+        let (a, b) = (lon_at(&mut h, x), lon_at(&mut h, x + 40.0));
+        x += ((10.0 - a) * 40.0 / (b - a)) as f32;
     }
+    lon_at(&mut h, x);
     settle(&mut h, 1.0);
     save(
         &mut h,
@@ -690,7 +699,7 @@ fn sky_layer_screenshots() {
     let app = h.state_mut();
     app.run(
         "camera.set",
-        json!({"lat": -lat + 12.0, "lon": lon + 180.0, "altitude_km": 40000.0}),
+        json!({"lat": -lat + 12.0, "lon": (lon + 360.0).rem_euclid(360.0) - 180.0, "altitude_km": 40000.0}),
     )
     .expect("camera");
     settle(&mut h, 6.0);
