@@ -13,10 +13,10 @@ impl App {
     ) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-language-label"));
+            let label = ui.label(lg.text("settings-language-label"));
             let choices = LanguagePreference::ALL
                 .map(|choice| (choice, choice.label(lg, &self.locale.system)));
-            egui::ComboBox::from_id_salt("settings_language")
+            let combo = egui::ComboBox::from_id_salt("settings_language")
                 .selected_text((*language_preference).label(lg, &self.locale.system))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -32,11 +32,13 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-experience-label"));
+            let label = ui.label(lg.text("settings-experience-label"));
             let levels = ExperienceLevel::ALL;
-            egui::ComboBox::from_id_salt("settings_experience")
+            let combo = egui::ComboBox::from_id_salt("settings_experience")
                 .selected_text(lg.text(self.settings.experience.label_id()))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -52,13 +54,15 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
         ui.weak(lg.text("cmd-settings-experience-help"));
     }
     pub(super) fn settings_appearance(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-theme-label"));
+            let label = ui.label(lg.text("settings-theme-label"));
             let choices = globecraft_data::settings::appearance::ThemePreference::ALL;
             let name = |theme| {
                 lg.text(match theme {
@@ -73,7 +77,7 @@ impl App {
                     }
                 })
             };
-            egui::ComboBox::from_id_salt("theme")
+            let combo = egui::ComboBox::from_id_salt("theme")
                 .selected_text(name(self.settings.appearance.theme))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(ui, choices.map(name));
@@ -86,12 +90,19 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
         ui.checkbox(
             &mut self.settings.appearance.reduce_motion,
             lg.text("settings-reduce-motion-label"),
         );
         ui.weak(lg.text("settings-reduce-motion-help"));
+        ui.checkbox(
+            &mut self.settings.appearance.mono_icons,
+            lg.text("settings-mono-icons-label"),
+        );
+        ui.weak(lg.text("settings-mono-icons-help"));
         for (id, label, selected) in [
             (
                 "ui-font",
@@ -105,8 +116,8 @@ impl App {
             ),
         ] {
             ui.horizontal(|ui| {
-                ui.label(lg.text(label));
-                egui::ComboBox::from_id_salt(id)
+                let label = ui.label(lg.text(label));
+                let combo = egui::ComboBox::from_id_salt(id)
                     .selected_text(if selected.is_empty() {
                         lg.text("settings-font-system")
                     } else {
@@ -122,6 +133,8 @@ impl App {
                             ui.selectable_value(selected, family.clone(), family);
                         }
                     });
+                // Read out with its label, which egui does not tie to it by itself.
+                combo.response.labelled_by(label.id);
             });
         }
         if self.fonts.discovering {
@@ -164,7 +177,7 @@ impl App {
     pub(super) fn settings_units(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-distance-units-label"));
+            let caption = ui.label(lg.text("settings-distance-units-label"));
             let label = |units| match units {
                 UnitPreference::System => lg.format(
                     "settings-units-system",
@@ -186,7 +199,7 @@ impl App {
                 UnitPreference::Imperial,
             ]
             .map(|units| (units, label(units)));
-            egui::ComboBox::from_id_salt("distance_units")
+            let combo = egui::ComboBox::from_id_salt("distance_units")
                 .selected_text(label(self.settings.distance_units))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -202,6 +215,8 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(caption.id);
         });
         super::super::coordinate_display::controls(ui, &mut self.settings.coordinate_display, lg);
         ui.checkbox(
@@ -213,9 +228,9 @@ impl App {
     pub(super) fn settings_earth_model(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-earth-model-label"));
+            let label = ui.label(lg.text("settings-earth-model-label"));
             let models = globecraft_core::earth_model::EarthModel::ALL;
-            egui::ComboBox::from_id_salt("earth_model")
+            let combo = egui::ComboBox::from_id_salt("earth_model")
                 .selected_text(lg.text(self.settings.earth_model.name_id()))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -232,6 +247,8 @@ impl App {
                         .on_hover_text(lg.text(model.help_id()));
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
     }
     pub(super) fn settings_graphics(&mut self, ui: &mut egui::Ui) {
