@@ -229,7 +229,7 @@ fn close_button(ui: &mut Ui, t: &Tokens, rect: Rect, tip: &str) -> Response {
         rect.shrink(5.0),
         "close",
         t.text_dim,
-        t.accent,
+        t.icon_accent,
     );
     resp.on_hover_text(tip)
 }
@@ -266,7 +266,7 @@ pub(in crate::app) fn sidebar_item(ui: &mut Ui, icon: &str, name: &str, on: bool
         Rect::from_center_size(pos2(rect.min.x + 16.0, rect.center().y), vec2(18.0, 18.0)),
         icon,
         t.icon,
-        t.accent,
+        t.icon_accent,
     );
     ui.painter().with_clip_rect(rect).text(
         pos2(rect.min.x + 32.0, rect.center().y),

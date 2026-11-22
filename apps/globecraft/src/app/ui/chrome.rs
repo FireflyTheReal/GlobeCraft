@@ -161,7 +161,7 @@ impl App {
                         Rect::from_center_size(pos2(icon_x, cr.center().y), vec2(14.0, 14.0)),
                         "command",
                         t.text_dim,
-                        t.accent,
+                        t.icon_accent,
                     );
                     if !compact {
                         ui.painter().text(
@@ -493,6 +493,6 @@ fn header_icon(ui: &mut Ui, t: &Tokens, r: Rect, icon: &str, tip: &str, id: egui
     {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
     }
-    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text_dim, t.accent);
+    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text_dim, t.icon_accent);
     resp.on_hover_text(tip)
 }

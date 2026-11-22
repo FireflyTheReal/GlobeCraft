@@ -112,7 +112,11 @@ fn toc_row(ui: &mut Ui, t: &Tokens, row: TocRow<'_>) -> egui::Response {
         ic,
         icon,
         if enabled { t.icon } else { t.text_disabled },
-        if enabled { t.accent } else { t.text_disabled },
+        if enabled {
+            t.icon_accent
+        } else {
+            t.text_disabled
+        },
     );
     // Cut short with "…" in a narrow pane (the tooltip holds the whole name).
     let text_x = x0 + 42.0;
@@ -150,7 +154,7 @@ fn group_heading(ui: &mut Ui, t: &Tokens, id: &str, title: &str, force_open: boo
         Rect::from_center_size(pos2(r.min.x + 8.0, r.center().y), vec2(12.0, 12.0)),
         icon,
         t.text_dim,
-        t.accent,
+        t.icon_accent,
     );
     ui.painter().text(
         pos2(r.min.x + 18.0, r.center().y),
@@ -305,7 +309,7 @@ impl App {
                     .min_size(egui::vec2(0.0, 20.0))
                     .desired_width(width),
             );
-            super::widgets::name_field(&response, lang.text("layers-search-placeholder"));
+            super::widgets::name_widget(&response, lang.text("layers-search-placeholder"));
             if !self.panes.layers.query.is_empty()
                 && icons::icon_button(ui, "close", lang.text("layers-search-clear")).clicked()
             {
@@ -663,7 +667,7 @@ impl App {
                     {
                         idx += 1;
                     }
-                    egui::ComboBox::from_id_salt("wayback_date")
+                    let combo = egui::ComboBox::from_id_salt("wayback_date")
                         .selected_text(self.wayback.releases[idx].date.clone())
                         .height(320.0)
                         .show_ui(ui, |ui| {
@@ -675,6 +679,7 @@ impl App {
                                 super::selection::full_width_value(ui, &mut idx, i, &r.date);
                             }
                         });
+                    super::widgets::name_widget(&combo.response, lang.text("wayback-date-name"));
                     if ui
                         .small_button("▶")
                         .on_hover_text(lang.text("wayback-newer-tooltip"))

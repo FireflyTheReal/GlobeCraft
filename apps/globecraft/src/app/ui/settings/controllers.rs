@@ -18,7 +18,7 @@ impl App {
         if let Some(error) = &self.controllers.error {
             ui.label(error);
         }
-        egui::ComboBox::from_id_salt("controller-device")
+        let combo = egui::ComboBox::from_id_salt("controller-device")
             .selected_text(
                 self.controllers
                     .devices
@@ -36,6 +36,7 @@ impl App {
                     );
                 }
             });
+        crate::app::ui::widgets::name_widget(&combo.response, lang.text("controllers-device-name"));
         if self.settings.controllers.selected.is_empty() {
             return;
         }
@@ -80,7 +81,7 @@ impl App {
         for (action, binding) in profile.axes.iter_mut().enumerate() {
             ui.push_id(("axis", action), |ui| {
                 ui.separator();
-                ui.label(lang.text(
+                let action_label = ui.label(lang.text(
                     [
                         "controllers-pan-x",
                         "controllers-pan-y",
@@ -90,7 +91,7 @@ impl App {
                     ][action],
                 ));
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("input")
+                    let combo = egui::ComboBox::from_id_salt("input")
                         .selected_text(
                             binding
                                 .input
@@ -111,6 +112,7 @@ impl App {
                                 );
                             }
                         });
+                    combo.response.labelled_by(action_label.id);
                     if ui.button(lang.text("controllers-bind")).clicked() {
                         self.controllers.listen(action, true);
                     }

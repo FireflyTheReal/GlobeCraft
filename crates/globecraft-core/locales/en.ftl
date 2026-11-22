@@ -109,6 +109,7 @@ layers-search-empty-active = No layers are on.
 wayback-loading-status = Loading available dates…
 
 wayback-older-tooltip = Older
+wayback-date-name = Imagery date
 
 wayback-newer-tooltip = Newer
 
@@ -767,7 +768,9 @@ settings-theme-light = Light
 settings-reduce-motion-label = Reduce motion
 settings-reduce-motion-help = Arrive at places without flying there, and stop the globe from coasting after a drag. On a Mac, Reduce Motion in System Settings does this too.
 settings-mono-icons-label = Monochrome icons
-settings-mono-icons-help = Draw the ribbon’s and menus’ icons in one colour, the accent, instead of their own colours.
+settings-mono-icons-help = Draw the ribbon’s and menus’ icons in one colour, the accent or your own, instead of their own colours.
+settings-mono-icons-own-color-label = Own colour instead of the accent
+settings-mono-icons-color-label = Icon colour
 settings-utc-times-label = Show times in UTC
 settings-utc-times-help = The timeline shows times in this computer’s time zone unless this is on.
 settings-ui-font-label = Interface font
@@ -833,6 +836,7 @@ settings-category-controllers = Controllers
 controllers-enabled = Enable controllers
 controllers-help = Explore navigation: left stick pans, right stick X rotates, triggers zoom. Return controls to neutral after closing dialogs or reconnecting.
 controllers-disconnected = No selected device connected
+controllers-device-name = Controller
 controllers-action-none = Unbound
 controllers-action-cancel = Cancel camera movement
 controllers-left-x = Left stick X
@@ -1356,7 +1360,7 @@ settings-map-style-line-time-zone = Time zone lines
 
 settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
 
-settings-map-style-color-label = Color
+settings-map-style-color-label = Colour
 
 settings-map-style-width-label = Width
 
@@ -1381,11 +1385,11 @@ settings-map-style-label-time-zone = Time zone offsets
 settings-map-style-reset-action = Reset Map Style
 
 cmd-style-line = Map Line Style
-cmd-style-line-help = Set the color, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines.
+cmd-style-line-help = Set the colour, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines.
 cmd-style-label-size = Name Size
 cmd-style-label-size-help = Set the font size of country, state, city or street names, or of the time zones' offsets.
 cmd-style-reset = Reset Map Style
-cmd-style-reset-help = Restore the default border colors, widths, dashes and name sizes.
+cmd-style-reset-help = Restore the default border colours, widths, dashes and name sizes.
 
 add-data-title = Add Data
 add-data-tab-library = Library
@@ -1415,6 +1419,7 @@ add-data-web-tile-size-label = Tile size
 add-data-web-max-zoom-label = Finest level
 add-data-web-layer-label = Layer
 add-data-web-no-layers = Load the service's layers first
+add-data-web-layer-name = Layer
 add-data-web-load-layers = Load layers
 add-data-web-default-name = Web map
 add-data-web-test-ok = A tile arrived ({ $width } × { $height } pixels).

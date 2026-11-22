@@ -172,7 +172,7 @@ fn paint_big(ui: &mut Ui, r: &Resolved, menu: bool) -> Response {
     bg(ui, rect, &resp, r.checked, &t);
     let ic = Rect::from_center_size(pos2(rect.center().x, rect.min.y + 21.0), vec2(32.0, 32.0));
     let (c, a) = if on {
-        (t.icon, t.accent)
+        (t.icon, t.icon_accent)
     } else {
         (t.text_disabled, t.text_disabled)
     };
@@ -337,7 +337,7 @@ fn paint_small(ui: &mut Ui, r: &Resolved, show_label: bool, menu: bool) -> Respo
     bg(ui, rect, &resp, r.checked, &t);
     let ic = Rect::from_center_size(pos2(rect.min.x + 13.0, rect.center().y), vec2(18.0, 18.0));
     let (c, a) = if on {
-        (t.icon, t.accent)
+        (t.icon, t.icon_accent)
     } else {
         (t.text_disabled, t.text_disabled)
     };
@@ -516,7 +516,7 @@ fn menu_icon(ui: &Ui, resp: &Response, icon: &str) {
         ),
         icon,
         t.icon,
-        t.accent,
+        t.icon_accent,
     );
 }
 
@@ -775,9 +775,9 @@ pub(in crate::app) fn tab_role(tab: &Response, selected: bool) {
     });
 }
 
-/// Names a text field for screen readers after its hint: egui hands the hint on only as a
-/// placeholder, which leaves the field itself without a name.
-pub(in crate::app) fn name_field(field: &Response, name: &str) {
+/// Names a widget for screen readers: a text field after its hint (egui hands the hint on
+/// only as a placeholder), or a drop-down menu that has no label beside it.
+pub(in crate::app) fn name_widget(field: &Response, name: &str) {
     field
         .ctx
         .accesskit_node_builder(field.id, |node| node.set_label(name));
@@ -797,7 +797,7 @@ pub(in crate::app) fn icon_button(ui: &mut Ui, icon: &str, hover: &str) -> Respo
         Stroke::new(1.0, t.border),
         egui::StrokeKind::Inside,
     );
-    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text, t.accent);
+    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text, t.icon_accent);
     resp.on_hover_text(hover)
 }
 

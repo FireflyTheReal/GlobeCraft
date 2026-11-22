@@ -3,6 +3,7 @@ use crate::app::App;
 use eframe::egui;
 use globecraft_core::language::{Lang, LanguagePreference};
 use globecraft_data::settings::experience::ExperienceLevel;
+use globecraft_data::settings::map_style::Rgba;
 use globecraft_data::settings::{MAX_MAP_SCALE, MIN_MAP_SCALE, MIN_UI_SCALE, UnitPreference};
 
 impl App {
@@ -103,6 +104,9 @@ impl App {
             lg.text("settings-mono-icons-label"),
         );
         ui.weak(lg.text("settings-mono-icons-help"));
+        if self.settings.appearance.mono_icons {
+            mono_icon_color(ui, lg, &mut self.settings.appearance.mono_icon_color);
+        }
         for (id, label, selected) in [
             (
                 "ui-font",
@@ -585,4 +589,37 @@ fn motion_resolution(ui: &mut egui::Ui, lg: Lang, setting: &mut Option<f32>, key
         )
         .on_hover_text(lg.text(&help_key));
     }
+}
+
+/// The monochrome icons' colour: the system accent, or one of the user's own.
+fn mono_icon_color(ui: &mut egui::Ui, lg: Lang, color: &mut Option<Rgba>) {
+    ui.horizontal(|ui| {
+        let mut own = color.is_some();
+        if ui
+            .checkbox(&mut own, lg.text("settings-mono-icons-own-color-label"))
+            .changed()
+        {
+            let accent = crate::app::ui::theme::Tokens::get(ui.ctx()).accent;
+            *color = own.then(|| Rgba(accent.to_srgba_unmultiplied()));
+        }
+        if let Some(rgba) = color {
+            let [r, g, b, _] = rgba.0;
+            let mut picked = egui::Color32::from_rgb(r, g, b);
+            let button = egui::color_picker::color_edit_button_srgba(
+                ui,
+                &mut picked,
+                egui::color_picker::Alpha::Opaque,
+            );
+            button.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::ColorButton,
+                    true,
+                    lg.text("settings-mono-icons-color-label"),
+                )
+            });
+            if button.changed() {
+                *rgba = Rgba(picked.to_srgba_unmultiplied());
+            }
+        }
+    });
 }

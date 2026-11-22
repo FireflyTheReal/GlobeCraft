@@ -33,7 +33,7 @@ impl App {
             }
         }
         let (icon, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-        icons::paint(ui.painter(), icon, "search", t.text_dim, t.accent);
+        icons::paint(ui.painter(), icon, "search", t.text_dim, t.icon_accent);
         let id = egui::Id::new(SEARCH_FIELD_ID);
         // Offline, the field says so where a search would fail, not only in the status bar
         // at the window's bottom (HIG: Windows, no critical information in a bottom bar).
@@ -51,7 +51,7 @@ impl App {
                 .min_size(vec2(0.0, 20.0))
                 .desired_width(ui.available_width() - offline_w),
         );
-        super::widgets::name_field(&r, lg.text("search-input-placeholder"));
+        super::widgets::name_widget(&r, lg.text("search-input-placeholder"));
         if let Some(text) = offline {
             let chip = egui::Label::new(egui::RichText::new(text).size(11.0).color(t.amber_text))
                 .sense(egui::Sense::click());

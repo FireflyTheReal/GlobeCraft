@@ -236,7 +236,13 @@ impl App {
         }
         let minimized = self.settings.workspace.ribbon_minimized;
         let icon = if minimized { "chevron_down" } else { "up" };
-        icons::paint(ui.painter(), cr.shrink(5.0), icon, t.text_dim, t.accent);
+        icons::paint(
+            ui.painter(),
+            cr.shrink(5.0),
+            icon,
+            t.text_dim,
+            t.icon_accent,
+        );
         let tip = lang.text(if minimized {
             "ribbon-expand-tooltip"
         } else {
@@ -396,7 +402,7 @@ fn scroll_buttons<R>(
             Rect::from_center_size(r.center(), vec2(16.0, 16.0)),
             icon,
             t.text_dim,
-            t.accent,
+            t.icon_accent,
         );
         let tip = lang.text(if left {
             "ribbon-scroll-left"

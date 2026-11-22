@@ -12,28 +12,29 @@ struct P<'a> {
     r: Rect,
     ink: Color32,
     acc: Color32,
-    /// Monochrome icons (Settings › Appearance): every colour but greys in the accent.
-    mono: bool,
+    /// Monochrome icons (Settings › Appearance): every colour but greys in this one.
+    mono: Option<Color32>,
 }
 
 /// Where the app leaves the Monochrome icons setting for `paint`, which has no `App`.
 const MONO_KEY: &str = "icons-mono";
 
-/// Sets whether icons draw in one colour: ink, with the accent for every hue they have.
-pub(in crate::app) fn set_mono(ctx: &egui::Context, mono: bool) {
+/// Sets the one colour icons draw every hue in, or `None` for their own colours.
+pub(in crate::app) fn set_mono(ctx: &egui::Context, mono: Option<Color32>) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(MONO_KEY), mono));
 }
 
 impl P<'_> {
-    /// A colour as drawn: in monochrome, a hue becomes the accent, with its opacity;
-    /// greys, white and black stay.
+    /// A colour as drawn: in monochrome, a hue becomes the monochrome colour, with its
+    /// opacity; greys, white and black stay.
     fn c(&self, c: Color32) -> Color32 {
         let [r, g, b, a] = c.to_srgba_unmultiplied();
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-        if !self.mono || max == 0 || f32::from(max - min) / f32::from(max) < 0.25 {
+        let Some(mono) = self.mono else { return c };
+        if max == 0 || f32::from(max - min) / f32::from(max) < 0.25 {
             return c;
         }
-        let [ar, ag, ab, _] = self.acc.to_srgba_unmultiplied();
+        let [ar, ag, ab, _] = mono.to_srgba_unmultiplied();
         Color32::from_rgba_unmultiplied(ar, ag, ab, a)
     }
     fn s(&self) -> f32 {
@@ -604,7 +605,7 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
         acc: accent,
         mono: painter
             .ctx()
-            .data(|d| d.get_temp(egui::Id::new(MONO_KEY)).unwrap_or(false)),
+            .data(|d| d.get_temp(egui::Id::new(MONO_KEY)).flatten()),
     };
     let green = Color32::from_rgb(0x16, 0x9A, 0x5A);
     let red = Color32::from_rgb(0xD1, 0x3C, 0x3C);
@@ -1850,31 +1851,33 @@ pub(in crate::app) fn paint(painter: &Painter, r: Rect, name: &str, ink: Color32
 
 #[cfg(test)]
 mod tests {
-    /// Monochrome keeps greys (ink, outlines) and alpha; saturated hues become the accent.
+    /// Monochrome keeps greys (ink, outlines) and alpha; saturated hues take its colour.
     #[test]
-    fn mono_maps_hues_to_accent() {
+    fn mono_maps_hues_to_its_colour() {
         let ctx = eframe::egui::Context::default();
         let painter = eframe::egui::Painter::new(
             ctx,
             eframe::egui::LayerId::background(),
             eframe::egui::Rect::EVERYTHING,
         );
-        let acc = eframe::egui::Color32::from_rgb(0x0A, 0x84, 0xFF);
+        let acc = eframe::egui::Color32::from_rgb(0x25, 0x63, 0xEB);
+        let mono = eframe::egui::Color32::from_rgb(0x0A, 0x84, 0xFF);
         let p = super::P {
             p: &painter,
             r: eframe::egui::Rect::EVERYTHING,
             ink: eframe::egui::Color32::GRAY,
             acc,
-            mono: true,
+            mono: Some(mono),
         };
         let grey = eframe::egui::Color32::from_rgb(0x5F, 0x6B, 0x7A);
         assert_eq!(p.c(grey), grey);
+        assert_eq!(p.c(acc), mono);
         let red = eframe::egui::Color32::from_rgba_unmultiplied(0xD1, 0x3C, 0x3C, 128);
         assert_eq!(
             p.c(red),
             eframe::egui::Color32::from_rgba_unmultiplied(0x0A, 0x84, 0xFF, 128)
         );
-        assert_eq!(super::P { mono: false, ..p }.c(red), red);
+        assert_eq!(super::P { mono: None, ..p }.c(red), red);
     }
 
     /// Every icon the interface names draws something other than the fallback square.

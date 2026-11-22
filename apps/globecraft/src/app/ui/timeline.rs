@@ -324,7 +324,13 @@ impl App {
             ui.painter()
                 .rect_filled(rect, CornerRadius::same(5), t.hover);
         }
-        icons::paint(ui.painter(), rect.shrink(4.0), "settings", t.icon, t.accent);
+        icons::paint(
+            ui.painter(),
+            rect.shrink(4.0),
+            "settings",
+            t.icon,
+            t.icon_accent,
+        );
         let response = response.on_hover_text(lang.text("timeline-settings-help"));
         let span = self.timeline.range_days * DAY_SECS;
         egui::Popup::menu(&response).show(|ui| {
@@ -399,7 +405,7 @@ fn icon_button(ui: &mut Ui, t: &Tokens, icon: &str, help: &str, checked: bool) -
     } else if resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(12), t.hover);
     }
-    icons::paint(ui.painter(), r.shrink(4.0), icon, t.icon, t.accent);
+    icons::paint(ui.painter(), r.shrink(4.0), icon, t.icon, t.icon_accent);
     resp.on_hover_text(help).clicked()
 }
 

@@ -1,6 +1,7 @@
 //! Map style: colour, width and dash per line type (borders, roads, transport, rivers,
 //! parks and time zones), and name sizes.
 use crate::app::App;
+use crate::app::ui::widgets::name_widget;
 use eframe::egui::{self, Color32};
 use globecraft_data::settings::map_style::{
     DashStyle, LabelType, LineGroup, LineType, MAX_LABEL_SIZE_POINTS, MAX_LINE_WIDTH_POINTS,
@@ -165,18 +166,20 @@ fn line_row(
     kind: LineType,
 ) {
     ui.label(lg.text(line_name(kind)));
+    // Each control is read out as "<line> – <column>": the table's headers are not tied to it.
+    let name = |column: &str| format!("{} – {}", lg.text(line_name(kind)), lg.text(column));
     let [r, g, b, a] = style.color.0;
     let mut color = Color32::from_rgba_unmultiplied(r, g, b, a);
-    if egui::color_picker::color_edit_button_srgba(
+    let button = egui::color_picker::color_edit_button_srgba(
         ui,
         &mut color,
         egui::color_picker::Alpha::OnlyBlend,
-    )
-    .changed()
-    {
+    );
+    name_widget(&button, &name("settings-map-style-color-label"));
+    if button.changed() {
         style.color = Rgba(color.to_srgba_unmultiplied());
     }
-    ui.add(
+    let width = ui.add(
         egui::Slider::new(
             &mut style.width_points,
             MIN_LINE_WIDTH_POINTS..=MAX_LINE_WIDTH_POINTS,
@@ -184,7 +187,8 @@ fn line_row(
         .step_by(WIDTH_STEP_POINTS)
         .suffix(" pt"),
     );
-    egui::ComboBox::from_id_salt(("map_style_dash", kind.code()))
+    name_widget(&width, &name("settings-map-style-width-label"));
+    let combo = egui::ComboBox::from_id_salt(("map_style_dash", kind.code()))
         .selected_text(lg.text(dash_name(style.dash)))
         .show_ui(ui, |ui| {
             super::super::selection::size_menu(
@@ -200,5 +204,13 @@ fn line_row(
                 );
             }
         });
+    crate::app::ui::widgets::name_widget(
+        &combo.response,
+        &format!(
+            "{} – {}",
+            lg.text(line_name(kind)),
+            lg.text("settings-map-style-dash-label")
+        ),
+    );
     ui.end_row();
 }
