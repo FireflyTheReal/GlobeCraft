@@ -53,6 +53,9 @@ struct View {
     raster: [u32; 4],
     sun: [f32; 4],
     shade: [f32; 4],
+    near: [u32; 4],
+    near_frac: [f32; 4],
+    near_derivatives: [[f32; 4]; 6],
 }
 
 pub(super) struct ReliefMarch {
@@ -91,6 +94,95 @@ pub(crate) struct Walked {
     /// How many tiles this walk uploaded first.
     #[cfg(test)]
     pub(super) uploads: usize,
+}
+
+/// How far from the camera (world units, about 10 km, times the latitude's cosine as
+/// the levels' own distances) points of the finest levels take their texel from the
+/// camera's (`NearMap`).
+const NEAR_RANGE: f64 = 1.6e-3;
+/// Texels across the map at the zoom the near map counts in (the finest, 15).
+const NEAR_SIDE: f64 = 512.0 * 32768.0;
+
+/// The map near the camera for the finest levels, where an f32 map coordinate is a
+/// quarter texel or coarser: the camera's zoom-15 texel (whole and fraction) and the
+/// first and second derivatives of zoom-15 texel coordinates in world units there,
+/// so a point's texel follows from its f32 offset from the camera.
+struct NearMap {
+    /// How far from the camera the map holds (world units).
+    range: f64,
+    whole: [u32; 2],
+    fraction: [f32; 2],
+    /// x's gradient, y's gradient, x's second derivatives (xx, yy, zz, xy; xz, yz, -,
+    /// -), y's the same.
+    derivatives: [[f32; 4]; 6],
+}
+
+impl NearMap {
+    fn at(camera: glam::DVec3, q: glam::DVec3) -> Self {
+        let lon = (camera * q).y.atan2((camera * q).x);
+        let texels = |d: glam::DVec3| near_texels(camera + d, q, lon);
+        let centre = texels(glam::DVec3::ZERO);
+        let floor = centre.floor();
+        // Central differences 64 m apart: far below the map's own curvature.
+        let h = 1e-5;
+        let axis = |i: usize| glam::DVec3::AXES[i] * h;
+        let grad = |i: usize| (texels(axis(i)) - texels(-axis(i))) / (2.0 * h);
+        let second = |i: usize, j: usize| {
+            if i == j {
+                (texels(axis(i)) - 2.0 * centre + texels(-axis(i))) / (h * h)
+            } else {
+                (texels(axis(i) + axis(j)) - texels(axis(i) - axis(j)) - texels(axis(j) - axis(i))
+                    + texels(-axis(i) - axis(j)))
+                    / (4.0 * h * h)
+            }
+        };
+        let (g, s) = (
+            [grad(0), grad(1), grad(2)],
+            [
+                second(0, 0),
+                second(1, 1),
+                second(2, 2),
+                second(0, 1),
+                second(0, 2),
+                second(1, 2),
+            ],
+        );
+        let pick = |c: usize| {
+            let part = |v: glam::DVec2| (if c == 0 { v.x } else { v.y }) as f32;
+            [
+                [part(g[0]), part(g[1]), part(g[2]), 0.0],
+                [part(s[0]), part(s[1]), part(s[2]), part(s[3])],
+                [part(s[4]), part(s[5]), 0.0, 0.0],
+            ]
+        };
+        let (x, y) = (pick(0), pick(1));
+        let n = (camera * q).normalize();
+        Self {
+            range: NEAR_RANGE * n.x.hypot(n.y).max(terrain::MIN_LATITUDE_COSINE),
+            whole: [
+                floor.x.rem_euclid(NEAR_SIDE) as u32,
+                floor.y.clamp(0.0, NEAR_SIDE - 1.0) as u32,
+            ],
+            fraction: [(centre.x - floor.x) as f32, (centre.y - floor.y) as f32],
+            derivatives: [x[0], y[0], x[1], x[2], y[1], y[2]],
+        }
+    }
+}
+
+/// Zoom-15 texel coordinates of the point `p` (world units) on the map (as the
+/// shader's `spot`), longitudes counted on from `lon0` without wrapping.
+fn near_texels(p: glam::DVec3, q: glam::DVec3, lon0: f64) -> glam::DVec2 {
+    use std::f64::consts::{PI, TAU};
+    let n = (p * q).normalize();
+    let lon = (n.y.atan2(n.x) - lon0 + PI).rem_euclid(TAU) - PI + lon0;
+    let limit = crate::tuning::WEB_MERCATOR_MAX_LATITUDE_DEG
+        .to_radians()
+        .sin();
+    let s = n.z.clamp(-limit, limit);
+    glam::DVec2::new(
+        lon / TAU + 0.5,
+        0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * PI),
+    ) * NEAR_SIDE
 }
 
 fn source() -> String {
@@ -251,6 +343,7 @@ impl ReliefMarch {
             [vector.x as f32, vector.y as f32, vector.z as f32, w as f32]
         };
         let geometry = request.basis.model.geometry();
+        let near = NearMap::at(request.basis.c, geometry.inverse_axes_squared());
         let to_world = relief.exaggeration() / EARTH_RADIUS_M;
         let view = View {
             camera: v4(request.basis.c, request.basis.aspect_ratio()),
@@ -276,6 +369,14 @@ impl ReliefMarch {
                 None => [0.0; 4],
             },
             shade: [0.0, relief.fade, 0.0, 0.0],
+            near: [near.whole[0], near.whole[1], 0, 0],
+            near_frac: [
+                near.fraction[0],
+                near.fraction[1],
+                (near.range * near.range) as f32,
+                0.0,
+            ],
+            near_derivatives: near.derivatives,
         };
         let mut table = vec![[u32::MAX; 4]; TABLE_SIZE];
         for &(key, layer) in &slots {
@@ -746,6 +847,55 @@ pub(super) fn grown_tiles(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The near map's texel for a point within its range of the camera (as the
+    /// shader works it out from the f32 derivatives) stays within a fiftieth of a
+    /// zoom-15 texel of the exact one, also across the antimeridian and far north.
+    #[test]
+    fn the_near_map_finds_the_finest_texels_round_the_camera() {
+        let q = globecraft_core::earth_model::EarthModel::Wgs84
+            .geometry()
+            .inverse_axes_squared();
+        for (lat, lon, height_km) in [(30.3, 79.8, 5.0), (46.5, 179.99, 1.0), (80.0, -20.0, 9.0)] {
+            let (lat, lon): (f64, f64) = (f64::to_radians(lat), f64::to_radians(lon));
+            let up = glam::DVec3::new(lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin());
+            let camera = up * (1.0 + height_km * 1000.0 / EARTH_RADIUS_M);
+            let near = NearMap::at(camera, q);
+            let lon0 = (camera * q).y.atan2((camera * q).x);
+            for i in 0..64 {
+                let a = f64::from(i) * 2.399;
+                let d = glam::DVec3::new(a.cos(), a.sin(), (a * 0.37).sin() * 0.5).normalize()
+                    * near.range
+                    * (f64::from(i % 8) + 1.0)
+                    / 8.0;
+                let [gx, gy, hx, hx2, hy, hy2] = near.derivatives.map(|v| v.map(f64::from));
+                let quad = |h: [f64; 4], h2: [f64; 4]| {
+                    0.5 * (h[0] * d.x * d.x + h[1] * d.y * d.y + h[2] * d.z * d.z)
+                        + h[3] * d.x * d.y
+                        + h2[0] * d.x * d.z
+                        + h2[1] * d.y * d.z
+                };
+                let shader = glam::DVec2::new(
+                    f64::from(near.whole[0])
+                        + f64::from(near.fraction[0])
+                        + gx[0] * d.x
+                        + gx[1] * d.y
+                        + gx[2] * d.z
+                        + quad(hx, hx2),
+                    f64::from(near.whole[1])
+                        + f64::from(near.fraction[1])
+                        + gy[0] * d.x
+                        + gy[1] * d.y
+                        + gy[2] * d.z
+                        + quad(hy, hy2),
+                );
+                let exact = near_texels(camera + d, q, lon0);
+                let mut off = shader - exact;
+                off.x = (off.x + NEAR_SIDE / 2.0).rem_euclid(NEAR_SIDE) - NEAR_SIDE / 2.0;
+                assert!(off.abs().max_element() < 0.02, "{lat} {lon} {d}: {off}");
+            }
+        }
+    }
 
     #[test]
     fn the_shader_validates() {

@@ -2,8 +2,8 @@
 // pixel's ray walks the blocks of the elevation tiles' maxima (`tops`) while it stays
 // above them: the CPU's exact march (`terrain::march`) starts where that ended. It
 // reads every level the CPU may read at that distance (the next coarser one where
-// heights blend, both near a level's edge), the maxima are widened by a block for the
-// f32 coordinates, and heights get a margin: the ray it hands over has never passed
+// heights blend, both near a level's edge), the maxima are widened by two texels for
+// the f32 coordinates and the steps' straight lines over the map, and heights get a margin: the ray it hands over has never passed
 // through ground the CPU would draw. The walk goes on to the ground's heights and
 // from there toward the sun as `terrain::sun_light` does: the share of the sun seen
 // there, which the CPU takes where it meets the ground at the same place. A tile it
@@ -17,6 +17,16 @@ struct Relief {
     raster: vec4<u32>, // width, height, tile table mask, most steps
     sun: vec4<f32>, // toward the sun (unit); w: 1 with a sun
     shade: vec4<f32>, // the relief's fade; x: unused
+    // Near the camera, where an f32 map coordinate is too coarse for the finest levels:
+    // the camera's texel at zoom 15 (whole part; fraction in `near_frac.xy`, range of
+    // the near map squared in `near_frac.z`) and the zoom-15 texel coordinates' first
+    // (`near_grad_*`, per world unit) and second derivatives (`near_hess_*`: xx, yy,
+    // zz, xy, then xz, yz) at the camera, for offsets from it.
+    near: vec4<u32>,
+    near_frac: vec4<f32>,
+    near_grad_x: vec4<f32>, near_grad_y: vec4<f32>,
+    near_hess_x: vec4<f32>, near_hess_x2: vec4<f32>,
+    near_hess_y: vec4<f32>, near_hess_y2: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> relief: Relief;
 // Per pixel: where the CPU's march starts, then (after all of those) where the ray
@@ -54,10 +64,12 @@ const UV_STEP: f32 = 1.2e-7;
 // A nudge drops the ray at most this far (metres), well within the heights' margin:
 // along a ray straight down, half a texel across the map is kilometres of ray.
 const NUDGE_DROP_M: f32 = 1.0;
-// From this level on an f32 map coordinate is half a texel or coarser: the walk ends
-// there without an answer and the CPU marches (camera-relative coordinates would carry
-// it on; roadmap D1 step 4).
+// From this level on an f32 map coordinate is a quarter texel or coarser: points
+// there take their texel from the camera's (`near`), and outside the near map's range
+// the walk ends without an answer.
+const NEAR_LEVEL: i32 = 13;
 const COARSE_COORDINATE_LEVEL: i32 = 14;
+const NEAR_ZOOM: i32 = 15;
 // The CPU takes the GPU's ground as its own when the walk went under the maxima for
 // at most this many texels before it, read every quarter texel there: on synthetic
 // relief up to one ray in 2,000 then meets the ground past a ridge tip the CPU's own
@@ -117,7 +129,41 @@ struct Looked { key: vec3<u32>, layer: i32 }
 fn place_kept(level: i32, uv: vec2<f32>, looked: ptr<function, Looked>) -> Place {
     let n = f32(1u << u32(level));
     let tile = min(floor(uv * n), vec2<f32>(n - 1.0));
-    let key = vec3<u32>(u32(level), u32(tile.x), u32(tile.y));
+    return place_held(level, vec2<u32>(tile), (uv * n - tile) * DEM_TEXELS, looked);
+}
+// Whether a point `d` from the camera takes its texel from the camera's at `level`.
+fn is_near(level: i32, d: vec3<f32>) -> bool {
+    return level >= NEAR_LEVEL && dot(d, d) < relief.near_frac.z;
+}
+// `level`'s tile and texel position for the point `d` from the camera (`is_near`):
+// whole texels in integers, so the fraction keeps f32's precision at every level.
+fn place_near(level: i32, d: vec3<f32>, looked: ptr<function, Looked>) -> Place {
+    let hx = relief.near_hess_x; let hx2 = relief.near_hess_x2;
+    let hy = relief.near_hess_y; let hy2 = relief.near_hess_y2;
+    let dd = d * d;
+    let cross = vec3<f32>(d.x * d.y, d.x * d.z, d.y * d.z);
+    let off = relief.near_frac.xy + vec2<f32>(
+        dot(relief.near_grad_x.xyz, d) + 0.5 * dot(hx.xyz, dd) + dot(vec3<f32>(hx.w, hx2.x, hx2.y), cross),
+        dot(relief.near_grad_y.xyz, d) + 0.5 * dot(hy.xyz, dd) + dot(vec3<f32>(hy.w, hy2.x, hy2.y), cross),
+    );
+    let whole = floor(off);
+    let side = i32(DEM_TEXELS) << u32(NEAR_ZOOM);
+    let x = ((i32(relief.near.x) + i32(whole.x)) % side + side) % side;
+    let y = clamp(i32(relief.near.y) + i32(whole.y), 0, side - 1);
+    let shift = u32(NEAR_ZOOM - level);
+    let g = vec2<u32>(u32(x), u32(y));
+    let fraction = (vec2<f32>(g & vec2<u32>((1u << shift) - 1u)) + (off - whole)) / f32(1u << shift);
+    let texel = g >> vec2<u32>(shift);
+    let last = u32(DEM_TEXELS) - 1u;
+    return place_held(level, texel / u32(DEM_TEXELS), vec2<f32>(texel & vec2<u32>(last)) + fraction, looked);
+}
+// The place at `level` of the point `d` from the camera, on the map at `uv`.
+fn locate(level: i32, d: vec3<f32>, uv: vec2<f32>, looked: ptr<function, Looked>) -> Place {
+    if is_near(level, d) { return place_near(level, d, looked); }
+    return place_kept(level, uv, looked);
+}
+fn place_held(level: i32, tile: vec2<u32>, at: vec2<f32>, looked: ptr<function, Looked>) -> Place {
+    let key = vec3<u32>(u32(level), tile.x, tile.y);
     if any(key != (*looked).key) {
         let layer = layer_of(key.x, key.y, key.z);
         // Stored only when not yet: every pixel storing to the same few words made
@@ -125,7 +171,7 @@ fn place_kept(level: i32, uv: vec2<f32>, looked: ptr<function, Looked>) -> Place
         if layer >= 0 && read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
         *looked = Looked(key, layer);
     }
-    return Place((*looked).layer, (uv * n - tile) * DEM_TEXELS);
+    return Place((*looked).layer, at);
 }
 // The highest bilinear height (metres) inside the texel at `at` (the most of its 3×3
 // heights, `peaks`, as the CPU's finest block maxima); NOT_HELD without the tile.
@@ -206,11 +252,11 @@ struct Walk {
     least: f32,
 }
 
-// Walks the ray from `origin` along `dir` from `from` to `end`, at levels by distance
+// Walks the ray from `rel` (from the camera) along `dir` from `from` to `end`, at levels by distance
 // for `angle` (view angle per pixel). `safe`: maxima with the margin and the levels
 // on both sides of an edge, for a start the CPU can trust. `lift`: toward the sun, the
 // height it started above the ground (0: the view's ray).
-fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: bool, lift: f32) -> Walk {
+fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: bool, lift: f32) -> Walk {
     let to_world = relief.march.x;
     let margin = select(0.0, relief.march.z, safe);
     let exaggeration = to_world * EARTH_RADIUS_M;
@@ -226,7 +272,8 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
     var coarse_looked = own_looked;
     var fine_looked = own_looked;
     for (var step = 0u; step < relief.raster.w; step++) {
-        let p = origin + dir * t;
+        let d = rel + dir * t;
+        let p = relief.camera.xyz + d;
         let h = height_above(p);
         if t >= end || h <= 0.0 {
             if !loose { result.above = t; }
@@ -236,7 +283,7 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         if at.past_limit { result.unknown = true; return result; }
         let zoom = log2(2.0 * PI * EARTH_RADIUS_M * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / (DEM_TEXELS * max(t * EARTH_RADIUS_M * angle, 0.01) * PIXELS_PER_TEXEL));
         let level = clamp(i32(floor(zoom)), 0, MAX_ZOOM);
-        if level >= COARSE_COORDINATE_LEVEL { result.unknown = true; return result; }
+        if level >= COARSE_COORDINATE_LEVEL && !is_near(level, d) { result.unknown = true; return result; }
         let fraction = zoom - f32(level);
         let blends = relief.march.w > 0.5 && level > 0 && fraction < BLEND_LEVELS;
         let weight = select(1.0, clamp(fraction / BLEND_LEVELS, 0.0, 1.0), blends);
@@ -247,12 +294,18 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         var nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
         if at.climb < 0.0 { nudge = min(nudge, NUDGE_DROP_M * to_world / -at.climb); }
         result.texel_t = 1.0 / speed;
+        // Exits come from the map's rate here, but the ray's path over the map bends
+        // (meridians converge, Mercator stretches north): a step stays short enough
+        // that it strays less than a texel, within the maxima's widening of two.
+        let texel_world = 2.0 * PI * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / texels;
+        let tangent = sqrt(max(1.0 - at.latitude_cosine * at.latitude_cosine, 0.0)) / max(at.latitude_cosine, MIN_LATITUDE_COSINE);
+        let longest = sqrt(2.0 / (texel_world * (1.0 + tangent))) / speed;
         // The tiles under the point, looked up once a step.
-        let own = place_kept(level, at.uv, &own_looked);
+        let own = locate(level, d, at.uv, &own_looked);
         var coarse_at = Place(-1, vec2<f32>(0.0));
         var fine_at = Place(-1, vec2<f32>(0.0));
-        if coarser { coarse_at = place_kept(level - 1, at.uv, &coarse_looked); }
-        if finer { fine_at = place_kept(level + 1, at.uv, &fine_looked); }
+        if coarser { coarse_at = locate(level - 1, d, at.uv, &coarse_looked); }
+        if finer { fine_at = locate(level + 1, d, at.uv, &fine_looked); }
         if own.layer < 0 || (coarser && coarse_at.layer < 0) || (finer && fine_at.layer < 0) {
             result.unknown = true;
             return result;
@@ -265,9 +318,10 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
             if finer { top = max(top, block_top(fine_at, mip + 1)); }
             let top_world = top * to_world + margin;
             if h > top_world {
-                let size = exp2(f32(mip + 1)) / texels;
-                let inside = at.uv - floor(at.uv / size) * size;
-                var exit = min(leave(inside.x, at.rate.x, size), leave(inside.y, at.rate.y, size));
+                let size = exp2(f32(mip + 1));
+                let inside = own.at - floor(own.at / size) * size;
+                let rate = at.rate * texels;
+                var exit = min(min(leave(inside.x, rate.x, size), leave(inside.y, rate.y, size)), longest);
                 if at.climb < 0.0 { exit = min(exit, (h - top_world) / -at.climb); }
                 last = vec2<f32>(t, h - top_world);
                 t += max(exit, 0.0) + nudge;
@@ -283,7 +337,9 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         next_mip = 1;
         var top = texel_top(own);
         if coarser { top = max(top, texel_top(coarse_at)); }
-        if finer { top = max(top, texel_top(fine_at)); }
+        // The finer level's texels are half as wide: its blocks of two (widened by
+        // two of its texels) cover the whole texel this step may cross.
+        if finer { top = max(top, block_top(fine_at, 0)); }
         var ground_world = top * to_world + margin;
         let over_top = h > ground_world;
         if !over_top {
@@ -302,11 +358,12 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
                     for (var i = 0; i < HIT_REFINEMENTS; i++) {
                         if c0 - c1 <= 0.0 { break; }
                         let tm = t0 + (t1 - t0) * c0 / (c0 - c1);
-                        let pm = origin + dir * tm;
+                        let dm = rel + dir * tm;
+                        let pm = relief.camera.xyz + dm;
                         let sm = spot(pm, dir);
-                        var gm = bilinear(place_kept(level, sm.uv, &own_looked));
+                        var gm = bilinear(locate(level, dm, sm.uv, &own_looked));
                         if blends {
-                            let cm = bilinear(place_kept(level - 1, sm.uv, &coarse_looked));
+                            let cm = bilinear(locate(level - 1, dm, sm.uv, &coarse_looked));
                             gm = cm + (gm - cm) * weight;
                         }
                         let c = height_above(pm) - gm * to_world;
@@ -323,9 +380,9 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
             }
         }
         last = vec2<f32>(t, h - ground_world);
-        let size = 1.0 / texels;
-        let inside = at.uv - floor(at.uv / size) * size;
-        var exit = min(leave(inside.x, at.rate.x, size), leave(inside.y, at.rate.y, size));
+        let inside = own.at - floor(own.at);
+        let rate = at.rate * texels;
+        var exit = min(leave(inside.x, rate.x, 1.0), leave(inside.y, rate.y, 1.0));
         if at.climb < 0.0 { exit = min(exit, (h - ground_world) / -at.climb); }
         // Under the maxima the heights are read more densely than the CPU reads them:
         // a ridge the CPU's steps meet, these meet too.
@@ -340,7 +397,8 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
 
 // The share of the sun seen at the relief's ground `p` met `distance` along the view
 // (`terrain::sun_light`); -1 when not known.
-fn sun_seen(p: vec3<f32>, distance: f32) -> f32 {
+fn sun_seen(rel: vec3<f32>, distance: f32) -> f32 {
+    let p = relief.camera.xyz + rel;
     let sun = relief.sun.xyz;
     let up = normalize(p * relief.q.xyz);
     let to_world = relief.march.x;
@@ -351,10 +409,10 @@ fn sun_seen(p: vec3<f32>, distance: f32) -> f32 {
     let angle = relief.march.y * SHADOW_DETAIL_COARSER;
     let texel = distance * angle * PIXELS_PER_TEXEL;
     let lift = max(SHADOW_LIFT_M * to_world, texel * SHADOW_LIFT_TEXELS * exaggeration);
-    let origin = p + up * lift - sun * distance;
-    let shell = span(origin, sun, relief.axes.xyz + vec3<f32>(relief.axes.w));
+    let start_rel = rel + up * lift - sun * distance;
+    let shell = span(relief.camera.xyz + start_rel, sun, relief.axes.xyz + vec3<f32>(relief.axes.w));
     if shell.x > shell.y { return 1.0; }
-    let toward = walk(origin, sun, max(shell.x, distance), shell.y, angle, false, lift);
+    let toward = walk(start_rel, sun, max(shell.x, distance), shell.y, angle, false, lift);
     if toward.hit >= 0.0 { return 1.0 - fade; }
     if toward.unknown { return -1.0; }
     let x = clamp(toward.least, 0.0, 1.0);
@@ -388,7 +446,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let floor_hit = span(camera, dir, relief.axes.xyz);
     if floor_hit.x <= floor_hit.y && floor_hit.x > 0.0 { end = min(end, floor_hit.x); }
     let first = max(shell.x, 0.0);
-    let view = walk(camera, dir, first, end, relief.march.y, true, 0.0);
+    let view = walk(vec3<f32>(0.0), dir, first, end, relief.march.y, true, 0.0);
     // The CPU walks the last texel again: its own steps between exact measurements put
     // the ground up to a texel from where the GPU sees it.
     starts[i] = select(max(view.above - BACK_TEXELS * view.texel_t, 0.0), end, view.above >= end);
@@ -409,5 +467,5 @@ fn sun(@builtin(global_invocation_id) id: vec3<u32>) {
     if i >= count || relief.sun.w < 0.5 { return; }
     let hit = starts[count + i];
     if hit < 0.0 { return; }
-    starts[2u * count + i] = sun_seen(relief.camera.xyz + ray(i, width, height) * hit, hit);
+    starts[2u * count + i] = sun_seen(ray(i, width, height) * hit, hit);
 }

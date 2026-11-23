@@ -296,6 +296,21 @@ impl Grid {
     fn contains(&self, (x, y): (f64, f64)) -> bool {
         (0.0..self.size).contains(&x) && (0.0..self.size).contains(&y)
     }
+    /// How far along the straight line from texel position `from` to `to` (inside this
+    /// tile) it enters the tile, as a share of the line: 0 when `from` is inside.
+    fn entry(&self, from: (f64, f64), to: (f64, f64)) -> f64 {
+        let axis = |a: f64, b: f64| {
+            let edge = if a < 0.0 {
+                0.0
+            } else if a >= self.size {
+                self.size
+            } else {
+                return 0.0;
+            };
+            ((edge - a) / (b - a)).clamp(0.0, 1.0)
+        };
+        axis(from.0, to.0).max(axis(from.1, to.1))
+    }
     /// No bilinear height between `from` and `to` (`(u, v)` corners of a square no
     /// wider than this tile) is above this, in metres.
     fn top_between_m(&self, dem: &[Arc<Tile>], from: (f64, f64), to: (f64, f64)) -> f32 {
@@ -1107,11 +1122,30 @@ fn march_near(
                     if margin.is_some() {
                         return March::Hit(*ray, Slope::FLAT);
                     }
-                    let t = refine(above, t, height - ground, |t| {
+                    let clearance = |t: f64| {
                         let point = origin + direction * t;
                         height_above(point, q)
                             - f64::from(ground_m(anchor.uv(t))) * to_world * polar_fade(point)
+                    };
+                    // The last point above may lie in the tile before, where this tile's
+                    // heights stand only as its edge row: the ground is looked for from
+                    // where the ray enters this tile (the stretch before it was clear).
+                    // Refined across the edge, rays met the ground in mid-air before
+                    // a seam (found by the GPU's walk, 2026-11-23).
+                    let entered = above.map(|(from, clear)| {
+                        let share =
+                            tile.entry(tile.texel(anchor.uv(from)), tile.texel(anchor.uv(t)));
+                        let entry = from + (t - from) * share;
+                        if share > 0.0 {
+                            (entry, clearance(entry))
+                        } else {
+                            (from, clear)
+                        }
                     });
+                    let t = match entered {
+                        Some((entry, clear)) if clear <= 0.0 => entry,
+                        _ => refine(entered, t, height - ground, clearance),
+                    };
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
                     let uv = anchor.uv(t);
@@ -1431,6 +1465,61 @@ mod march_tests {
                 .clone();
             Lookup::Ready(tile)
         }
+    }
+
+    /// A ray that meets the ground just past a tile's edge meets it there, not in
+    /// mid-air over the tile before: east of 90° E (a tile edge at every level) the
+    /// ground stands 1,000 m high, west of it at sea level, and the ray crosses the edge
+    /// 500 m up. Refined with the second tile's heights, which outside it stand as its
+    /// edge row, the hit lay kilometres before the edge (2026-11-23).
+    #[test]
+    fn a_ray_meets_the_ground_past_a_tile_edge_at_the_edge() {
+        let geometry = EarthModel::PerfectSphere.geometry();
+        let lookup = |key: TileKey| {
+            let (provider, z, tx, _, _) = crate::unkey(key);
+            if provider != Provider::TerrainDem {
+                return Lookup::Absent;
+            }
+            let high = f64::from(tx) / f64::from(1u32 << z) >= 0.75;
+            Lookup::Ready(Arc::new(Tile::from_elevation(Elevation::from_heights(
+                64,
+                vec![if high { 1_000.0 } else { 0.0 }; 64 * 64],
+            ))))
+        };
+        let km = 1.0 / globecraft_core::EARTH_RADIUS_KM;
+        let (lat, lon) = (30.0, 90.0 - 9.6 / (111.32 * 30f64.to_radians().cos()));
+        let up = globecraft_core::math::ll_to_v3(lat, lon);
+        let east = DVec3::Z.cross(up).normalize();
+        let origin = geometry.position(lat, lon) + up * km;
+        let direction = (east * 9.6 - up * 0.5).normalize();
+        let mut loc = Local {
+            lookup: &lookup,
+            map: HashMap::<_, _, KeyBuild>::default(),
+            dem: Vec::new(),
+            dem_placed: Vec::new(),
+            dem_index: HashMap::default(),
+            now: std::time::Instant::now(),
+        };
+        let (ray, hits) = ray_from(origin, direction, geometry);
+        let hit = match march(
+            &ray,
+            0.0,
+            hits,
+            origin,
+            geometry,
+            TerrainCfg::new(1.0, 1.0),
+            1e-3,
+            0.0,
+            &mut loc,
+        ) {
+            March::Hit(hit, _) => hit,
+            _ => panic!("no ground"),
+        };
+        let (_, hit_lon) = globecraft_core::math::v3_to_ll(hit.point.normalize());
+        assert!(
+            (hit_lon - 90.0).abs() < 1e-3,
+            "met the ground at {hit_lon}° E"
+        );
     }
 
     #[test]
