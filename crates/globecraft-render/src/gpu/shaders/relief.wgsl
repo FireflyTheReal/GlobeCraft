@@ -99,11 +99,19 @@ fn height_of(layer: i32, texel: vec2<i32>) -> f32 {
 // Where `uv` falls in `level`'s tile: the tile's layer (or -1) and the position in
 // texels.
 struct Place { layer: i32, at: vec2<f32> }
+// The tiles this pixel already marked as read, by level (finer, own, coarser walk
+// alternately): a store on every step from every pixel to the same few words made the
+// whole walk wait on them (a second a frame on an M1, 2026-11-23).
+var<private> marked: array<i32, 3> = array<i32, 3>(-1, -1, -1);
 fn place(level: i32, uv: vec2<f32>) -> Place {
     let n = f32(1u << u32(level));
     let tile = min(floor(uv * n), vec2<f32>(n - 1.0));
     let layer = layer_of(u32(level), u32(tile.x), u32(tile.y));
-    if layer >= 0 { read_tiles[layer] = 1u; }
+    let slot = u32(level) % 3u;
+    if layer >= 0 && marked[slot] != layer {
+        marked[slot] = layer;
+        if read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
+    }
     return Place(layer, (uv * n - tile) * DEM_TEXELS);
 }
 // The highest bilinear height (metres) inside the texel at `at` (its 3×3 heights,

@@ -416,6 +416,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             Some((w.parse().ok()?, h.parse().ok()?))
         })
         .unwrap_or((320, 200));
+    let mut failures = Vec::new();
     for (name, alt, tilt, heading) in [
         ("top-16km", 16.0, 0.0, 0.0),
         ("tilt-16km", 16.0, 70.0, 0.0),
@@ -643,16 +644,26 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             timed(Some(&starts)),
             timed(None)
         );
-        assert_eq!(
-            relief::past_the_ground(&starts[..count], &hits),
-            0,
-            "{name}"
-        );
-        assert!(gpu_steps <= cpu_steps, "{name}");
+        // Every view runs before the checks fail, so one run on a real GPU tells all.
+        let past = relief::past_the_ground(&starts[..count], &hits);
+        for (i, (&start, &(hit, _))) in starts[..count].iter().zip(&hits).enumerate() {
+            if f64::from(start) > hit * (1.0 + relief::PAST_THE_GROUND_SHARE) {
+                println!(
+                    "{name}: past the ground at ({}, {}): start {start:e}, the CPU's ground {hit:e}, the GPU's {:e} (trusted {})",
+                    i % width,
+                    i / width,
+                    starts[count + i],
+                    starts[3 * count + i]
+                );
+            }
+        }
         let wrong = relief::trusted_past_the_ground(&starts, &hits);
         println!("{name}: {wrong} grounds taken from the GPU past the CPU's");
-        assert!(wrong * relief::TRUSTED_PAST_PER <= count, "{name}");
+        if past > 0 || gpu_steps > cpu_steps || wrong * relief::TRUSTED_PAST_PER > count {
+            failures.push(name);
+        }
     }
+    assert!(failures.is_empty(), "{failures:?}");
     let march = gpu.relief.take().flatten().unwrap();
     drop(march);
     let mut checked = relief::ReliefMarch::new(&gpu.device, 128);
