@@ -3,8 +3,12 @@ use super::*;
 use crate::tuning;
 use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN, earth_model::SurfaceGeometry};
 use globecraft_data::tiles::{Lookup, Provider, make_key, unkey};
-const MIN_GPU_ALTITUDE_KM: f64 = 1000.0;
-const MAX_TRACKED_ZOOM: u8 = 10;
+/// Eyes this far above the air's top (`atmosphere::HEIGHT_KM`, measured as the CPU's
+/// `atmosphere::Frame` does) see it from above, the shader's way.
+const ABOVE_THE_AIR_KM: f64 = 1.0;
+/// The finest level the GPU draws: a 2,000-pixel view from 101 km reaches 12.9, and
+/// an f32 map coordinate is still an eighth of a pixel there.
+const MAX_TRACKED_ZOOM: u8 = 13;
 const TILE_TABLE_SIZE: usize = 2048;
 /// Slots of the set of tiles a frame sampled or missed (`need` in the shader): a few
 /// thousand at most even in a wide view; more fall back to the CPU.
@@ -44,6 +48,8 @@ pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub atlas: &'a wgpu::TextureView,
+    /// The atlas tiles' mean colours (`GpuRenderer::means`).
+    pub means: &'a wgpu::Buffer,
 }
 pub(super) struct Frame {
     pub view: RenderedView,
@@ -193,6 +199,7 @@ impl Overview {
             device,
             queue,
             atlas,
+            means,
         } = context;
         let Some(max_zoom) = supported_zoom(request) else {
             return Err(("View requires the precise CPU renderer (close altitude, exact grid, or raster limits)".into(),pixels,false));
@@ -275,7 +282,11 @@ impl Overview {
                 u32::from(request.cfg.sun.is_some()),
                 u32::from(request.cfg.atmo),
                 lod_height(request),
-                0,
+                // Esri's imagery changes its source between levels 11 and 12.
+                u32::from(matches!(
+                    request.cfg.provider,
+                    Provider::Satellite | Provider::Wayback
+                )),
             ],
             limits: [
                 max_zoom as u32,
@@ -352,6 +363,10 @@ impl Overview {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: self.aurora.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: means.as_entire_binding(),
                 },
             ],
         });
@@ -527,18 +542,25 @@ fn figure(geometry: SurfaceGeometry, camera: glam::DVec3) -> ([f32; 4], [f32; 4]
 }
 pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
     let count = request.width.checked_mul(request.height)?;
+    // The eye's height, as the CPU's air measures it (in the surface's own measure):
+    // `cam.alt` is the distance to the point looked at, which a tilt puts far below
+    // the eye's height (a view 130 km out at 60° has its eye 65 km up, in the air).
+    let c = request.basis.c;
+    let eye_km = ((c.dot(c * request.basis.model.geometry().inverse_axes_squared())).sqrt() - 1.0)
+        * globecraft_core::EARTH_RADIUS_KM;
     if request.width == 0
         || request.height == 0
         || count > MAX_RASTER_PIXELS
-        || request.cam.alt < MIN_GPU_ALTITUDE_KM
-        || !request.cam.alt.is_finite()
+        || !eye_km.is_finite()
+        || eye_km < f64::from(crate::atmosphere::HEIGHT_KM) + ABOVE_THE_AIR_KM
         || request.cfg.grid
     {
         return None;
     }
+    // No ground lies nearer than the eye's height.
     let pa = 2.0 * VERTICAL_FOV_HALF_TAN / f64::from(lod_height(request));
     let max_lod = ((2.0 * std::f64::consts::PI * EARTH_RADIUS_M)
-        / (tuning::TILE_SIZE_PX * request.cam.alt * globecraft_core::METERS_PER_KM * pa))
+        / (tuning::TILE_SIZE_PX * eye_km * globecraft_core::METERS_PER_KM * pa))
         .log2()
         + tuning::LOD_SHARPNESS_BIAS;
     // Below level 0 the shader clamps to level 0 but keeps the fraction, and blends

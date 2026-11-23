@@ -19,6 +19,9 @@ const MAX_ATLAS_LAYERS: u32 = GPU_TILE_BUDGET_BYTES / TILE_BYTES;
 const GLOBAL_RESIDENT_ZOOM: u8 = 3;
 const MAX_RESIDENCY_PASSES: usize = 2;
 const WORKGROUP_SIZE: u32 = 256;
+/// Mean colours held per atlas tile (`Tile::means`: 8×8, 4×4, 2×2 and 1 blocks), for
+/// matching imagery levels' colours (`colour_match`).
+const MEANS_PER_TILE: usize = 85;
 
 struct Slot {
     key: TileKey,
@@ -30,6 +33,8 @@ pub(crate) struct GpuRenderer {
     overview: overview::Overview,
     atlas: wgpu::Texture,
     view: wgpu::TextureView,
+    /// Each atlas layer's tile's mean colours (`MEANS_PER_TILE`; w -1 without them).
+    means: wgpu::Buffer,
     slots: Vec<Option<Slot>>,
     preferred: Vec<TileKey>,
     failure: Arc<Mutex<Option<String>>>,
@@ -164,6 +169,12 @@ impl GpuRenderer {
             view_formats: &[],
         });
         let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
+        let means = overview::buffer(
+            &device,
+            "GlobeCraft tile mean colours",
+            layers as usize * MEANS_PER_TILE * 16,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
         let overview = overview::Overview::new(&device);
         if let Some(error) = scope.pop().await {
             return Err(error.to_string());
@@ -187,6 +198,7 @@ impl GpuRenderer {
             overview,
             atlas,
             view,
+            means,
             slots: (0..layers).map(|_| None).collect(),
             preferred: Vec::new(),
             failure,
@@ -333,6 +345,7 @@ impl GpuRenderer {
                     device: &self.device,
                     queue: &self.queue,
                     atlas: &self.view,
+                    means: &self.means,
                 },
                 &request,
                 &slots,
@@ -428,6 +441,17 @@ impl GpuRenderer {
                     depth_or_array_layers: 1,
                 },
             );
+            let means: Vec<[f32; 4]> = match tile.means() {
+                means if means.len() == MEANS_PER_TILE => {
+                    means.iter().map(|mean| mean.to_array()).collect()
+                }
+                _ => vec![[0.0, 0.0, 0.0, -1.0]; MEANS_PER_TILE],
+            };
+            self.queue.write_buffer(
+                &self.means,
+                (layer as usize * MEANS_PER_TILE * 16) as u64,
+                bytemuck::cast_slice(&means),
+            );
             *slot = Some(Slot {
                 key: *key,
                 source: Arc::downgrade(tile),
@@ -502,6 +526,7 @@ impl GpuRenderer {
                     device: &self.device,
                     queue: &self.queue,
                     atlas: &self.view,
+                    means: &self.means,
                 },
                 request,
                 &slots,

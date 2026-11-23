@@ -161,6 +161,7 @@ fn gpu_overview_matches_cpu() {
                             device: &gpu.device,
                             queue: &gpu.queue,
                             atlas: &gpu.view,
+                            means: &gpu.means,
                         },
                         &request,
                         &slots,
@@ -310,9 +311,23 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
         globecraft_core::earth_model::EarthModel::Wgs84,
     );
     assert!(GpuRenderer::supports(&request));
-    request.cam.alt = 0.15;
+    let at = |request: &mut RenderRequest, alt: f64, tilt: f64| {
+        request.cam.alt = alt;
+        request.cam.tilt = tilt;
+        request.basis = request.cam.basis_for_model(
+            request.width as f64 / request.height as f64,
+            globecraft_core::earth_model::EarthModel::Wgs84,
+        );
+    };
+    at(&mut request, 0.15, 0.0);
     assert!(!GpuRenderer::supports(&request));
-    request.cam.alt = 14000.0;
+    // Its eye's height counts, not the distance to the point looked at: 130 km out at
+    // 60° the eye is 65 km up, in the air; 260 km out, above it.
+    at(&mut request, 130.0, 60.0);
+    assert!(!GpuRenderer::supports(&request));
+    at(&mut request, 260.0, 60.0);
+    assert!(GpuRenderer::supports(&request));
+    at(&mut request, 14000.0, 0.0);
     request.cfg.grid = true;
     assert!(!GpuRenderer::supports(&request));
     request.cfg.grid = false;
@@ -721,4 +736,144 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
     checked
         .self_check(&gpu.device, &gpu.queue)
         .expect("the self-check passes");
+}
+
+/// Cameras from the air's top to 1,000 km (roadmap D8, G1b): the GPU's picture
+/// matches the CPU's within the bounds real imagery is held to, levels to 13 and
+/// Esri's levels 11 and 12 matched in colour. Tiles at every level, each level a
+/// different brightness, so a colour left unmatched shows.
+#[test]
+#[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
+fn gpu_close_overview_matches_cpu() {
+    use std::sync::Mutex;
+    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
+    let asked: Mutex<std::collections::HashSet<TileKey>> = Mutex::new(Default::default());
+    let lookup = |key: TileKey| {
+        asked.lock().unwrap().insert(key);
+        let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
+        let mut tiles = tiles.lock().unwrap();
+        Lookup::Ready(Arc::clone(tiles.entry(key).or_insert_with(|| {
+            // Smooth colour over the globe at every level with a faint pattern in each
+            // tile; Esri's imagery a third darker to level 11 (its mosaics) than from
+            // 12 (photographs), which colour matching evens out.
+            let gain = if provider == Provider::Satellite && z <= 11 {
+                0.7
+            } else {
+                1.0
+            };
+            let image = image::RgbaImage::from_fn(256, 256, |px, py| {
+                let u = (f64::from(x) + f64::from(px) / 256.0) / f64::from(1u32 << z);
+                let v = (f64::from(y) + f64::from(py) / 256.0) / f64::from(1u32 << z);
+                let wave = |f: f64| (0.5 + 0.5 * (f * std::f64::consts::TAU).sin()) as f32;
+                let detail = if (px / 16 + py / 16) % 2 == 0 {
+                    0.98
+                } else {
+                    1.0
+                };
+                let channel = |value: f32| (value * gain * detail * 255.0) as u8;
+                image::Rgba([
+                    channel(wave(u * 37.0)),
+                    channel(wave(v * 53.0 + 0.3)),
+                    channel(wave((u + v) * 29.0 + 0.6)),
+                    255,
+                ])
+            });
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(image)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            Arc::new(Tile::decode(bytes.get_ref()).unwrap())
+        })))
+    };
+    let (w, h) = (160usize, 100usize);
+    let mut failures = Vec::new();
+    for provider in [Provider::Satellite, Provider::Streets] {
+        for (lat, lon, alt, tilt, heading) in [
+            (45.0, 9.0, 900.0, 0.0, 0.0),
+            (45.0, 9.0, 500.0, 30.0, 40.0),
+            (30.3, 79.8, 200.0, 0.0, 0.0),
+            (30.3, 79.8, 150.0, 45.0, 10.0),
+            (-33.9, 151.2, 125.0, 20.0, 200.0),
+            (64.0, -150.0, 260.0, 60.0, 90.0),
+            (20.0, -150.0, 2000.0, 80.0, 90.0),
+        ] {
+            for lit in [false, true] {
+                let cam = Cam {
+                    lat,
+                    lon,
+                    alt,
+                    heading,
+                    tilt,
+                    look_up: 0.0,
+                };
+                let request = RenderRequest {
+                    width: w,
+                    height: h,
+                    cam,
+                    basis: cam.basis_for_model(
+                        w as f64 / h as f64,
+                        globecraft_core::earth_model::EarthModel::Wgs84,
+                    ),
+                    cfg: crate::RenderCfg {
+                        provider,
+                        rel: 7,
+                        atmo: lit,
+                        sun: lit.then(|| ll_to_v3(lat - 20.0, lon + 30.0)),
+                        grid: false,
+                        // The levels of a 2,000-pixel-high view.
+                        lod_scale: h as f32 / 2000.0,
+                        level_blend: true,
+                        ..crate::tests::batch_reference_config(provider)
+                    },
+                    overlays: None,
+                    aircraft: None,
+                    live_layers: None,
+                    compare: None,
+                    presentation: 0,
+                };
+                let name = format!("{provider:?} ({lat},{lon}) {alt} km tilt {tilt} lit {lit}");
+                assert!(GpuRenderer::supports(&request), "{name}");
+                asked.lock().unwrap().clear();
+                let (cpu, _, _) =
+                    crate::render_pixels_tracked(w, h, &request.basis, &request.cfg, &lookup);
+                let used: Vec<_> = {
+                    let asked = asked.lock().unwrap();
+                    let tiles = tiles.lock().unwrap();
+                    asked.iter().map(|key| (*key, tiles[key].clone())).collect()
+                };
+                let deepest = used
+                    .iter()
+                    .map(|(key, _)| globecraft_data::tiles::unkey(*key).1)
+                    .max()
+                    .unwrap();
+                let slots = gpu.upload(&used).expect("the view's tiles fit the atlas");
+                let frame = gpu
+                    .overview
+                    .render(
+                        overview::Context {
+                            device: &gpu.device,
+                            queue: &gpu.queue,
+                            atlas: &gpu.view,
+                            means: &gpu.means,
+                        },
+                        &request,
+                        &slots,
+                        &lookup,
+                        Vec::new(),
+                    )
+                    .unwrap_or_else(|(error, _, _)| panic!("{name}: {error}"));
+                let result = parity(&frame.view.pixels, &cpu);
+                println!(
+                    "{name}: {} tiles to level {deepest}, parity {result:?}, waiting {}",
+                    used.len(),
+                    frame.view.waiting.len()
+                );
+                if result.is_err() {
+                    failures.push(name);
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
 }

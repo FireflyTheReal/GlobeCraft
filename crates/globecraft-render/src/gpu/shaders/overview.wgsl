@@ -7,7 +7,7 @@ struct View {
     shape: vec4<f32>, // 1 / the surface's semi-axes squared; the camera in that metric, squared
     figure: vec4<f32>, // semi-major axis (m), eccentricity squared, the eye's twilight adaptation (`atmosphere::eye_weight`), aurora opacity (0: off)
     raster: vec4<u32>, // width, height, imagery, provider max zoom
-    effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, reserved
+    effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, colour matching (1)
     limits: vec4<u32>, // tracked max zoom, the needs' set size (a power of two), table mask, water map width
     lights: vec4<u32>, // night lights shown, their max zoom, unused, tracked max zoom
     // The camera's tile coordinates at zoom 19 (x, y): needs are kept relative to the
@@ -21,6 +21,8 @@ struct View {
 // The tiles sampled or missed: a hash set of packed keys (`need_key`), then each
 // one's nearest pixel distance (f32 bits, `atomicMin`), then an overflow flag.
 @group(0) @binding(4) var<storage, read_write> needs: array<atomic<u32>>;
+// Each atlas layer's tile's mean colours (`Tile::means`; w -1 without them).
+@group(0) @binding(9) var<storage, read> means: array<vec4<f32>>;
 // The air (the CPU's `atmosphere`): the light that crosses it from the ground by view
 // angle, and the sunlight scattered along rays entering from space.
 @group(0) @binding(5) var<storage, read> air_transmittance: array<vec4<f32>>;
@@ -189,6 +191,14 @@ const AIR_UNLIT_SUN: f32 = __AIR_UNLIT_SUN__;
 const AIR_NIGHT_SUN: f32 = __AIR_NIGHT_SUN__;
 const AIR_TINY: f32 = 1.1754944e-38;
 const MIN_LIGHTS_DARKNESS: f32 = __MIN_LIGHTS_DARKNESS__;
+// Matching imagery levels' colours (`colour_match`).
+const COLOUR_COARSE_U: u32 = __COLOUR_COARSE__u;
+const COLOUR_FINE_U: u32 = __COLOUR_FINE__u;
+const OWN_COLOURS_U: u32 = __OWN_COLOURS__u;
+const COLOUR_MAX_GAIN: f32 = __COLOUR_MAX_GAIN__;
+const COLOUR_DARK_FLOOR: f32 = __COLOUR_DARK_FLOOR__;
+const MEAN_CELLS_U: u32 = __MEAN_CELLS__u;
+const MEANS_PER_TILE_U: u32 = __MEANS_PER_TILE__u;
 // Marks the night lights' tiles in the tile table's level word.
 const LIGHTS_TAG: u32 = __LIGHTS_TAG__u;
 fn blend(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }
@@ -290,6 +300,46 @@ fn need(source: u32, z: u32, coord: vec2<u32>, distance: f32) {
     }
     overflow();
 }
+// The mean colour of the tile at level `z` under `uv` over `cells` × `cells` blocks,
+// between the four nearest (`Tile::mean_colour`); w -1 when the tile is not held or
+// has none. Noted as a need, as the CPU asks for it.
+fn mean_colour(z: u32, uv: vec2<f32>, distance: f32, cells: u32) -> vec4<f32> {
+    let n = 1u << z;
+    let coordinate = min(floor(uv * f32(n)), vec2<f32>(f32(n - 1u)));
+    let coord = vec2<u32>(max(coordinate, vec2<f32>(0.0)));
+    need(0u, z, coord, distance);
+    let layer = find_tile(z, coord.x, coord.y);
+    if layer < 0 { return vec4<f32>(-1.0); }
+    // The grid of `cells` comes after the finer ones.
+    var start = u32(layer) * MEANS_PER_TILE_U;
+    var finer = MEAN_CELLS_U;
+    while finer > cells { start += finer * finer; finer /= 2u; }
+    if means[start].w < 0.0 { return vec4<f32>(-1.0); }
+    let last = f32(cells - 1u);
+    let p = clamp((uv * f32(n) - coordinate) * f32(cells) - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(last));
+    let low = vec2<u32>(p);
+    let high = min(low + vec2<u32>(1u), vec2<u32>(cells - 1u));
+    let f = p - vec2<f32>(low);
+    let top = mix(means[start + low.y * cells + low.x], means[start + low.y * cells + high.x], f.x);
+    let bottom = mix(means[start + high.y * cells + low.x], means[start + high.y * cells + high.x], f.x);
+    return mix(top, bottom, f.y);
+}
+// `colour`, sampled at level `z`, brought toward level 11's colours where `uv` is
+// (`colour_match::matched`): unchanged until both level 11's and 12's tiles there are
+// held, and for other maps than Esri's imagery.
+fn matched(colour: vec3<f32>, z: u32, uv: vec2<f32>, distance: f32) -> vec3<f32> {
+    if view.effects.w == 0u || z < COLOUR_FINE_U { return colour; }
+    let weight = clamp(f32(OWN_COLOURS_U - min(z, OWN_COLOURS_U)) / f32(OWN_COLOURS_U - COLOUR_FINE_U), 0.0, 1.0);
+    if weight <= 0.0 { return colour; }
+    let coarse = mean_colour(COLOUR_COARSE_U, uv, distance, MEAN_CELLS_U);
+    if coarse.w < 0.0 { return colour; }
+    let fine = mean_colour(COLOUR_FINE_U, uv, distance, MEAN_CELLS_U / 2u);
+    if fine.w < 0.0 { return colour; }
+    let floor = vec3<f32>(COLOUR_DARK_FLOOR);
+    var gain = clamp((coarse.rgb + floor) / (fine.rgb + floor), vec3<f32>(1.0 / COLOUR_MAX_GAIN), vec3<f32>(COLOUR_MAX_GAIN));
+    gain = vec3<f32>(1.0) + (gain - vec3<f32>(1.0)) * weight;
+    return min(colour * gain, vec3<f32>(1.0));
+}
 // The colour of `source` (0: the base map, 1: the night lights) from level `zoom` or
 // the nearest coarser level loaded; `w` is 1 when a level was found.
 fn chain(source: u32, zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: f32) -> vec4<f32> {
@@ -308,8 +358,10 @@ fn chain(source: u32, zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: 
         if layer >= 0 {
             let local = uv * f32(n) - coordinate;
             let stride = stride_at(z, i32(base), frac);
-            if stride <= 1.0 { return vec4<f32>(sample_tile(local,layer),1.0); }
-            return vec4<f32>(sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE)),1.0);
+            var colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE));
+            if stride <= 1.0 { colour = sample_tile(local,layer); }
+            if source == 0u { colour = matched(colour, u32(z), uv, distance); }
+            return vec4<f32>(colour,1.0);
         }
         z -= 1;
         if z < 0 { break; }

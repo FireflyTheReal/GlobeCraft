@@ -17,6 +17,14 @@ pub(super) fn source() -> String {
         ("AIR_VIEWS", air::SCATTERING_VIEWS),
         ("AIR_SUNS", air::SCATTERING_SUNS),
         ("AIR_PHASES", air::SCATTERING_PHASES),
+        ("COLOUR_COARSE", crate::colour_match::COARSE_LEVEL as usize),
+        ("COLOUR_FINE", crate::colour_match::FINE_LEVEL as usize),
+        (
+            "OWN_COLOURS",
+            crate::colour_match::OWN_COLOURS_LEVEL as usize,
+        ),
+        ("MEAN_CELLS", globecraft_data::tiles::MEAN_CELLS),
+        ("MEANS_PER_TILE", super::MEANS_PER_TILE),
     ] {
         source = source.replace(&format!("__{name}__"), &value.to_string());
     }
@@ -55,6 +63,8 @@ pub(super) fn source() -> String {
         ("AURORA_NIGHT_COSINE", crate::aurora::NIGHT_COSINE),
         ("AURORA_SAMPLE_KM", crate::aurora::SAMPLE_KM),
         ("AURORA_MAX_SAMPLES", crate::aurora::MAX_SAMPLES as f32),
+        ("COLOUR_MAX_GAIN", crate::colour_match::MAX_GAIN),
+        ("COLOUR_DARK_FLOOR", crate::colour_match::DARK_FLOOR),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{value:?}"));
     }

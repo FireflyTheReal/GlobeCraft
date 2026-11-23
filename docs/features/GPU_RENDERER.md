@@ -32,15 +32,20 @@ pixels; small frames keep CPU rendering because complete GPU/CPU timings were si
 at 512×384 on the baseline adapter. `GLOBECRAFT_RENDERER=gpu` also uses it for small
 supported frames. `GLOBECRAFT_RENDERER=cpu` never creates a GPU device.
 
-GPU rendering requires an altitude of at least 1,000 km, no geographic grid, no
-relief, the screen's level blending (not the sharper screenshot modes), at most
-4 million pixels, and a checked LOD bound of zoom 10 or lower. Close views and exact
-grid rendering use the double-precision CPU renderer. Within that range it draws both
+GPU rendering requires the eye above the air (more than 101 km over the ground, as
+the CPU's atmosphere measures it; a tilted view's eye lies far below the distance to
+the point it looks at), no geographic grid, no relief, the screen's level blending
+(not the sharper screenshot modes), at most 4 million pixels, and a checked LOD bound
+of zoom 13 or lower. Closer views and exact grid rendering use the double-precision
+CPU renderer (roadmap D8 brings the GPU closer step by step). The tiles a frame needs
+are kept in a hash set of 16,384 packed keys (zoom and offset from the camera's tile
+there); levels 12 to 15 of Esri's imagery are matched to level 11's colours from each
+atlas tile's mean colours, as the CPU's `colour_match`. Within that range it draws both
 Earth models (a sphere is the ellipsoid whose axes are all one), every provider and
 historical release, sunlight, the air in front of the ground (`atmosphere`: two small
 read-only tables, the transmittance table's ground row and the scattering table's top
 layer, and the same sums as the CPU) and night lights (their tiles share the atlas and
-the tile table, with their own block of tile needs). Camera operations,
+the tile table, their needs marked in their keys). Camera operations,
 picking and overlay projection remain double precision. The sky, a narrow horizon
 strip, tile-seam strips and the polar caps (latitudes past 83° under satellite
 imagery, which have their own projection, tiles and colour matching) are left by the

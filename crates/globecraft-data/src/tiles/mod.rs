@@ -279,6 +279,11 @@ impl Tile {
     /// The tile's mean colour around `(u, v)` (0 to 1 across it) over blocks a
     /// `cells`-th of it wide (`cells` divides `MEAN_CELLS`), bilinear between their
     /// middles; `None` for a tile without mean colours.
+    /// The mean colours over every grid of blocks (`MEAN_CELLS` across, then half as
+    /// many, down to one), row by row; empty for elevation tiles.
+    pub fn means(&self) -> &[Vec4] {
+        &self.means
+    }
     pub fn mean_colour(&self, u: f64, v: f64, cells: usize) -> Option<Vec4> {
         if self.means.is_empty() || cells == 0 || !MEAN_CELLS.is_multiple_of(cells) {
             return None;
