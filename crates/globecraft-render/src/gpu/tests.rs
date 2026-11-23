@@ -699,6 +699,16 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         }
         let wrong = relief::trusted_past_the_ground(&starts, &hits);
         println!("{name}: {wrong} grounds taken from the GPU past the CPU's");
+        for (i, &(hit, _)) in hits.iter().enumerate() {
+            let gpu = f64::from(starts[count + i]);
+            if starts[3 * count + i] > 0.5 && gpu > hit * (1.0 + relief::PAST_THE_GROUND_SHARE) {
+                println!(
+                    "{name}: taken past the ground at ({}, {}): the GPU's {gpu:e}, the CPU's {hit:e}",
+                    i % width,
+                    i / width
+                );
+            }
+        }
         if past > 0 || gpu_steps > cpu_steps || wrong * relief::TRUSTED_PAST_PER > count {
             failures.push(name);
         }
