@@ -89,6 +89,7 @@ pub(crate) struct Walked {
     /// spared the march, no longer reads them itself.
     pub(super) read: Vec<TileKey>,
     /// How many tiles this walk uploaded first.
+    #[cfg(test)]
     pub(super) uploads: usize,
 }
 
@@ -229,7 +230,7 @@ impl ReliefMarch {
         let Some(relief) = request.cfg.terrain else {
             return Err("No relief in this view".into());
         };
-        let (slots, uploads) = self.hold(queue, tiles);
+        let (slots, _uploads) = self.hold(queue, tiles);
         let count = request.width * request.height;
         let layers = self.slots.len();
         if count > self.pixels {
@@ -381,7 +382,8 @@ impl ReliefMarch {
         Ok(Walked {
             pixels,
             read,
-            uploads,
+            #[cfg(test)]
+            uploads: _uploads,
         })
     }
 

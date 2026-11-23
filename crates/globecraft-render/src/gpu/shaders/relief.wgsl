@@ -51,6 +51,9 @@ const TOP_MIP: i32 = 7;
 // the point where it was, and the walk crept a thousandth of a texel a step.
 const EXIT_NUDGE_TEXELS: f32 = 0.001;
 const UV_STEP: f32 = 1.2e-7;
+// A nudge drops the ray at most this far (metres), well within the heights' margin:
+// along a ray straight down, half a texel across the map is kilometres of ray.
+const NUDGE_DROP_M: f32 = 1.0;
 // From this level on an f32 map coordinate is half a texel or coarser: the walk ends
 // there without an answer and the CPU marches (camera-relative coordinates would carry
 // it on; roadmap D1 step 4).
@@ -241,7 +244,8 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         let coarser = level > 0 && ((safe && fraction < LEVEL_EDGE) || (relief.march.w > 0.5 && fraction < BLEND_LEVELS + select(0.0, LEVEL_EDGE, safe)));
         let texels = DEM_TEXELS * exp2(f32(level));
         let speed = max(length(at.rate) * texels, 1e-12);
-        let nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
+        var nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
+        if at.climb < 0.0 { nudge = min(nudge, NUDGE_DROP_M * to_world / -at.climb); }
         result.texel_t = 1.0 / speed;
         // The tiles under the point, looked up once a step.
         let own = place_kept(level, at.uv, &own_looked);
