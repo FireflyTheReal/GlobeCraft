@@ -8,13 +8,18 @@ struct View {
     figure: vec4<f32>, // semi-major axis (m), eccentricity squared, the eye's twilight adaptation (`atmosphere::eye_weight`), aurora opacity (0: off)
     raster: vec4<u32>, // width, height, imagery, provider max zoom
     effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, reserved
-    limits: vec4<u32>, // tracked max zoom, dependency count, table mask, water map width
-    lights: vec4<u32>, // night lights shown, their max zoom, where their needs start, tracked max zoom
+    limits: vec4<u32>, // tracked max zoom, the needs' set size (a power of two), table mask, water map width
+    lights: vec4<u32>, // night lights shown, their max zoom, unused, tracked max zoom
+    // The camera's tile coordinates at zoom 19 (x, y): needs are kept relative to the
+    // camera's tile at their own zoom.
+    origin: vec4<u32>,
 }
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read_write> output: array<u32>;
 @group(0) @binding(2) var atlas: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
+// The tiles sampled or missed: a hash set of packed keys (`need_key`), then each
+// one's nearest pixel distance (f32 bits, `atomicMin`), then an overflow flag.
 @group(0) @binding(4) var<storage, read_write> needs: array<atomic<u32>>;
 // The air (the CPU's `atmosphere`): the light that crosses it from the ground by view
 // angle, and the sunlight scattered along rays entering from space.
@@ -247,11 +252,48 @@ fn stride_at(zz: i32, base: i32, frac: f32) -> f32 {
     if exponent >= FILTER_EXPONENT_MAX { return MAX_SAMPLE_STRIDE; }
     return exp2(exponent);
 }
+fn overflow() { atomicStore(&needs[2u * view.limits.y], 1u); }
+// A need's key: the source (top bit), the zoom (5 bits) and the tile's offset from the
+// camera's tile at that zoom (13 bits each, signed; x round the globe); 0xffffffff
+// (empty) is never one, the zoom being at most 19.
+fn need_key(source: u32, z: u32, coord: vec2<u32>) -> u32 {
+    let n = 1u << z;
+    let camera = view.origin.xy >> vec2<u32>(19u - z);
+    var dx = i32((coord.x - camera.x) & (n - 1u));
+    if dx >= i32(n / 2u) { dx -= i32(n); }
+    let dy = i32(coord.y) - i32(camera.y);
+    if abs(dx) >= 4096 || abs(dy) >= 4096 { return 0xffffffffu; }
+    return (source << 31u) | (z << 26u) | ((u32(dx) & 0x1fffu) << 13u) | (u32(dy) & 0x1fffu);
+}
+// Notes tile `coord` of `source` at zoom `z` as sampled by a pixel `distance` from the
+// view's centre (the nearest one counts).
+fn need(source: u32, z: u32, coord: vec2<u32>, distance: f32) {
+    let key = need_key(source, z, coord);
+    if key == 0xffffffffu { overflow(); return; }
+    let size = view.limits.y;
+    let priority = bitcast<u32>(distance);
+    var index = ((key * 2654435761u) >> 12u) & (size - 1u);
+    for (var probe = 0u; probe < size; probe++) {
+        var held = atomicLoad(&needs[index]);
+        if held == 0xffffffffu {
+            let swap = atomicCompareExchangeWeak(&needs[index], 0xffffffffu, key);
+            held = swap.old_value;
+            // Lost to a spurious failure: the slot is still empty, try it again.
+            if !swap.exchanged && held == 0xffffffffu { probe--; continue; }
+            if swap.exchanged { held = key; }
+        }
+        if held == key {
+            if priority < atomicLoad(&needs[size + index]) { atomicMin(&needs[size + index], priority); }
+            return;
+        }
+        index = (index + 1u) & (size - 1u);
+    }
+    overflow();
+}
 // The colour of `source` (0: the base map, 1: the night lights) from level `zoom` or
 // the nearest coarser level loaded; `w` is 1 when a level was found.
 fn chain(source: u32, zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: f32) -> vec4<f32> {
     let tag = select(0u, LIGHTS_TAG, source == 1u);
-    let first = select(0u, view.lights.z, source == 1u);
     let tracked = select(view.limits.x, view.lights.w, source == 1u);
     var z = i32(zoom);
     loop {
@@ -261,11 +303,7 @@ fn chain(source: u32, zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: 
         let coord = vec2<u32>(max(coordinate,vec2<f32>(0.0)));
         // Track sampled keys as well as misses, so residency follows this view
         // instead of growing with the entire decoded cache.
-        if u32(z) <= tracked {
-            let index = first + ((1u << (2u * u32(z))) - 1u) / 3u + coord.y * n + coord.x;
-            let priority = bitcast<u32>(distance);
-            if priority < atomicLoad(&needs[index]) { atomicMin(&needs[index],priority); }
-        } else { atomicStore(&needs[view.limits.y],1u); }
+        if u32(z) <= tracked { need(source, u32(z), coord, distance); } else { overflow(); }
         let layer = find_tile(u32(z) | tag,coord.x,coord.y);
         if layer >= 0 {
             let local = uv * f32(n) - coordinate;

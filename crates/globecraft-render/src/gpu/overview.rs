@@ -6,6 +6,11 @@ use globecraft_data::tiles::{Lookup, Provider, make_key, unkey};
 const MIN_GPU_ALTITUDE_KM: f64 = 1000.0;
 const MAX_TRACKED_ZOOM: u8 = 10;
 const TILE_TABLE_SIZE: usize = 2048;
+/// Slots of the set of tiles a frame sampled or missed (`need` in the shader): a few
+/// thousand at most even in a wide view; more fall back to the CPU.
+const NEEDS_SET_SIZE: usize = 16_384;
+/// The zoom the needs' origin is counted at (`need_key`).
+const ORIGIN_ZOOM: u32 = 19;
 const MAX_RASTER_PIXELS: usize = 2000 * 2000;
 /// How long a frame may take on the GPU before the device counts as failed. Frames
 /// take milliseconds; the slowest software adapter measured took 0.15 s. Tests wait
@@ -30,8 +35,10 @@ struct View {
     raster: [u32; 4],
     effects: [u32; 4],
     limits: [u32; 4],
-    /// Night lights: shown, their finest level, where their needs start, tracked level.
+    /// Night lights: shown, their finest level, unused, tracked level.
     lights: [u32; 4],
+    /// The camera's tile coordinates at zoom 19 (`need_key` in the shader).
+    origin: [u32; 4],
 }
 pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
@@ -191,13 +198,11 @@ impl Overview {
             return Err(("View requires the precise CPU renderer (close altitude, exact grid, or raster limits)".into(),pixels,false));
         };
         let count = request.width * request.height;
-        // One slot per tile of every tracked level: the base map's, then the night lights'.
-        let pyramid = |levels: u8| ((1usize << (2 * (levels as usize + 1))) - 1) / 3;
-        let base_dependencies = pyramid(max_zoom);
+        // The needs' set: keys, their distances, the overflow flag after them.
         let lights_zoom = Provider::NightLights.max_zoom().min(max_zoom);
-        let dependencies =
-            base_dependencies + request.cfg.night_lights.map_or(0, |_| pyramid(lights_zoom));
+        let dependencies = 2 * NEEDS_SET_SIZE;
         self.reserve(device, count, dependencies);
+        let origin = camera_tile(request.basis.c, request.basis.model.geometry());
         // The water map for the sun's glint, uploaded when it changes. The source is
         // twice as wide as high; the shader counts on it.
         let water = request
@@ -274,14 +279,15 @@ impl Overview {
             ],
             limits: [
                 max_zoom as u32,
-                dependencies as u32,
+                NEEDS_SET_SIZE as u32,
                 (TILE_TABLE_SIZE - 1) as u32,
                 water.map_or(0, |water| water.width()),
             ],
+            origin: [origin.0, origin.1, 0, 0],
             lights: [
                 u32::from(request.cfg.night_lights.is_some()),
                 u32::from(Provider::NightLights.max_zoom()),
-                base_dependencies as u32,
+                0,
                 u32::from(lights_zoom),
             ],
         };
@@ -419,29 +425,22 @@ impl Overview {
                     false,
                 ));
             }
-            let lights = request.cfg.night_lights.map(|edition| {
-                (
-                    Provider::NightLights,
-                    edition,
-                    lights_zoom,
-                    base_dependencies,
-                )
-            });
-            for (provider, release, levels, first) in
-                std::iter::once((request.cfg.provider, request.cfg.rel, max_zoom, 0)).chain(lights)
+            for (&key, &distance) in needs[..NEEDS_SET_SIZE]
+                .iter()
+                .zip(&needs[NEEDS_SET_SIZE..2 * NEEDS_SET_SIZE])
             {
-                for z in 0..=levels {
-                    let start = first + pyramid(z) - (1usize << (2 * z as usize));
-                    let n = 1usize << z;
-                    for (i, &dist) in needs[start..start + n * n].iter().enumerate() {
-                        if dist != u32::MAX {
-                            required.push((
-                                make_key(provider, z, (i % n) as u32, (i / n) as u32, release),
-                                f32::from_bits(dist),
-                            ));
-                        }
-                    }
+                if key == u32::MAX {
+                    continue;
                 }
+                let (provider, release) = match request.cfg.night_lights {
+                    Some(edition) if key >> 31 == 1 => (Provider::NightLights, edition),
+                    _ => (request.cfg.provider, request.cfg.rel),
+                };
+                let tile = needed_tile(key, origin);
+                required.push((
+                    make_key(provider, tile.0, tile.1, tile.2, release),
+                    f32::from_bits(distance),
+                ));
             }
         }
         self.staging.unmap();
@@ -475,6 +474,33 @@ impl Overview {
         })
     }
 }
+/// The camera's tile coordinates at `ORIGIN_ZOOM` (on the map below it, as the
+/// shader's Mercator): the origin the needs' keys count from.
+fn camera_tile(camera: glam::DVec3, geometry: SurfaceGeometry) -> (u32, u32) {
+    use std::f64::consts::PI;
+    let n = (camera * geometry.inverse_axes_squared()).normalize();
+    let limit = tuning::WEB_MERCATOR_MAX_LATITUDE_DEG.to_radians().sin();
+    let s = n.z.clamp(-limit, limit);
+    let side = f64::from(1u32 << ORIGIN_ZOOM);
+    let u = (n.y.atan2(n.x) / (2.0 * PI) + 0.5).rem_euclid(1.0);
+    let v = 0.5 - ((1.0 + s) / (1.0 - s)).ln() / (4.0 * PI);
+    let tile = |c: f64| ((c * side).floor() as u32).min((1 << ORIGIN_ZOOM) - 1);
+    (tile(u), tile(v))
+}
+
+/// The tile (zoom, x, y) a key of the needs' set stands for (`need_key` in the shader),
+/// from the camera's tile at `ORIGIN_ZOOM`.
+fn needed_tile(key: u32, origin: (u32, u32)) -> (u8, u32, u32) {
+    let z = (key >> 26) & 31;
+    let signed = |bits: u32| ((bits << 19) as i32) >> 19;
+    let (dx, dy) = (signed((key >> 13) & 0x1fff), signed(key & 0x1fff));
+    let shift = ORIGIN_ZOOM - z;
+    let n = 1i64 << z;
+    let x = (i64::from(origin.0 >> shift) + i64::from(dx)).rem_euclid(n);
+    let y = i64::from(origin.1 >> shift) + i64::from(dy);
+    (z as u8, x as u32, y as u32)
+}
+
 /// The surface as the shader takes it (`View::shape`, `View::figure`): a sphere is the
 /// ellipsoid whose axes are all one.
 fn figure(geometry: SurfaceGeometry, camera: glam::DVec3) -> ([f32; 4], [f32; 4]) {
@@ -557,8 +583,9 @@ mod tests {
         )
         .validate(&module)
         .expect("portable shader operations");
-        assert_eq!(std::mem::size_of::<View>(), 176);
+        assert_eq!(std::mem::size_of::<View>(), 192);
         assert_eq!(std::mem::offset_of!(View, lights), 160);
+        assert_eq!(std::mem::offset_of!(View, origin), 176);
         assert_eq!(std::mem::offset_of!(View, raster), 112);
         assert_eq!(std::mem::offset_of!(View, effects), 128);
         assert_eq!(std::mem::offset_of!(View, limits), 144);
@@ -576,5 +603,59 @@ mod tests {
             members[7].offset as usize,
             std::mem::offset_of!(View, raster)
         );
+    }
+
+    /// The shader's `need_key`, for the tile `(z, x, y)` seen from the camera's tile
+    /// `origin` at `ORIGIN_ZOOM`.
+    fn need_key(source: u32, z: u32, (x, y): (u32, u32), origin: (u32, u32)) -> Option<u32> {
+        let n = 1u32 << z;
+        let camera = (origin.0 >> (19 - z), origin.1 >> (19 - z));
+        let mut dx = (x.wrapping_sub(camera.0) & (n - 1)) as i32;
+        if dx >= (n / 2) as i32 {
+            dx -= n as i32;
+        }
+        let dy = y as i32 - camera.1 as i32;
+        (dx.abs() < 4096 && dy.abs() < 4096).then_some(
+            (source << 31) | (z << 26) | ((dx as u32 & 0x1fff) << 13) | (dy as u32 & 0x1fff),
+        )
+    }
+
+    /// Every tile within reach of the camera's comes back from its key, round the
+    /// antimeridian too, at every zoom; tiles too far off do not fit a key.
+    #[test]
+    fn the_needs_keys_give_their_tiles_back() {
+        for origin in [
+            (0, 0),
+            (1 << 18, 1 << 18),
+            ((1 << 19) - 1, 1000),
+            (5, (1 << 19) - 1),
+        ] {
+            for z in 0..=19u32 {
+                let n = 1u32 << z;
+                let camera = (origin.0 >> (19 - z), origin.1 >> (19 - z));
+                for (ox, oy) in [(0i64, 0i64), (1, -1), (-3, 7), (4000, -4000), (-4095, 4095)] {
+                    let x = (i64::from(camera.0) + ox).rem_euclid(i64::from(n)) as u32;
+                    let y = i64::from(camera.1) + oy;
+                    if !(0..i64::from(n)).contains(&y) {
+                        continue;
+                    }
+                    let y = y as u32;
+                    let wraps = i64::from(n) <= 8192;
+                    match need_key(1, z, (x, y), origin) {
+                        Some(key) => {
+                            assert_ne!(key, u32::MAX);
+                            assert_eq!(needed_tile(key, origin), (z as u8, x, y), "{z} {ox} {oy}");
+                            assert_eq!(key >> 31, 1);
+                        }
+                        None => assert!(!wraps || oy.abs() >= 4096, "{z} {ox} {oy}"),
+                    }
+                }
+                // Too far from the camera's tile at a fine zoom: no key.
+                if z >= 14 {
+                    let far = (camera.0.wrapping_add(5000) & (n - 1), camera.1);
+                    assert_eq!(need_key(0, z, far, origin), None);
+                }
+            }
+        }
     }
 }
