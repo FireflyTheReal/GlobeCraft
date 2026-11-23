@@ -34,9 +34,11 @@ const MAX_STEPS: u32 = 512;
 /// metre, a tile's edge may be read from its neighbour.
 const HEIGHT_MARGIN_M: f64 = 10.0;
 const WORKGROUP: u32 = 64;
-/// New tiles uploaded per frame at most (a few milliseconds each): after a jump the
+/// New tiles uploaded per frame at most (0.6 ms each to prepare in this container's
+/// release build): a whole tilted view's tiles in one frame (six a frame took a camera
+/// low among the relief 7 frames to be walked on an M1, 2026-11-23); after a jump the
 /// rest come in the next frames, and the walk stops where one is not held yet.
-const MAX_UPLOADS_PER_FRAME: usize = 6;
+const MAX_UPLOADS_PER_FRAME: usize = 64;
 /// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
 
@@ -548,27 +550,7 @@ impl ReliefMarch {
 
     fn upload(&self, queue: &wgpu::Queue, layer: u32, elevation: &Elevation) {
         let side = 2 * TOPS_EDGE;
-        let quarters: Vec<u16> = (0..side * side)
-            .map(|i| {
-                let (x, y) = ((i % side) as usize, (i / side) as usize);
-                (elevation.height_m(x as f64 + 0.5, y as f64 + 0.5) * HEIGHT_STEPS_PER_M)
-                    .round()
-                    .clamp(0.0, f32::from(u16::MAX)) as u16
-            })
-            .collect();
-        let last = side as usize - 1;
-        let peaks: Vec<u16> = (0..side * side)
-            .map(|i| {
-                let (x, y) = ((i % side) as usize, (i / side) as usize);
-                let mut top = 0;
-                for yy in y.saturating_sub(1)..=(y + 1).min(last) {
-                    for xx in x.saturating_sub(1)..=(x + 1).min(last) {
-                        top = top.max(quarters[yy * side as usize + xx]);
-                    }
-                }
-                top
-            })
-            .collect();
+        let (quarters, peaks) = texels(elevation);
         for (texture, texels) in [(&self.heights, &quarters), (&self.peaks, &peaks)] {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -623,26 +605,53 @@ impl ReliefMarch {
     }
 }
 
+/// A tile's heights in quarter metres (clamped to `u16`) and the most of each texel's
+/// 3×3 of them (clamped at the tile's edges), as the GPU holds them. Read straight
+/// from the samples and maximised a row and then a column at a time: through
+/// bilinear lookups and nine reads per texel an upload took 13 ms (2026-11-23).
+fn texels(elevation: &Elevation) -> (Vec<u16>, Vec<u16>) {
+    let side = elevation.size();
+    // `as` rounds half up here and saturates: below sea level 0, above u16's range its
+    // top.
+    let quarters: Vec<u16> = elevation
+        .heights()
+        .iter()
+        .map(|&metres| (metres * HEIGHT_STEPS_PER_M + 0.5) as u16)
+        .collect();
+    let peaks = widened(&quarters, side, u16::max);
+    (quarters, peaks)
+}
+
+/// The most of each cell's 3×3 in the square grid `grid` (`side` across), clamped at
+/// the edges: a row and then a column at a time.
+fn widened<T: Copy + Default>(grid: &[T], side: usize, max: fn(T, T) -> T) -> Vec<T> {
+    let mut across = vec![T::default(); side * side];
+    for (row, out) in grid.chunks_exact(side).zip(across.chunks_exact_mut(side)) {
+        out[0] = max(row[0], row[1]);
+        for x in 1..side - 1 {
+            out[x] = max(max(row[x - 1], row[x]), row[x + 1]);
+        }
+        out[side - 1] = max(row[side - 2], row[side - 1]);
+    }
+    let mut most = vec![T::default(); side * side];
+    let row = |y: usize| &across[y * side..][..side];
+    for (y, out) in most.chunks_exact_mut(side).enumerate() {
+        let (above, here, below) = (row(y.saturating_sub(1)), row(y), row((y + 1).min(side - 1)));
+        for x in 0..side {
+            out[x] = max(max(above[x], here[x]), below[x]);
+        }
+    }
+    most
+}
+
 /// A tile's maxima as the GPU holds them: over blocks of two texels, each widened by
 /// its neighbouring blocks, then over blocks twice as wide, down to the whole tile.
 fn tops(elevation: &Elevation) -> Vec<Vec<f32>> {
     let side = TOPS_EDGE as usize;
-    let finest = |x: isize, y: isize| {
-        let clamp = |c: isize| c.clamp(0, side as isize - 1) as usize;
-        elevation.block_max_m(1, clamp(x), clamp(y))
-    };
-    let mut level: Vec<f32> = (0..side * side)
-        .map(|i| {
-            let (x, y) = ((i % side) as isize, (i / side) as isize);
-            let mut top = f32::MIN;
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    top = top.max(finest(x + dx, y + dy));
-                }
-            }
-            top
-        })
+    let finest: Vec<f32> = (0..side * side)
+        .map(|i| elevation.block_max_m(1, i % side, i / side))
         .collect();
+    let mut level = widened(&finest, side, f32::max);
     let mut levels = Vec::with_capacity(TOPS_MIPS as usize);
     let mut side = side;
     loop {
@@ -894,6 +903,31 @@ mod tests {
                 off.x = (off.x + NEAR_SIDE / 2.0).rem_euclid(NEAR_SIDE) - NEAR_SIDE / 2.0;
                 assert!(off.abs().max_element() < 0.02, "{lat} {lon} {d}: {off}");
             }
+        }
+    }
+
+    /// The heights held are the samples in quarter metres, and each texel's top the
+    /// most of its 3×3 of them, clamped at the tile's edges.
+    #[test]
+    fn the_texels_held_are_the_samples_and_their_3x3_tops() {
+        let tile = crate::tests::probe_dem_tile(10, 700, 400);
+        let elevation = tile.elevation().unwrap();
+        let (quarters, peaks) = texels(elevation);
+        let side = elevation.size();
+        let quarter = |x: isize, y: isize| {
+            let clamp = |c: isize| c.clamp(0, side as isize - 1) as usize;
+            let metres = elevation.height_m(clamp(x) as f64 + 0.5, clamp(y) as f64 + 0.5);
+            (metres * HEIGHT_STEPS_PER_M).round() as u16
+        };
+        for (i, (&held, &top)) in quarters.iter().zip(&peaks).enumerate() {
+            let (x, y) = ((i % side) as isize, (i / side) as isize);
+            assert_eq!(held, quarter(x, y));
+            let most = (-1..=1)
+                .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+                .map(|(dx, dy)| quarter(x + dx, y + dy))
+                .max()
+                .unwrap();
+            assert_eq!(top, most, "{x} {y}");
         }
     }
 

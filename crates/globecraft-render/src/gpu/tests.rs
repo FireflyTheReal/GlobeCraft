@@ -489,9 +489,10 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .as_mut()
             .unwrap();
         // Frames one after another, as the backend draws them: each walk holds the
-        // tiles the CPU's last frame held and the ones the last walk read (a few
-        // more uploaded each frame). Once all are in, every frame takes as many of
-        // the GPU's grounds (they did not come and go, 2026-11-23).
+        // tiles the CPU's last frame held and the ones the last walk read (up to 64
+        // more uploaded each frame). From the second frame on, every frame takes as
+        // many of the GPU's grounds (they did not come and go, 2026-11-23; with six
+        // uploads a frame a camera low among the relief waited 7 frames).
         let count = width * height;
         let taken = |pixels: &[f32]| pixels[3 * count..].iter().filter(|&&t| t > 0.5).count();
         let mut tiles = held;
@@ -514,7 +515,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             "{name}: grounds taken frame by frame {taken_by_frame:?}, tiles uploaded {uploads_by_frame:?}"
         );
         assert!(
-            taken_by_frame[8..]
+            taken_by_frame[1..]
                 .iter()
                 .all(|&taken| taken * 10 >= most * 9),
             "{name}: {taken_by_frame:?}"

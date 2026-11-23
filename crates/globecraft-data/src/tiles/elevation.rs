@@ -91,6 +91,10 @@ impl Elevation {
     pub fn size(&self) -> usize {
         self.size
     }
+    /// The height samples (metres), row by row, `size` × `size`.
+    pub fn heights(&self) -> &[f32] {
+        &self.heights
+    }
     /// The coarsest level: one block for the whole tile.
     pub fn top_level(&self) -> usize {
         self.maxima.len() - 1
