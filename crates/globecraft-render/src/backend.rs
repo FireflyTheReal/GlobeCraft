@@ -127,7 +127,66 @@ pub struct FrameRenderer {
     /// See `with_start_marker`.
     #[cfg(feature = "gpu")]
     start_marker: Option<std::path::PathBuf>,
+    #[cfg(feature = "gpu")]
+    relief_timing: ReliefTiming,
 }
+
+/// Whether the GPU's relief walk (`gpu::relief`) makes relief frames faster on this
+/// computer: it costs the GPU what it saves the CPU, and only the hardware says which
+/// is more (a software adapter took ten times the CPU's whole frame, 2026-11-23).
+/// Every `RELIEF_CHECK_EVERY`th relief frame is drawn without it; once each way has
+/// `RELIEF_SAMPLES` frames, the walk goes off for good while frames without it take
+/// less time per pixel.
+#[cfg(feature = "gpu")]
+#[derive(Default)]
+struct ReliefTiming {
+    frames: u32,
+    /// Seconds per megapixel, averaged (`RELIEF_AVERAGE_SHARE` per frame), and frames
+    /// counted: with the walk, without.
+    with: (f64, u32),
+    without: (f64, u32),
+    off: bool,
+}
+#[cfg(feature = "gpu")]
+const RELIEF_CHECK_EVERY: u32 = 20;
+#[cfg(feature = "gpu")]
+const RELIEF_SAMPLES: u32 = 3;
+#[cfg(feature = "gpu")]
+const RELIEF_AVERAGE_SHARE: f64 = 0.3;
+
+#[cfg(feature = "gpu")]
+impl ReliefTiming {
+    fn walks(&self) -> bool {
+        !self.off && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)
+    }
+    fn note(&mut self, walked: bool, seconds_per_megapixel: f64) {
+        self.frames += 1;
+        let (average, count) = if walked {
+            &mut self.with
+        } else {
+            &mut self.without
+        };
+        *average = if *count == 0 {
+            seconds_per_megapixel
+        } else {
+            *average + (seconds_per_megapixel - *average) * RELIEF_AVERAGE_SHARE
+        };
+        *count += 1;
+        if !self.off
+            && self.with.1 >= RELIEF_SAMPLES
+            && self.without.1 >= RELIEF_SAMPLES
+            && self.without.0 < self.with.0
+        {
+            self.off = true;
+            globecraft_data::log_line!(
+                "The GPU's relief walk made relief frames slower here ({:.0} against {:.0} ms per megapixel); the CPU marches alone",
+                self.with.0 * 1000.0,
+                self.without.0 * 1000.0
+            );
+        }
+    }
+}
+
 impl FrameRenderer {
     pub fn new(preference: BackendPreference) -> Self {
         Self {
@@ -143,6 +202,8 @@ impl FrameRenderer {
             restarts_left: MAX_GPU_RESTARTS,
             #[cfg(feature = "gpu")]
             start_marker: None,
+            #[cfg(feature = "gpu")]
+            relief_timing: ReliefTiming::default(),
         }
     }
     /// The renderer the settings ask for (`BackendPreference::from_environment`). When
@@ -289,8 +350,10 @@ impl FrameRenderer {
         #[cfg(feature = "gpu")]
         if request.cfg.terrain.is_some() && self.preference != BackendPreference::Cpu {
             self.initialize_with(crate::gpu::GpuRenderer::new);
+            let started = std::time::Instant::now();
+            let walks = self.relief_timing.walks();
             let starts =
-                match self.gpu.as_mut().map(|gpu| {
+                match self.gpu.as_mut().filter(|_| walks).map(|gpu| {
                     gpu_call(|| gpu.relief_starts(request, cache)).and_then(|result| result)
                 }) {
                     Some(Ok(starts)) => starts,
@@ -300,6 +363,7 @@ impl FrameRenderer {
                     }
                     None => None,
                 };
+            let walked = starts.is_some();
             update_status(|status| status.cpu_frames += 1);
             let (frame, held) = crate::render_relief_view_into(
                 request.width,
@@ -312,6 +376,14 @@ impl FrameRenderer {
             );
             if let Some(gpu) = &mut self.gpu {
                 gpu.relief_frame_held(held);
+                // Frames before the walk had tiles say nothing about it.
+                if walked || !walks {
+                    let megapixels = (request.width * request.height) as f64 / 1e6;
+                    self.relief_timing.note(
+                        walked,
+                        started.elapsed().as_secs_f64() / megapixels.max(1e-6),
+                    );
+                }
             }
             return frame;
         }
@@ -357,6 +429,29 @@ impl FrameRenderer {
             }
         }
         cpu(buffer)
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod relief_timing_tests {
+    use super::*;
+
+    /// Frames without the walk come every `RELIEF_CHECK_EVERY`; the walk goes off once
+    /// frames without it are faster, and stays on while they are slower.
+    #[test]
+    fn the_relief_walk_stays_only_where_it_pays() {
+        let mut timing = ReliefTiming::default();
+        let run = |timing: &mut ReliefTiming, with: f64, without: f64| {
+            for _ in 0..RELIEF_CHECK_EVERY * RELIEF_SAMPLES {
+                let walks = timing.walks();
+                timing.note(walks, if walks { with } else { without });
+            }
+        };
+        run(&mut timing, 0.1, 0.2);
+        assert!(!timing.off && timing.walks());
+        let mut slow = ReliefTiming::default();
+        run(&mut slow, 0.3, 0.2);
+        assert!(slow.off && !slow.walks());
     }
 }
 

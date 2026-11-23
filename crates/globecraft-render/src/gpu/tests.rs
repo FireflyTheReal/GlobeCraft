@@ -427,8 +427,8 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         let mut cfg = crate::tests::batch_reference_config(Provider::Satellite);
         cfg.grid = false;
         cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
-        // The view's march alone (the march toward the sun counts its steps too).
-        cfg.sun = None;
+        // A low sun in the west: long shadows.
+        cfg.sun = Some(globecraft_core::math::ll_to_v3(15.0, -10.0));
         let request = RenderRequest {
             width,
             height,
@@ -473,19 +473,48 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
             .as_mut()
             .unwrap();
+        let walked = std::time::Instant::now();
         let starts = march
             .starts(&gpu.device, &gpu.queue, &request, &held)
             .expect("relief march");
+        println!("{name}: the GPU's walk {:?}", walked.elapsed());
         let (frame, gpu_steps) = render(Some(&starts));
         let pixels = frame.pixels;
         let result = parity(&pixels, &expected);
         // The march started from the camera: how much the start alone moves the
         // picture (the CPU's linear steps between exact measurements).
-        let zeros = vec![0.0; width * height];
+        let mut zeros = vec![0.0; width * height];
+        zeros.resize(3 * width * height, -1.0);
         let from_camera = render(Some(&zeros)).0.pixels;
         let hits = crate::relief_hits(width, height, &request.basis, &request.cfg, &lookup);
         let (mut past, mut share, mut counted, mut most) = (0, 0.0, 0, 0.0f64);
-        for (&start, &hit) in starts.iter().zip(&hits) {
+        let count = width * height;
+        let known = starts[2 * count..]
+            .iter()
+            .filter(|&&seen| seen >= 0.0)
+            .count();
+        let met = starts[count..2 * count]
+            .iter()
+            .filter(|&&hit| hit >= 0.0)
+            .count();
+        println!(
+            "{name}: the GPU met the ground for {met} pixels, knew the sun's share for {known}"
+        );
+        // The sun's share where both met the ground at the same place.
+        let (mut compared, mut off, mut total) = (0, 0, 0.0);
+        for (i, &(hit, seen)) in hits.iter().enumerate() {
+            let (gpu_hit, gpu_seen) = (f64::from(starts[count + i]), starts[2 * count + i]);
+            if hit.is_finite() && gpu_seen >= 0.0 && (gpu_hit - hit).abs() <= hit * 1e-3 {
+                compared += 1;
+                total += f64::from((gpu_seen - seen).abs());
+                off += usize::from((gpu_seen - seen).abs() > 0.25);
+            }
+        }
+        println!(
+            "{name}: sun's share compared at {compared} pixels: mean difference {:.3}, {off} off by more than a quarter",
+            total / compared.max(1) as f64
+        );
+        for (&start, &(hit, _)) in starts[..count].iter().zip(&hits) {
             if hit.is_finite() {
                 past += usize::from(f64::from(start) > hit);
                 most = most.max(f64::from(start) / hit - 1.0);
@@ -518,10 +547,10 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             };
             save(&expected, "cpu");
             save(&pixels, "gpu");
-            let shade: Vec<u8> = starts
+            let shade: Vec<u8> = starts[2 * width * height..]
                 .iter()
                 .flat_map(|&t| {
-                    let level = (t * 4000.0).clamp(0.0, 255.0) as u8;
+                    let level = (t * 255.0).clamp(0.0, 255.0) as u8;
                     [level, level, level, 255]
                 })
                 .collect();
@@ -557,7 +586,11 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             timed(Some(&starts)),
             timed(None)
         );
-        assert_eq!(relief::past_the_ground(&starts, &hits), 0, "{name}");
+        assert_eq!(
+            relief::past_the_ground(&starts[..count], &hits),
+            0,
+            "{name}"
+        );
         assert!(gpu_steps <= cpu_steps, "{name}");
     }
     let march = gpu.relief.take().flatten().unwrap();

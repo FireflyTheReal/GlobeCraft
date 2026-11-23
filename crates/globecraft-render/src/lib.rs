@@ -519,11 +519,24 @@ struct MarchStarts<'a> {
     beams: &'a [f64],
     /// Per pixel, from the GPU (`gpu::relief`).
     pixels: Option<&'a [f32]>,
+    /// Where the GPU met the ground and the share of the sun it saw there (-1: none).
+    hits: Option<&'a [f32]>,
+    seen: Option<&'a [f32]>,
+}
+
+impl MarchStarts<'_> {
+    /// The share of the sun the GPU saw at pixel `x`'s ground, when it met the ground
+    /// within a texel of `distance` (where the CPU did).
+    fn gpu_sun(&self, x: usize, distance: f64, pixel_angle: f64) -> Option<f32> {
+        let (hit, seen) = (f64::from(self.hits?[x]), self.seen?[x]);
+        let texel = distance * pixel_angle * terrain::DEM_PIXELS_PER_TEXEL;
+        (hit >= 0.0 && seen >= 0.0 && (hit - distance).abs() <= texel).then_some(seen)
+    }
 }
 
 /// How far each pixel's ray goes before the relief stops it, marched from the camera
 /// (row by row; infinite where it meets none): what a start for the march must not
-/// pass (`gpu::relief`'s self-check).
+/// pass (`gpu::relief`'s self-check). With a sun, also the share of it seen there.
 #[cfg(feature = "gpu")]
 pub(crate) fn relief_hits(
     w: usize,
@@ -531,9 +544,9 @@ pub(crate) fn relief_hits(
     basis: &Basis,
     cfg: &RenderCfg,
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
-) -> Vec<f64> {
+) -> Vec<(f64, f32)> {
     let Some(relief) = cfg.terrain else {
-        return vec![f64::INFINITY; w * h];
+        return vec![(f64::INFINITY, 1.0); w * h];
     };
     let rays = RayCaster::new(w, h, basis);
     let mut loc = Local {
@@ -561,8 +574,20 @@ pub(crate) fn relief_hits(
                         0.0,
                         &mut loc,
                     ) {
-                        terrain::March::Hit(ground, _) => ground.distance,
-                        terrain::March::Floor | terrain::March::Miss => f64::INFINITY,
+                        terrain::March::Hit(ground, _) => (
+                            ground.distance,
+                            cfg.sun.map_or(1.0, |sun| {
+                                terrain::sun_light(
+                                    &ground,
+                                    sun,
+                                    rays.model_geometry(),
+                                    relief,
+                                    pixel_angle(h, cfg),
+                                    &mut loc,
+                                )
+                            }),
+                        ),
+                        terrain::March::Floor | terrain::March::Miss => (f64::INFINITY, 1.0),
                     },
                 );
             }
@@ -630,16 +655,19 @@ fn render_row<const ELLIPSOID: bool>(
                                         relief.fade,
                                     )),
                                     sky: slope.sky_share(relief.fade),
-                                    seen: sun_seen.at(x, ground.distance, || {
-                                        terrain::sun_light(
-                                            &ground,
-                                            sun,
-                                            geometry,
-                                            relief,
-                                            pixel_angle,
-                                            loc,
-                                        )
-                                    }),
+                                    seen: match starts.gpu_sun(x, ground.distance, pixel_angle) {
+                                        Some(seen) => seen,
+                                        None => sun_seen.at(x, ground.distance, || {
+                                            terrain::sun_light(
+                                                &ground,
+                                                sun,
+                                                geometry,
+                                                relief,
+                                                pixel_angle,
+                                                loc,
+                                            )
+                                        }),
+                                    },
                                     dip: terrain::horizon_dip(&ground, geometry, relief),
                                 },
                                 None => Relief {
@@ -912,7 +940,7 @@ pub(crate) fn render_pixels_with(
     let unit_sphere = rays.uses_unit_sphere();
     let air = frame_air(&rays, cfg);
     let now = std::time::Instant::now();
-    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() == w * h);
+    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() == 3 * w * h);
     let per_batch: Vec<_> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()
@@ -945,9 +973,13 @@ pub(crate) fn render_pixels_with(
             };
             for (offset, row) in rows.chunks_mut(row_bytes).enumerate() {
                 let y = first_row + batch * ROWS_PER_TILE_BATCH + offset;
+                let gpu_row =
+                    |part: usize| starts.map(|starts| &starts[part * w * h + y * w..][..w]);
                 let marches = MarchStarts {
                     beams: &beams,
-                    pixels: starts.map(|starts| &starts[y * w..(y + 1) * w]),
+                    pixels: gpu_row(0),
+                    hits: gpu_row(1),
+                    seen: gpu_row(2),
                 };
                 if unit_sphere {
                     render_row::<false>(y, &rays, cfg, &mut loc, marches, air.as_ref(), row);

@@ -1,14 +1,18 @@
-//! The open-air part of the relief march on the GPU (roadmap D1, first step). Relief
-//! frames cost four to seven flat ones on the CPU, most of it the rays' walk down the
-//! elevation tiles' block maxima before they meet the ground (`terrain_views`,
-//! 2026-11-22). The GPU walks each pixel's ray as far as the maxima let it
-//! (`shaders/relief.wgsl`) and the CPU's exact march starts there (`render_row`), in
-//! place of the 8×8-pixel cones (`terrain::beam`): the picture is the CPU's.
+//! The relief march on the GPU (roadmap D1, steps 1 and 2). Relief frames cost four
+//! to seven flat ones on the CPU: the rays' walk down the elevation tiles' block
+//! maxima before they meet the ground, and as much again from there toward the sun
+//! (`terrain_views`, 2026-11-22). The GPU walks each pixel's ray as far as the maxima
+//! let it (`shaders/relief.wgsl`) and the CPU's exact march starts there
+//! (`render_row`), in place of the 8×8-pixel cones (`terrain::beam`): the picture is
+//! the CPU's. The GPU goes on to the ground and toward the sun as
+//! `terrain::sun_light` does; where the CPU meets the ground at the same place it
+//! takes the share of the sun the GPU saw there.
 //!
 //! The GPU holds the elevation tiles the last relief frame held (the view moves a
-//! little between frames), as their maxima over blocks of two texels and coarser,
-//! widened by a block. Tiles still growing in are left out: their heights are
-//! between levels.
+//! little between frames): their heights, and their maxima over blocks of two texels
+//! and coarser, widened by a block. Tiles still growing in are left out: their heights
+//! are between levels. Whether the walk pays is the hardware's to say
+//! (`backend::ReliefTiming`).
 use super::*;
 use crate::terrain;
 use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN};
@@ -28,7 +32,7 @@ const MAX_STEPS: u32 = 512;
 /// metre, a tile's edge may be read from its neighbour.
 const HEIGHT_MARGIN_M: f64 = 10.0;
 const WORKGROUP: u32 = 64;
-/// Heights are held in quarter metres (to 16 km), rounded up.
+/// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
 
 #[repr(C)]
@@ -42,6 +46,8 @@ struct View {
     axes: [f32; 4],
     march: [f32; 4],
     raster: [u32; 4],
+    sun: [f32; 4],
+    shade: [f32; 4],
 }
 
 pub(super) struct ReliefMarch {
@@ -53,8 +59,7 @@ pub(super) struct ReliefMarch {
     pixels: usize,
     tops: wgpu::Texture,
     tops_view: wgpu::TextureView,
-    /// The tiles' texel maxima (`Elevation::block_max_m` at level 0), in quarter
-    /// metres rounded up.
+    /// The tiles' heights, in quarter metres.
     heights: wgpu::Texture,
     heights_view: wgpu::TextureView,
     slots: Vec<Option<Slot>>,
@@ -75,6 +80,12 @@ fn source() -> String {
         ("PIXELS_PER_TEXEL", terrain::DEM_PIXELS_PER_TEXEL),
         ("MIN_LATITUDE_COSINE", terrain::MIN_LATITUDE_COSINE),
         ("BLEND_LEVELS", terrain::HEIGHT_BLEND_LEVELS),
+        ("SUN_RADIUS", terrain::SUN_RADIUS_RAD),
+        ("SHADOW_SOFT", terrain::SHADOW_SOFT_TEXEL_SHARE),
+        ("SHADOW_LIFT_M", terrain::SHADOW_LIFT_M),
+        ("SHADOW_LIFT_TEXELS", terrain::SHADOW_LIFT_TEXELS),
+        ("SHADOW_COARSER", terrain::SHADOW_DETAIL_COARSER),
+        ("SUN_RISE_START", crate::tuning::SUN_RISE_START_COSINE),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{:?}", value as f32));
     }
@@ -142,7 +153,7 @@ impl ReliefMarch {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             ),
             table: overview::buffer(device, "GlobeCraft relief tiles", TABLE_SIZE * 16, storage),
-            output: overview::buffer(device, "GlobeCraft relief starts", 4, storage),
+            output: overview::buffer(device, "GlobeCraft relief starts", 12, storage),
             staging: overview::buffer(
                 device,
                 "GlobeCraft relief readback",
@@ -158,8 +169,10 @@ impl ReliefMarch {
         }
     }
 
-    /// Where each pixel's relief march may start (row by row), walking the elevation
-    /// tiles `tiles` (the ones the last relief frame held).
+    /// Per pixel (row by row): where its relief march may start, then where the GPU
+    /// met the ground (-1: it did not), then the share of the sun seen there (-1: not
+    /// known), walking the elevation tiles `tiles` (the ones the last relief frame
+    /// held).
     pub(super) fn starts(
         &mut self,
         device: &wgpu::Device,
@@ -177,11 +190,11 @@ impl ReliefMarch {
             let storage = wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC;
-            self.output = overview::buffer(device, "GlobeCraft relief starts", count * 4, storage);
+            self.output = overview::buffer(device, "GlobeCraft relief starts", count * 12, storage);
             self.staging = overview::buffer(
                 device,
                 "GlobeCraft relief readback",
-                count * 4,
+                count * 12,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
         }
@@ -210,6 +223,11 @@ impl ReliefMarch {
                 (TABLE_SIZE - 1) as u32,
                 MAX_STEPS,
             ],
+            sun: match request.cfg.sun {
+                Some(sun) => v4(sun, 1.0),
+                None => [0.0; 4],
+            },
+            shade: [0.0, relief.fade, 0.0, 0.0],
         };
         let mut table = vec![[u32::MAX; 4]; TABLE_SIZE];
         for (key, layer) in slots {
@@ -232,7 +250,7 @@ impl ReliefMarch {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: binding(&self.output, (count * 4) as u64),
+                    resource: binding(&self.output, (count * 12) as u64),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -260,9 +278,9 @@ impl ReliefMarch {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, (count * 4) as u64);
+        encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, (count * 12) as u64);
         queue.submit(Some(encoder.finish()));
-        let slice = self.staging.slice(..(count * 4) as u64);
+        let slice = self.staging.slice(..(count * 12) as u64);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
@@ -341,8 +359,8 @@ impl ReliefMarch {
         let quarters: Vec<u16> = (0..side * side)
             .map(|i| {
                 let (x, y) = ((i % side) as usize, (i / side) as usize);
-                (elevation.block_max_m(0, x, y) * HEIGHT_STEPS_PER_M)
-                    .ceil()
+                (elevation.height_m(x as f64 + 0.5, y as f64 + 0.5) * HEIGHT_STEPS_PER_M)
+                    .round()
                     .clamp(0.0, f32::from(u16::MAX)) as u16
             })
             .collect();
@@ -520,7 +538,7 @@ impl ReliefMarch {
         let tiles = grown_tiles(&held, lookup, std::time::Instant::now());
         let starts = self.starts(device, queue, &request, &tiles)?;
         let hits = crate::relief_hits(WIDTH, HEIGHT, &request.basis, &request.cfg, &lookup);
-        let past = past_the_ground(&starts, &hits);
+        let past = past_the_ground(&starts[..WIDTH * HEIGHT], &hits);
         if past > 0 {
             return Err(format!(
                 "GPU relief self-check: {past} of {} rays handed over past the ground",
@@ -536,11 +554,11 @@ impl ReliefMarch {
 pub(super) const PAST_THE_GROUND_SHARE: f64 = 0.02;
 
 /// How many of `starts` lie past the ground the CPU's march meets (`hits`).
-pub(super) fn past_the_ground(starts: &[f32], hits: &[f64]) -> usize {
+pub(super) fn past_the_ground(starts: &[f32], hits: &[(f64, f32)]) -> usize {
     starts
         .iter()
         .zip(hits)
-        .filter(|&(&start, &hit)| f64::from(start) > hit * (1.0 + PAST_THE_GROUND_SHARE))
+        .filter(|&(&start, &(hit, _))| f64::from(start) > hit * (1.0 + PAST_THE_GROUND_SHARE))
         .count()
 }
 

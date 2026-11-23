@@ -158,23 +158,23 @@ pub(super) enum March {
 
 /// The march toward the sun starts this high over the ground (metres, before
 /// exaggeration), so the slope it leaves does not shade itself.
-const SHADOW_LIFT_M: f64 = 20.0;
+pub(crate) const SHADOW_LIFT_M: f64 = 20.0;
 /// …and at least this many of the elevation texels it reads above it, times the
 /// exaggeration: a coarser level's heights stand above the finer ground on slopes.
-const SHADOW_LIFT_TEXELS: f64 = 1.5;
+pub(crate) const SHADOW_LIFT_TEXELS: f64 = 1.5;
 /// The march toward the sun reads the elevation this many times coarser than the
 /// view: the shadow's edge is soft anyway, and it reads fewer, smaller tiles.
-const SHADOW_DETAIL_COARSER: f64 = 4.0;
+pub(crate) const SHADOW_DETAIL_COARSER: f64 = 4.0;
 /// Tiles only the shadows need are asked for after the view's own.
 const SHADOW_REQUEST_PRIORITY: f32 = f32::MAX;
 /// The sun's angular radius: a ray this close to a ridge still sees part of the disc.
-const SUN_RADIUS_RAD: f64 = 0.004_65;
+pub(crate) const SUN_RADIUS_RAD: f64 = 0.004_65;
 /// How uncertain an elevation texel's height is, as a share of its width: a ray that
 /// clears the ground by less than this sees the sun only in part. With a hard edge,
 /// a low sun cast every far, coarse texel (200–400 m wide at sunrise) as a sharp
 /// strip of shadow kilometres long, which jumped from block to block as the sun
 /// rose (user's recording, 2026-11-20 22:48).
-const SHADOW_SOFT_TEXEL_SHARE: f64 = 0.3;
+pub(crate) const SHADOW_SOFT_TEXEL_SHARE: f64 = 0.3;
 
 /// What the march toward the sun learns on its way: the least clearance over the
 /// ground, as a share of the margin within which the sun is partly hidden there (the
