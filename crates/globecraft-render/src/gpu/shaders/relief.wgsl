@@ -45,9 +45,13 @@ const TOP_MIP: i32 = 7;
 // Past a block's edge by this share of a texel, as the CPU (`BLOCK_EXIT_TEXELS`).
 const EXIT_NUDGE_TEXELS: f32 = 0.001;
 // The CPU takes the GPU's ground as its own when the walk went under the maxima for
-// at most this many texels before it (two let a few ridges through on synthetic
-// relief, 2026-11-23).
-const TRUSTED_TEXELS: f32 = 1.0;
+// at most this many texels before it, read every quarter texel there: on synthetic
+// relief up to one ray in 2,000 then meets the ground past a ridge tip the CPU's own
+// steps meet, a pixel along a ridge's edge (where the f32 level falls on the other
+// side of a level's edge).
+const TRUSTED_TEXELS: f32 = 8.0;
+// Steps under the maxima at most this long.
+const LOOSE_STEP_TEXELS: f32 = 0.25;
 // Texels the CPU walks again before the ground the GPU found.
 const BACK_TEXELS: f32 = 1.0;
 // As `terrain::sun_light` and `SunMargin`.
@@ -295,6 +299,9 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         let inside = at.uv - floor(at.uv / size) * size;
         var exit = min(leave(inside.x, at.rate.x, size), leave(inside.y, at.rate.y, size));
         if at.climb < 0.0 { exit = min(exit, (h - ground_world) / -at.climb); }
+        // Under the maxima the heights are read more densely than the CPU reads them:
+        // a ridge the CPU's steps meet, these meet too.
+        if !over_top { exit = min(exit, LOOSE_STEP_TEXELS / speed); }
         t += max(exit, 0.0) + EXIT_NUDGE_TEXELS / speed;
         if over_top && !loose { result.above = t; }
         loose = loose || !over_top;

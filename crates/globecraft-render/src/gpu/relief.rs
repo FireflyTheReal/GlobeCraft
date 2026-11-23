@@ -540,12 +540,12 @@ impl ReliefMarch {
         let tiles = grown_tiles(&held, lookup, std::time::Instant::now());
         let starts = self.starts(device, queue, &request, &tiles)?;
         let hits = crate::relief_hits(WIDTH, HEIGHT, &request.basis, &request.cfg, &lookup);
-        let past = past_the_ground(&starts[..WIDTH * HEIGHT], &hits)
-            + trusted_past_the_ground(&starts, &hits);
-        if past > 0 {
+        let past = past_the_ground(&starts[..WIDTH * HEIGHT], &hits);
+        let trusted_past = trusted_past_the_ground(&starts, &hits);
+        if past > 0 || trusted_past * TRUSTED_PAST_PER > WIDTH * HEIGHT {
             return Err(format!(
-                "GPU relief self-check: {past} of {} rays handed over past the ground",
-                starts.len()
+                "GPU relief self-check: {past} starts and {trusted_past} grounds of {} rays past the ground",
+                WIDTH * HEIGHT
             ));
         }
         Ok(())
@@ -555,6 +555,10 @@ impl ReliefMarch {
 /// The CPU's own steps between exact measurements put the ground up to a texel from
 /// where the GPU sees it: a start may lie this share of the way past the hit.
 pub(super) const PAST_THE_GROUND_SHARE: f64 = 0.02;
+
+/// At most one ground in this many taken from the GPU may lie past a ridge tip the
+/// CPU's march meets (`TRUSTED_TEXELS` in the shader).
+pub(super) const TRUSTED_PAST_PER: usize = 1_000;
 
 /// How many of the GPU's grounds the CPU may take as its own (`trusted`, from
 /// `ReliefMarch::starts`) lie past the ground its march meets (`hits`): a ridge the

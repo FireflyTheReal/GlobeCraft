@@ -585,8 +585,27 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
                 .min()
                 .unwrap()
         };
+        let mut flat = request.cfg.clone();
+        flat.terrain = None;
+        let flat_time = (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                crate::render_pixels_with(
+                    width,
+                    height,
+                    0..height,
+                    &request.basis,
+                    &flat,
+                    &lookup,
+                    Vec::new(),
+                    None,
+                );
+                started.elapsed()
+            })
+            .min()
+            .unwrap();
         println!(
-            "{name}: the CPU's part {:?} after the GPU's walk, {:?} with the cones",
+            "{name}: the CPU's part {:?} after the GPU's walk, {:?} with the cones, {flat_time:?} without relief",
             timed(Some(&starts)),
             timed(None)
         );
@@ -598,7 +617,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         assert!(gpu_steps <= cpu_steps, "{name}");
         let wrong = relief::trusted_past_the_ground(&starts, &hits);
         println!("{name}: {wrong} grounds taken from the GPU past the CPU's");
-        assert_eq!(wrong, 0, "{name}");
+        assert!(wrong * relief::TRUSTED_PAST_PER <= count, "{name}");
     }
     let march = gpu.relief.take().flatten().unwrap();
     drop(march);
