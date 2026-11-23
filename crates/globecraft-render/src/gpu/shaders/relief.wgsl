@@ -21,7 +21,7 @@ struct Relief {
 @group(0) @binding(0) var<uniform> relief: Relief;
 // Per pixel: where the CPU's march starts, then (after all of those) where the ray
 // met the ground (-1: nowhere it knows), then the share of the sun seen there (-1:
-// not known).
+// not known), then whether the CPU may take that ground as its own (1) or marches.
 @group(0) @binding(1) var<storage, read_write> starts: array<f32>;
 @group(0) @binding(2) var tops: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
@@ -44,6 +44,10 @@ const LEVEL_EDGE: f32 = 0.02;
 const TOP_MIP: i32 = 7;
 // Past a block's edge by this share of a texel, as the CPU (`BLOCK_EXIT_TEXELS`).
 const EXIT_NUDGE_TEXELS: f32 = 0.001;
+// The CPU takes the GPU's ground as its own when the walk went under the maxima for
+// at most this many texels before it (two let a few ridges through on synthetic
+// relief, 2026-11-23).
+const TRUSTED_TEXELS: f32 = 1.0;
 // Texels the CPU walks again before the ground the GPU found.
 const BACK_TEXELS: f32 = 1.0;
 // As `terrain::sun_light` and `SunMargin`.
@@ -330,6 +334,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if i >= count { return; }
     starts[count + i] = -1.0;
     starts[2u * count + i] = -1.0;
+    starts[3u * count + i] = 0.0;
     let x = i % width; let y = i / width;
     let nx = (f32(x) + 0.5) / f32(width) * 2.0 - 1.0;
     let ny = 1.0 - (f32(y) + 0.5) / f32(height) * 2.0;
@@ -347,6 +352,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     starts[i] = select(max(view.above - BACK_TEXELS * view.texel_t, 0.0), end, view.above >= end);
     if view.hit >= 0.0 {
         starts[count + i] = view.hit;
+        starts[3u * count + i] = select(0.0, 1.0, view.hit - view.above <= TRUSTED_TEXELS * view.texel_t);
         if relief.sun.w > 0.5 {
             starts[2u * count + i] = sun_seen(camera + dir * view.hit, view.hit);
         }

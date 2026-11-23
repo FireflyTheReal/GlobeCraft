@@ -522,6 +522,8 @@ struct MarchStarts<'a> {
     /// Where the GPU met the ground and the share of the sun it saw there (-1: none).
     hits: Option<&'a [f32]>,
     seen: Option<&'a [f32]>,
+    /// Where the CPU may take the GPU's ground as its own (1).
+    trusted: Option<&'a [f32]>,
 }
 
 impl MarchStarts<'_> {
@@ -531,6 +533,11 @@ impl MarchStarts<'_> {
         let (hit, seen) = (f64::from(self.hits?[x]), self.seen?[x]);
         let texel = distance * pixel_angle * terrain::DEM_PIXELS_PER_TEXEL;
         (hit >= 0.0 && seen >= 0.0 && (hit - distance).abs() <= texel).then_some(seen)
+    }
+    /// Where the GPU met pixel `x`'s ground, when the CPU may take it as its own.
+    fn gpu_hit(&self, x: usize) -> Option<f64> {
+        let hit = f64::from(self.hits?[x]);
+        (hit >= 0.0 && self.trusted?[x] > 0.5).then_some(hit)
     }
 }
 
@@ -627,24 +634,38 @@ fn render_row<const ELLIPSOID: bool>(
                 Some(relief) => {
                     let offset = (x as f32 - w as f32 / 2.0, y as f32 - h as f32 / 2.0);
                     let priority = offset.0 * offset.0 + offset.1 * offset.1;
-                    match terrain::march(
-                        &ray,
-                        match starts.pixels {
-                            Some(pixels) => f64::from(pixels[x]),
-                            None => starts
-                                .beams
-                                .get(x / terrain::BEAM_COLUMNS)
-                                .copied()
-                                .unwrap_or(0.0),
-                        },
-                        hits_surface,
-                        rays.camera(),
-                        geometry,
-                        relief,
-                        pixel_angle,
-                        priority,
-                        loc,
-                    ) {
+                    let met = starts.gpu_hit(x).and_then(|t| {
+                        terrain::met_at(
+                            &ray,
+                            t,
+                            rays.camera(),
+                            geometry,
+                            relief,
+                            pixel_angle,
+                            priority,
+                            loc,
+                        )
+                    });
+                    match met.unwrap_or_else(|| {
+                        terrain::march(
+                            &ray,
+                            match starts.pixels {
+                                Some(pixels) => f64::from(pixels[x]),
+                                None => starts
+                                    .beams
+                                    .get(x / terrain::BEAM_COLUMNS)
+                                    .copied()
+                                    .unwrap_or(0.0),
+                            },
+                            hits_surface,
+                            rays.camera(),
+                            geometry,
+                            relief,
+                            pixel_angle,
+                            priority,
+                            loc,
+                        )
+                    }) {
                         terrain::March::Hit(ground, slope) => {
                             let light = match cfg.sun {
                                 Some(sun) => Relief {
@@ -940,7 +961,7 @@ pub(crate) fn render_pixels_with(
     let unit_sphere = rays.uses_unit_sphere();
     let air = frame_air(&rays, cfg);
     let now = std::time::Instant::now();
-    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() == 3 * w * h);
+    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() == 4 * w * h);
     let per_batch: Vec<_> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()
@@ -980,6 +1001,7 @@ pub(crate) fn render_pixels_with(
                     pixels: gpu_row(0),
                     hits: gpu_row(1),
                     seen: gpu_row(2),
+                    trusted: gpu_row(3),
                 };
                 if unit_sphere {
                     render_row::<false>(y, &rays, cfg, &mut loc, marches, air.as_ref(), row);

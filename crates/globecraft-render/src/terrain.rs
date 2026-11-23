@@ -593,6 +593,107 @@ pub(super) fn horizon_dip(
     (2.0 * height.max(0.0)).sqrt() * f64::from(terrain.fade)
 }
 
+/// Where a march met the ground.
+struct Found {
+    t: f64,
+    point: DVec3,
+    normal: DVec3,
+    uv: (f64, f64),
+    latitude_cosine: f64,
+}
+
+/// The hit at `found` on `tile`: the ground's slope there, as the march shades it.
+fn hit_on(
+    ray: &rays::RaySample,
+    tile: DemTile,
+    found: Found,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> March {
+    let Found {
+        t,
+        point,
+        normal,
+        uv,
+        latitude_cosine,
+    } = found;
+    let to_world = terrain.exaggeration / EARTH_RADIUS_M;
+    let held = Held::of(loc);
+    let mut shade = if !terrain.smooth || tile.morph.is_none() {
+        slope(&tile.grid, tile.elevation(held.tiles), uv, normal, to_world)
+    } else {
+        tile.shade(held, uv, normal, to_world)
+    };
+    // A finer level steepens the slopes, so the shading darkened at once where the
+    // level changed, all over the view as it zoomed (user's recording, 2026-11-17).
+    // It comes in with the zoom instead: from the next coarser level's at the change to
+    // this level's one level on.
+    let level = tile.n.log2().round() as i32;
+    let toward = (dem_zoom_exact(t, pixel_angle, latitude_cosine, DEM_TILE_TEXELS)
+        - f64::from(level))
+    .clamp(0.0, 1.0) as f32;
+    if toward < 1.0
+        && terrain.smooth
+        && level > 0
+        && let Some(coarser) = dem_tile(loc, level - 1, uv, dist)
+    {
+        let held = Held::of(loc);
+        let before = coarser.shade(held, uv, normal, to_world);
+        shade = before.lerp(shade, f64::from(toward));
+    }
+    let shade = shade.faded(polar_fade(point) as f32);
+    March::Hit(
+        rays::RaySample {
+            distance: t,
+            point,
+            normal,
+            incidence: (-ray.direction.dot(normal)).max(0.0),
+            ..*ray
+        },
+        shade,
+    )
+}
+
+/// The hit where the GPU met the ground, `t` along `ray` from `origin`
+/// (`gpu::relief`), shaded as the march would shade it, without the march: `None`
+/// where the level for that distance is not held as itself (missing, or still growing
+/// in), and the march decides.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn met_at(
+    ray: &rays::RaySample,
+    t: f64,
+    origin: DVec3,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> Option<March> {
+    let point = origin + ray.direction * t;
+    if polar_fade(point) < 1.0 {
+        return None;
+    }
+    let normal = geometry.normal(point).normalize();
+    let latitude_cosine = normal.x.hypot(normal.y);
+    let zoom = (dem_zoom_exact(t, pixel_angle, latitude_cosine, DEM_TILE_TEXELS).floor() as i32)
+        .clamp(0, DEM_MAX_ZOOM);
+    let uv = mercator_uv(normal);
+    let tile = dem_tile(loc, zoom, uv, dist)?;
+    if tile.level() != zoom || (terrain.smooth && tile.morph.is_some()) {
+        return None;
+    }
+    let found = Found {
+        t,
+        point,
+        normal,
+        uv,
+        latitude_cosine,
+    };
+    Some(hit_on(ray, tile, found, terrain, pixel_angle, dist, loc))
+}
+
 /// Elevation tiles end at Web Mercator's limit (85.05°): past it each tile's edge row
 /// stood for all the land to the pole, as ridges along the meridians that cast long
 /// slabs of shadow (Julien's recording over Antarctica, 2026-11-22). Past the limit
@@ -1014,41 +1115,14 @@ fn march_near(
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
                     let uv = anchor.uv(t);
-                    let mut shade = if grown {
-                        slope(&tile.grid, elevation, uv, normal, to_world)
-                    } else {
-                        tile.shade(held, uv, normal, to_world)
+                    let found = Found {
+                        t,
+                        point,
+                        normal,
+                        uv,
+                        latitude_cosine: anchor.latitude_cosine,
                     };
-                    // A finer level steepens the slopes, so the shading darkened at
-                    // once where the level changed, all over the view as it zoomed
-                    // (user's recording, 2026-11-17). It comes in with the zoom
-                    // instead: from the next coarser level's at the change to this
-                    // level's one level on.
-                    let level = tile.n.log2().round() as i32;
-                    let toward =
-                        (dem_zoom_exact(t, pixel_angle, anchor.latitude_cosine, DEM_TILE_TEXELS)
-                            - f64::from(level))
-                        .clamp(0.0, 1.0) as f32;
-                    if toward < 1.0
-                        && terrain.smooth
-                        && level > 0
-                        && let Some(coarser) = dem_tile(loc, level - 1, uv, dist)
-                    {
-                        let held = Held::of(loc);
-                        let before = coarser.shade(held, uv, normal, to_world);
-                        shade = before.lerp(shade, f64::from(toward));
-                    }
-                    let shade = shade.faded(polar_fade(point) as f32);
-                    return March::Hit(
-                        rays::RaySample {
-                            distance: t,
-                            point,
-                            normal,
-                            incidence: (-direction.dot(normal)).max(0.0),
-                            ..*ray
-                        },
-                        shade,
-                    );
+                    return hit_on(ray, tile, found, terrain, pixel_angle, dist, loc);
                 }
                 above = Some((t, height - ground));
                 if let Some(margin) = margin.as_deref_mut() {

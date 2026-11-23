@@ -484,12 +484,12 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         // The march started from the camera: how much the start alone moves the
         // picture (the CPU's linear steps between exact measurements).
         let mut zeros = vec![0.0; width * height];
-        zeros.resize(3 * width * height, -1.0);
+        zeros.resize(4 * width * height, -1.0);
         let from_camera = render(Some(&zeros)).0.pixels;
         let hits = crate::relief_hits(width, height, &request.basis, &request.cfg, &lookup);
         let (mut past, mut share, mut counted, mut most) = (0, 0.0, 0, 0.0f64);
         let count = width * height;
-        let known = starts[2 * count..]
+        let known = starts[2 * count..3 * count]
             .iter()
             .filter(|&&seen| seen >= 0.0)
             .count();
@@ -497,8 +497,12 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .iter()
             .filter(|&&hit| hit >= 0.0)
             .count();
+        let trusted = starts[3 * count..]
+            .iter()
+            .filter(|&&trusted| trusted > 0.5)
+            .count();
         println!(
-            "{name}: the GPU met the ground for {met} pixels, knew the sun's share for {known}"
+            "{name}: the GPU met the ground for {met} pixels ({trusted} taken as they are), knew the sun's share for {known}"
         );
         // The sun's share where both met the ground at the same place.
         let (mut compared, mut off, mut total) = (0, 0, 0.0);
@@ -592,6 +596,9 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             "{name}"
         );
         assert!(gpu_steps <= cpu_steps, "{name}");
+        let wrong = relief::trusted_past_the_ground(&starts, &hits);
+        println!("{name}: {wrong} grounds taken from the GPU past the CPU's");
+        assert_eq!(wrong, 0, "{name}");
     }
     let march = gpu.relief.take().flatten().unwrap();
     drop(march);
