@@ -82,11 +82,14 @@ pub(super) struct ReliefMarch {
 pub(crate) struct Walked {
     /// Per pixel (row by row): where its relief march may start, then where the GPU
     /// met the ground (-1: it did not), then the share of the sun seen there (-1: not
-    /// known), then whether the CPU may take that ground as its own (1).
+    /// known), then whether the CPU may take that ground as its own (1; -1: the walk
+    /// gave up on that ray without an answer).
     pub(crate) pixels: Vec<f32>,
     /// The tiles the walk read: they stay held for the next frame, though the CPU,
     /// spared the march, no longer reads them itself.
     pub(super) read: Vec<TileKey>,
+    /// How many tiles this walk uploaded first.
+    pub(super) uploads: usize,
 }
 
 fn source() -> String {
@@ -226,7 +229,7 @@ impl ReliefMarch {
         let Some(relief) = request.cfg.terrain else {
             return Err("No relief in this view".into());
         };
-        let slots = self.hold(queue, tiles);
+        let (slots, uploads) = self.hold(queue, tiles);
         let count = request.width * request.height;
         let layers = self.slots.len();
         if count > self.pixels {
@@ -375,13 +378,21 @@ impl ReliefMarch {
             .filter(|(_, layer)| read[*layer as usize] != 0)
             .map(|(key, _)| *key)
             .collect();
-        Ok(Walked { pixels, read })
+        Ok(Walked {
+            pixels,
+            read,
+            uploads,
+        })
     }
 
     /// Holds `tiles` (fully grown ones, as many as fit, coarse first), keeping those
     /// already held and uploading at most `MAX_UPLOADS_PER_FRAME` more; where each
     /// sits.
-    fn hold(&mut self, queue: &wgpu::Queue, tiles: &[(TileKey, Arc<Tile>)]) -> Vec<(TileKey, u32)> {
+    fn hold(
+        &mut self,
+        queue: &wgpu::Queue,
+        tiles: &[(TileKey, Arc<Tile>)],
+    ) -> (Vec<(TileKey, u32)>, usize) {
         let mut wanted: Vec<_> = tiles
             .iter()
             .filter(|(_, tile)| {
@@ -429,7 +440,7 @@ impl ReliefMarch {
             };
             held.push((*key, layer as u32));
         }
-        held
+        (held, uploads)
     }
 
     fn upload(&self, queue: &wgpu::Queue, layer: u32, elevation: &Elevation) {
@@ -690,6 +701,19 @@ fn made_up_mountains(z: u8, x: u32, y: u32) -> Tile {
         })
         .collect();
     Tile::from_elevation(Elevation::from_heights(size, heights))
+}
+
+/// Whether the walk answered at least half the rays (`pixels` as in `Walked`): where
+/// it gave up on more (a camera low among the relief starts every ray at levels too
+/// fine for f32 map coordinates), the CPU's own cones start the rays further on.
+pub(super) fn helps(pixels: &[f32]) -> bool {
+    let count = pixels.len() / 4;
+    pixels[3 * count..]
+        .iter()
+        .filter(|&&trusted| trusted < 0.0)
+        .count()
+        * 2
+        <= count
 }
 
 /// The elevation tiles to hold for the next frame: the ones the CPU's frame held

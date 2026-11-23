@@ -245,7 +245,7 @@ impl GpuRenderer {
         match march.starts(device, queue, request, &tiles) {
             Ok(walked) => {
                 self.relief_read = walked.read;
-                Ok(Some(walked.pixels))
+                Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
             }
             Err(error) => {
                 globecraft_data::log_line!("The CPU marches the relief alone: {error}");

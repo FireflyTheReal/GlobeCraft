@@ -21,7 +21,8 @@ struct Relief {
 @group(0) @binding(0) var<uniform> relief: Relief;
 // Per pixel: where the CPU's march starts, then (after all of those) where the ray
 // met the ground (-1: nowhere it knows), then the share of the sun seen there (-1:
-// not known), then whether the CPU may take that ground as its own (1) or marches.
+// not known), then whether the CPU may take that ground as its own (1) or marches (0;
+// -1: the walk gave up without an answer).
 @group(0) @binding(1) var<storage, read_write> starts: array<f32>;
 @group(0) @binding(2) var tops: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
@@ -45,8 +46,15 @@ const BLEND_LEVELS: f32 = __BLEND_LEVELS__;
 const LEVEL_EDGE: f32 = 0.02;
 // The coarsest block walked: half a tile (the next finer level's whole tile).
 const TOP_MIP: i32 = 7;
-// Past a block's edge by this share of a texel, as the CPU (`BLOCK_EXIT_TEXELS`).
+// Past a block's edge by this share of a texel, as the CPU (`BLOCK_EXIT_TEXELS`), or
+// by two steps of an f32 map coordinate where those are longer: a smaller nudge left
+// the point where it was, and the walk crept a thousandth of a texel a step.
 const EXIT_NUDGE_TEXELS: f32 = 0.001;
+const UV_STEP: f32 = 1.2e-7;
+// From this level on an f32 map coordinate is half a texel or coarser: the walk ends
+// there without an answer and the CPU marches (camera-relative coordinates would carry
+// it on; roadmap D1 step 4).
+const COARSE_COORDINATE_LEVEL: i32 = 14;
 // The CPU takes the GPU's ground as its own when the walk went under the maxima for
 // at most this many texels before it, read every quarter texel there: on synthetic
 // relief up to one ray in 2,000 then meets the ground past a ridge tip the CPU's own
@@ -225,6 +233,7 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         if at.past_limit { result.unknown = true; return result; }
         let zoom = log2(2.0 * PI * EARTH_RADIUS_M * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / (DEM_TEXELS * max(t * EARTH_RADIUS_M * angle, 0.01) * PIXELS_PER_TEXEL));
         let level = clamp(i32(floor(zoom)), 0, MAX_ZOOM);
+        if level >= COARSE_COORDINATE_LEVEL { result.unknown = true; return result; }
         let fraction = zoom - f32(level);
         let blends = relief.march.w > 0.5 && level > 0 && fraction < BLEND_LEVELS;
         let weight = select(1.0, clamp(fraction / BLEND_LEVELS, 0.0, 1.0), blends);
@@ -232,6 +241,7 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         let coarser = level > 0 && ((safe && fraction < LEVEL_EDGE) || (relief.march.w > 0.5 && fraction < BLEND_LEVELS + select(0.0, LEVEL_EDGE, safe)));
         let texels = DEM_TEXELS * exp2(f32(level));
         let speed = max(length(at.rate) * texels, 1e-12);
+        let nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
         result.texel_t = 1.0 / speed;
         // The tiles under the point, looked up once a step.
         let own = place_kept(level, at.uv, &own_looked);
@@ -256,7 +266,7 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
                 var exit = min(leave(inside.x, at.rate.x, size), leave(inside.y, at.rate.y, size));
                 if at.climb < 0.0 { exit = min(exit, (h - top_world) / -at.climb); }
                 last = vec2<f32>(t, h - top_world);
-                t += max(exit, 0.0) + EXIT_NUDGE_TEXELS / speed;
+                t += max(exit, 0.0) + nudge;
                 // Past a stretch under the maxima the open air no longer counts.
                 if !loose { result.above = t; }
                 next_mip = mip + 1;
@@ -316,7 +326,7 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         // Under the maxima the heights are read more densely than the CPU reads them:
         // a ridge the CPU's steps meet, these meet too.
         if !over_top { exit = min(exit, LOOSE_STEP_TEXELS / speed); }
-        t += max(exit, 0.0) + EXIT_NUDGE_TEXELS / speed;
+        t += max(exit, 0.0) + nudge;
         if over_top && !loose { result.above = t; }
         loose = loose || !over_top;
     }
@@ -378,6 +388,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // The CPU walks the last texel again: its own steps between exact measurements put
     // the ground up to a texel from where the GPU sees it.
     starts[i] = select(max(view.above - BACK_TEXELS * view.texel_t, 0.0), end, view.above >= end);
+    // -1: the walk gave up without an answer (`relief::helps`).
+    if view.unknown && view.hit < 0.0 { starts[3u * count + i] = -1.0; }
     if view.hit >= 0.0 {
         starts[count + i] = view.hit;
         starts[3u * count + i] = select(0.0, 1.0, view.hit - view.above <= TRUSTED_TEXELS * view.texel_t);

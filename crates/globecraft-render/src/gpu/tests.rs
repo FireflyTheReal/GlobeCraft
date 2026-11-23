@@ -496,6 +496,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         let taken = |pixels: &[f32]| pixels[3 * count..].iter().filter(|&&t| t > 0.5).count();
         let mut tiles = held;
         let mut taken_by_frame = Vec::new();
+        let mut uploads_by_frame = Vec::new();
         let mut starts = Vec::new();
         for _ in 0..16 {
             let grown = relief::grown_tiles(&tiles, lookup, std::time::Instant::now());
@@ -503,12 +504,15 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
                 .starts(&gpu.device, &gpu.queue, &request, &grown)
                 .expect("relief march");
             taken_by_frame.push(taken(&walked.pixels));
+            uploads_by_frame.push(walked.uploads);
             let frame = render(Some(&walked.pixels)).0;
             tiles = relief::next_tiles(frame.relief_tiles, &walked.read);
             starts = walked.pixels;
         }
         let most = *taken_by_frame.iter().max().unwrap();
-        println!("{name}: grounds taken frame by frame {taken_by_frame:?}");
+        println!(
+            "{name}: grounds taken frame by frame {taken_by_frame:?}, tiles uploaded {uploads_by_frame:?}"
+        );
         assert!(
             taken_by_frame[8..]
                 .iter()
@@ -517,11 +521,16 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         );
         let walked = std::time::Instant::now();
         let grown = relief::grown_tiles(&tiles, lookup, std::time::Instant::now());
-        march
+        let uploads = march
             .starts(&gpu.device, &gpu.queue, &request, &grown)
-            .expect("relief march");
+            .expect("relief march")
+            .uploads;
         let walk_time = walked.elapsed();
-        println!("{name}: the GPU's walk {walk_time:?}");
+        println!("{name}: the GPU's walk {walk_time:?} ({uploads} tiles uploaded first)");
+        if !relief::helps(&starts) {
+            println!("{name}: the walk gave up on most rays; the CPU's cones start them");
+            continue;
+        }
         // The same walk without the sun's share: what the walk toward the sun costs.
         let sunless = RenderRequest {
             cfg: crate::RenderCfg {
