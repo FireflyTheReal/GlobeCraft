@@ -69,6 +69,10 @@ pub(super) struct ReliefMarch {
     /// The tiles' heights, in quarter metres.
     heights: wgpu::Texture,
     heights_view: wgpu::TextureView,
+    /// The most of each texel's 3×3 heights (quarter metres): one read for the
+    /// texel's top where nine were.
+    peaks: wgpu::Texture,
+    peaks_view: wgpu::TextureView,
     /// Per tile held, whether the last walk read it (`read_tiles` in the shader).
     read: wgpu::Buffer,
     slots: Vec<Option<Slot>>,
@@ -148,7 +152,7 @@ impl ReliefMarch {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        let heights = device.create_texture(&wgpu::TextureDescriptor {
+        let heights_descriptor = wgpu::TextureDescriptor {
             label: Some("GlobeCraft elevation heights"),
             size: wgpu::Extent3d {
                 width: 2 * TOPS_EDGE,
@@ -161,8 +165,17 @@ impl ReliefMarch {
             format: wgpu::TextureFormat::R16Uint,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
-        });
+        };
+        let heights = device.create_texture(&heights_descriptor);
         let heights_view = heights.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let peaks = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("GlobeCraft elevation texel maxima"),
+            ..heights_descriptor
+        });
+        let peaks_view = peaks.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
@@ -189,6 +202,8 @@ impl ReliefMarch {
             tops_view,
             heights,
             heights_view,
+            peaks,
+            peaks_view,
             read: overview::buffer(
                 device,
                 "GlobeCraft relief tiles read",
@@ -299,6 +314,10 @@ impl ReliefMarch {
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: self.read.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(&self.peaks_view),
                     },
                 ],
             })
@@ -423,29 +442,44 @@ impl ReliefMarch {
                     .clamp(0.0, f32::from(u16::MAX)) as u16
             })
             .collect();
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.heights,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: layer,
+        let last = side as usize - 1;
+        let peaks: Vec<u16> = (0..side * side)
+            .map(|i| {
+                let (x, y) = ((i % side) as usize, (i / side) as usize);
+                let mut top = 0;
+                for yy in y.saturating_sub(1)..=(y + 1).min(last) {
+                    for xx in x.saturating_sub(1)..=(x + 1).min(last) {
+                        top = top.max(quarters[yy * side as usize + xx]);
+                    }
+                }
+                top
+            })
+            .collect();
+        for (texture, texels) in [(&self.heights, &quarters), (&self.peaks, &peaks)] {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(&quarters),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(side * 2),
-                rows_per_image: Some(side),
-            },
-            wgpu::Extent3d {
-                width: side,
-                height: side,
-                depth_or_array_layers: 1,
-            },
-        );
+                bytemuck::cast_slice(texels),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side * 2),
+                    rows_per_image: Some(side),
+                },
+                wgpu::Extent3d {
+                    width: side,
+                    height: side,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         for (mip, tops) in tops(elevation).iter().enumerate() {
             let side = TOPS_EDGE >> mip;
             queue.write_texture(

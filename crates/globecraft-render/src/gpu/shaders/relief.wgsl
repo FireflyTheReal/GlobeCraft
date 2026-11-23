@@ -27,8 +27,9 @@ struct Relief {
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
 // Per tile held: whether a walk read it (1), so it stays held next frame.
 @group(0) @binding(5) var<storage, read_write> read_tiles: array<u32>;
-// The tiles' heights in quarter metres.
+// The tiles' heights in quarter metres, and the most of each texel's 3×3 of them.
 @group(0) @binding(4) var heights: texture_2d_array<u32>;
+@group(0) @binding(6) var peaks: texture_2d_array<u32>;
 
 const PI: f32 = 3.141592653589793;
 const FOV_HALF_TAN: f32 = __FOV__;
@@ -99,27 +100,29 @@ fn height_of(layer: i32, texel: vec2<i32>) -> f32 {
 // Where `uv` falls in `level`'s tile: the tile's layer (or -1) and the position in
 // texels.
 struct Place { layer: i32, at: vec2<f32> }
-fn place(level: i32, uv: vec2<f32>) -> Place {
+// The tile last looked up for one of the walk's levels: the same tile is not looked up
+// again (the hash table every step cost more than the walk's own sums).
+struct Looked { key: vec3<u32>, layer: i32 }
+fn place_kept(level: i32, uv: vec2<f32>, looked: ptr<function, Looked>) -> Place {
     let n = f32(1u << u32(level));
     let tile = min(floor(uv * n), vec2<f32>(n - 1.0));
-    let layer = layer_of(u32(level), u32(tile.x), u32(tile.y));
-    // Stored only when not yet: every step of every pixel storing to the same few
-    // words made the walk wait on them.
-    if layer >= 0 && read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
-    return Place(layer, (uv * n - tile) * DEM_TEXELS);
+    let key = vec3<u32>(u32(level), u32(tile.x), u32(tile.y));
+    if any(key != (*looked).key) {
+        let layer = layer_of(key.x, key.y, key.z);
+        // Stored only when not yet: every pixel storing to the same few words made
+        // the walk wait on them.
+        if layer >= 0 && read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
+        *looked = Looked(key, layer);
+    }
+    return Place((*looked).layer, (uv * n - tile) * DEM_TEXELS);
 }
-// The highest bilinear height (metres) inside the texel at `at` (its 3×3 heights,
-// as the CPU's finest block maxima); NOT_HELD without the tile.
+// The highest bilinear height (metres) inside the texel at `at` (the most of its 3×3
+// heights, `peaks`, as the CPU's finest block maxima); NOT_HELD without the tile.
 fn texel_top(at: Place) -> f32 {
     if at.layer < 0 { return NOT_HELD; }
-    let texel = vec2<i32>(at.at);
-    var top = 0.0;
-    for (var dy = -1; dy <= 1; dy++) {
-        for (var dx = -1; dx <= 1; dx++) {
-            top = max(top, height_of(at.layer, texel + vec2<i32>(dx, dy)));
-        }
-    }
-    return top + 0.125;
+    let last = i32(DEM_TEXELS) - 1;
+    let texel = clamp(vec2<i32>(at.at), vec2<i32>(0), vec2<i32>(last));
+    return f32(textureLoad(peaks, texel, at.layer, 0).x) * 0.25 + 0.125;
 }
 // The bilinear height (metres) at `at`, as `Elevation::height_m`; NOT_HELD.
 fn bilinear(at: Place) -> f32 {
@@ -207,6 +210,10 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
     // the CPU's steps meet).
     var loose = false;
     var next_mip = TOP_MIP;
+    // The tiles last looked up for the step's own level and the ones on either side.
+    var own_looked = Looked(vec3<u32>(0xffffffffu), -1);
+    var coarse_looked = own_looked;
+    var fine_looked = own_looked;
     for (var step = 0u; step < relief.raster.w; step++) {
         let p = origin + dir * t;
         let h = height_above(p);
@@ -227,11 +234,11 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
         let speed = max(length(at.rate) * texels, 1e-12);
         result.texel_t = 1.0 / speed;
         // The tiles under the point, looked up once a step.
-        let own = place(level, at.uv);
+        let own = place_kept(level, at.uv, &own_looked);
         var coarse_at = Place(-1, vec2<f32>(0.0));
         var fine_at = Place(-1, vec2<f32>(0.0));
-        if coarser { coarse_at = place(level - 1, at.uv); }
-        if finer { fine_at = place(level + 1, at.uv); }
+        if coarser { coarse_at = place_kept(level - 1, at.uv, &coarse_looked); }
+        if finer { fine_at = place_kept(level + 1, at.uv, &fine_looked); }
         if own.layer < 0 || (coarser && coarse_at.layer < 0) || (finer && fine_at.layer < 0) {
             result.unknown = true;
             return result;
@@ -283,9 +290,9 @@ fn walk(origin: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, saf
                         let tm = t0 + (t1 - t0) * c0 / (c0 - c1);
                         let pm = origin + dir * tm;
                         let sm = spot(pm, dir);
-                        var gm = bilinear(place(level, sm.uv));
+                        var gm = bilinear(place_kept(level, sm.uv, &own_looked));
                         if blends {
-                            let cm = bilinear(place(level - 1, sm.uv));
+                            let cm = bilinear(place_kept(level - 1, sm.uv, &coarse_looked));
                             gm = cm + (gm - cm) * weight;
                         }
                         let c = height_above(pm) - gm * to_world;
