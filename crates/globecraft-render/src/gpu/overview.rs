@@ -3,11 +3,8 @@ use super::*;
 use crate::tuning;
 use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN, earth_model::SurfaceGeometry};
 use globecraft_data::tiles::{Lookup, Provider, make_key, unkey};
-/// Eyes this far above the air's top (`atmosphere::HEIGHT_KM`, measured as the CPU's
-/// `atmosphere::Frame` does) see it from above, the shader's way.
-const ABOVE_THE_AIR_KM: f64 = 1.0;
-/// The finest level the GPU draws: a 2,000-pixel view from 101 km reaches 12.9, and
-/// an f32 map coordinate is still an eighth of a pixel there.
+/// The finest level the GPU draws: a 2,000-pixel view from 92 km reaches 13, and an
+/// f32 map coordinate is still an eighth of a pixel there.
 const MAX_TRACKED_ZOOM: u8 = 13;
 const TILE_TABLE_SIZE: usize = 2048;
 /// Slots of the set of tiles a frame sampled or missed (`need` in the shader): a few
@@ -15,6 +12,23 @@ const TILE_TABLE_SIZE: usize = 2048;
 const NEEDS_SET_SIZE: usize = 16_384;
 /// The zoom the needs' origin is counted at (`need_key`).
 const ORIGIN_ZOOM: u32 = 19;
+/// The inside air's entries (`atmosphere::InsideAir`).
+const INSIDE_ENTRIES: usize = crate::atmosphere::SCATTERING_VIEWS
+    * crate::atmosphere::SCATTERING_PHASES
+    + crate::atmosphere::TRANSMITTANCE_ANGLES;
+/// Where each part of the air buffer starts (`Overview::air`), in entries.
+pub(super) const AIR_SCATTERING_AT: usize =
+    crate::atmosphere::TRANSMITTANCE_HEIGHTS * crate::atmosphere::TRANSMITTANCE_ANGLES;
+pub(super) const AIR_INSIDE_AT: usize = AIR_SCATTERING_AT
+    + crate::atmosphere::SCATTERING_HEIGHTS
+        * crate::atmosphere::SCATTERING_VIEWS
+        * crate::atmosphere::SCATTERING_SUNS
+        * crate::atmosphere::SCATTERING_PHASES;
+pub(super) const AERIAL_AT: usize = AIR_INSIDE_AT + INSIDE_ENTRIES;
+const AIR_ENTRIES: usize = AERIAL_AT
+    + 2 * crate::atmosphere::aerial::VIEWS
+        * crate::atmosphere::aerial::AZIMUTHS
+        * crate::atmosphere::aerial::DISTANCES;
 const MAX_RASTER_PIXELS: usize = 2000 * 2000;
 /// How long a frame may take on the GPU before the device counts as failed. Frames
 /// take milliseconds; the slowest software adapter measured took 0.15 s. Tests wait
@@ -43,6 +57,17 @@ struct View {
     lights: [u32; 4],
     /// The camera's tile coordinates at zoom 19 (`need_key` in the shader).
     origin: [u32; 4],
+    /// The camera inside the air (`atmosphere::Frame::inside_air`): its distance from
+    /// the centre (km), the sun's cosine there, √(radius² − ground²), and 1 (0: the
+    /// camera is above the air).
+    air_frame: [f32; 4],
+    /// The camera's vertical, and how much of the air low down comes from the
+    /// integrated table (`AERIAL_FADE_KM`; 0 without it).
+    air_up: [f32; 4],
+    /// The eye's adaptation to twilight on the air's light.
+    air_adapt: [f32; 4],
+    /// The integrated table: its horizon's sine, reach (km) and sun cosine.
+    aerial: [f32; 4],
 }
 pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
@@ -61,9 +86,12 @@ pub(super) struct Overview {
     table: wgpu::Buffer,
     output: wgpu::Buffer,
     needs: wgpu::Buffer,
-    /// The air's tables (`atmosphere`): written once.
-    air_transmittance: wgpu::Buffer,
-    air_scattering: wgpu::Buffer,
+    /// The air (`air_tables` in the shader): its tables, written once; the air
+    /// with the camera inside it (`atmosphere::InsideAir`), written each such frame;
+    /// and the aerial table (`atmosphere::aerial`), written when it changes, the table
+    /// it holds in `aerial_for`. One buffer keeps the shader within the eight storage
+    /// buffers every adapter offers.
+    air: wgpu::Buffer,
     /// The water map for the sun's glint (bytes packed four to a word), and the map
     /// it holds.
     water: wgpu::Buffer,
@@ -72,6 +100,7 @@ pub(super) struct Overview {
     /// it holds.
     aurora: wgpu::Buffer,
     aurora_for: Option<std::sync::Arc<globecraft_data::aurora::AuroraGrid>>,
+    aerial_for: Option<std::sync::Arc<crate::atmosphere::aerial::Aerial>>,
     staging: wgpu::Buffer,
     pixels: usize,
     dependency_count: usize,
@@ -91,13 +120,22 @@ pub(super) fn buffer(
     })
 }
 /// A read-only table for the shader.
-fn table(device: &wgpu::Device, label: &str, entries: &[glam::Vec4]) -> wgpu::Buffer {
+/// The air buffer (`Overview::air`), its tables in place.
+fn air(device: &wgpu::Device) -> wgpu::Buffer {
     use wgpu::util::DeviceExt;
-    let entries: Vec<[f32; 4]> = entries.iter().map(|entry| entry.to_array()).collect();
+    let tables = &crate::atmosphere::TABLES;
+    let mut entries: Vec<[f32; 4]> = tables
+        .transmittance_table()
+        .iter()
+        .chain(tables.scattering_table())
+        .map(|entry| entry.to_array())
+        .collect();
+    assert_eq!(entries.len(), AIR_INSIDE_AT, "the air tables' sizes");
+    entries.resize(AIR_ENTRIES, [0.0; 4]);
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
+        label: Some("GlobeCraft air"),
         contents: bytemuck::cast_slice(&entries),
-        usage: wgpu::BufferUsages::STORAGE,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     })
 }
 impl Overview {
@@ -133,20 +171,12 @@ impl Overview {
             ),
             output: buffer(device, "GlobeCraft overview pixels", 4, storage),
             needs: buffer(device, "GlobeCraft overview dependencies", 8, storage),
-            air_transmittance: table(
-                device,
-                "GlobeCraft air transmittance",
-                crate::atmosphere::TABLES.ground_transmittance(),
-            ),
-            air_scattering: table(
-                device,
-                "GlobeCraft air scattering",
-                crate::atmosphere::TABLES.top_scattering(),
-            ),
+            air: air(device),
             water: buffer(device, "GlobeCraft water", 4, wgpu::BufferUsages::STORAGE),
             water_for: None,
             aurora: buffer(device, "GlobeCraft aurora", 4, wgpu::BufferUsages::STORAGE),
             aurora_for: None,
+            aerial_for: None,
             staging: buffer(
                 device,
                 "GlobeCraft overview readback",
@@ -250,6 +280,48 @@ impl Overview {
             });
             self.aurora_for = Some(aurora.grid.clone());
         }
+        // The air with the camera inside it, as the CPU's frame has it.
+        let rays = crate::rays::RayCaster::new(request.width, request.height, &request.basis);
+        let air = crate::frame_air(&rays, &request.cfg);
+        let inside = air.as_ref().and_then(crate::atmosphere::Frame::inside_air);
+        if let Some(inside) = &inside {
+            let entries: Vec<[f32; 4]> = inside
+                .scattering
+                .iter()
+                .chain(inside.transmittance)
+                .map(|entry| entry.to_array())
+                .collect();
+            debug_assert_eq!(entries.len(), INSIDE_ENTRIES);
+            queue.write_buffer(
+                &self.air,
+                (AIR_INSIDE_AT * 16) as u64,
+                bytemuck::cast_slice(&entries),
+            );
+            if let Some(aerial) = inside.aerial
+                && !self
+                    .aerial_for
+                    .as_ref()
+                    .is_some_and(|held| std::sync::Arc::ptr_eq(held, aerial))
+            {
+                let cells: Vec<[f32; 4]> = aerial
+                    .parts()
+                    .3
+                    .iter()
+                    .flat_map(|(light, crossed)| [light.to_array(), crossed.to_array()])
+                    .collect();
+                assert_eq!(
+                    cells.len(),
+                    AIR_ENTRIES - AERIAL_AT,
+                    "the aerial table's size"
+                );
+                queue.write_buffer(
+                    &self.air,
+                    (AERIAL_AT * 16) as u64,
+                    bytemuck::cast_slice(&cells),
+                );
+                self.aerial_for = Some(aerial.clone());
+            }
+        }
         let rotation = request.basis.rotation_from_view();
         let v4 = |vector: glam::DVec3, w| [vector.x as f32, vector.y as f32, vector.z as f32, w];
         let (shape, figure) = figure(request.basis.model.geometry(), request.basis.c);
@@ -295,6 +367,29 @@ impl Overview {
                 water.map_or(0, |water| water.width()),
             ],
             origin: [origin.0, origin.1, 0, 0],
+            air_frame: inside.as_ref().map_or([0.0; 4], |inside| {
+                [inside.radius_km, inside.sun_cosine, inside.rho, 1.0]
+            }),
+            air_up: inside.as_ref().map_or([0.0; 4], |inside| {
+                let share = inside.aerial.map_or(0.0, |_| {
+                    let [from, to] = crate::atmosphere::AERIAL_FADE_KM;
+                    let x = ((inside.radius_km - crate::atmosphere::GROUND_KM - from)
+                        / (to - from))
+                        .clamp(0.0, 1.0);
+                    1.0 - x * x * (3.0 - 2.0 * x)
+                });
+                v4(inside.up, share)
+            }),
+            air_adapt: inside
+                .as_ref()
+                .map_or([1.0; 4], |inside| inside.adapt.to_array()),
+            aerial: inside
+                .as_ref()
+                .and_then(|inside| inside.aerial)
+                .map_or([0.0; 4], |aerial| {
+                    let (horizon, reach, sun_cosine, _) = aerial.parts();
+                    [horizon, reach, sun_cosine, 1.0]
+                }),
             lights: [
                 u32::from(request.cfg.night_lights.is_some()),
                 u32::from(Provider::NightLights.max_zoom()),
@@ -350,11 +445,7 @@ impl Overview {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.air_transmittance.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: self.air_scattering.as_entire_binding(),
+                    resource: self.air.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
@@ -552,7 +643,7 @@ pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
         || request.height == 0
         || count > MAX_RASTER_PIXELS
         || !eye_km.is_finite()
-        || eye_km < f64::from(crate::atmosphere::HEIGHT_KM) + ABOVE_THE_AIR_KM
+        || eye_km <= 0.0
         || request.cfg.grid
     {
         return None;
@@ -605,7 +696,15 @@ mod tests {
         )
         .validate(&module)
         .expect("portable shader operations");
-        assert_eq!(std::mem::size_of::<View>(), 192);
+        // Every adapter offers eight storage buffers to a compute stage (wgpu's
+        // default limit, which the device asks for).
+        let storage = module
+            .global_variables
+            .iter()
+            .filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. }))
+            .count();
+        assert!(storage <= 8, "{storage} storage buffers");
+        assert_eq!(std::mem::size_of::<View>(), 256);
         assert_eq!(std::mem::offset_of!(View, lights), 160);
         assert_eq!(std::mem::offset_of!(View, origin), 176);
         assert_eq!(std::mem::offset_of!(View, raster), 112);

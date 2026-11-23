@@ -738,10 +738,12 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         .expect("the self-check passes");
 }
 
-/// Cameras from the air's top to 1,000 km (roadmap D8, G1b): the GPU's picture
-/// matches the CPU's within the bounds real imagery is held to, levels to 13 and
-/// Esri's levels 11 and 12 matched in colour. Tiles at every level, each level a
-/// different brightness, so a colour left unmatched shows.
+/// Close cameras (roadmap D8): from 1,000 km down into the air (G1b, G2), the GPU's
+/// picture matches the CPU's within the bounds real imagery is held to: levels to 13,
+/// Esri's levels 11 and 12 matched in colour, the air seen from above it and from
+/// inside it (its tables narrowed to the camera, the integrated table low down) with
+/// the sun high, low and set, with and without the night lights. Views whose eye is low take a coarser level of detail,
+/// so they stay within level 13 until the levels past it are the GPU's (G3).
 #[test]
 #[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
 fn gpu_close_overview_matches_cpu() {
@@ -789,16 +791,25 @@ fn gpu_close_overview_matches_cpu() {
     let (w, h) = (160usize, 100usize);
     let mut failures = Vec::new();
     for provider in [Provider::Satellite, Provider::Streets] {
-        for (lat, lon, alt, tilt, heading) in [
-            (45.0, 9.0, 900.0, 0.0, 0.0),
-            (45.0, 9.0, 500.0, 30.0, 40.0),
-            (30.3, 79.8, 200.0, 0.0, 0.0),
-            (30.3, 79.8, 150.0, 45.0, 10.0),
-            (-33.9, 151.2, 125.0, 20.0, 200.0),
-            (64.0, -150.0, 260.0, 60.0, 90.0),
-            (20.0, -150.0, 2000.0, 80.0, 90.0),
+        for (lat, lon, alt, tilt, heading, sun_east) in [
+            (45.0, 9.0, 900.0, 0.0, 0.0, 30.0),
+            (45.0, 9.0, 500.0, 30.0, 40.0, 30.0),
+            (30.3, 79.8, 200.0, 0.0, 0.0, 30.0),
+            (30.3, 79.8, 150.0, 45.0, 10.0, 30.0),
+            (-33.9, 151.2, 125.0, 20.0, 200.0, 30.0),
+            (64.0, -150.0, 260.0, 60.0, 90.0, 30.0),
+            (20.0, -150.0, 2000.0, 80.0, 90.0, 30.0),
+            // Inside the air: from its top down to the integrated table's heights,
+            // the sun high, low over the horizon and just set.
+            (45.0, 9.0, 90.0, 0.0, 0.0, 30.0),
+            (64.0, -150.0, 130.0, 60.0, 90.0, 30.0),
+            (30.3, 79.8, 40.0, 30.0, 120.0, 80.0),
+            (-33.9, 151.2, 25.0, 50.0, 300.0, 86.0),
+            (45.0, 9.0, 12.0, 70.0, 90.0, 30.0),
+            (45.0, 9.0, 8.0, 0.0, 0.0, 95.0),
+            (10.0, -60.0, 3.0, 75.0, 270.0, 88.0),
         ] {
-            for lit in [false, true] {
+            for (lit, lights) in [(false, false), (true, false), (false, true), (true, true)] {
                 let cam = Cam {
                     lat,
                     lon,
@@ -819,11 +830,13 @@ fn gpu_close_overview_matches_cpu() {
                         provider,
                         rel: 7,
                         atmo: lit,
-                        sun: lit.then(|| ll_to_v3(lat - 20.0, lon + 30.0)),
+                        sun: lit.then(|| {
+                            ll_to_v3(lat - 20.0 * (sun_east / 30.0_f64).min(1.0), lon + sun_east)
+                        }),
                         grid: false,
-                        // The levels of a 2,000-pixel-high view.
-                        lod_scale: h as f32 / 2000.0,
+                        lod_scale: 1.0,
                         level_blend: true,
+                        night_lights: lights.then_some(1),
                         ..crate::tests::batch_reference_config(provider)
                     },
                     overlays: None,
@@ -832,7 +845,19 @@ fn gpu_close_overview_matches_cpu() {
                     compare: None,
                     presentation: 0,
                 };
-                let name = format!("{provider:?} ({lat},{lon}) {alt} km tilt {tilt} lit {lit}");
+                // The levels of a view up to 2,000 pixels high, no finer than 13.
+                let mut request = request;
+                let c = request.basis.c;
+                let eye_km = (c
+                    .dot(c * request.basis.model.geometry().inverse_axes_squared())
+                    .sqrt()
+                    - 1.0)
+                    * globecraft_core::EARTH_RADIUS_KM;
+                let lod_height = (eye_km * 21.0).clamp(16.0, 2000.0);
+                request.cfg.lod_scale = (h as f64 / lod_height) as f32;
+                let name = format!(
+                    "{provider:?} ({lat},{lon}) {alt} km tilt {tilt} (eye {eye_km:.0} km) sun east {sun_east} lit {lit} lights {lights}"
+                );
                 assert!(GpuRenderer::supports(&request), "{name}");
                 asked.lock().unwrap().clear();
                 let (cpu, _, _) =

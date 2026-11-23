@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 
 /// View cosines (closest round the horizon), azimuths from the sun (closest round
 /// it, where the haze's glow peaks), distances.
-const VIEWS: usize = 64;
-const AZIMUTHS: usize = 32;
-const DISTANCES: usize = 32;
+pub(crate) const VIEWS: usize = 64;
+pub(crate) const AZIMUTHS: usize = 32;
+pub(crate) const DISTANCES: usize = 32;
 /// Steps between two distances.
 const SUBSTEPS: usize = 4;
 /// The table reaches this far past the camera's sea-level horizon: mountains beyond
@@ -29,7 +29,7 @@ const MIN_REACH_KM: f32 = 50.0;
 /// One frame's table: per view cosine, azimuth and distance, the light the air
 /// scatters toward the camera up to there and the share of the light from there that
 /// arrives. Both final (phase functions applied), before exposure.
-pub(super) struct Aerial {
+pub(crate) struct Aerial {
     radius_km: f32,
     sun_cosine: f32,
     horizon: f32,
@@ -160,6 +160,12 @@ impl Aerial {
 
     /// The air's light and transmittance for a ray at view cosine `mu` and cosine `nu`
     /// to the sun, to `distance_km`.
+    /// The table for the GPU: its horizon's sine, reach, sun cosine and cells (light
+    /// and the share crossed, by view row, azimuth column and distance slice).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn parts(&self) -> (f32, f32, f32, &[(Vec4, Vec4)]) {
+        (self.horizon, self.reach_km, self.sun_cosine, &self.cells)
+    }
     pub(super) fn sample(&self, mu: f32, nu: f32, distance_km: f32) -> (Vec4, Vec4) {
         let sun_across = (1.0 - self.sun_cosine * self.sun_cosine).max(0.0).sqrt();
         let across = (1.0 - mu * mu).max(0.0).sqrt() * sun_across;

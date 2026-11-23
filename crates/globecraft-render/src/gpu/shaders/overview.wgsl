@@ -13,6 +13,16 @@ struct View {
     // The camera's tile coordinates at zoom 19 (x, y): needs are kept relative to the
     // camera's tile at their own zoom.
     origin: vec4<u32>,
+    // The camera inside the air (`atmosphere::Frame`): its distance from the centre
+    // (km), the sun's cosine there, sqrt(radius^2 - ground^2), and 1 (0: above it).
+    air_frame: vec4<f32>,
+    // The camera's vertical; w: the integrated table's share low down (0: none).
+    air_up: vec4<f32>,
+    // The eye's adaptation to twilight on the air's light.
+    air_adapt: vec4<f32>,
+    // The integrated table (`atmosphere::aerial`): its horizon's sine, reach (km), sun
+    // cosine, and 1 when there is one.
+    aerial: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read_write> output: array<u32>;
@@ -23,10 +33,18 @@ struct View {
 @group(0) @binding(4) var<storage, read_write> needs: array<atomic<u32>>;
 // Each atlas layer's tile's mean colours (`Tile::means`; w -1 without them).
 @group(0) @binding(9) var<storage, read> means: array<vec4<f32>>;
-// The air (the CPU's `atmosphere`): the light that crosses it from the ground by view
-// angle, and the sunlight scattered along rays entering from space.
-@group(0) @binding(5) var<storage, read> air_transmittance: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read> air_scattering: array<vec4<f32>>;
+// The air (the CPU's `atmosphere`), one buffer: its whole tables
+// (`atmosphere::Tables`), transmittance by height (rows) and way to the top
+// (columns), from 0, and scattering by height, view, sun and phase, from
+// `AIR_SCATTERING_AT`; the air at the camera's height and sun with the camera inside
+// it (`atmosphere::Inside`: scattering by view and phase, then the transmittance
+// row), from `AIR_INSIDE_AT`; the air integrated along rays for a low camera
+// (`atmosphere::aerial`: light and the share crossed for each view row, azimuth
+// column and distance slice), from `AERIAL_AT`.
+@group(0) @binding(5) var<storage, read> air_tables: array<vec4<f32>>;
+const AIR_SCATTERING_AT: u32 = __AIR_SCATTERING_AT__u;
+const AIR_INSIDE_AT: u32 = __AIR_INSIDE_AT__u;
+const AERIAL_AT: u32 = __AERIAL_AT__u;
 // The water map for the sun's glint (`sun::glint`), bytes packed four to a word.
 @group(0) @binding(7) var<storage, read> water: array<u32>;
 const GLINT_STRENGTH: f32 = __GLINT_STRENGTH__;
@@ -190,6 +208,14 @@ const AIR_NADIR_SHARE: f32 = __AIR_NADIR_SHARE__;
 const AIR_UNLIT_SUN: f32 = __AIR_UNLIT_SUN__;
 const AIR_NIGHT_SUN: f32 = __AIR_NIGHT_SUN__;
 const AIR_TINY: f32 = 1.1754944e-38;
+const AIR_TRANSMITTANCE_HEIGHTS: u32 = __AIR_TRANSMITTANCE_HEIGHTS__u;
+const AIR_SCATTERING_HEIGHTS: u32 = __AIR_SCATTERING_HEIGHTS__u;
+const AIR_SEA_LEVEL_SLACK: f32 = __AIR_SEA_LEVEL_SLACK__;
+const AERIAL_VIEWS: u32 = __AERIAL_VIEWS__u;
+const AERIAL_AZIMUTHS: u32 = __AERIAL_AZIMUTHS__u;
+const AERIAL_DISTANCES: u32 = __AERIAL_DISTANCES__u;
+// Where the scattering table's top layer starts (rays entering the air from space).
+const AIR_TOP_LAYER: u32 = (AIR_SCATTERING_HEIGHTS - 1u) * AIR_VIEWS * AIR_SUNS * AIR_PHASES;
 const MIN_LIGHTS_DARKNESS: f32 = __MIN_LIGHTS_DARKNESS__;
 // Matching imagery levels' colours (`colour_match`).
 const COLOUR_COARSE_U: u32 = __COLOUR_COARSE__u;
@@ -384,11 +410,11 @@ fn air_up(cosine: f32) -> f32 {
 fn air_crossed(up: f32) -> vec4<f32> {
     let c = air_cell(clamp((up-AIR_HEIGHT)/(AIR_HORIZON-AIR_HEIGHT),0.0,1.0)*f32(AIR_ANGLES-1u),AIR_ANGLES);
     let i = u32(c.x);
-    return air_lerp(air_transmittance[i],air_transmittance[i+1u],c.y);
+    return air_lerp(air_tables[i],air_tables[i+1u],c.y);
 }
 fn air_entry(view: u32, sun: u32, phase: vec2<f32>) -> vec4<f32> {
-    let first = (view*AIR_SUNS+sun)*AIR_PHASES+u32(phase.x);
-    return air_lerp(air_scattering[first],air_scattering[first+1u],phase.y);
+    let first = AIR_TOP_LAYER+(view*AIR_SUNS+sun)*AIR_PHASES+u32(phase.x);
+    return air_lerp(air_tables[AIR_SCATTERING_AT + first],air_tables[AIR_SCATTERING_AT + first+1u],phase.y);
 }
 // Sunlight scattered toward the eye in front of ground seen from space.
 fn air_scattered(up: f32, mu_s: f32, nu: f32) -> vec3<f32> {
@@ -404,11 +430,194 @@ fn air_scattered(up: f32, mu_s: f32, nu: f32) -> vec3<f32> {
         air_lerp(air_entry(v,s,phase),air_entry(v,s+1u,phase),sun.y),
         air_lerp(air_entry(v+1u,s,phase),air_entry(v+1u,s+1u,phase),sun.y),
         view.y);
+    return air_radiance(entry, nu);
+}
+// The scattered light of a table entry (`atmosphere::radiance`): air in rgb, haze from
+// its red in w.
+fn air_radiance(entry: vec4<f32>, nu: f32) -> vec3<f32> {
     let spread = HAZE_SPREAD - HAZE_FORWARD*nu;
     let both = 1.0 + nu*nu;
     var haze = vec3<f32>(0.0);
     if entry.x > 0.0 { let ratio = entry.w/entry.x; haze = vec3<f32>(entry.w,entry.y*ratio*HAZE_GREEN,entry.z*ratio*HAZE_BLUE); }
     return entry.xyz*(AIR_PHASE*both) + haze*(HAZE_PHASE*both/(spread*sqrt(spread)));
+}
+// The camera inside the air (`atmosphere::Frame::ground`), sum for sum.
+fn distance_to_top(r: f32, mu: f32) -> f32 {
+    return max(-r * mu + sqrt(max(r * r * (mu * mu - 1.0) + AIR_TOP * AIR_TOP, 0.0)), 0.0);
+}
+fn distance_to_ground(r: f32, mu: f32) -> f32 {
+    return max(-r * mu - sqrt(max(r * r * (mu * mu - 1.0) + AIR_GROUND * AIR_GROUND, 0.0)), 0.0);
+}
+fn meets_ground(r: f32, mu: f32) -> bool {
+    return mu < 0.0 && r * r * (mu * mu - 1.0) + AIR_GROUND * AIR_GROUND >= 0.0;
+}
+// The radius and the view and sun cosines `d` further along a ray.
+fn air_along(r: f32, mu: f32, mu_s: f32, nu: f32, d: f32) -> vec3<f32> {
+    let r_d = clamp(sqrt(d * d + 2.0 * r * mu * d + r * r), AIR_GROUND, AIR_TOP);
+    return vec3<f32>(r_d, clamp((r * mu + d) / r_d, -1.0, 1.0), clamp((r * mu_s + d * nu) / r_d, -1.0, 1.0));
+}
+fn sun_coordinate(mu_s: f32) -> f32 {
+    let a = (distance_to_top(AIR_GROUND, mu_s) - AIR_HEIGHT) / (AIR_HORIZON - AIR_HEIGHT);
+    return max(1.0 - a / AIR_LOWEST_SUN, 0.0) / (1.0 + a);
+}
+// The share of light that reaches the top of the air from radius `r` along `mu`.
+fn air_to_top(r: f32, mu: f32) -> vec4<f32> {
+    let rho = sqrt(max(r * r - AIR_GROUND * AIR_GROUND, 0.0));
+    let d_min = AIR_TOP - r; let d_max = rho + AIR_HORIZON;
+    let column = air_cell((distance_to_top(r, mu) - d_min) / (d_max - d_min) * f32(AIR_ANGLES - 1u), AIR_ANGLES);
+    let row = air_cell(rho / AIR_HORIZON * f32(AIR_TRANSMITTANCE_HEIGHTS - 1u), AIR_TRANSMITTANCE_HEIGHTS);
+    let c = u32(column.x); let w = u32(row.x) * AIR_ANGLES;
+    return air_lerp(
+        air_lerp(air_tables[w + c], air_tables[w + c + 1u], column.y),
+        air_lerp(air_tables[w + AIR_ANGLES + c], air_tables[w + AIR_ANGLES + c + 1u], column.y),
+        row.y);
+}
+// The scattering table's entry for a ray (`Tables::scattering`).
+fn air_scattering_at(r: f32, mu: f32, mu_s: f32, nu: f32, to_ground: bool) -> vec4<f32> {
+    let rho = sqrt(max(r * r - AIR_GROUND * AIR_GROUND, 0.0));
+    let views = AIR_VIEWS / 2u;
+    var view: vec2<f32>;
+    if to_ground {
+        let d_min = r - AIR_GROUND; let d_max = rho;
+        var way = 0.0;
+        if d_max != d_min { way = (distance_to_ground(r, mu) - d_min) / (d_max - d_min); }
+        view = air_cell(f32(views - 1u) * (1.0 - way), views);
+    } else {
+        let d_min = AIR_TOP - r; let d_max = rho + AIR_HORIZON;
+        view = air_cell(f32(views - 1u) * (distance_to_top(r, mu) - d_min) / (d_max - d_min), views);
+        view.x += f32(views);
+    }
+    let height = air_cell(rho / AIR_HORIZON * f32(AIR_SCATTERING_HEIGHTS - 1u), AIR_SCATTERING_HEIGHTS);
+    let sun = air_cell(sun_coordinate(mu_s) * f32(AIR_SUNS - 1u), AIR_SUNS);
+    let phase = air_cell((nu + 1.0) * 0.5 * f32(AIR_PHASES - 1u), AIR_PHASES);
+    let h = u32(height.x);
+    if height.y == 0.0 { return air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
+    if height.y == 1.0 { return air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
+    return air_lerp(
+        air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase),
+        air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase),
+        height.y);
+}
+fn air_at(height: u32, view: u32, sun: u32, phase: vec2<f32>) -> vec4<f32> {
+    let first = ((height * AIR_VIEWS + view) * AIR_SUNS + sun) * AIR_PHASES + u32(phase.x);
+    return air_lerp(air_tables[AIR_SCATTERING_AT + first], air_tables[AIR_SCATTERING_AT + first + 1u], phase.y);
+}
+fn air_layer(height: u32, view: u32, view_step: f32, sun: u32, sun_step: f32, phase: vec2<f32>) -> vec4<f32> {
+    return air_lerp(
+        air_lerp(air_at(height, view, sun, phase), air_at(height, view, sun + 1u, phase), sun_step),
+        air_lerp(air_at(height, view + 1u, sun, phase), air_at(height, view + 1u, sun + 1u, phase), sun_step),
+        view_step);
+}
+// The sunlight's colour after crossing the air (`Tables::sunlight`).
+fn air_sunlight(transmitted: vec4<f32>) -> vec3<f32> {
+    let red = max(transmitted.x, AIR_TINY);
+    return sqrt(min(vec3<f32>(1.0, transmitted.y / red * AIR_NOON_GREEN, transmitted.z / red * AIR_NOON_BLUE), vec3<f32>(1.0)));
+}
+// `Inside`: how far along its half of the views a ray that leaves the air lies, and
+// one that reaches the ground.
+fn inside_way_out(r: f32, mu: f32) -> f32 {
+    let d_min = AIR_TOP - r; let d_max = view.air_frame.z + AIR_HORIZON;
+    return (distance_to_top(r, mu) - d_min) / (d_max - d_min);
+}
+fn inside_way_down(r: f32, mu: f32) -> f32 {
+    let d_min = r - AIR_GROUND; let d_max = view.air_frame.z;
+    if d_max == d_min { return 0.0; }
+    return (distance_to_ground(r, mu) - d_min) / (d_max - d_min);
+}
+fn inside_crossed(way: f32) -> vec4<f32> {
+    let c = air_cell(way * f32(AIR_ANGLES - 1u), AIR_ANGLES);
+    let first = AIR_VIEWS * AIR_PHASES + u32(c.x);
+    return air_lerp(air_tables[AIR_INSIDE_AT + first], air_tables[AIR_INSIDE_AT + first + 1u], c.y);
+}
+fn inside_scattered(way: f32, to_ground: bool, nu: f32) -> vec4<f32> {
+    let views = AIR_VIEWS / 2u;
+    var view = air_cell(f32(views - 1u) * way, views);
+    if to_ground { view = air_cell(f32(views - 1u) * (1.0 - way), views); } else { view.x += f32(views); }
+    let phase = air_cell((nu + 1.0) * 0.5 * f32(AIR_PHASES - 1u), AIR_PHASES);
+    let a = u32(view.x) * AIR_PHASES + u32(phase.x);
+    let b = a + AIR_PHASES;
+    return air_lerp(
+        air_lerp(air_tables[AIR_INSIDE_AT + a], air_tables[AIR_INSIDE_AT + a + 1u], phase.y),
+        air_lerp(air_tables[AIR_INSIDE_AT + b], air_tables[AIR_INSIDE_AT + b + 1u], phase.y),
+        view.y);
+}
+// The integrated table's light and share crossed (`aerial::Aerial::sample`).
+struct AerialLight { light: vec4<f32>, crossed: vec4<f32> }
+fn aerial_corner(at: f32, count: u32) -> vec2<f32> {
+    let low = min(floor(at), f32(count - 2u));
+    return vec2<f32>(low, at - low);
+}
+fn aerial_sample(mu: f32, nu: f32, distance_km: f32) -> AerialLight {
+    let sun_cosine = view.aerial.z;
+    let sun_across = sqrt(max(1.0 - sun_cosine * sun_cosine, 0.0));
+    let across = sqrt(max(1.0 - mu * mu, 0.0)) * sun_across;
+    var azimuth = 1.0;
+    if across > 1e-6 { azimuth = clamp((nu - mu * sun_cosine) / across, -1.0, 1.0); }
+    let horizon = asin(view.aerial.x);
+    let angle = asin(clamp(mu, -1.0, 1.0)) - horizon;
+    var side = PI / 2.0 - horizon;
+    if angle < 0.0 { side = PI / 2.0 + horizon; }
+    var v = sqrt(abs(angle) / side);
+    if angle < 0.0 { v = -v; }
+    let row = aerial_corner(clamp((v + 1.0) * 0.5 * f32(AERIAL_VIEWS - 1u), 0.0, f32(AERIAL_VIEWS - 1u)), AERIAL_VIEWS);
+    let column = aerial_corner(clamp(sqrt(clamp(acos(azimuth) / PI, 0.0, 1.0)) * f32(AERIAL_AZIMUTHS - 1u), 0.0, f32(AERIAL_AZIMUTHS - 1u)), AERIAL_AZIMUTHS);
+    let slice = aerial_corner(clamp(sqrt(clamp(distance_km / view.aerial.y, 0.0, 1.0)) * f32(AERIAL_DISTANCES - 1u), 0.0, f32(AERIAL_DISTANCES - 1u)), AERIAL_DISTANCES);
+    var result = AerialLight(vec4<f32>(0.0), vec4<f32>(0.0));
+    for (var dr = 0u; dr < 2u; dr++) {
+        for (var dc = 0u; dc < 2u; dc++) {
+            for (var ds = 0u; ds < 2u; ds++) {
+                let weight = select(1.0 - row.y, row.y, dr == 1u) * select(1.0 - column.y, column.y, dc == 1u) * select(1.0 - slice.y, slice.y, ds == 1u);
+                let cell = ((u32(row.x) + dr) * AERIAL_AZIMUTHS + u32(column.x) + dc) * AERIAL_DISTANCES + u32(slice.x) + ds;
+                result.light += air_tables[AERIAL_AT + 2u * cell] * weight;
+                result.crossed += air_tables[AERIAL_AT + 2u * cell + 1u] * weight;
+            }
+        }
+    }
+    return result;
+}
+// The air in front of ground `distance_km` along `dir` with the camera inside it:
+// scattered light, the share crossed, the sunlight's colour.
+struct InsideAir { scattered: vec3<f32>, crossed: vec3<f32>, sunlight: vec3<f32> }
+fn inside_ground(dir: vec3<f32>, distance_km: f32, sunlit: bool) -> InsideAir {
+    let r = view.air_frame.x;
+    let sun_cosine = view.air_frame.y;
+    let mu = dot(dir, view.air_up.xyz);
+    var nu = mu * sun_cosine;
+    if sunlit { nu = dot(dir, view.sun.xyz); }
+    let adapt = view.air_adapt.rgb;
+    let share = view.air_up.w;
+    var aerial = AerialLight(vec4<f32>(0.0), vec4<f32>(1.0));
+    if view.aerial.w > 0.0 { aerial = aerial_sample(mu, nu, distance_km); }
+    let to_ground = meets_ground(r, mu);
+    let at = air_along(r, mu, sun_cosine, nu, distance_km);
+    var sunlight = vec3<f32>(1.0);
+    if sunlit { sunlight = air_sunlight(air_to_top(at.x, max(at.z, 0.0))); }
+    if view.aerial.w > 0.0 && share >= 1.0 {
+        return InsideAir(aerial.light.rgb * adapt, aerial.crossed.rgb, sunlight);
+    }
+    var whole: vec4<f32>; var rest: vec4<f32>;
+    if to_ground {
+        whole = air_to_top(at.x, -at.y);
+        rest = inside_crossed(inside_way_out(r, -mu));
+    } else {
+        whole = inside_crossed(inside_way_out(r, mu));
+        rest = air_to_top(at.x, at.y);
+    }
+    var transmitted = min(whole / max(rest, vec4<f32>(AIR_TINY)), vec4<f32>(1.0));
+    var way = inside_way_out(r, mu);
+    if to_ground { way = inside_way_down(r, mu); }
+    var near = inside_scattered(way, to_ground, nu);
+    if at.x > AIR_GROUND + AIR_SEA_LEVEL_SLACK {
+        let beyond = air_scattering_at(at.x, at.y, at.z, nu, to_ground);
+        let reached = vec4<f32>(transmitted.x, transmitted.y, transmitted.z, transmitted.x);
+        near = max(near - beyond * reached, vec4<f32>(0.0));
+    }
+    var scattered = air_radiance(near, nu);
+    if view.aerial.w > 0.0 {
+        scattered = scattered + (aerial.light.rgb - scattered) * share;
+        transmitted = transmitted + (aerial.crossed - transmitted) * share;
+    }
+    return InsideAir(scattered * adapt, transmitted.rgb, sunlight);
 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -512,7 +721,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var sun_tint = vec3<f32>(1.0);
     var glow = vec3<f32>(0.0);
     var crossed = vec3<f32>(1.0);
-    if airy {
+    if airy && view.air_frame.w > 0.0 {
+        // The camera inside the air.
+        let air = inside_ground(dir, t * (EARTH_RADIUS_M / 1000.0), sunlit);
+        glow = air.scattered;
+        crossed = air.crossed;
+        if sunlit {
+            sunlight = vec3<f32>(1.0) + (air.sunlight - vec3<f32>(1.0))*(1.0-darkness);
+            sun_tint = air.sunlight;
+        }
+    } else if airy {
         let up = air_up(incidence);
         crossed = air_crossed(up).xyz;
         var mu_s = select(AIR_UNLIT_SUN,AIR_NIGHT_SUN,all_night);
