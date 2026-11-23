@@ -99,19 +99,13 @@ fn height_of(layer: i32, texel: vec2<i32>) -> f32 {
 // Where `uv` falls in `level`'s tile: the tile's layer (or -1) and the position in
 // texels.
 struct Place { layer: i32, at: vec2<f32> }
-// The tiles this pixel already marked as read, by level (finer, own, coarser walk
-// alternately): a store on every step from every pixel to the same few words made the
-// whole walk wait on them (a second a frame on an M1, 2026-11-23).
-var<private> marked: array<i32, 3> = array<i32, 3>(-1, -1, -1);
 fn place(level: i32, uv: vec2<f32>) -> Place {
     let n = f32(1u << u32(level));
     let tile = min(floor(uv * n), vec2<f32>(n - 1.0));
     let layer = layer_of(u32(level), u32(tile.x), u32(tile.y));
-    let slot = u32(level) % 3u;
-    if layer >= 0 && marked[slot] != layer {
-        marked[slot] = layer;
-        if read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
-    }
+    // Stored only when not yet: every step of every pixel storing to the same few
+    // words made the walk wait on them.
+    if layer >= 0 && read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
     return Place(layer, (uv * n - tile) * DEM_TEXELS);
 }
 // The highest bilinear height (metres) inside the texel at `at` (its 3×3 heights,
@@ -346,6 +340,16 @@ fn sun_seen(p: vec3<f32>, distance: f32) -> f32 {
     return 1.0 - fade * (1.0 - x * x * (3.0 - 2.0 * x));
 }
 
+// The view's ray for pixel `i` of `width` (unit).
+fn ray(i: u32, width: u32, height: u32) -> vec3<f32> {
+    let x = i % width; let y = i / width;
+    let nx = (f32(x) + 0.5) / f32(width) * 2.0 - 1.0;
+    let ny = 1.0 - (f32(y) + 0.5) / f32(height) * 2.0;
+    return normalize(relief.right.xyz * (nx * relief.camera.w * FOV_HALF_TAN) + relief.up.xyz * (ny * FOV_HALF_TAN) - relief.forward.xyz);
+}
+
+// The view's rays (`starts`, hits and trust); the sun's share comes in a pass of its
+// own (`sun`): the two walks in one kernel kept fewer pixels in flight.
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -355,10 +359,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     starts[count + i] = -1.0;
     starts[2u * count + i] = -1.0;
     starts[3u * count + i] = 0.0;
-    let x = i % width; let y = i / width;
-    let nx = (f32(x) + 0.5) / f32(width) * 2.0 - 1.0;
-    let ny = 1.0 - (f32(y) + 0.5) / f32(height) * 2.0;
-    let dir = normalize(relief.right.xyz * (nx * relief.camera.w * FOV_HALF_TAN) + relief.up.xyz * (ny * FOV_HALF_TAN) - relief.forward.xyz);
+    let dir = ray(i, width, height);
     let camera = relief.camera.xyz;
     let shell = span(camera, dir, relief.axes.xyz + vec3<f32>(relief.axes.w));
     if shell.x > shell.y || shell.y <= 0.0 { starts[i] = 0.0; return; }
@@ -373,8 +374,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if view.hit >= 0.0 {
         starts[count + i] = view.hit;
         starts[3u * count + i] = select(0.0, 1.0, view.hit - view.above <= TRUSTED_TEXELS * view.texel_t);
-        if relief.sun.w > 0.5 {
-            starts[2u * count + i] = sun_seen(camera + dir * view.hit, view.hit);
-        }
     }
+}
+
+// The share of the sun seen where `main` met the ground.
+@compute @workgroup_size(64)
+fn sun(@builtin(global_invocation_id) id: vec3<u32>) {
+    let i = id.x;
+    let width = relief.raster.x; let height = relief.raster.y;
+    let count = width * height;
+    if i >= count || relief.sun.w < 0.5 { return; }
+    let hit = starts[count + i];
+    if hit < 0.0 { return; }
+    starts[2u * count + i] = sun_seen(relief.camera.xyz + ray(i, width, height) * hit, hit);
 }

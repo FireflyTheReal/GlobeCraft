@@ -137,7 +137,10 @@ pub struct FrameRenderer {
 /// Every `RELIEF_CHECK_EVERY`th relief frame is drawn without it and set against the
 /// frame drawn with it just before (the same view, a moment apart); after
 /// `RELIEF_LOSSES` such pairs in a row where the frame without it took less time per
-/// pixel, the walk goes off for good.
+/// pixel, the walk goes off for good. The second relief frame is the first check, and
+/// a frame without the walk in under half the time turns it off at once: on an M1 at
+/// 1920×1200 the walk made frames twice as slow, and three checks took 60 such frames
+/// (2026-11-23).
 #[cfg(feature = "gpu")]
 #[derive(Default)]
 struct ReliefTiming {
@@ -155,7 +158,7 @@ const RELIEF_LOSSES: u32 = 3;
 #[cfg(feature = "gpu")]
 impl ReliefTiming {
     fn walks(&self) -> bool {
-        !self.off && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)
+        !self.off && self.frames != 1 && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)
     }
     fn note(&mut self, walked: bool, seconds_per_megapixel: f64) {
         self.frames += 1;
@@ -171,7 +174,7 @@ impl ReliefTiming {
         } else {
             0
         };
-        if self.losses >= RELIEF_LOSSES && !self.off {
+        if (self.losses >= RELIEF_LOSSES || seconds_per_megapixel * 2.0 < with) && !self.off {
             self.off = true;
             globecraft_data::log_line!(
                 "The GPU's relief walk made relief frames slower here ({:.0} against {:.0} ms per megapixel); the CPU marches alone",
@@ -432,8 +435,8 @@ mod relief_timing_tests {
     use super::*;
 
     /// Frames without the walk come every `RELIEF_CHECK_EVERY`; the walk goes off once
-    /// they beat the frame before them `RELIEF_LOSSES` times in a row, and stays on
-    /// when one loss is followed by a win.
+    /// they beat the frame before them `RELIEF_LOSSES` times in a row (or take under
+    /// half its time), and stays on when one loss is followed by a win.
     #[test]
     fn the_relief_walk_stays_only_where_it_pays() {
         let run = |timing: &mut ReliefTiming, with: f64, without: &[f64]| {
@@ -450,6 +453,10 @@ mod relief_timing_tests {
         let mut slow = ReliefTiming::default();
         run(&mut slow, 0.3, &[0.2, 0.2, 0.2]);
         assert!(slow.off && !slow.walks());
+        // Twice as slow with the walk: off at the second relief frame.
+        let mut much_slower = ReliefTiming::default();
+        run(&mut much_slower, 1.5, &[0.6]);
+        assert!(much_slower.off && much_slower.frames == 2);
     }
 }
 

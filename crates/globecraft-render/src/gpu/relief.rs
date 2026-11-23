@@ -57,6 +57,8 @@ struct View {
 
 pub(super) struct ReliefMarch {
     pipeline: wgpu::ComputePipeline,
+    /// The sun's share where the view's rays met the ground (a pass of its own).
+    sun: wgpu::ComputePipeline,
     uniform: wgpu::Buffer,
     table: wgpu::Buffer,
     output: wgpu::Buffer,
@@ -116,14 +118,17 @@ impl ReliefMarch {
             label: Some("GlobeCraft relief march"),
             source: wgpu::ShaderSource::Wgsl(source().into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("GlobeCraft relief march"),
-            layout: None,
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = |entry_point| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("GlobeCraft relief march"),
+                layout: None,
+                module: &shader,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let (pipeline, sun) = (pipeline("main"), pipeline("sun"));
         let layers = layers.min(MAX_TOPS_LAYERS);
         let tops = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("GlobeCraft elevation maxima"),
@@ -164,6 +169,7 @@ impl ReliefMarch {
         let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
         Self {
             pipeline,
+            sun,
             uniform: overview::buffer(
                 device,
                 "GlobeCraft relief view",
@@ -264,36 +270,39 @@ impl ReliefMarch {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&view));
         queue.write_buffer(&self.table, 0, bytemuck::cast_slice(&table));
         queue.write_buffer(&self.read, 0, &vec![0; layers * 4]);
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GlobeCraft relief march"),
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: binding(&self.output, (count * 16) as u64),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.tops_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.table.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.heights_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: self.read.as_entire_binding(),
-                },
-            ],
-        });
+        // A bind group for each pass: each pipeline's own layout.
+        let group = |pipeline: &wgpu::ComputePipeline| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("GlobeCraft relief march"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: binding(&self.output, (count * 16) as u64),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&self.tops_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.table.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&self.heights_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: self.read.as_entire_binding(),
+                    },
+                ],
+            })
+        };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("GlobeCraft relief march"),
         });
@@ -302,9 +311,11 @@ impl ReliefMarch {
                 label: Some("GlobeCraft relief march"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
+            for pipeline in [&self.pipeline, &self.sun] {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &group(pipeline), &[]);
+                pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
+            }
         }
         encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, (count * 16) as u64);
         encoder.copy_buffer_to_buffer(

@@ -417,6 +417,8 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         })
         .unwrap_or((320, 200));
     let mut failures = Vec::new();
+    // `GLOBECRAFT_RELIEF_PROBE_VIEWS=tilt-16km,top-16km` runs only those.
+    let only = std::env::var("GLOBECRAFT_RELIEF_PROBE_VIEWS").ok();
     for (name, alt, tilt, heading) in [
         ("top-16km", 16.0, 0.0, 0.0),
         ("tilt-16km", 16.0, 70.0, 0.0),
@@ -424,6 +426,12 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         ("tilt-6km", 6.0, 72.0, 30.0),
         ("tilt85-3km", 3.0, 85.0, 30.0),
     ] {
+        if only
+            .as_ref()
+            .is_some_and(|only| !only.split(',').any(|view| view == name))
+        {
+            continue;
+        }
         let cam = Cam {
             lat: 30.3,
             lon: 79.8,
@@ -514,6 +522,28 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .expect("relief march");
         let walk_time = walked.elapsed();
         println!("{name}: the GPU's walk {walk_time:?}");
+        // The same walk without the sun's share: what the walk toward the sun costs.
+        let sunless = RenderRequest {
+            cfg: crate::RenderCfg {
+                sun: None,
+                ..request.cfg.clone()
+            },
+            basis: cam.basis_for_model(
+                width as f64 / height as f64,
+                globecraft_core::earth_model::EarthModel::Wgs84,
+            ),
+            overlays: None,
+            aircraft: None,
+            live_layers: None,
+            compare: None,
+            ..request
+        };
+        let walked = std::time::Instant::now();
+        let without_sun = march
+            .starts(&gpu.device, &gpu.queue, &sunless, &grown)
+            .expect("relief march")
+            .pixels;
+        let sunless_time = walked.elapsed();
         let (frame, gpu_steps) = render(Some(&starts));
         let pixels = frame.pixels;
         let result = parity(&pixels, &expected);
@@ -640,8 +670,9 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .min()
             .unwrap();
         println!(
-            "{name}: the CPU's part {:?} after the GPU's walk ({walk_time:?}), {:?} with the cones, {flat_time:?} without relief",
+            "{name}: the CPU's part {:?} after the GPU's walk ({walk_time:?}), {:?} after the walk without the sun ({sunless_time:?}), {:?} with the cones, {flat_time:?} without relief",
             timed(Some(&starts)),
+            timed(Some(&without_sun)),
             timed(None)
         );
         // Every view runs before the checks fail, so one run on a real GPU tells all.
