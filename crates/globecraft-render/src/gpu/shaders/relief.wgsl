@@ -25,6 +25,8 @@ struct Relief {
 @group(0) @binding(1) var<storage, read_write> starts: array<f32>;
 @group(0) @binding(2) var tops: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
+// Per tile held: whether a walk read it (1), so it stays held next frame.
+@group(0) @binding(5) var<storage, read_write> read_tiles: array<u32>;
 // The tiles' heights in quarter metres.
 @group(0) @binding(4) var heights: texture_2d_array<u32>;
 
@@ -65,6 +67,7 @@ const HIT_REFINEMENTS: i32 = 3;
 // A tile not held.
 const NOT_HELD: f32 = -1.0;
 
+// As `overview::tile_hash`.
 fn tile_hash(z: u32, x: u32, y: u32) -> u32 {
     return (z * 73856093u) ^ (x * 19349663u) ^ (y * 83492791u);
 }
@@ -99,7 +102,9 @@ struct Place { layer: i32, at: vec2<f32> }
 fn place(level: i32, uv: vec2<f32>) -> Place {
     let n = f32(1u << u32(level));
     let tile = min(floor(uv * n), vec2<f32>(n - 1.0));
-    return Place(layer_of(u32(level), u32(tile.x), u32(tile.y)), (uv * n - tile) * DEM_TEXELS);
+    let layer = layer_of(u32(level), u32(tile.x), u32(tile.y));
+    if layer >= 0 { read_tiles[layer] = 1u; }
+    return Place(layer, (uv * n - tile) * DEM_TEXELS);
 }
 // The highest bilinear height (metres) inside the texel at `at` (its 3×3 heights,
 // as the CPU's finest block maxima); NOT_HELD without the tile.

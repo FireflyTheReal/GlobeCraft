@@ -41,8 +41,10 @@ pub(crate) struct GpuRenderer {
     /// The relief march (`relief`), made with the first relief frame; `None` inside
     /// once it failed its check on this adapter.
     relief: Option<Option<relief::ReliefMarch>>,
-    /// The elevation tiles the last relief frame held.
+    /// The elevation tiles for the next relief walk (`relief::next_tiles`), and the
+    /// ones the last walk read.
     relief_tiles: Vec<TileKey>,
+    relief_read: Vec<TileKey>,
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -196,12 +198,14 @@ impl GpuRenderer {
             ),
             relief: None,
             relief_tiles: Vec::new(),
+            relief_read: Vec::new(),
         })
     }
 
-    /// Where each pixel's relief march may start (`relief`, row by row); `None` until
-    /// a relief frame told which elevation tiles it held (`relief_frame_held`), or when
-    /// the march failed its check on this adapter.
+    /// What the GPU's walk found for each pixel (`relief::Walked::pixels`); `None`
+    /// until a relief frame told which elevation tiles it held (`relief_frame_held`),
+    /// or once the walk failed its check or a frame on this adapter (only a lost
+    /// device is an error: the GPU renderer goes with it).
     pub(crate) fn relief_starts(
         &mut self,
         request: &RenderRequest,
@@ -238,11 +242,22 @@ impl GpuRenderer {
         if tiles.is_empty() {
             return Ok(None);
         }
-        march.starts(device, queue, request, &tiles).map(Some)
+        match march.starts(device, queue, request, &tiles) {
+            Ok(walked) => {
+                self.relief_read = walked.read;
+                Ok(Some(walked.pixels))
+            }
+            Err(error) => {
+                globecraft_data::log_line!("The CPU marches the relief alone: {error}");
+                self.relief = Some(None);
+                Ok(None)
+            }
+        }
     }
-    /// The elevation tiles a relief frame held: the relief march's for the next.
+    /// The elevation tiles a relief frame held: with the ones the walk read, the
+    /// walk's for the next.
     pub(crate) fn relief_frame_held(&mut self, tiles: Vec<TileKey>) {
-        self.relief_tiles = tiles;
+        self.relief_tiles = relief::next_tiles(tiles, &self.relief_read);
     }
 
     /// Draws one small view of a made-up tile on this adapter and on the CPU, and

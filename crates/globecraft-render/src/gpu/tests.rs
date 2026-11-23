@@ -408,7 +408,14 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             }
         })))
     };
-    let (width, height) = (320, 200);
+    // `GLOBECRAFT_RELIEF_PROBE_SIZE=1920x1200` times a full window on a real GPU.
+    let (width, height) = std::env::var("GLOBECRAFT_RELIEF_PROBE_SIZE")
+        .ok()
+        .and_then(|size| {
+            let (w, h) = size.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((320, 200));
     for (name, alt, tilt, heading) in [
         ("top-16km", 16.0, 0.0, 0.0),
         ("tilt-16km", 16.0, 70.0, 0.0),
@@ -467,17 +474,45 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         };
         let (frame, cpu_steps) = render(None);
         let (expected, held) = (frame.pixels, frame.relief_tiles);
-        let held = relief::grown_tiles(&held, lookup, std::time::Instant::now());
         let march = gpu
             .relief
             .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
             .as_mut()
             .unwrap();
+        // Frames one after another, as the backend draws them: each walk holds the
+        // tiles the CPU's last frame held and the ones the last walk read (a few
+        // more uploaded each frame). Once all are in, every frame takes as many of
+        // the GPU's grounds (they did not come and go, 2026-11-23).
+        let count = width * height;
+        let taken = |pixels: &[f32]| pixels[3 * count..].iter().filter(|&&t| t > 0.5).count();
+        let mut tiles = held;
+        let mut taken_by_frame = Vec::new();
+        let mut starts = Vec::new();
+        for _ in 0..16 {
+            let grown = relief::grown_tiles(&tiles, lookup, std::time::Instant::now());
+            let walked = march
+                .starts(&gpu.device, &gpu.queue, &request, &grown)
+                .expect("relief march");
+            taken_by_frame.push(taken(&walked.pixels));
+            let frame = render(Some(&walked.pixels)).0;
+            tiles = relief::next_tiles(frame.relief_tiles, &walked.read);
+            starts = walked.pixels;
+        }
+        let most = *taken_by_frame.iter().max().unwrap();
+        println!("{name}: grounds taken frame by frame {taken_by_frame:?}");
+        assert!(
+            taken_by_frame[8..]
+                .iter()
+                .all(|&taken| taken * 10 >= most * 9),
+            "{name}: {taken_by_frame:?}"
+        );
         let walked = std::time::Instant::now();
-        let starts = march
-            .starts(&gpu.device, &gpu.queue, &request, &held)
+        let grown = relief::grown_tiles(&tiles, lookup, std::time::Instant::now());
+        march
+            .starts(&gpu.device, &gpu.queue, &request, &grown)
             .expect("relief march");
-        println!("{name}: the GPU's walk {:?}", walked.elapsed());
+        let walk_time = walked.elapsed();
+        println!("{name}: the GPU's walk {walk_time:?}");
         let (frame, gpu_steps) = render(Some(&starts));
         let pixels = frame.pixels;
         let result = parity(&pixels, &expected);
@@ -488,7 +523,6 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         let from_camera = render(Some(&zeros)).0.pixels;
         let hits = crate::relief_hits(width, height, &request.basis, &request.cfg, &lookup);
         let (mut past, mut share, mut counted, mut most) = (0, 0.0, 0, 0.0f64);
-        let count = width * height;
         let known = starts[2 * count..3 * count]
             .iter()
             .filter(|&&seen| seen >= 0.0)
@@ -605,7 +639,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .min()
             .unwrap();
         println!(
-            "{name}: the CPU's part {:?} after the GPU's walk, {:?} with the cones, {flat_time:?} without relief",
+            "{name}: the CPU's part {:?} after the GPU's walk ({walk_time:?}), {:?} with the cones, {flat_time:?} without relief",
             timed(Some(&starts)),
             timed(None)
         );

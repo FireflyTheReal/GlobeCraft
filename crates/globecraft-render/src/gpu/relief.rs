@@ -34,6 +34,9 @@ const MAX_STEPS: u32 = 512;
 /// metre, a tile's edge may be read from its neighbour.
 const HEIGHT_MARGIN_M: f64 = 10.0;
 const WORKGROUP: u32 = 64;
+/// New tiles uploaded per frame at most (a few milliseconds each): after a jump the
+/// rest come in the next frames, and the walk stops where one is not held yet.
+const MAX_UPLOADS_PER_FRAME: usize = 6;
 /// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
 
@@ -64,7 +67,20 @@ pub(super) struct ReliefMarch {
     /// The tiles' heights, in quarter metres.
     heights: wgpu::Texture,
     heights_view: wgpu::TextureView,
+    /// Per tile held, whether the last walk read it (`read_tiles` in the shader).
+    read: wgpu::Buffer,
     slots: Vec<Option<Slot>>,
+}
+
+/// What a walk found (`ReliefMarch::starts`).
+pub(crate) struct Walked {
+    /// Per pixel (row by row): where its relief march may start, then where the GPU
+    /// met the ground (-1: it did not), then the share of the sun seen there (-1: not
+    /// known), then whether the CPU may take that ground as its own (1).
+    pub(crate) pixels: Vec<f32>,
+    /// The tiles the walk read: they stay held for the next frame, though the CPU,
+    /// spared the march, no longer reads them itself.
+    pub(super) read: Vec<TileKey>,
 }
 
 fn source() -> String {
@@ -159,7 +175,7 @@ impl ReliefMarch {
             staging: overview::buffer(
                 device,
                 "GlobeCraft relief readback",
-                4,
+                16 + layers as usize * 4,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             ),
             pixels: 1,
@@ -167,26 +183,31 @@ impl ReliefMarch {
             tops_view,
             heights,
             heights_view,
+            read: overview::buffer(
+                device,
+                "GlobeCraft relief tiles read",
+                layers as usize * 4,
+                storage | wgpu::BufferUsages::COPY_SRC,
+            ),
             slots: (0..layers).map(|_| None).collect(),
         }
     }
 
-    /// Per pixel (row by row): where its relief march may start, then where the GPU
-    /// met the ground (-1: it did not), then the share of the sun seen there (-1: not
-    /// known), then whether the CPU may take that ground as its own (1), walking the elevation tiles `tiles` (the ones the last relief frame
-    /// held).
+    /// Walks each pixel's ray over the elevation tiles `tiles` (the ones the last
+    /// relief frame held).
     pub(super) fn starts(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         request: &RenderRequest,
         tiles: &[(TileKey, Arc<Tile>)],
-    ) -> Result<Vec<f32>, String> {
+    ) -> Result<Walked, String> {
         let Some(relief) = request.cfg.terrain else {
             return Err("No relief in this view".into());
         };
         let slots = self.hold(queue, tiles);
         let count = request.width * request.height;
+        let layers = self.slots.len();
         if count > self.pixels {
             self.pixels = count;
             let storage = wgpu::BufferUsages::STORAGE
@@ -196,7 +217,7 @@ impl ReliefMarch {
             self.staging = overview::buffer(
                 device,
                 "GlobeCraft relief readback",
-                count * 16,
+                count * 16 + layers * 4,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
         }
@@ -232,9 +253,9 @@ impl ReliefMarch {
             shade: [0.0, relief.fade, 0.0, 0.0],
         };
         let mut table = vec![[u32::MAX; 4]; TABLE_SIZE];
-        for (key, layer) in slots {
+        for &(key, layer) in &slots {
             let (_, z, x, y, _) = unkey(key);
-            let mut index = tile_hash(u32::from(z), x, y);
+            let mut index = overview::tile_hash(u32::from(z), x, y, TABLE_SIZE);
             while table[index][0] != u32::MAX {
                 index = (index + 1) & (TABLE_SIZE - 1);
             }
@@ -242,6 +263,7 @@ impl ReliefMarch {
         }
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&view));
         queue.write_buffer(&self.table, 0, bytemuck::cast_slice(&table));
+        queue.write_buffer(&self.read, 0, &vec![0; layers * 4]);
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GlobeCraft relief march"),
             layout: &self.pipeline.get_bind_group_layout(0),
@@ -266,6 +288,10 @@ impl ReliefMarch {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(&self.heights_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.read.as_entire_binding(),
+                },
             ],
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -281,8 +307,15 @@ impl ReliefMarch {
             pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(
+            &self.read,
+            0,
+            &self.staging,
+            (count * 16) as u64,
+            (layers * 4) as u64,
+        );
         queue.submit(Some(encoder.finish()));
-        let slice = self.staging.slice(..(count * 16) as u64);
+        let slice = self.staging.slice(..(count * 16 + layers * 4) as u64);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
@@ -296,18 +329,28 @@ impl ReliefMarch {
         rx.recv()
             .map_err(|error| error.to_string())
             .and_then(|result| result.map_err(|error| error.to_string()))?;
-        let starts = {
+        let (pixels, read) = {
             let mapped = slice
                 .get_mapped_range()
                 .map_err(|error| error.to_string())?;
-            bytemuck::cast_slice::<u8, f32>(&mapped).to_vec()
+            let (pixels, read) = mapped.split_at(count * 16);
+            (
+                bytemuck::cast_slice::<u8, f32>(pixels).to_vec(),
+                bytemuck::cast_slice::<u8, u32>(read).to_vec(),
+            )
         };
         self.staging.unmap();
-        Ok(starts)
+        let read = slots
+            .iter()
+            .filter(|(_, layer)| read[*layer as usize] != 0)
+            .map(|(key, _)| *key)
+            .collect();
+        Ok(Walked { pixels, read })
     }
 
     /// Holds `tiles` (fully grown ones, as many as fit, coarse first), keeping those
-    /// already held; where each sits.
+    /// already held and uploading at most `MAX_UPLOADS_PER_FRAME` more; where each
+    /// sits.
     fn hold(&mut self, queue: &wgpu::Queue, tiles: &[(TileKey, Arc<Tile>)]) -> Vec<(TileKey, u32)> {
         let mut wanted: Vec<_> = tiles
             .iter()
@@ -320,6 +363,7 @@ impl ReliefMarch {
         wanted.truncate(self.slots.len());
         let keys: std::collections::HashSet<_> = wanted.iter().map(|(key, _)| *key).collect();
         let mut held = Vec::with_capacity(wanted.len());
+        let mut uploads = 0;
         for (key, tile) in wanted {
             let current = self.slots.iter().position(|slot| {
                 slot.as_ref().is_some_and(|slot| {
@@ -332,7 +376,9 @@ impl ReliefMarch {
             });
             let layer = match current {
                 Some(layer) => layer,
+                None if uploads == MAX_UPLOADS_PER_FRAME => continue,
                 None => {
+                    uploads += 1;
                     let Some(layer) = self.slots.iter().position(|slot| {
                         slot.as_ref().is_none_or(|slot| {
                             !keys.contains(&slot.key) || slot.source.strong_count() == 0
@@ -538,7 +584,7 @@ impl ReliefMarch {
         };
         let held = render(None).relief_tiles;
         let tiles = grown_tiles(&held, lookup, std::time::Instant::now());
-        let starts = self.starts(device, queue, &request, &tiles)?;
+        let starts = self.starts(device, queue, &request, &tiles)?.pixels;
         let hits = crate::relief_hits(WIDTH, HEIGHT, &request.basis, &request.cfg, &lookup);
         let past = past_the_ground(&starts[..WIDTH * HEIGHT], &hits);
         let trusted_past = trusted_past_the_ground(&starts, &hits);
@@ -593,16 +639,21 @@ fn made_up_mountains(z: u8, x: u32, y: u32) -> Tile {
         .map(|i| {
             let u = (f64::from(x) + ((i % size) as f64 + 0.5) / size as f64) / n;
             let v = (f64::from(y) + ((i / size) as f64 + 0.5) / size as f64) / n;
-            let ridge = |c: f64| 0.5 + 0.5 * (c * std::f64::consts::TAU * 4000.0).sin();
+            // Triangle waves: cheap to make at the first relief frame.
+            let ridge = |c: f64| 1.0 - (2.0 * (c * 4000.0).fract() - 1.0).abs();
             (3000.0 * ridge(u) * ridge(v + 0.3 * u)) as f32
         })
         .collect();
     Tile::from_elevation(Elevation::from_heights(size, heights))
 }
 
-fn tile_hash(z: u32, x: u32, y: u32) -> usize {
-    (z.wrapping_mul(73856093) ^ x.wrapping_mul(19349663) ^ y.wrapping_mul(83492791)) as usize
-        & (TABLE_SIZE - 1)
+/// The elevation tiles to hold for the next frame: the ones the CPU's frame held
+/// (`cpu`) and the ones the walk read (`read`).
+pub(super) fn next_tiles(mut cpu: Vec<TileKey>, read: &[TileKey]) -> Vec<TileKey> {
+    cpu.extend_from_slice(read);
+    cpu.sort_unstable();
+    cpu.dedup();
+    cpu
 }
 
 /// The elevation tiles among `keys` that are loaded and fully grown, as `lookup` has

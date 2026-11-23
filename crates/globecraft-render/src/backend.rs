@@ -134,25 +134,23 @@ pub struct FrameRenderer {
 /// Whether the GPU's relief walk (`gpu::relief`) makes relief frames faster on this
 /// computer: it costs the GPU what it saves the CPU, and only the hardware says which
 /// is more (a software adapter took ten times the CPU's whole frame, 2026-11-23).
-/// Every `RELIEF_CHECK_EVERY`th relief frame is drawn without it; once each way has
-/// `RELIEF_SAMPLES` frames, the walk goes off for good while frames without it take
-/// less time per pixel.
+/// Every `RELIEF_CHECK_EVERY`th relief frame is drawn without it and set against the
+/// frame drawn with it just before (the same view, a moment apart); after
+/// `RELIEF_LOSSES` such pairs in a row where the frame without it took less time per
+/// pixel, the walk goes off for good.
 #[cfg(feature = "gpu")]
 #[derive(Default)]
 struct ReliefTiming {
     frames: u32,
-    /// Seconds per megapixel, averaged (`RELIEF_AVERAGE_SHARE` per frame), and frames
-    /// counted: with the walk, without.
-    with: (f64, u32),
-    without: (f64, u32),
+    /// The last frame with the walk: seconds per megapixel.
+    with: Option<f64>,
+    losses: u32,
     off: bool,
 }
 #[cfg(feature = "gpu")]
 const RELIEF_CHECK_EVERY: u32 = 20;
 #[cfg(feature = "gpu")]
-const RELIEF_SAMPLES: u32 = 3;
-#[cfg(feature = "gpu")]
-const RELIEF_AVERAGE_SHARE: f64 = 0.3;
+const RELIEF_LOSSES: u32 = 3;
 
 #[cfg(feature = "gpu")]
 impl ReliefTiming {
@@ -161,27 +159,24 @@ impl ReliefTiming {
     }
     fn note(&mut self, walked: bool, seconds_per_megapixel: f64) {
         self.frames += 1;
-        let (average, count) = if walked {
-            &mut self.with
-        } else {
-            &mut self.without
+        if walked {
+            self.with = Some(seconds_per_megapixel);
+            return;
+        }
+        let Some(with) = self.with.take() else {
+            return;
         };
-        *average = if *count == 0 {
-            seconds_per_megapixel
+        self.losses = if seconds_per_megapixel < with {
+            self.losses + 1
         } else {
-            *average + (seconds_per_megapixel - *average) * RELIEF_AVERAGE_SHARE
+            0
         };
-        *count += 1;
-        if !self.off
-            && self.with.1 >= RELIEF_SAMPLES
-            && self.without.1 >= RELIEF_SAMPLES
-            && self.without.0 < self.with.0
-        {
+        if self.losses >= RELIEF_LOSSES && !self.off {
             self.off = true;
             globecraft_data::log_line!(
                 "The GPU's relief walk made relief frames slower here ({:.0} against {:.0} ms per megapixel); the CPU marches alone",
-                self.with.0 * 1000.0,
-                self.without.0 * 1000.0
+                with * 1000.0,
+                seconds_per_megapixel * 1000.0
             );
         }
     }
@@ -437,20 +432,23 @@ mod relief_timing_tests {
     use super::*;
 
     /// Frames without the walk come every `RELIEF_CHECK_EVERY`; the walk goes off once
-    /// frames without it are faster, and stays on while they are slower.
+    /// they beat the frame before them `RELIEF_LOSSES` times in a row, and stays on
+    /// when one loss is followed by a win.
     #[test]
     fn the_relief_walk_stays_only_where_it_pays() {
-        let mut timing = ReliefTiming::default();
-        let run = |timing: &mut ReliefTiming, with: f64, without: f64| {
-            for _ in 0..RELIEF_CHECK_EVERY * RELIEF_SAMPLES {
-                let walks = timing.walks();
-                timing.note(walks, if walks { with } else { without });
+        let run = |timing: &mut ReliefTiming, with: f64, without: &[f64]| {
+            for &without in without {
+                while timing.walks() {
+                    timing.note(true, with);
+                }
+                timing.note(false, without);
             }
         };
-        run(&mut timing, 0.1, 0.2);
-        assert!(!timing.off && timing.walks());
+        let mut paying = ReliefTiming::default();
+        run(&mut paying, 0.1, &[0.05, 0.05, 0.2, 0.05, 0.05, 0.2]);
+        assert!(!paying.off && paying.walks());
         let mut slow = ReliefTiming::default();
-        run(&mut slow, 0.3, 0.2);
+        run(&mut slow, 0.3, &[0.2, 0.2, 0.2]);
         assert!(slow.off && !slow.walks());
     }
 }

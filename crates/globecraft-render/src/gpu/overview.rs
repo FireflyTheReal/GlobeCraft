@@ -292,7 +292,7 @@ impl Overview {
                 } else {
                     0
                 };
-            let mut index = tile_hash(level, x, y);
+            let mut index = tile_hash(level, x, y, TILE_TABLE_SIZE);
             while table[index][0] != u32::MAX {
                 index = (index + 1) & (TILE_TABLE_SIZE - 1);
             }
@@ -535,9 +535,11 @@ fn lod_height(request: &RenderRequest) -> u32 {
     };
     ((request.height as f64 / scale).round() as u32).max(1)
 }
-fn tile_hash(z: u32, x: u32, y: u32) -> usize {
+/// Where tile (z, x, y) starts its search in a table of `size` (a power of two), as the
+/// shaders' `tile_hash`.
+pub(super) fn tile_hash(z: u32, x: u32, y: u32, size: usize) -> usize {
     (z.wrapping_mul(73856093) ^ x.wrapping_mul(19349663) ^ y.wrapping_mul(83492791)) as usize
-        & (TILE_TABLE_SIZE - 1)
+        & (size - 1)
 }
 #[cfg(test)]
 mod tests {
