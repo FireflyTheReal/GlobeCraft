@@ -23,6 +23,11 @@ const MAX_TILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ZOOM: u8 = 22;
 /// Web Mercator ends here.
 const MAX_MERCATOR_LAT: f64 = 85.051_128_78;
+/// The whole world is asked for at the layer's coarsest level when it is this few
+/// tiles, so the globe is covered past the tiles round the view.
+const MAX_COVER_TILES: u32 = 16;
+/// The largest answer to GIBS's list of a layer's days (it is under a kilobyte).
+const MAX_DOMAINS_BYTES: u64 = 256 * 1024;
 
 enum Entry {
     Loading,
@@ -47,6 +52,20 @@ struct Shared {
     day: u64,
     /// The tiles of earlier days, shown where the current day's have not arrived.
     previous: HashMap<TileKey, Arc<RgbaImage>>,
+    /// For a GIBS layer's newest day (`gibs_domains_url`): the day shown instead.
+    gibs_day: GibsDay,
+}
+
+/// The day a GIBS template's `default` stands for.
+#[derive(Default)]
+enum GibsDay {
+    #[default]
+    NotAsked,
+    Asking,
+    /// The day before GIBS's newest.
+    Known(String),
+    /// GIBS did not say: its `default` stays.
+    Unknown,
 }
 
 /// The loaded tiles of one view, read without locking while the overlay is drawn.
@@ -103,6 +122,8 @@ pub struct RasterTiles {
     tile_px: u16,
     /// The day `{date}` stands for (`YYYY-MM-DD`).
     date: String,
+    /// Where GIBS lists the days of a template asking for its newest day.
+    gibs_domains: Option<String>,
     shared: Arc<Mutex<Shared>>,
     snapshot: Option<(Vec<TileKey>, u64, Arc<RasterSnapshot>)>,
 }
@@ -118,6 +139,7 @@ impl RasterTiles {
             max_zoom: max_zoom.clamp(min_zoom.min(MAX_ZOOM), MAX_ZOOM),
             tile_px: tile_px.max(64),
             date: super::day_before(globecraft_core::math::now_unix()),
+            gibs_domains: gibs_domains_url(template),
             shared: Arc::default(),
             snapshot: None,
         }
@@ -173,16 +195,53 @@ impl RasterTiles {
             .round()
             .clamp(f64::from(self.min_zoom), f64::from(self.max_zoom)) as u8;
         let radius = view_radius_deg(altitude_km, tilt_deg);
-        let wanted = loop {
+        let mut wanted = loop {
             let tiles = around(zoom, lat, lon, radius);
             if tiles.len() <= MAX_WANTED || zoom <= self.min_zoom {
                 break tiles.into_iter().take(MAX_WANTED).collect::<Vec<_>>();
             }
             zoom -= 1;
         };
+        // The world at the coarsest level first, when it is a few tiles: the tiles
+        // round the view left the rest of the globe empty from far away.
+        let side = 1u32 << self.min_zoom;
+        if side * side <= MAX_COVER_TILES {
+            let cover: Vec<TileKey> = (0..side)
+                .flat_map(|y| (0..side).map(move |x| (x, y)))
+                .map(|(x, y)| TileKey {
+                    z: self.min_zoom,
+                    x,
+                    y,
+                })
+                .filter(|key| !wanted.contains(key))
+                .collect();
+            wanted.splice(0..0, cover);
+        }
         let now = Instant::now();
         let Ok(mut shared) = self.shared.lock() else {
             return None;
+        };
+        // GIBS's newest day is often only partly in (a few orbits of a daily map):
+        // the day before it, once GIBS has said which that is.
+        let template = match (&self.gibs_domains, &shared.gibs_day) {
+            (None, _) | (Some(_), GibsDay::Unknown) => self.template.clone(),
+            (Some(_), GibsDay::Known(day)) => {
+                self.template
+                    .replacen("/default/default/", &format!("/default/{day}/"), 1)
+            }
+            (Some(_), GibsDay::Asking) => return None,
+            (Some(url), GibsDay::NotAsked) => {
+                shared.gibs_day = GibsDay::Asking;
+                let (state, url, repaint) = (self.shared.clone(), url.clone(), repaint.clone());
+                runtime.spawn(async move {
+                    let day = gibs_day_before_newest(url).await;
+                    if let Ok(mut shared) = state.lock() {
+                        shared.gibs_day = day.map_or(GibsDay::Unknown, GibsDay::Known);
+                    }
+                    repaint();
+                });
+                return None;
+            }
         };
         let mut inflight = shared
             .tiles
@@ -203,7 +262,7 @@ impl RasterTiles {
             }
             shared.tiles.insert(*key, Entry::Loading);
             inflight += 1;
-            let url = super::tile_url(&self.template, key.z, key.x, key.y, &self.date);
+            let url = super::tile_url(&template, key.z, key.x, key.y, &self.date);
             let (state, key, repaint) = (self.shared.clone(), *key, repaint.clone());
             let archive = self.archive.clone();
             let day = shared.day;
@@ -318,6 +377,50 @@ fn evict(tiles: &mut HashMap<TileKey, Entry>) {
     }
 }
 
+/// GIBS's list of a layer's days (DescribeDomains) for a template asking for its
+/// newest day (`…/best/{layer}/default/default/{matrix set}/{z}/{y}/{x}.png`).
+fn gibs_domains_url(template: &str) -> Option<String> {
+    if !template.starts_with("https://gibs.earthdata.nasa.gov/wmts/") {
+        return None;
+    }
+    let (before, after) = template.split_once("/default/default/")?;
+    let (base, layer) = before.rsplit_once('/')?;
+    let matrix_set = after.split('/').next()?;
+    Some(format!(
+        "{base}/1.0.0/{layer}/default/{matrix_set}/all/all.xml"
+    ))
+}
+
+/// The day before the newest in GIBS's list of a layer's days, or the newest when it
+/// stands alone.
+fn day_before_newest(domains: &str) -> Option<String> {
+    let start = domains.find("<Domain>")? + "<Domain>".len();
+    let end = start + domains[start..].find("</Domain>")?;
+    let last = domains[start..end].split(',').next_back()?.trim();
+    let mut parts = last.split('/');
+    let (first, newest) = match (parts.next(), parts.next()) {
+        (Some(first), Some(newest)) => (first, newest),
+        (Some(only), None) => (only, only),
+        _ => return None,
+    };
+    let newest_secs = globecraft_core::time::parse_iso(newest.get(..10)?)?;
+    let first_secs = globecraft_core::time::parse_iso(first.get(..10)?)?;
+    let before = newest_secs - globecraft_core::time::DAY_SECS;
+    Some(globecraft_core::time::date_utc(if before >= first_secs {
+        before
+    } else {
+        newest_secs
+    }))
+}
+
+async fn gibs_day_before_newest(url: String) -> Option<String> {
+    let client = crate::http::client(crate::http::Policy::UserData).ok()?;
+    let bytes = crate::http::body(client.get(&url), MAX_DOMAINS_BYTES)
+        .await
+        .ok()?;
+    day_before_newest(&String::from_utf8_lossy(&bytes))
+}
+
 async fn archive_tile(
     archive: &super::archive::TileArchive,
     key: TileKey,
@@ -382,6 +485,36 @@ mod tests {
         assert_eq!(snapshot.sample(40.0, -90.0), Some([200; 4]));
         assert_eq!(snapshot.sample(-40.0, 90.0), Some([10; 4]));
         assert_eq!(snapshot.sample(89.0, 0.0), None);
+    }
+
+    #[test]
+    fn a_gibs_layers_newest_day_is_read_from_its_list_of_days() {
+        let template = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/\
+                        OMPS_Ozone_Total_Column/default/default/\
+                        GoogleMapsCompatible_Level6/{z}/{y}/{x}.png";
+        assert_eq!(
+            gibs_domains_url(template).as_deref(),
+            Some(
+                "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/1.0.0/\
+                 OMPS_Ozone_Total_Column/default/GoogleMapsCompatible_Level6/all/all.xml"
+            )
+        );
+        assert_eq!(
+            gibs_domains_url("https://gibs.earthdata.nasa.gov/wmts/x/{date}/{z}"),
+            None
+        );
+        assert_eq!(
+            gibs_domains_url("https://example.com/default/default/a/{z}"),
+            None
+        );
+        // As GIBS answered on 2026-11-24: the newest day held a few orbits.
+        let domains = "<Domains><DimensionDomain><ows:Identifier>time</ows:Identifier>\
+                       <Domain>2012-01-26/2012-01-28/P1D,2022-08-10/2026-07-10/P1D,\
+                       2026-07-17/2026-11-02/P1D</Domain></DimensionDomain></Domains>";
+        assert_eq!(day_before_newest(domains).as_deref(), Some("2026-11-01"));
+        let alone = "<Domain>2026-07-10/2026-07-10/P1D,2026-11-02</Domain>";
+        assert_eq!(day_before_newest(alone).as_deref(), Some("2026-11-02"));
+        assert_eq!(day_before_newest("no list"), None);
     }
 
     #[test]

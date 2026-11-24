@@ -160,9 +160,10 @@ fn gibs_true_colour() -> UserSource {
     }
 }
 
-/// The ozone layer's thickness (Dobson units) from the OMPS instrument on Suomi NPP,
-/// its newest day: the data comes in a few days to weeks late, so it is not matched
-/// to the app's time (`default` is GIBS's newest).
+/// The ozone layer's thickness (Dobson units) from the OMPS instrument on Suomi NPP:
+/// the data comes in a few days to weeks late, so it is not matched to the app's
+/// time. `default` stands for the day before GIBS's newest, which often holds only a
+/// few orbits (`RasterTiles`, 2026-11-24).
 fn ozone() -> UserSource {
     UserSource::Tiles {
         template: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/\

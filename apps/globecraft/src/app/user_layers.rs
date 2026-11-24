@@ -24,6 +24,9 @@ const NAME_SEPARATION_POINTS: f32 = 70.0;
 /// Free room kept around each marker and name, map points. Less than half the gap
 /// between a marker and its name (4 points), so a name never touches its own marker.
 const LABEL_PADDING_POINTS: f32 = 1.5;
+/// Width of the projected web maps (pixels) at rest and while the view moves.
+const RASTER_WIDTH_PX: usize = 1280;
+const RASTER_MOVING_WIDTH_PX: usize = 360;
 
 enum Stream {
     Raster {
@@ -189,11 +192,23 @@ impl UserLayers {
         if shown.is_empty() {
             return;
         }
-        // Coarser while the view moves, as the weather maps.
-        let max_width = if painter.ctx().input(|i| i.pointer.any_down()) {
-            640
+        // Coarser while the view moves, as the weather maps: every frame of a moving
+        // view projects the maps again on the interface's path (a glide or the
+        // navigation controls move it with no button down too). The view counts as
+        // moving while it differs from the last projected one; the first frame it
+        // holds still is projected sharp.
+        let moving = self
+            .texture_for
+            .as_ref()
+            .is_some_and(|(projected, ..)| projected != basis);
+        if moving {
+            // A frame more, which draws the maps sharp once the view holds still.
+            painter.ctx().request_repaint();
+        }
+        let max_width = if moving {
+            RASTER_MOVING_WIDTH_PX
         } else {
-            1280
+            RASTER_WIDTH_PX
         };
         let width =
             ((rect.width() * painter.ctx().pixels_per_point()) as usize).clamp(160, max_width);
