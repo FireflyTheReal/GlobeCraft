@@ -1192,7 +1192,7 @@ fn gpu_relief_walk_timing() {
         )
         .relief_tiles;
         let grown = relief::grown_tiles(&held, lookup, std::time::Instant::now());
-        let mut best: Option<[std::time::Duration; 3]> = None;
+        let mut best: Option<[std::time::Duration; relief::TIMED_PASSES]> = None;
         let mut planes = Vec::new();
         for run in 0..8 {
             let walked = march
@@ -1220,8 +1220,19 @@ fn gpu_relief_walk_timing() {
             .filter(|&&s| s >= 0.0)
             .map(|&s| f64::from(s))
             .sum();
+        // A pass the device refused walks nothing, and says so only here.
+        let failure = gpu
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        assert!(failure.is_none(), "{name}: {failure:?}");
+        assert!(
+            hits.iter().any(|&hit| hit > 0.0),
+            "{name}: the walk met no ground"
+        );
         println!(
-            "WALK {name}: on the device {:?} (the view, the sun's even and odd columns); {} grounds (mean distance {:.6e}), {trusted} trusted, sun's shares summing to {seen:.1}",
+            "WALK {name}: on the device {:?} (the cones, the view, the sun's even and odd columns); {} grounds (mean distance {:.6e}), {trusted} trusted, sun's shares summing to {seen:.1}",
             best.map(|best| best.map(|d| d.as_secs_f64() * 1000.0)),
             hits.len(),
             hits.iter().sum::<f64>() / hits.len().max(1) as f64,

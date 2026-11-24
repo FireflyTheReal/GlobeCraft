@@ -42,7 +42,15 @@ coarser one's), and the overview draws that ground from the walk's buffer on the
 device with the CPU's light (the sun on the slope, the share of it the walk saw, the
 sun rising earlier over high ground, hill shading without the sun). Every pixel it
 does not take (the sky, grounds the CPU would march for, a level or the next coarser
-one not held) the CPU draws in the repair, marched from the walk's starts. Since 2026-11-24 every level a
+one not held) the CPU draws in the repair, marched from the walk's starts. The walk
+runs in four passes of 8×8-pixel workgroups: first a cone for each 8×8 block of
+pixels walks the maxima as wide as the block's rays (the GPU's form of the CPU's
+`terrain::beam`), and the block's rays start their own walks where it ended; then the
+view's rays; then the share of the sun at their grounds, even columns and then odd
+ones. A group of 32 threads takes as long as its slowest: the ground's refinement
+runs after the walk's loop, not inside it, and square blocks walk more alike than
+rows. On an M1 at 1920×1200 the four views of `gpu_relief_walk_timing` walked in
+62–101 ms on the device, from 117–192 ms before these three (2026-11-24). Since 2026-11-24 every level a
 map has, to zoom 20, is the GPU's: to level 13 a point's place on the map is an f32
 map coordinate (an eighth of a texel there); past it, where that is a texel or
 coarser, it comes from the point's f32 offset from the camera on the map near the

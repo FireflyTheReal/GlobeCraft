@@ -490,9 +490,169 @@ fn hit_slope(dir: vec3<f32>, t: f32) -> vec2<f32> {
 // The view's ray for pixel `i` of `width` (unit).
 fn ray(i: u32, width: u32, height: u32) -> vec3<f32> {
     let x = i % width; let y = i / width;
-    let nx = (f32(x) + 0.5) / f32(width) * 2.0 - 1.0;
-    let ny = 1.0 - (f32(y) + 0.5) / f32(height) * 2.0;
+    return ray_through(vec2<f32>(f32(x) + 0.5, f32(y) + 0.5), width, height);
+}
+// The view's ray through the point `at` (in pixels, from the top left corner).
+fn ray_through(at: vec2<f32>, width: u32, height: u32) -> vec3<f32> {
+    let nx = at.x / f32(width) * 2.0 - 1.0;
+    let ny = 1.0 - at.y / f32(height) * 2.0;
     return normalize(relief.right.xyz * (nx * relief.camera.w * FOV_HALF_TAN) + relief.up.xyz * (ny * FOV_HALF_TAN) - relief.forward.xyz);
+}
+
+// Square blocks of pixels whose rays a cone walks first (`cone`): their own walks
+// start where it ended. Up there the rays of a block walk alike, the open air was
+// four in ten of their steps (2026-11-24), and one walk for 64 rays costs little.
+const CONE_SIDE: u32 = 8u;
+// The planes per pixel before the cones' starts (`relief::PLANES`).
+const PLANES: u32 = 6u;
+// A cone's rays stay within this share of a block of its middle ray's: the block and
+// the eight around it hold them all.
+const CONE_SHARE: f32 = 0.9;
+// Not held, or no answer: a height no ray clears.
+const UNCLEARED: f32 = 3.4e38;
+
+// The highest top (metres) of mip `mip` at `offset` (texels) from `at`, a place in
+// the tile `key` (level, x, y): in the neighbouring tile past its edge. UNCLEARED where
+// that tile is not held or past the map.
+fn corner_top(key: vec3<u32>, at: Place, offset: vec2<f32>, mip: i32) -> f32 {
+    let corner = at.at + offset;
+    let shift = floor(corner / DEM_TEXELS);
+    var layer = at.layer;
+    if any(shift != vec2<f32>(0.0)) {
+        let n = i32(1u << key.x);
+        let x = ((i32(key.y) + i32(shift.x)) % n + n) % n;
+        let y = i32(key.z) + i32(shift.y);
+        if y < 0 || y >= n { return UNCLEARED; }
+        layer = layer_of(key.x, u32(x), u32(y));
+        if layer >= 0 && read_tiles[layer] == 0u { read_tiles[layer] = 1u; }
+    }
+    if layer < 0 { return UNCLEARED; }
+    return block_top(Place(layer, corner - shift * DEM_TEXELS), mip);
+}
+// The highest top (metres) of mip `mip` (blocks `size` texels wide) over the blocks a
+// cone sweeps: from `at`, `path` texels on, `radius` texels around (at most three
+// blocks across: the path stays within a block, the cone narrower than one).
+fn swept_top(key: vec3<u32>, at: Place, path: vec2<f32>, radius: f32, size: f32, mip: i32) -> f32 {
+    let low = floor((min(at.at, at.at + path) - vec2<f32>(radius)) / size);
+    let high = floor((max(at.at, at.at + path) + vec2<f32>(radius)) / size);
+    let origin = Place(at.layer, vec2<f32>(0.0));
+    var top = 0.0;
+    for (var y = low.y; y <= high.y; y += 1.0) {
+        for (var x = low.x; x <= high.x; x += 1.0) {
+            top = max(top, corner_top(key, origin, (vec2<f32>(x, y) + vec2<f32>(0.5)) * size, mip));
+        }
+    }
+    return top;
+}
+
+// How far along `dir` (from the camera, from `start` to `end`) every ray within
+// `spread` of it (world units per unit along the ray) stays over the maxima, with
+// the margin and the levels either side of an edge as the view's `walk`: the
+// max-mipmap walk over the blocks around the ray's, while the cone is narrower than
+// a block.
+fn cone_walk(dir: vec3<f32>, start: f32, end: f32, spread: f32) -> f32 {
+    let to_world = relief.march.x;
+    let margin = relief.march.z;
+    var t = start;
+    var next_mip = TOP_MIP;
+    var own_looked = Looked(vec3<u32>(0xffffffffu), -1);
+    var coarse_looked = own_looked;
+    var fine_looked = own_looked;
+    for (var step = 0u; step < relief.raster.w; step++) {
+        let d = dir * t;
+        let p = relief.camera.xyz + d;
+        let h = height_above(p);
+        if t >= end || h <= 0.0 { return t; }
+        let at = spot(p, dir);
+        if at.past_limit || at.latitude_cosine < MIN_LATITUDE_COSINE { return t; }
+        let zoom = log2(2.0 * PI * EARTH_RADIUS_M * at.latitude_cosine / (DEM_TEXELS * max(t * EARTH_RADIUS_M * relief.march.y, 0.01) * PIXELS_PER_TEXEL));
+        let level = clamp(i32(floor(zoom)), 0, MAX_ZOOM);
+        if level >= COARSE_COORDINATE_LEVEL && !is_near(level, d) { return t; }
+        let fraction = zoom - f32(level);
+        let finer = level < MAX_ZOOM && fraction > 1.0 - LEVEL_EDGE;
+        let coarser = level > 0 && (fraction < LEVEL_EDGE || (relief.march.w > 0.5 && fraction < BLEND_LEVELS + LEVEL_EDGE));
+        let texels = DEM_TEXELS * exp2(f32(level));
+        let speed = max(length(at.rate) * texels, 1e-12);
+        var nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
+        if at.climb < 0.0 { nudge = min(nudge, NUDGE_DROP_M * to_world / -at.climb); }
+        // A texel's width here (world units): the cone's rays and blocks in texels.
+        let texel_world = 2.0 * PI * at.latitude_cosine / texels;
+        let tangent = sqrt(max(1.0 - at.latitude_cosine * at.latitude_cosine, 0.0)) / at.latitude_cosine;
+        let longest = sqrt(2.0 / (texel_world * (1.0 + tangent))) / speed;
+        let sine = sqrt(max(1.0 - at.latitude_cosine * at.latitude_cosine, 0.0));
+        let own = locate(level, d, at.uv, &own_looked);
+        var coarse_at = Place(-1, vec2<f32>(0.0));
+        var fine_at = Place(-1, vec2<f32>(0.0));
+        if coarser { coarse_at = locate(level - 1, d, at.uv, &coarse_looked); }
+        if finer { fine_at = locate(level + 1, d, at.uv, &fine_looked); }
+        if own.layer < 0 || (coarser && coarse_at.layer < 0) || (finer && fine_at.layer < 0) { return t; }
+        let radius = spread * t;
+        var moved = false;
+        for (var mip = min(next_mip, TOP_MIP); mip >= 1; mip--) {
+            let size = exp2(f32(mip + 1));
+            // The nine blocks (world units, middle to corner) within the map's limit
+            // and, where the rays need it, the near map's range.
+            let reach = 2.13 * size * texel_world;
+            if sine + reach > MERCATOR_MAX_SINE { continue; }
+            let far = length(d) + reach;
+            if level >= COARSE_COORDINATE_LEVEL && far * far >= relief.near_frac.z { continue; }
+            let widest = CONE_SHARE * size * texel_world;
+            if radius >= widest { continue; }
+            // To the block's edge, as the view's walk, while the cone stays narrow enough.
+            let inside = own.at - floor(own.at / size) * size;
+            let rate = at.rate * texels;
+            var exit = min(min(leave(inside.x, rate.x, size), leave(inside.y, rate.y, size)), longest);
+            exit = min(exit, (widest - radius) / spread);
+            // The blocks the cone sweeps to there, at each level the rays read.
+            let path = rate * (exit + nudge);
+            let swept = (radius + spread * (exit + nudge)) / texel_world;
+            var top = swept_top(own_looked.key, own, path, swept, size, mip);
+            if coarser { top = max(top, swept_top(coarse_looked.key, coarse_at, path / 2.0, swept / 2.0, size / 2.0, mip - 1)); }
+            if finer { top = max(top, swept_top(fine_looked.key, fine_at, path * 2.0, swept * 2.0, size * 2.0, mip + 1)); }
+            let clear = h - radius - (top * to_world + margin);
+            if clear <= 0.0 { continue; }
+            // The cone's lowest ray nears the maxima at most this fast (a shorter step
+            // sweeps less).
+            let sink = spread - at.climb;
+            if sink > 0.0 { exit = min(exit, clear / sink); }
+            if exit <= t * 1e-6 { return t; }
+            t += exit + nudge;
+            next_mip = mip + 1;
+            moved = true;
+            break;
+        }
+        if !moved { return t; }
+    }
+    return t;
+}
+
+// One cone a block of `CONE_SIDE` pixels across: where its rays' own walks start
+// (after the pixels' planes; 0 where it does not help).
+@compute @workgroup_size(8, 8)
+fn cone(@builtin(global_invocation_id) id: vec3<u32>) {
+    let width = relief.raster.x; let height = relief.raster.y;
+    let across = (width + CONE_SIDE - 1u) / CONE_SIDE;
+    if id.x >= across || id.y * CONE_SIDE >= height { return; }
+    let slot = PLANES * width * height + id.y * across + id.x;
+    starts[slot] = 0.0;
+    let low = id.xy * CONE_SIDE;
+    let high = min(low + vec2<u32>(CONE_SIDE - 1u), vec2<u32>(width - 1u, height - 1u));
+    let dir = ray_through(vec2<f32>(low + high) / 2.0 + vec2<f32>(0.5), width, height);
+    // The block's rays are no farther from the middle one than its corners' (the rays
+    // within an angle of it fill a cone, whose section with the screen is convex).
+    var spread = 0.0;
+    for (var corner = 0u; corner < 4u; corner++) {
+        let at = vec2<u32>(select(low.x, high.x, (corner & 1u) == 1u), select(low.y, high.y, corner >= 2u));
+        spread = max(spread, length(ray_through(vec2<f32>(at) + vec2<f32>(0.5), width, height) - dir));
+    }
+    spread = spread * 1.01 + 1e-7;
+    let camera = relief.camera.xyz;
+    let shell = span(camera, dir, relief.axes.xyz + vec3<f32>(relief.axes.w));
+    if shell.x > shell.y || shell.y <= 0.0 { return; }
+    // Before the shell widened by the cone as wide as where the middle ray enters
+    // it, every ray of the block is outside the shell.
+    let wide = span(camera, dir, relief.axes.xyz + vec3<f32>(relief.axes.w + spread * max(shell.x, 0.0) * 1.01));
+    starts[slot] = cone_walk(dir, max(wide.x, 0.0), shell.y, spread);
 }
 
 // The view's rays (`starts`, hits and trust); the sun's share comes in a pass of its
@@ -516,7 +676,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let floor_hit = span(camera, dir, relief.axes.xyz);
     let floor_met = floor_hit.x <= floor_hit.y && floor_hit.x > 0.0;
     if floor_met { end = min(end, floor_hit.x); }
-    let first = max(shell.x, 0.0);
+    // Where the block's cone ended (`cone`), every ray of the block is over the maxima.
+    let across = (width + CONE_SIDE - 1u) / CONE_SIDE;
+    let cone_start = starts[PLANES * count + (id.y / CONE_SIDE) * across + id.x / CONE_SIDE];
+    let first = max(max(shell.x, 0.0), cone_start);
     let view = walk(vec3<f32>(0.0), dir, first, end, relief.march.y, true, 0.0);
     // The CPU walks the last texel again: its own steps between exact measurements put
     // the ground up to a texel from where the GPU sees it.

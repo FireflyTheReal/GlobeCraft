@@ -8,7 +8,9 @@
 //! `terrain::sun_light` does; where the CPU meets the ground at the same place it
 //! takes the share of the sun the GPU saw there. Where the GPU's walk went under the
 //! maxima for at most a texel before the ground, the CPU takes that ground as its own
-//! and only shades it (`terrain::met_at`).
+//! and only shades it (`terrain::met_at`). On the GPU too a cone as wide as an 8×8
+//! block of pixels walks first (`cone` in the shader), and the block's rays start where
+//! it ended.
 //!
 //! The GPU holds the elevation tiles the last relief frame held (the view moves a
 //! little between frames): their heights, and their maxima over blocks of two texels
@@ -37,6 +39,8 @@ const HEIGHT_MARGIN_M: f64 = 10.0;
 /// is `SHARED_SIDE`): a group of threads takes as long as its longest walk, and
 /// neighbouring rays walk alike, a row of 32 not as much (2026-11-24).
 const WORKGROUP_SIDE: u32 = 8;
+/// Pixels across a cone's square block (`CONE_SIDE` in the shader).
+const CONE_SIDE: usize = 8;
 /// New tiles uploaded per frame at most (0.6 ms each to prepare in this container's
 /// release build): a whole tilted view's tiles in one frame (six a frame took a camera
 /// low among the relief 7 frames to be walked on an M1, 2026-11-23); after a jump the
@@ -80,11 +84,13 @@ pub(super) struct ReliefMarch {
     /// even columns, then odd ones, shared with their neighbours where they can).
     sun: wgpu::ComputePipeline,
     sun_shared: wgpu::ComputePipeline,
+    /// One cone a block of pixels first, where their rays' walks start (`cone`).
+    cone: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     table: wgpu::Buffer,
     output: wgpu::Buffer,
     staging: wgpu::Buffer,
-    pixels: usize,
     tops: wgpu::Texture,
     tops_view: wgpu::TextureView,
     /// The tiles' heights, in quarter metres.
@@ -112,12 +118,12 @@ pub(crate) struct Walked {
     /// How many tiles this walk uploaded first.
     #[cfg(test)]
     pub(super) uploads: usize,
-    /// How long each pass took on the device (the view's walk, the sun's even and odd
-    /// columns; where the adapter can time them), and the wait for the device and the
-    /// copy of what it found.
+    /// How long each pass took on the device (the cones, the view's walk, the sun's even
+    /// and odd columns; where the adapter can time them), and the wait for the device
+    /// and the copy of what it found.
     #[cfg(test)]
     pub(super) took: (
-        Option<[std::time::Duration; 3]>,
+        Option<[std::time::Duration; TIMED_PASSES]>,
         std::time::Duration,
         std::time::Duration,
     ),
@@ -302,18 +308,67 @@ impl ReliefMarch {
             label: Some("GlobeCraft relief march"),
             source: wgpu::ShaderSource::Wgsl(source().into()),
         });
+        // One layout for every pass: a pass's own would leave out what it does not read
+        // (the cones read no heights), and the bind group would match none but one.
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty,
+            count: None,
+        };
+        let storage = |read_only| wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        };
+        let texture = |sample_type| wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("GlobeCraft relief march"),
+            entries: &[
+                entry(
+                    0,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
+                entry(1, storage(false)),
+                entry(
+                    2,
+                    texture(wgpu::TextureSampleType::Float { filterable: false }),
+                ),
+                entry(3, storage(true)),
+                entry(4, texture(wgpu::TextureSampleType::Uint)),
+                entry(5, storage(false)),
+                entry(6, texture(wgpu::TextureSampleType::Uint)),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("GlobeCraft relief march"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
         let pipeline = |entry_point| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("GlobeCraft relief march"),
-                layout: None,
+                layout: Some(&pipeline_layout),
                 module: &shader,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 cache: None,
             })
         };
-        let (pipeline, sun, sun_shared) =
-            (pipeline("main"), pipeline("sun"), pipeline("sun_shared"));
+        let (pipeline, sun, sun_shared, cone) = (
+            pipeline("main"),
+            pipeline("sun"),
+            pipeline("sun_shared"),
+            pipeline("cone"),
+        );
         let layers = layers.min(MAX_TOPS_LAYERS);
         let tops = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("GlobeCraft elevation maxima"),
@@ -365,6 +420,8 @@ impl ReliefMarch {
             pipeline,
             sun,
             sun_shared,
+            cone,
+            layout,
             uniform: overview::buffer(
                 device,
                 "GlobeCraft relief view",
@@ -379,7 +436,6 @@ impl ReliefMarch {
                 16 + layers as usize * 4,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             ),
-            pixels: 1,
             tops,
             tops_view,
             heights,
@@ -411,21 +467,22 @@ impl ReliefMarch {
         let (slots, _uploads) = self.hold(queue, tiles);
         let count = request.width * request.height;
         let layers = self.slots.len();
-        if count > self.pixels {
-            self.pixels = count;
+        // The pixels' planes, then the cones' starts.
+        let cones = request.width.div_ceil(CONE_SIDE) * request.height.div_ceil(CONE_SIDE);
+        let output_bytes = count * PLANE_BYTES + cones * 4;
+        if output_bytes as u64 > self.output.size() {
             let storage = wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC;
-            self.output = overview::buffer(
-                device,
-                "GlobeCraft relief starts",
-                count * PLANE_BYTES,
-                storage,
-            );
+            self.output =
+                overview::buffer(device, "GlobeCraft relief starts", output_bytes, storage);
+        }
+        let read_bytes = count * READ_BYTES + layers * 4;
+        if read_bytes as u64 > self.staging.size() {
             self.staging = overview::buffer(
                 device,
                 "GlobeCraft relief readback",
-                count * READ_BYTES + layers * 4,
+                read_bytes,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
         }
@@ -486,43 +543,40 @@ impl ReliefMarch {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&view));
         queue.write_buffer(&self.table, 0, bytemuck::cast_slice(&table));
         queue.write_buffer(&self.read, 0, &vec![0; layers * 4]);
-        // A bind group for each pass: each pipeline's own layout.
-        let group = |pipeline: &wgpu::ComputePipeline| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("GlobeCraft relief march"),
-                layout: &pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: binding(&self.output, (count * PLANE_BYTES) as u64),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&self.tops_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.table.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(&self.heights_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: self.read.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(&self.peaks_view),
-                    },
-                ],
-            })
-        };
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GlobeCraft relief march"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: binding(&self.output, output_bytes as u64),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.tops_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.table.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.heights_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.read.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.peaks_view),
+                },
+            ],
+        });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("GlobeCraft relief march"),
         });
@@ -531,13 +585,22 @@ impl ReliefMarch {
             .features()
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| Timing::new(device));
-        // The view's pixels, then the sun's even and odd columns, in workgroups across
-        // and down (one axis held at most 65,535 workgroups).
+        // The cones, the view's pixels, then the sun's even and odd columns, in
+        // workgroups across and down (one axis held at most 65,535 workgroups).
         let (width, height) = (request.width as u32, request.height as u32);
-        for (index, (pipeline, (across, side))) in [
-            (&self.pipeline, (width, WORKGROUP_SIDE)),
-            (&self.sun, (width.div_ceil(2), WORKGROUP_SIDE)),
-            (&self.sun_shared, (width / 2, SHARED_SIDE)),
+        let cone_side = CONE_SIDE as u32;
+        for (index, (pipeline, (across, down, side))) in [
+            (
+                &self.cone,
+                (
+                    width.div_ceil(cone_side),
+                    height.div_ceil(cone_side),
+                    WORKGROUP_SIDE,
+                ),
+            ),
+            (&self.pipeline, (width, height, WORKGROUP_SIDE)),
+            (&self.sun, (width.div_ceil(2), height, WORKGROUP_SIDE)),
+            (&self.sun_shared, (width / 2, height, SHARED_SIDE)),
         ]
         .into_iter()
         .enumerate()
@@ -551,8 +614,8 @@ impl ReliefMarch {
                 timestamp_writes,
             });
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &group(pipeline), &[]);
-            pass.dispatch_workgroups(across.div_ceil(side), height.div_ceil(side), 1);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(across.div_ceil(side), down.div_ceil(side), 1);
         }
         #[cfg(test)]
         if let Some(timing) = &timing {
@@ -932,6 +995,12 @@ pub(super) fn past_the_ground(starts: &[f32], hits: &[(f64, f32)]) -> usize {
         .count()
 }
 
+/// The walk's passes: the cones, the view, the sun's even and odd columns.
+#[cfg(test)]
+pub(super) const TIMED_PASSES: usize = 4;
+/// A start and an end per pass.
+#[cfg(test)]
+const TIMESTAMP_BYTES: usize = 2 * TIMED_PASSES * 8;
 /// The walk's passes timed on the device (tests, where the adapter can).
 #[cfg(test)]
 struct Timing {
@@ -946,18 +1015,18 @@ impl Timing {
             queries: device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("GlobeCraft relief timing"),
                 ty: wgpu::QueryType::Timestamp,
-                count: 6,
+                count: 2 * TIMED_PASSES as u32,
             }),
             resolved: overview::buffer(
                 device,
                 "GlobeCraft relief timing",
-                48,
+                TIMESTAMP_BYTES,
                 wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             ),
             staging: overview::buffer(
                 device,
                 "GlobeCraft relief timing readback",
-                48,
+                TIMESTAMP_BYTES,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             ),
         }
@@ -970,10 +1039,14 @@ impl Timing {
         }
     }
     fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.resolve_query_set(&self.queries, 0..6, &self.resolved, 0);
-        encoder.copy_buffer_to_buffer(&self.resolved, 0, &self.staging, 0, 48);
+        encoder.resolve_query_set(&self.queries, 0..2 * TIMED_PASSES as u32, &self.resolved, 0);
+        encoder.copy_buffer_to_buffer(&self.resolved, 0, &self.staging, 0, TIMESTAMP_BYTES as u64);
     }
-    fn read(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> [std::time::Duration; 3] {
+    fn read(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> [std::time::Duration; TIMED_PASSES] {
         let slice = self.staging.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         device
