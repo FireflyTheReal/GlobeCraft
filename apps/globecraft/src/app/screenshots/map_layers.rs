@@ -1284,9 +1284,22 @@ fn timeline_playback_frames() {
     let app = h.state_mut();
     app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
         .expect("sunlight");
+    // PROBE_ALT_KM, PROBE_TILT, PROBE_LAT, PROBE_LON: the view (default the whole
+    // globe from 14,000 km); PROBE_RELIEF=1 turns 3D terrain on.
+    let env = |name: &str, default: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default)
+    };
+    if std::env::var("PROBE_RELIEF").is_ok_and(|v| v == "1") {
+        app.run("layer.show", json!({"layer": "terrain", "visible": true}))
+            .expect("terrain");
+    }
     app.run(
         "camera.set",
-        json!({"lat": 20.0, "lon": 10.0, "altitude_km": 14_000.0, "tilt_deg": 0.0}),
+        json!({"lat": env("PROBE_LAT", 20.0), "lon": env("PROBE_LON", 10.0),
+               "altitude_km": env("PROBE_ALT_KM", 14_000.0), "tilt_deg": env("PROBE_TILT", 0.0)}),
     )
     .expect("camera");
     settle(&mut h, 10.0);
@@ -1308,16 +1321,37 @@ fn timeline_playback_frames() {
     };
     let mut last = shown_ptr(&h);
     let mut frames = 0;
+    let started = std::time::Instant::now();
+    let (mut last_at, mut gaps, mut sizes) = (0.0, Vec::new(), std::collections::BTreeMap::new());
     for _ in 0..120 {
         h.step();
         let shown = shown_ptr(&h);
-        frames += usize::from(shown != last);
+        if shown != last {
+            frames += 1;
+            let at = started.elapsed().as_secs_f64() * 1e3;
+            gaps.push(at - last_at);
+            last_at = at;
+            if let Some(frame) = &h.state().frame.image {
+                *sizes.entry((frame.width, frame.height)).or_insert(0) += 1;
+            }
+        }
         last = shown;
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
+    let elapsed = started.elapsed().as_secs_f64();
+    gaps.sort_by(f64::total_cmp);
+    let at = |share: f64| {
+        gaps.get(((gaps.len() as f64 * share) as usize).min(gaps.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0.0)
+    };
     println!(
-        "{frames} globe frames shown in 120 steps; scene time moved {:.0} min",
-        (h.state().scene_unix() - started_at) / 60.0
+        "PLAYBACK: {frames} globe frames shown in 120 steps ({:.1} a second); scene time moved {:.0} min; between frames median {:.0} ms, 90th {:.0}, longest {:.0}; sizes {sizes:?}",
+        frames as f64 / elapsed,
+        (h.state().scene_unix() - started_at) / 60.0,
+        at(0.5),
+        at(0.9),
+        at(1.0),
     );
 }
 
