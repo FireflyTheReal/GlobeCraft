@@ -381,12 +381,13 @@ impl FrameRenderer {
                 };
             let walked = starts.is_some();
             // The GPU draws the frame from its walk where it can (roadmap D8, G4), the
-            // CPU what it leaves.
+            // CPU what it leaves. Also below `MIN_AUTO_GPU_PIXELS`, which is for flat
+            // frames: relief frames while moving are that small (0.28 of the window),
+            // and at 616×360 on an M1 the GPU drew them in 3–8 ms after the walk, the
+            // CPU in 18–23 ms (2026-11-24).
             let mut buffer = buffer;
             if let (Some(starts), Some(gpu)) = (starts.as_deref(), self.gpu.as_mut())
                 && crate::gpu::GpuRenderer::supports(request)
-                && (self.preference != BackendPreference::Auto
-                    || request.width.saturating_mul(request.height) >= MIN_AUTO_GPU_PIXELS)
             {
                 match gpu_call(|| gpu.render_relief(request, cache, buffer, starts))
                     .unwrap_or_else(|error| Err((error, Vec::new(), true)))
