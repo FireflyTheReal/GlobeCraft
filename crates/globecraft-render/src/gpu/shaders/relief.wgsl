@@ -525,14 +525,52 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// The share of the sun seen where `main` met the ground.
+// The share of the sun seen where `main` met the ground: the even columns (and a
+// last odd one), then `sun_shared` the odd ones.
 @compute @workgroup_size(64)
 fn sun(@builtin(global_invocation_id) id: vec3<u32>) {
-    let i = id.x;
     let width = relief.raster.x; let height = relief.raster.y;
+    let half = (width + 1u) / 2u;
+    if id.x >= half * height || relief.sun.w < 0.5 { return; }
+    let x = (id.x % half) * 2u;
+    let i = (id.x / half) * width + x;
     let count = width * height;
-    if i >= count || relief.sun.w < 0.5 { return; }
     let hit = starts[count + i];
     if hit < 0.0 { return; }
+    starts[2u * count + i] = sun_seen(ray(i, width, height) * hit, hit);
+    // A last odd column has no right neighbour: walked here.
+    if x + 2u == width {
+        let j = i + 1u;
+        let next = starts[count + j];
+        if next >= 0.0 { starts[2u * count + j] = sun_seen(ray(j, width, height) * next, next); }
+    }
+}
+// Neighbours count as at the same depth within this share of the distance (the CPU's
+// `SAME_DEPTH_SHARE`).
+const SAME_DEPTH_SHARE: f32 = __SAME_DEPTH_SHARE__;
+// An odd column between two neighbours wholly lit, or wholly in shadow, at its own
+// depth takes their share, as the CPU's `SunSeen` (which looks left only); every
+// other is walked. A walk toward the sun was half of the relief walk's time on an M1
+// (2026-11-24).
+@compute @workgroup_size(64)
+fn sun_shared(@builtin(global_invocation_id) id: vec3<u32>) {
+    let width = relief.raster.x; let height = relief.raster.y;
+    let odd = width / 2u;
+    if id.x >= odd * height || relief.sun.w < 0.5 { return; }
+    let x = (id.x % odd) * 2u + 1u;
+    if x + 1u >= width { return; }
+    let i = (id.x / odd) * width + x;
+    let count = width * height;
+    let hit = starts[count + i];
+    if hit < 0.0 { return; }
+    let left = starts[count + i - 1u];
+    let right = starts[count + i + 1u];
+    let seen = starts[2u * count + i - 1u];
+    let full_shade = 1.0 - relief.shade.y;
+    if left >= 0.0 && right >= 0.0 && abs(left - hit) <= hit * SAME_DEPTH_SHARE && abs(right - hit) <= hit * SAME_DEPTH_SHARE
+        && seen == starts[2u * count + i + 1u] && (seen == 1.0 || seen == full_shade) {
+        starts[2u * count + i] = seen;
+        return;
+    }
     starts[2u * count + i] = sun_seen(ray(i, width, height) * hit, hit);
 }

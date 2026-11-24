@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Draws the pixels the shader left (`overview::UNDRAWN`) as the CPU does; with the
-/// relief, from the GPU's walk (`walk`, `relief::PLANES` planes): marched where the
+/// relief, from the GPU's walk (`walk`, `relief::READ_PLANES` planes): marched where the
 /// shader did not take the walk's ground. The tiles missed, and the elevation tiles
 /// held.
 pub(super) fn pixels(

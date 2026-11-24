@@ -46,6 +46,10 @@ const HEIGHT_STEPS_PER_M: f32 = 4.0;
 pub(super) const PLANES: usize = 6;
 /// Their bytes, per pixel.
 const PLANE_BYTES: usize = PLANES * 4;
+/// The planes the CPU reads back (`Walked::pixels`): the first four; the slopes stay
+/// on the device for the overview.
+pub(super) const READ_PLANES: usize = 4;
+const READ_BYTES: usize = READ_PLANES * 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -67,8 +71,10 @@ struct View {
 
 pub(super) struct ReliefMarch {
     pipeline: wgpu::ComputePipeline,
-    /// The sun's share where the view's rays met the ground (a pass of its own).
+    /// The sun's share where the view's rays met the ground (passes of their own:
+    /// even columns, then odd ones, shared with their neighbours where they can).
     sun: wgpu::ComputePipeline,
+    sun_shared: wgpu::ComputePipeline,
     uniform: wgpu::Buffer,
     table: wgpu::Buffer,
     output: wgpu::Buffer,
@@ -269,6 +275,7 @@ fn source() -> String {
         ("SHADOW_COARSER", terrain::SHADOW_DETAIL_COARSER),
         ("SUN_RISE_START", crate::tuning::SUN_RISE_START_COSINE),
         ("MAX_SLOPE", terrain::MAX_SLOPE),
+        ("SAME_DEPTH_SHARE", crate::SAME_DEPTH_SHARE),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{:?}", value as f32));
     }
@@ -291,7 +298,8 @@ impl ReliefMarch {
                 cache: None,
             })
         };
-        let (pipeline, sun) = (pipeline("main"), pipeline("sun"));
+        let (pipeline, sun, sun_shared) =
+            (pipeline("main"), pipeline("sun"), pipeline("sun_shared"));
         let layers = layers.min(MAX_TOPS_LAYERS);
         let tops = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("GlobeCraft elevation maxima"),
@@ -342,6 +350,7 @@ impl ReliefMarch {
         Self {
             pipeline,
             sun,
+            sun_shared,
             uniform: overview::buffer(
                 device,
                 "GlobeCraft relief view",
@@ -402,7 +411,7 @@ impl ReliefMarch {
             self.staging = overview::buffer(
                 device,
                 "GlobeCraft relief readback",
-                count * PLANE_BYTES + layers * 4,
+                count * READ_BYTES + layers * 4,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
         }
@@ -508,7 +517,7 @@ impl ReliefMarch {
                 label: Some("GlobeCraft relief march"),
                 timestamp_writes: None,
             });
-            for pipeline in [&self.pipeline, &self.sun] {
+            for pipeline in [&self.pipeline, &self.sun, &self.sun_shared] {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &group(pipeline), &[]);
                 pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
@@ -519,19 +528,19 @@ impl ReliefMarch {
             0,
             &self.staging,
             0,
-            (count * PLANE_BYTES) as u64,
+            (count * READ_BYTES) as u64,
         );
         encoder.copy_buffer_to_buffer(
             &self.read,
             0,
             &self.staging,
-            (count * PLANE_BYTES) as u64,
+            (count * READ_BYTES) as u64,
             (layers * 4) as u64,
         );
         queue.submit(Some(encoder.finish()));
         let slice = self
             .staging
-            .slice(..(count * PLANE_BYTES + layers * 4) as u64);
+            .slice(..(count * READ_BYTES + layers * 4) as u64);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
@@ -549,7 +558,7 @@ impl ReliefMarch {
             let mapped = slice
                 .get_mapped_range()
                 .map_err(|error| error.to_string())?;
-            let (pixels, read) = mapped.split_at(count * PLANE_BYTES);
+            let (pixels, read) = mapped.split_at(count * READ_BYTES);
             (
                 bytemuck::cast_slice::<u8, f32>(pixels).to_vec(),
                 bytemuck::cast_slice::<u8, u32>(read).to_vec(),
@@ -903,7 +912,7 @@ fn made_up_mountains(z: u8, x: u32, y: u32) -> Tile {
 /// it gave up on more (a camera low among the relief starts every ray at levels too
 /// fine for f32 map coordinates), the CPU's own cones start the rays further on.
 pub(super) fn helps(pixels: &[f32]) -> bool {
-    let count = pixels.len() / PLANES;
+    let count = pixels.len() / READ_PLANES;
     pixels[3 * count..4 * count]
         .iter()
         .filter(|&&trusted| trusted < 0.0)

@@ -494,7 +494,7 @@ pub(crate) struct SunSeen {
 }
 
 /// Neighbours count as at the same depth within this share of the distance.
-const SAME_DEPTH_SHARE: f64 = 0.02;
+pub(crate) const SAME_DEPTH_SHARE: f64 = 0.02;
 
 impl SunSeen {
     fn at(&mut self, x: usize, distance: f64, march: impl FnOnce() -> f32) -> f32 {

@@ -97,7 +97,8 @@ pub(super) struct Context<'a> {
     /// The atlas tiles' mean colours (`GpuRenderer::means`).
     pub means: &'a wgpu::Buffer,
     /// With the relief: the GPU's walk for this view (`relief::ReliefMarch::starts`),
-    /// on the device and read back (`relief::PLANES` planes).
+    /// on the device (`relief::PLANES` planes) and read back (the first
+    /// `relief::READ_PLANES`).
     pub walk: Option<(&'a wgpu::Buffer, &'a [f32])>,
 }
 pub(super) struct Frame {
@@ -276,7 +277,7 @@ impl Overview {
         // The walk is for this view: planes of one value per pixel.
         let walk = walk.filter(|(_, planes)| {
             request.cfg.terrain.is_some()
-                && planes.len() == super::relief::PLANES * request.width * request.height
+                && planes.len() == super::relief::READ_PLANES * request.width * request.height
         });
         if request.cfg.terrain.is_some() && walk.is_none() {
             return Err((
