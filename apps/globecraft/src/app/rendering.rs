@@ -574,11 +574,14 @@ fn same_view(
         && displayed_rect.is_some_and(|displayed| Some(displayed) == rect)
 }
 
-/// Two frames show the same camera when every camera value matches exactly.
+/// Two frames show the same camera when every camera value matches exactly. The
+/// look up counts too: without it, tilting past the horizon cross-faded each frame
+/// over the last as if tiles had arrived, and the ground and the sun showed twice
+/// (user, 2026-11-24).
 fn same_camera(a: Cam, b: Cam) -> bool {
-    [a.lat, a.lon, a.alt, a.heading, a.tilt]
+    [a.lat, a.lon, a.alt, a.heading, a.tilt, a.look_up]
         .iter()
-        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt])
+        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt, b.look_up])
         .all(|(x, y)| x.to_bits() == y.to_bits())
 }
 
@@ -647,6 +650,19 @@ mod tests {
         assert!(!same_view(
             true,
             Some((Cam { lon: 31.0, ..shown }, basis)),
+            Some(rect),
+            shown,
+            Some(rect)
+        ));
+        assert!(!same_view(
+            true,
+            Some((
+                Cam {
+                    look_up: 12.0,
+                    ..shown
+                },
+                basis
+            )),
             Some(rect),
             shown,
             Some(rect)
