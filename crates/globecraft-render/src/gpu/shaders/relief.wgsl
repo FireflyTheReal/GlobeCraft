@@ -298,6 +298,8 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
     var coarse_looked = own_looked;
     var fine_looked = own_looked;
     var met = Met(0.0, 0.0, 0.0, 0.0, -1, false, 1.0);
+    // Where the view's ray met the ground inside a cell: the clearance's c1 and c2 there.
+    var piece = vec2<f32>(3.4e38);
     for (var step = 0u; step < relief.raster.w; step++) {
         let d = rel + dir * t;
         let p = relief.camera.xyz + d;
@@ -423,25 +425,9 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
                 if s > 0.0 && s < low_s && there < low { low_s = s; low = there; }
             }
             if low <= 0.0 {
-                // The first root, bracketed closely for the refinement after the loop.
-                var root = low_s;
-                if abs(c2) * low_s <= 1e-6 * abs(c1) {
-                    if c1 < 0.0 { root = min(-c0 / c1, low_s); }
-                } else {
-                    let disc = max(c1 * c1 - 4.0 * c2 * c0, 0.0);
-                    let q = -0.5 * (c1 + select(-1.0, 1.0, c1 >= 0.0) * sqrt(disc));
-                    let r1 = q / c2;
-                    let r2 = c0 / q;
-                    let first = min(select(3.4e38, r1, r1 > 0.0), select(3.4e38, r2, r2 > 0.0));
-                    root = min(first, low_s);
-                }
-                let before = root * (1.0 - ROOT_BRACKET);
-                let after = min(root * (1.0 + ROOT_BRACKET), low_s);
-                met = Met(
-                    t + before, c0 + before * (c1 + before * c2),
-                    t + after, min(c0 + after * (c1 + after * c2), 0.0),
-                    level, blends, weight,
-                );
+                // Its root is found after the loop (fewer values live in it).
+                met = Met(t, c0, t + low_s, low, level, blends, weight);
+                piece = vec2<f32>(c1, c2);
                 break;
             }
         } else {
@@ -457,6 +443,29 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
     if met.level < 0 {
         result.unknown = true;
         return result;
+    }
+    if piece.x < 3.0e38 {
+        // The first root of the clearance in the cell, bracketed closely for the
+        // refinement.
+        let c0 = met.c0; let c1 = piece.x; let c2 = piece.y;
+        let low_s = met.t1 - met.t0;
+        var root = low_s;
+        if abs(c2) * low_s <= 1e-6 * abs(c1) {
+            if c1 < 0.0 { root = min(-c0 / c1, low_s); }
+        } else {
+            let disc = max(c1 * c1 - 4.0 * c2 * c0, 0.0);
+            let q = -0.5 * (c1 + select(-1.0, 1.0, c1 >= 0.0) * sqrt(disc));
+            let r1 = q / c2;
+            let r2 = c0 / q;
+            root = min(min(select(3.4e38, r1, r1 > 0.0), select(3.4e38, r2, r2 > 0.0)), low_s);
+        }
+        let before = root * (1.0 - ROOT_BRACKET);
+        let after = min(root * (1.0 + ROOT_BRACKET), low_s);
+        let t = met.t0;
+        met.t0 = t + before;
+        met.c0 = c0 + before * (c1 + before * c2);
+        met.t1 = t + after;
+        met.c1 = min(c0 + after * (c1 + after * c2), 0.0);
     }
     // Met the ground: refined between the last point above and this one. Here, after
     // the loop, a group of threads refines once; inside it, once for every step any of
