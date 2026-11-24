@@ -144,9 +144,15 @@ impl App {
         } else {
             self.settings.motion_resolution
         };
-        let (w, h) = globecraft_render::view::raster_size(
+        // The quality setting draws the frame with fewer pixels than the screen's.
+        let raster_ppp = globecraft_render::view::quality_pixels_per_point(
             render_rect.size(),
             ppp,
+            self.settings.render_quality.max_height_px(),
+        );
+        let (w, h) = globecraft_render::view::raster_size(
+            render_rect.size(),
+            raster_ppp,
             idle,
             relief,
             motion_scale,
@@ -306,7 +312,7 @@ impl App {
             WakeOutcome::Submit => {
                 let lod_scale = globecraft_render::view::render_scale(
                     render_rect.size(),
-                    ppp,
+                    raster_ppp,
                     idle,
                     relief,
                     motion_scale,

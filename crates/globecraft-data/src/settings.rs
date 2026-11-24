@@ -8,6 +8,7 @@ pub mod layers;
 mod lenient;
 pub mod map_style;
 pub mod navigation;
+pub mod render_quality;
 pub mod screenshot;
 pub mod sidebar;
 pub mod sky;
@@ -98,6 +99,8 @@ pub struct Settings {
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
+    /// How sharp the globe renders: the screen's pixels, HD or SD.
+    pub render_quality: render_quality::RenderQuality,
     /// The resolution a moving view without relief renders at, as a share of the full
     /// one (0.2–1); `None`: automatic (0.4).
     pub motion_resolution: Option<f32>,
@@ -186,6 +189,7 @@ impl Default for Settings {
             utc_times: false,
             keys_in_keychain: false,
             gpu_globe: true,
+            render_quality: render_quality::RenderQuality::Screen,
             motion_resolution: None,
             motion_resolution_relief: None,
             smooth_relief: true,
@@ -898,6 +902,7 @@ mod tests {
             utc_times: false,
             keys_in_keychain: false,
             gpu_globe: true,
+            render_quality: render_quality::RenderQuality::Screen,
             motion_resolution: None,
             motion_resolution_relief: None,
             smooth_relief: true,

@@ -341,6 +341,11 @@ statusbar-cursor-elevation = Elevação: { $distance }
 
 
 settings-uncap-fps-toggle = FPS sem limite (requer reiniciar)
+settings-render-quality = Resolução do globo
+settings-render-quality-screen = Tamanho da tela
+settings-render-quality-hd = HD (1080p)
+settings-render-quality-sd = SD (720p)
+settings-render-quality-help = Quantos pixels o globo desenha. HD e SD desenham menos do que uma tela grande ou Retina tem e carregam blocos mais grossos: quadros mais leves, imagem mais suave. Os quadros em movimento continuam uma parte disso.
 settings-motion-resolution-auto = Quadros mais leves em movimento, vista plana (automático)
 settings-motion-resolution = Resolução em movimento, vista plana
 settings-motion-resolution-help = Enquanto a vista se move, os quadros são renderizados a uma parte da resolução total, para chegarem depressa. O automático usa 40 %. 100 % é o mais nítido e o mais lento.

@@ -341,6 +341,11 @@ statusbar-cursor-elevation = Elevation: { $distance }
 
 
 settings-uncap-fps-toggle = Uncap FPS (restart required)
+settings-render-quality = Globe resolution
+settings-render-quality-screen = Screen size
+settings-render-quality-hd = HD (1080p)
+settings-render-quality-sd = SD (720p)
+settings-render-quality-help = How many pixels the globe draws. HD and SD draw fewer than a large or Retina screen has and load coarser tiles: lighter frames, a softer picture. Moving frames stay a share of it.
 settings-motion-resolution-auto = Lighter frames while moving, flat view (automatic)
 settings-motion-resolution = Resolution while moving, flat view
 settings-motion-resolution-help = While the view moves, frames render at a share of the full resolution, so they come quickly. Automatic uses 40 %. 100 % is sharpest and slowest.
