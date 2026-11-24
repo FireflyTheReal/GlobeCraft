@@ -4,7 +4,7 @@ use globecraft_data::tiles::{Lookup, TileKey};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-/// Draws the pixels the shader left (alpha below 255) as the CPU does; with the
+/// Draws the pixels the shader left (`overview::UNDRAWN`) as the CPU does; with the
 /// relief, from the GPU's walk (`walk`, `relief::PLANES` planes): marched where the
 /// shader did not take the walk's ground. The tiles missed, and the elevation tiles
 /// held.
@@ -37,7 +37,7 @@ pub(super) fn pixels(
                     let starts = crate::MarchStarts::walked(walk, request.width, request.height, y);
                     let mut sun_seen = crate::SunSeen::default();
                     for (pack, group) in pixels.chunks_mut(crate::rays::RAY_LANES).enumerate() {
-                        if group.iter().all(|pixel| pixel[3] == 255) {
+                        if group.iter().all(|pixel| *pixel != super::overview::UNDRAWN) {
                             continue;
                         }
                         let first_x = pack * crate::rays::RAY_LANES;
@@ -47,7 +47,7 @@ pub(super) fn pixels(
                             rays.cast_model::<true>(first_x, y)
                         };
                         for (lane, (pixel, ray)) in group.iter_mut().zip(samples).enumerate() {
-                            if pixel[3] == 255 {
+                            if *pixel != super::overview::UNDRAWN {
                                 continue;
                             }
                             let x = first_x + lane;
@@ -83,7 +83,7 @@ pub(super) fn pixels(
                 for (pack, group) in pixels.chunks_mut(crate::rays::RAY_LANES).enumerate() {
                     // Most surface packs need no CPU work. Sky/horizon packs retain
                     // f64 classification and the deterministic 64-bit stars.
-                    if group.iter().all(|pixel| pixel[3] == 255) {
+                    if group.iter().all(|pixel| *pixel != super::overview::UNDRAWN) {
                         continue;
                     }
                     for (lane, (pixel, ray)) in group
@@ -91,7 +91,7 @@ pub(super) fn pixels(
                         .zip(rays.cast(pack * crate::rays::RAY_LANES, y))
                         .enumerate()
                     {
-                        if pixel[3] == 255 {
+                        if *pixel != super::overview::UNDRAWN {
                             continue;
                         }
                         let color = if ray.discriminant >= 0.0 && ray.camera_dot < 0.0 {

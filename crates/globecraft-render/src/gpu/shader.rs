@@ -33,6 +33,10 @@ pub(super) fn source() -> String {
         ("AIR_SCATTERING_AT", super::overview::AIR_SCATTERING_AT),
         ("AIR_INSIDE_AT", super::overview::AIR_INSIDE_AT),
         ("AERIAL_AT", super::overview::AERIAL_AT),
+        (
+            "UNDRAWN",
+            u32::from_le_bytes(super::overview::UNDRAWN) as usize,
+        ),
         ("MAP_ZOOM", usize::from(super::overview::MAP_ZOOM)),
         (
             "GLOBAL_MAX_LEVEL",
@@ -79,6 +83,12 @@ pub(super) fn source() -> String {
         ("COLOUR_MAX_GAIN", crate::colour_match::MAX_GAIN),
         ("COLOUR_DARK_FLOOR", crate::colour_match::DARK_FLOOR),
         ("AIR_SEA_LEVEL_SLACK", air::SEA_LEVEL_SLACK_KM),
+        ("SUN_BRIGHTNESS", crate::sun::SUN_BRIGHTNESS),
+        ("SUN_NEAR_LIGHT", crate::sun::SUN_GLOW_NEAR.0),
+        ("SUN_WIDE_LIGHT", crate::sun::SUN_GLOW_WIDE.0),
+        ("SUN_RED", crate::sun::SUN_COLOUR.x),
+        ("SUN_GREEN", crate::sun::SUN_COLOUR.y),
+        ("SUN_BLUE", crate::sun::SUN_COLOUR.z),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{value:?}"));
     }
@@ -108,6 +118,10 @@ pub(super) fn source() -> String {
         ("CHART_GAIN", crate::terrain::SHADE_GAIN),
         ("CHART_MIN", crate::terrain::MIN_SHADE),
         ("CHART_MAX", crate::terrain::MAX_SHADE),
+        ("SUN_DISC", crate::sun::SUN_RADIUS_RAD),
+        ("SUN_NEAR_FALL", crate::sun::SUN_GLOW_NEAR.1),
+        ("SUN_WIDE_FALL", crate::sun::SUN_GLOW_WIDE.1),
+        ("SUN_REACH", crate::sun::SUN_GLOW_REACH_RAD),
         ("TWILIGHT_OFFSET", tuning::TWILIGHT_OFFSET),
         ("TWILIGHT_WIDTH", tuning::TWILIGHT_WIDTH),
         ("NIGHT_BRIGHTNESS", tuning::NIGHT_BRIGHTNESS as f64),

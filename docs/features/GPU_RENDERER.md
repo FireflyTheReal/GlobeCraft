@@ -61,12 +61,18 @@ tables; with the camera inside the air, since 2026-11-23, also the tables narrow
 its height and sun, written each frame, and below 30 km the air integrated along the
 camera's rays, `atmosphere::aerial`, written when it changes) and night lights (their tiles share the atlas and
 the tile table, their needs marked in their keys). Camera operations,
-picking and overlay projection remain double precision. The sky, a narrow horizon
-strip, tile-seam strips and the polar caps (latitudes past 83° under satellite
-imagery, which have their own projection, tiles and colour matching) are left by the
-shader and drawn by the shared precise CPU calculations ("repair"), retaining
-deterministic stars and avoiding floating-point changes in tile-edge selection. A
-view that is mostly polar cap is therefore mostly CPU work.
+picking and overlay projection remain double precision. Since 2026-11-24 (roadmap
+D8, G5) the shader also draws the sky when it is drawn behind the frame
+(`RenderCfg::sky_behind`, as the app does; the stars are the app's layer behind):
+the air's glow seen from inside the air or from space (`atmosphere::Frame::sky`,
+`Air::behind`), the sun through it and the aurora; with clouds seen from below the
+sky stays the CPU's. Pixels the shader leaves are marked `overview::UNDRAWN`
+(magenta with no alpha, which a drawn pixel never is): a horizon strip (where the
+discriminant is under a hundredth of the ray's reach squared, or under 0.01), tile-seam
+strips, the polar caps (latitudes past 83° under satellite imagery, which have their
+own projection, tiles and colour matching), the sky drawn into the frame, and with
+relief every ray the walk did not answer; the shared precise CPU calculations draw
+them ("repair"). A view that is mostly polar cap is therefore mostly CPU work.
 
 Four guards make an untested adapter safe to try:
 

@@ -40,6 +40,9 @@ struct View {
     // The relief (roadmap D8, G4): 1 when the view has it (the ground then comes from
     // the GPU's walk, `walk`), its fade, its exaggeration; w unused.
     relief: vec4<f32>,
+    // The sky: drawn here (1), the camera's distance from the centre (km) and the sun's
+    // cosine there (`atmosphere::Frame::sky`).
+    sky: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read_write> output: array<u32>;
@@ -64,6 +67,20 @@ struct View {
 // the relief on (`view.relief.x`).
 @group(0) @binding(6) var<storage, read> walk: array<f32>;
 const NO_SLOPE: f32 = 3.4e38;
+const SKY_MISS: f32 = -3.4e38;
+// A pixel left to the CPU (`overview::UNDRAWN`).
+const UNDRAWN: u32 = __UNDRAWN__u;
+// A ray misses the ellipsoid for sure past this much of the discriminant.
+const SKY_MARGIN: f32 = 1e-5;
+// The sun in the sky (`sun::sun_in_sky`).
+const SUN_DISC: f32 = __SUN_DISC__;
+const SUN_REACH: f32 = __SUN_REACH__;
+const SUN_BRIGHTNESS: f32 = __SUN_BRIGHTNESS__;
+const SUN_NEAR_LIGHT: f32 = __SUN_NEAR_LIGHT__;
+const SUN_NEAR_FALL: f32 = __SUN_NEAR_FALL__;
+const SUN_WIDE_LIGHT: f32 = __SUN_WIDE_LIGHT__;
+const SUN_WIDE_FALL: f32 = __SUN_WIDE_FALL__;
+const SUN_COLOUR: vec3<f32> = vec3<f32>(__SUN_RED__, __SUN_GREEN__, __SUN_BLUE__);
 // Hill shading without the sun (`terrain::Slope::chart_light`).
 const LIGHT_UP: f32 = __LIGHT_UP__;
 const LIGHT_NORTH: f32 = __LIGHT_NORTH__;
@@ -187,6 +204,7 @@ const MERCATOR_LIMIT_DEG: f32 = __MERCATOR__;
 const TILE_SEAM_PRECISION_MARGIN: f32 = 0.0001;
 const MERCATOR_EDGE_EPSILON: f32 = 0.00000011920928955078125;
 const HORIZON_PRECISION_MARGIN: f32 = 0.01;
+const HORIZON_SHARE: f32 = 1e-4;
 // Where the polar caps begin (the CPU draws them, see `polar`), less a margin for f32.
 const POLAR_CAP_START: f32 = __POLAR_CAP_START__;
 const PI: f32 = 3.141592653589793;
@@ -700,6 +718,75 @@ fn inside_ground(dir: vec3<f32>, distance_km: f32, sunlit: bool) -> InsideAir {
     }
     return InsideAir(scattered * adapt, transmitted.rgb, sunlight);
 }
+// The colour (as drawn, premultiplied) and alpha of a ray that misses the Earth, for
+// a sky drawn behind the frame (`pixel::sky` with `sky_behind`, no clouds below): the
+// air's glow (`atmosphere::Frame::sky`, `Air::behind`), the sun through it
+// (`sun::sun_in_sky`), the aurora. `mu`: the ray's cosine to the camera's vertical in
+// the surface's measure.
+fn sky_colour(camera: vec3<f32>, dir: vec3<f32>, mu: f32) -> vec4<f32> {
+    let sunlit = view.effects.x != 0u;
+    let sun = view.sun.xyz;
+    var scattered = vec3<f32>(0.0);
+    var through = vec3<f32>(1.0);
+    var air = false;
+    if view.effects.y != 0u {
+        let r = view.sky.y;
+        let sun_cosine = view.sky.z;
+        if view.air_frame.w > 0.0 {
+            var nu = mu * sun_cosine;
+            if sunlit { nu = dot(dir, sun); }
+            let way = inside_way_out(r, mu);
+            scattered = air_radiance(inside_scattered(way, false, nu), nu) * view.air_adapt.rgb;
+            through = inside_crossed(way).rgb;
+            air = true;
+        } else {
+            let reach = r * r * (mu * mu - 1.0) + AIR_TOP * AIR_TOP;
+            if mu < 0.0 && reach >= 0.0 {
+                let entry = -r * mu - sqrt(reach);
+                let mu_top = clamp((r * mu + entry) / AIR_TOP, -1.0, 1.0);
+                var mu_s = sun_cosine;
+                var nu = mu_top * sun_cosine;
+                if sunlit {
+                    nu = dot(dir, sun);
+                    mu_s = clamp((r * sun_cosine + entry * nu) / AIR_TOP, -1.0, 1.0);
+                }
+                scattered = air_radiance(air_scattering_at(AIR_TOP, mu_top, mu_s, nu, false), nu);
+                through = air_to_top(AIR_TOP, mu_top).rgb;
+                air = true;
+            }
+        }
+    }
+    var glow = vec4<f32>(0.0);
+    if air {
+        let light = scattered * AIR_EXPOSURE;
+        let toned = light / (vec3<f32>(1.0) + light);
+        let dark = 1.0 - max(max(toned.x, toned.y), toned.z);
+        glow = vec4<f32>(sqrt(toned), 1.0 - sqrt((through.x + through.y + through.z) / 3.0) * dark * dark);
+    }
+    var disc = vec3<f32>(0.0);
+    if sunlit && dot(dir, sun) > cos(SUN_REACH) {
+        // The angle from the sun's centre without the cancellation of acos near 1.
+        let angle = 2.0 * asin(min(length(dir - sun) * 0.5, 1.0));
+        var light = 0.0;
+        if angle <= SUN_DISC { light = 1.0; } else if angle < SUN_REACH {
+            let past = angle - SUN_DISC;
+            light = min(SUN_NEAR_LIGHT * exp(-past / SUN_NEAR_FALL) + SUN_WIDE_LIGHT * exp(-past / SUN_WIDE_FALL), 1.0);
+        }
+        disc = SUN_COLOUR * min(through * SUN_BRIGHTNESS, vec3<f32>(1.0)) * light;
+    }
+    var aurora = vec3<f32>(0.0);
+    if view.figure.w > 0.0 { aurora = aurora_glow(camera, dir, 3.4e38); }
+    let lit = min(glow.rgb + disc, vec3<f32>(1.0));
+    let open = lit + aurora * (vec3<f32>(1.0) - lit);
+    return vec4<f32>(open, max(glow.w, max(max(disc.x, disc.y), disc.z)));
+}
+// A drawn pixel: never `UNDRAWN` (a sky that comes out so moves by a level of green).
+fn put(i: u32, colour: vec4<f32>) {
+    let c = vec4<u32>(clamp(colour, vec4<f32>(0.0), vec4<f32>(1.0)) * 255.0);
+    var word = c.r | (c.g << 8u) | (c.b << 16u) | (c.a << 24u);
+    if word == UNDRAWN { word += 256u; }
+    output[i] = word;
+}
 // The sky's light and the share of the sun's a surface facing it takes, for the sun's
 // cosine `e` over ground whose own horizon lies `dip` (radians) below the level one
 // (`pixel::Daylight::below`; `raised` with a dip): the sun rises and the sky
@@ -755,12 +842,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         t = walk[count + i];
         seen = walk[2u * count + i];
         slope = vec2<f32>(walk[4u * count + i], walk[5u * count + i]);
+        // The sky, where the walk surely met no ground.
+        if slope.x <= SKY_MISS {
+            let disc = bb * bb - a * height_term;
+            if view.sky.x > 0.0 && (bb >= 0.0 || disc < -SKY_MARGIN) {
+                put(i, sky_colour(camera, dir, bb / sqrt(a * view.shape.w)));
+            } else { output[i] = UNDRAWN; }
+            return;
+        }
         if t < 0.0 || walk[3u * count + i] < 0.5 || slope.x >= NO_SLOPE || (view.effects.x != 0u && seen < 0.0) {
-            output[i] = 0u; return;
+            output[i] = UNDRAWN; return;
         }
     } else {
         let disc = bb * bb - a * height_term;
-        if disc < HORIZON_PRECISION_MARGIN || bb >= 0.0 { output[i] = 0u; return; }
+        if bb >= 0.0 || disc < -SKY_MARGIN {
+            if view.sky.x > 0.0 { put(i, sky_colour(camera, dir, bb / sqrt(a * view.shape.w))); } else { output[i] = UNDRAWN; }
+            return;
+        }
+        // Near the horizon the root's f32 error grows as 1/sqrt(disc) of bb's: within a
+        // hundredth of |bb| the CPU draws (up to 6e-6 of the distance off before).
+        if disc < min(HORIZON_PRECISION_MARGIN, HORIZON_SHARE * bb * bb) { output[i] = UNDRAWN; return; }
         t = height_term / (-bb + sqrt(disc));
     }
     let point = camera + dir * t;
@@ -772,7 +873,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // The polar caps have their own imagery, projection and colour matching, and the
     // night lights their own fill past their tiles: the precise CPU repair draws them
     // (a small share of an overview).
-    if (view.raster.z != 0u || view.lights.x != 0u) && abs(lat) > POLAR_CAP_START { output[i] = 0u; return; }
+    if (view.raster.z != 0u || view.lights.x != 0u) && abs(lat) > POLAR_CAP_START { output[i] = UNDRAWN; return; }
     let mpp = t * EARTH_RADIUS_M * (2.0 * FOV_HALF_TAN / f32(view.effects.z)) / sqrt(max(incidence,LOD_INC_COS));
     // The radius of the parallel's circle: the prime vertical radius times cos(latitude).
     let prime_vertical = view.figure.x / sqrt(1.0 - view.figure.y * normal.z * normal.z);
@@ -803,9 +904,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var spot = spot_from_uv(uv);
     if abs(lat) < POLAR_CAP_START && dot(d, d) < view.near_frac.z {
         spot = spot_near(d);
-    } else if seam_zoom > GLOBAL_MAX_LEVEL { output[i] = 0u; return; }
+    } else if seam_zoom > GLOBAL_MAX_LEVEL { output[i] = UNDRAWN; return; }
     let seam_local = spot_local(spot, seam_zoom, spot_tile(spot, seam_zoom));
-    if any(min(seam_local, vec2<f32>(1.0) - seam_local) < vec2<f32>(TILE_SEAM_PRECISION_MARGIN)) { output[i] = 0u; return; }
+    if any(min(seam_local, vec2<f32>(1.0) - seam_local) < vec2<f32>(TILE_SEAM_PRECISION_MARGIN)) { output[i] = UNDRAWN; return; }
     let offset = vec2<f32>(f32(x)-f32(width)/2.0,f32(y)-f32(height)/2.0);
     let distance = dot(offset,offset);
     var color = chain(0u,z,spot,distance,z,fraction).rgb;
@@ -921,6 +1022,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let glow = aurora_glow(camera, dir, t);
         color = color + glow * (vec3<f32>(1.0) - color);
     }
-    let rgb = vec3<u32>(clamp(color,vec3<f32>(0.0),vec3<f32>(1.0))*255.0);
-    output[i] = rgb.r | (rgb.g<<8u) | (rgb.b<<16u) | (255u<<24u);
+    put(i, vec4<f32>(color, 1.0));
 }

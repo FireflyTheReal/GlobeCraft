@@ -92,6 +92,9 @@ const SUN_RISE_START_COSINE: f32 = __SUN_RISE_START__;
 const HIT_REFINEMENTS: i32 = 3;
 const MAX_SLOPE: f32 = __MAX_SLOPE__;
 const NO_SLOPE: f32 = 3.4e38;
+// In the slope's plane: the ray surely meets no ground (it misses the relief's shell,
+// or stays over the maxima to where it leaves it, never reaching the ellipsoid).
+const SKY: f32 = -3.4e38;
 // A tile not held.
 const NOT_HELD: f32 = -1.0;
 
@@ -497,10 +500,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dir = ray(i, width, height);
     let camera = relief.camera.xyz;
     let shell = span(camera, dir, relief.axes.xyz + vec3<f32>(relief.axes.w));
-    if shell.x > shell.y || shell.y <= 0.0 { starts[i] = 0.0; return; }
+    if shell.x > shell.y || shell.y <= 0.0 { starts[i] = 0.0; starts[4u * count + i] = SKY; return; }
     var end = shell.y;
     let floor_hit = span(camera, dir, relief.axes.xyz);
-    if floor_hit.x <= floor_hit.y && floor_hit.x > 0.0 { end = min(end, floor_hit.x); }
+    let floor_met = floor_hit.x <= floor_hit.y && floor_hit.x > 0.0;
+    if floor_met { end = min(end, floor_hit.x); }
     let first = max(shell.x, 0.0);
     let view = walk(vec3<f32>(0.0), dir, first, end, relief.march.y, true, 0.0);
     // The CPU walks the last texel again: its own steps between exact measurements put
@@ -508,6 +512,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     starts[i] = select(max(view.above - BACK_TEXELS * view.texel_t, 0.0), end, view.above >= end);
     // -1: the walk gave up without an answer (`relief::helps`).
     if view.unknown && view.hit < 0.0 { starts[3u * count + i] = -1.0; }
+    if !floor_met && !view.unknown && view.hit < 0.0 && view.above >= end { starts[4u * count + i] = SKY; }
     if view.hit >= 0.0 {
         starts[count + i] = view.hit;
         let trusted = view.hit - view.above <= TRUSTED_TEXELS * view.texel_t;

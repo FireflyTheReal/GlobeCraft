@@ -939,6 +939,12 @@ impl Frame {
         }
     }
 
+    /// The camera's distance from the centre (km) and the sun's cosine there, as the
+    /// sky takes them (`sky`; the GPU's `sky_colour`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn camera_and_sun(&self) -> (f32, f32) {
+        (self.radius_km, self.sun_cosine)
+    }
     /// The cosine between a view direction and the sun; without a sun, as for one at
     /// right angles to the view.
     fn phase(&self, direction: glam::DVec3, mu: f32) -> f32 {

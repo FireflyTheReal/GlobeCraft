@@ -823,6 +823,10 @@ fn gpu_close_overview_matches_cpu() {
                         lod_scale: 1.0,
                         level_blend: true,
                         night_lights: lights.then_some(1),
+                        // The sky behind the frame, as the app draws it (the GPU's,
+                        // G5), but for one case: the sky drawn into the frame (the
+                        // CPU's).
+                        sky_behind: lit || lights,
                         ..crate::tests::batch_reference_config(provider)
                     },
                     overlays: None,
@@ -972,6 +976,8 @@ fn gpu_relief_view_matches_cpu() {
             cfg.grid = false;
             cfg.terrain = Some(crate::TerrainCfg::new(exaggeration, fade));
             cfg.sun = sun;
+            // The sky behind the frame, as the app draws it (the GPU's, G5).
+            cfg.sky_behind = true;
             let request = RenderRequest {
                 width,
                 height,

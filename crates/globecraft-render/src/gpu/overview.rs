@@ -41,6 +41,9 @@ const MAX_RASTER_PIXELS: usize = 2000 * 2000;
 /// longer: the relief walk at 1920×1200 takes the software adapter half a minute.
 pub(super) const FRAME_WAIT_LIMIT: std::time::Duration =
     std::time::Duration::from_secs(if cfg!(test) { 120 } else { 5 });
+/// A pixel the shader left to the CPU (`repair`): magenta with no alpha, which the
+/// shader never draws (it moves a sky that comes out so by a level of green).
+pub(super) const UNDRAWN: [u8; 4] = [255, 0, 255, 0];
 /// Marks the night lights' tiles in the tile table's level word (levels are below 32).
 pub(super) const LIGHTS_TAG: u32 = 0x100;
 
@@ -83,6 +86,10 @@ struct View {
     near_cubic: [[f32; 4]; 5],
     /// The relief: on (1), its fade and exaggeration.
     relief: [f32; 4],
+    /// The sky: drawn by the GPU (1: behind the frame, `RenderCfg::sky_behind`, and no
+    /// clouds seen from below), the camera's distance from the centre (km) and the
+    /// sun's cosine there (`atmosphere::Frame::sky`).
+    sky: [f32; 4],
 }
 pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
@@ -455,6 +462,19 @@ impl Overview {
             relief: request.cfg.terrain.map_or([0.0; 4], |relief| {
                 [1.0, relief.fade, relief.exaggeration() as f32, 0.0]
             }),
+            sky: {
+                let (radius_km, sun_cosine) =
+                    air.as_ref().map_or((0.0, 0.0), |air| air.camera_and_sun());
+                let eye_km = (request.basis.c.dot(request.basis.c * q).sqrt() - 1.0)
+                    * globecraft_core::EARTH_RADIUS_KM;
+                let drawn = request.cfg.sky_behind
+                    && request
+                        .cfg
+                        .clouds
+                        .as_ref()
+                        .is_none_or(|_| !crate::clouds::seen_from_below(eye_km));
+                [if drawn { 1.0 } else { 0.0 }, radius_km, sun_cosine, 0.0]
+            },
         };
         let mut table = vec![[u32::MAX; 4]; TILE_TABLE_SIZE];
         for (&key, &layer) in slots {
@@ -626,7 +646,7 @@ impl Overview {
         #[cfg(test)]
         let repaired = pixels
             .chunks_exact(4)
-            .filter(|pixel| pixel[3] != 255)
+            .filter(|pixel| **pixel == UNDRAWN[..])
             .count();
         let (repaired_needs, relief_tiles) =
             super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes));
@@ -800,7 +820,7 @@ mod tests {
             .filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. }))
             .count();
         assert!(storage <= 8, "{storage} storage buffers");
-        assert_eq!(std::mem::size_of::<View>(), 480);
+        assert_eq!(std::mem::size_of::<View>(), 496);
         assert_eq!(std::mem::offset_of!(View, lights), 160);
         assert_eq!(std::mem::offset_of!(View, origin), 176);
         assert_eq!(std::mem::offset_of!(View, raster), 112);
