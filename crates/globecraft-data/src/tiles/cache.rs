@@ -1122,17 +1122,45 @@ async fn worker(
     }
 }
 
+/// A future whose panic becomes an error: a panicking download (as every TLS handshake on
+/// Android did before its certificate verifier was set up) would otherwise end its worker
+/// task with the tile's request slot still counted, and after `TILE_WORKER_COUNT` of them
+/// nothing would ever download again.
+struct CatchPanic<F>(std::pin::Pin<Box<F>>);
+impl<F: std::future::Future> std::future::Future for CatchPanic<F> {
+    type Output = Result<F::Output, String>;
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let future = self.0.as_mut();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.poll(cx))) {
+            Ok(std::task::Poll::Ready(output)) => std::task::Poll::Ready(Ok(output)),
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Err(payload) => std::task::Poll::Ready(Err(payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("non-string panic payload")
+                .to_owned())),
+        }
+    }
+}
+
 async fn download(cache: &TileCache, job: Job, repaint: &Arc<dyn Fn() + Send + Sync>) {
     let revalidating = job.revalidate.clone();
-    let fetch = fetch_tile(
+    let fetch = CatchPanic(Box::pin(fetch_tile(
         job.key,
         &cache.disk,
         cache.fixture_source.as_deref(),
         job.ahead,
         revalidating.clone(),
-    );
+    )));
     let outcome = tokio::select! {
-        result = fetch => Some(result),
+        result = fetch => Some(result.unwrap_or_else(|panic| {
+            crate::log_line!("Tile download panicked: {panic}");
+            Err(TileFailure::Error)
+        })),
         () = job.cancel.notified() => None,
     };
     cache
