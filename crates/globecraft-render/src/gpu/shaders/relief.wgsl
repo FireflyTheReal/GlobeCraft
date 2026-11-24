@@ -551,26 +551,39 @@ const SAME_DEPTH_SHARE: f32 = __SAME_DEPTH_SHARE__;
 // An odd column between two neighbours wholly lit, or wholly in shadow, at its own
 // depth takes their share, as the CPU's `SunSeen` (which looks left only); every
 // other is walked. A walk toward the sun was half of the relief walk's time on an M1
-// (2026-11-24).
-@compute @workgroup_size(64)
-fn sun_shared(@builtin(global_invocation_id) id: vec3<u32>) {
+// (2026-11-24). The columns still to walk are gathered in each workgroup first and
+// walked by its first threads: a group of threads takes as long as its longest walk,
+// so a walk or two among shared columns otherwise cost the group a whole walk.
+const SHARED_GROUP: u32 = 256u;
+var<workgroup> pending: array<u32, SHARED_GROUP>;
+var<workgroup> pending_count: atomic<u32>;
+@compute @workgroup_size(256)
+fn sun_shared(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local: u32) {
+    if local == 0u { atomicStore(&pending_count, 0u); }
+    workgroupBarrier();
     let width = relief.raster.x; let height = relief.raster.y;
-    let odd = width / 2u;
-    if id.x >= odd * height || relief.sun.w < 0.5 { return; }
-    let x = (id.x % odd) * 2u + 1u;
-    if x + 1u >= width { return; }
-    let i = (id.x / odd) * width + x;
     let count = width * height;
-    let hit = starts[count + i];
-    if hit < 0.0 { return; }
-    let left = starts[count + i - 1u];
-    let right = starts[count + i + 1u];
-    let seen = starts[2u * count + i - 1u];
-    let full_shade = 1.0 - relief.shade.y;
-    if left >= 0.0 && right >= 0.0 && abs(left - hit) <= hit * SAME_DEPTH_SHARE && abs(right - hit) <= hit * SAME_DEPTH_SHARE
-        && seen == starts[2u * count + i + 1u] && (seen == 1.0 || seen == full_shade) {
-        starts[2u * count + i] = seen;
-        return;
+    let odd = width / 2u;
+    let x = (id.x % max(odd, 1u)) * 2u + 1u;
+    let i = (id.x / max(odd, 1u)) * width + x;
+    if relief.sun.w > 0.5 && id.x < odd * height && x + 1u < width && starts[count + i] >= 0.0 {
+        let hit = starts[count + i];
+        let left = starts[count + i - 1u];
+        let right = starts[count + i + 1u];
+        let seen = starts[2u * count + i - 1u];
+        let full_shade = 1.0 - relief.shade.y;
+        if left >= 0.0 && right >= 0.0 && abs(left - hit) <= hit * SAME_DEPTH_SHARE && abs(right - hit) <= hit * SAME_DEPTH_SHARE
+            && seen == starts[2u * count + i + 1u] && (seen == 1.0 || seen == full_shade) {
+            starts[2u * count + i] = seen;
+        } else {
+            pending[atomicAdd(&pending_count, 1u)] = i;
+        }
     }
-    starts[2u * count + i] = sun_seen(ray(i, width, height) * hit, hit);
+    workgroupBarrier();
+    let walks = atomicLoad(&pending_count);
+    if local < walks {
+        let j = pending[local];
+        let hit = starts[count + j];
+        starts[2u * count + j] = sun_seen(ray(j, width, height) * hit, hit);
+    }
 }

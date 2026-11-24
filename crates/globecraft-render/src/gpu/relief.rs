@@ -41,6 +41,8 @@ const WORKGROUP: u32 = 64;
 const MAX_UPLOADS_PER_FRAME: usize = 64;
 /// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
+/// `sun_shared`'s workgroup (`SHARED_GROUP` in the shader).
+const SHARED_GROUP: u32 = 256;
 /// The walk's planes per pixel (`starts` in the shader): start, ground, sun's share,
 /// trust, slope east and north.
 pub(super) const PLANES: usize = 6;
@@ -517,10 +519,14 @@ impl ReliefMarch {
                 label: Some("GlobeCraft relief march"),
                 timestamp_writes: None,
             });
-            for pipeline in [&self.pipeline, &self.sun, &self.sun_shared] {
+            for (pipeline, workgroup) in [
+                (&self.pipeline, WORKGROUP),
+                (&self.sun, WORKGROUP),
+                (&self.sun_shared, SHARED_GROUP),
+            ] {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &group(pipeline), &[]);
-                pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
+                pass.dispatch_workgroups((count as u32).div_ceil(workgroup), 1, 1);
             }
         }
         encoder.copy_buffer_to_buffer(
