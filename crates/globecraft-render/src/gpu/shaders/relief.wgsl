@@ -75,6 +75,11 @@ const NEAR_ZOOM: i32 = 15;
 // The exact piece's root is bracketed this closely (share of the way along the piece)
 // for the refinement, which measures the ground there itself.
 const ROOT_BRACKET: f32 = 0.01;
+// A level not held yet is stood in for by one at most this many levels coarser, over
+// the open air only and this much higher for each level it stands in for (metres): far
+// more than a level's maxima rise over the next coarser one's.
+const FALLBACK_LEVELS: i32 = 6;
+const FALLBACK_CLEARANCE_M: f32 = 250.0;
 // Texels the CPU walks again before the ground the GPU found.
 const BACK_TEXELS: f32 = 1.0;
 // As `terrain::sun_light` and `SunMargin`.
@@ -295,6 +300,7 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
     var own_looked = Looked(vec3<u32>(0xffffffffu), -1);
     var coarse_looked = own_looked;
     var fine_looked = own_looked;
+    var fallback_looked = own_looked;
     var met = Met(0.0, 0.0, 0.0, 0.0, -1, false, 1.0);
     // Where the view's ray met the ground inside a cell: the clearance's c1 and c2 there.
     var piece = vec2<f32>(3.4e38);
@@ -309,13 +315,34 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         let at = spot(p, dir);
         if at.past_limit { result.unknown = true; return result; }
         let zoom = log2(2.0 * PI * EARTH_RADIUS_M * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / (DEM_TEXELS * max(t * EARTH_RADIUS_M * angle, 0.01) * PIXELS_PER_TEXEL));
-        let level = clamp(i32(floor(zoom)), 0, MAX_ZOOM);
-        if level >= COARSE_COORDINATE_LEVEL && !is_near(level, d) { result.unknown = true; return result; }
+        let wanted = clamp(i32(floor(zoom)), 0, MAX_ZOOM);
+        if wanted >= COARSE_COORDINATE_LEVEL && !is_near(wanted, d) { result.unknown = true; return result; }
+        // The tiles under the point, looked up once a step.
+        var level = wanted;
+        var own = locate(level, d, at.uv, &own_looked);
+        // A level not held yet (a tile the view has not needed before: round a camera
+        // that moved, the finest levels) is stood in for by the finest held one under
+        // it, as the CPU's march does (`terrain::dem_tile`), but only over the open
+        // air: its maxima count `FALLBACK_CLEARANCE_M` higher, and the walk ends without
+        // an answer where it would go under them.
+        var fallback = false;
+        if own.layer < 0 {
+            for (var below = wanted - 1; below >= max(wanted - FALLBACK_LEVELS, 0); below--) {
+                let stand_in = locate(below, d, at.uv, &fallback_looked);
+                if stand_in.layer >= 0 {
+                    own = stand_in;
+                    level = below;
+                    fallback = true;
+                    break;
+                }
+            }
+        }
         let fraction = zoom - f32(level);
-        let blends = relief.march.w > 0.5 && level > 0 && fraction < BLEND_LEVELS;
+        let blends = !fallback && relief.march.w > 0.5 && level > 0 && fraction < BLEND_LEVELS;
         let weight = select(1.0, clamp(fraction / BLEND_LEVELS, 0.0, 1.0), blends);
-        let finer = safe && level < MAX_ZOOM && fraction > 1.0 - LEVEL_EDGE;
-        let coarser = level > 0 && ((safe && fraction < LEVEL_EDGE) || (relief.march.w > 0.5 && fraction < BLEND_LEVELS + select(0.0, LEVEL_EDGE, safe)));
+        var finer = !fallback && safe && level < MAX_ZOOM && fraction > 1.0 - LEVEL_EDGE;
+        let coarser = !fallback && level > 0 && ((safe && fraction < LEVEL_EDGE) || (relief.march.w > 0.5 && fraction < BLEND_LEVELS + select(0.0, LEVEL_EDGE, safe)));
+        var clearance = margin + FALLBACK_CLEARANCE_M * to_world * f32(wanted - level);
         let texels = DEM_TEXELS * exp2(f32(level));
         let speed = max(length(at.rate) * texels, 1e-12);
         var nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
@@ -329,13 +356,19 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         let texel_world = 2.0 * PI * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / texels;
         let tangent = sqrt(max(1.0 - at.latitude_cosine * at.latitude_cosine, 0.0)) / max(at.latitude_cosine, MIN_LATITUDE_COSINE);
         let longest = sqrt(2.0 / (texel_world * (1.0 + tangent))) / speed;
-        // The tiles under the point, looked up once a step.
-        let own = locate(level, d, at.uv, &own_looked);
         var coarse_at = Place(-1, vec2<f32>(0.0));
         var fine_at = Place(-1, vec2<f32>(0.0));
         if coarser { coarse_at = locate(level - 1, d, at.uv, &coarse_looked); }
-        if finer { fine_at = locate(level + 1, d, at.uv, &fine_looked); }
-        if own.layer < 0 || (coarser && coarse_at.layer < 0) || (finer && fine_at.layer < 0) {
+        if finer {
+            fine_at = locate(level + 1, d, at.uv, &fine_looked);
+            // The finer level not held yet: the same stand-in, over the open air only.
+            if fine_at.layer < 0 {
+                finer = false;
+                clearance += FALLBACK_CLEARANCE_M * to_world;
+                fallback = true;
+            }
+        }
+        if own.layer < 0 || (coarser && coarse_at.layer < 0) {
             result.unknown = true;
             return result;
         }
@@ -345,7 +378,7 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
             var top = block_top(own, mip);
             if coarser { top = max(top, block_top(coarse_at, mip - 1)); }
             if finer { top = max(top, block_top(fine_at, mip + 1)); }
-            let top_world = top * to_world + margin;
+            let top_world = top * to_world + clearance;
             if h > top_world {
                 let size = exp2(f32(mip + 1));
                 let inside = own.at - floor(own.at / size) * size;
@@ -362,6 +395,7 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
             }
         }
         if moved { continue; }
+        if fallback { result.unknown = true; return result; }
         // Within a block of the ground: texel by texel.
         next_mip = 1;
         var top = texel_top(own);

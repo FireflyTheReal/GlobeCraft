@@ -42,7 +42,12 @@ coarser one's), and the overview draws that ground from the walk's buffer on the
 device with the CPU's light (the sun on the slope, the share of it the walk saw, the
 sun rising earlier over high ground, hill shading without the sun). Every pixel it
 does not take (the sky, grounds the CPU would march for, a level or the next coarser
-one not held) the CPU draws in the repair, marched from the walk's starts. The walk
+one not held) the CPU draws in the repair, marched from the walk's starts. A level not
+held yet (round a camera that moved into new tiles) is stood in for by the finest held
+level up to six coarser, as the CPU's march does, but over the open air only and
+250 m higher for each level: with the near camera's level-15 tile missing the walk
+gave up on four of five rays of a tilted view and the CPU drew 14 of 15 frames of a
+turn; with the stand-in it gives up on under 5 % (2026-11-24). The walk
 runs in five passes: first a cone for each 8×8 block of pixels walks the maxima as
 wide as the block's rays (the GPU's form of the CPU's `terrain::beam`), and the
 block's rays start their own walks where it ended; then the view's rays; then the

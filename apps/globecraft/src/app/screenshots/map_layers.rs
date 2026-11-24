@@ -1096,6 +1096,109 @@ fn timeline_and_levels_screenshots() {
     save(&mut h, &dir, "levels-day");
 }
 
+/// Relief while the view turns, as Julien moves it (2026-11-24: "I still don't quite
+/// see the improvements"): over the Alps with 3D terrain and the sun, after the tiles
+/// have loaded, 120 interface steps of about 16 ms turning 0.5° each, then the wait
+/// for the sharp frame once the turn stops. Prints the globe frames shown, their sizes,
+/// how many each renderer drew, and the GPU's status. Manual (network; on the Mac it
+/// times Metal). `PROBE_LAT`, `PROBE_LON`, `PROBE_ALT_KM`, `PROBE_TILT`.
+#[test]
+#[ignore = "manual: needs network; relief frames while turning"]
+fn relief_turn_frames() {
+    let mut h = harness(ThemePreference::Dark);
+    let env = |name: &str, default: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default)
+    };
+    let app = h.state_mut();
+    for layer in ["terrain", "sunlight"] {
+        app.run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect(layer);
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": env("PROBE_LAT", 46.55), "lon": env("PROBE_LON", 8.0),
+            "altitude_km": env("PROBE_ALT_KM", 16.0), "tilt_deg": env("PROBE_TILT", 70.0),
+            "heading_deg": 0.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 90.0);
+    let shown = |h: &Harness<'static, App>| {
+        h.state()
+            .frame
+            .image
+            .as_ref()
+            .map(|f| (Arc::as_ptr(&f.pixels), f.width, f.height))
+    };
+    let before = globecraft_render::backend::status();
+    let mut last = shown(&h);
+    let mut sizes: std::collections::BTreeMap<(usize, usize), usize> = Default::default();
+    let mut arrivals = Vec::new();
+    let turning = std::time::Instant::now();
+    for step in 0..120 {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"heading_deg": 0.5 * f64::from(step + 1)}),
+            )
+            .expect("turn");
+        h.step();
+        let now = shown(&h);
+        if now.map(|f| f.0) != last.map(|f| f.0) {
+            if let Some((_, w, h)) = now {
+                *sizes.entry((w, h)).or_default() += 1;
+            }
+            arrivals.push(turning.elapsed().as_secs_f64() * 1e3);
+        }
+        last = now;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    let turned = turning.elapsed().as_secs_f64() * 1e3;
+    let during = globecraft_render::backend::status();
+    // After the turn: until a frame of the full size is shown.
+    let stopped = std::time::Instant::now();
+    let full = loop {
+        h.step();
+        let now = shown(&h);
+        if now.map(|f| f.0) != last.map(|f| f.0)
+            && now.is_some_and(|(_, w, _)| sizes.keys().all(|&(seen, _)| w > seen))
+        {
+            break Some(stopped.elapsed().as_secs_f64() * 1e3);
+        }
+        last = now;
+        if stopped.elapsed().as_secs() > 10 {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    };
+    let gaps: Vec<f64> = arrivals.windows(2).map(|w| w[1] - w[0]).collect();
+    let mut sorted = gaps.clone();
+    sorted.sort_by(f64::total_cmp);
+    let at = |share: f64| {
+        sorted
+            .get(((sorted.len() as f64 * share) as usize).min(sorted.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(f64::NAN)
+    };
+    println!(
+        "RELIEF TURN: {} globe frames in {turned:.0} ms ({:.1} a second); between frames median {:.0} ms, 90th {:.0} ms, longest {:.0} ms; sizes {sizes:?}",
+        arrivals.len(),
+        arrivals.len() as f64 / turned * 1e3,
+        at(0.5),
+        at(0.9),
+        sorted.last().copied().unwrap_or(f64::NAN),
+    );
+    println!(
+        "RELIEF TURN: drawn by the GPU {} and by the CPU {} while turning; sharp frame {full:?} ms after the turn stopped; GPU {:?}, note {:?}",
+        during.gpu_frames - before.gpu_frames,
+        during.cpu_frames - before.cpu_frames,
+        during.adapter,
+        during.note,
+    );
+}
+
 /// The interface thread's time per frame while the view turns slowly over New York
 /// at 1.2 km with the buildings on (roadmap B1, B7): after the tiles have loaded,
 /// 120 steps of 0.25° each, the mean and the slowest step, and how many new globe

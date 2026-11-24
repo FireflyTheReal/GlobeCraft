@@ -1255,3 +1255,111 @@ fn gpu_relief_walk_timing() {
         );
     }
 }
+
+/// A camera that moved into tiles the GPU does not hold yet (the finest levels round
+/// it): the walk stands in coarser held levels over the open air, so it still answers
+/// most rays, and none of its starts passes the ground.
+#[test]
+#[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
+fn a_level_not_held_yet_is_stood_in_for_over_the_open_air() {
+    // The finest level the walk is given in this view.
+    const HELD_LEVELS: u8 = 12;
+    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    let tiles = std::sync::Mutex::new(HashMap::<TileKey, Arc<Tile>>::new());
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
+        if provider == Provider::Satellite && z > 14 {
+            return Lookup::Unavailable;
+        }
+        let mut tiles = tiles.lock().unwrap();
+        Lookup::Ready(Arc::clone(tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                crate::tests::probe_dem_tile(z, x, y)
+            } else {
+                crate::tests::probe_image_tile(z, x, y)
+            }
+        })))
+    };
+    let (width, height) = (324, 203);
+    let cam = Cam {
+        lat: 30.3,
+        lon: 79.8,
+        heading: 0.0,
+        alt: 16.0,
+        tilt: 70.0,
+        look_up: 0.0,
+    };
+    let mut cfg = crate::tests::batch_reference_config(Provider::Satellite);
+    cfg.grid = false;
+    cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+    cfg.sun = Some(ll_to_v3(15.0, -10.0));
+    let request = RenderRequest {
+        width,
+        height,
+        cam,
+        basis: cam.basis_for_model(
+            width as f64 / height as f64,
+            globecraft_core::earth_model::EarthModel::Wgs84,
+        ),
+        cfg,
+        overlays: None,
+        aircraft: None,
+        live_layers: None,
+        presentation: 0,
+        compare: None,
+    };
+    let held = crate::render_pixels_with(
+        width,
+        height,
+        0..height,
+        &request.basis,
+        &request.cfg,
+        &lookup,
+        Vec::new(),
+        None,
+    )
+    .relief_tiles;
+    let finest = held
+        .iter()
+        .map(|&key| globecraft_data::tiles::unkey(key).1)
+        .max()
+        .unwrap();
+    assert!(finest > HELD_LEVELS + 1, "the view needs level {finest}");
+    let coarse: Vec<TileKey> = held
+        .into_iter()
+        .filter(|&key| globecraft_data::tiles::unkey(key).1 <= HELD_LEVELS)
+        .collect();
+    let march = gpu
+        .relief
+        .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
+        .as_mut()
+        .unwrap();
+    let grown = relief::grown_tiles(&coarse, lookup, std::time::Instant::now());
+    let starts = march
+        .starts(&gpu.device, &gpu.queue, &request, &grown)
+        .expect("relief march")
+        .pixels;
+    let count = width * height;
+    let gave_up = starts[3 * count..]
+        .iter()
+        .filter(|&&trusted| trusted < 0.0)
+        .count();
+    println!(
+        "levels to {HELD_LEVELS} of {finest} held: the walk gave up on {gave_up} of {count} rays"
+    );
+    assert!(relief::helps(&starts), "gave up on {gave_up} of {count}");
+    let hits = crate::relief_hits(
+        width,
+        height,
+        &request.basis,
+        &request.cfg,
+        &lookup,
+        crate::HitMarch::Exact,
+    );
+    let past = starts[..count]
+        .iter()
+        .zip(&hits)
+        .filter(|&(&start, &(hit, _))| hit.is_finite() && f64::from(start) > hit * (1.0 + 1e-4))
+        .count();
+    assert_eq!(past, 0, "starts past the ground");
+}
