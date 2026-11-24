@@ -1111,3 +1111,119 @@ fn smooth_tile(provider: Provider, z: u8, x: u32, y: u32) -> Arc<Tile> {
         .unwrap();
     Arc::new(Tile::decode(bytes.get_ref()).unwrap())
 }
+
+/// The relief walk's passes timed on the device, alone (`GLOBECRAFT_RELIEF_PROBE_SIZE`
+/// for the size): the fastest of five walks of each view once its tiles are held, and
+/// what the walk found (to see a faster walk still finds the same grounds).
+#[test]
+#[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
+fn gpu_relief_walk_timing() {
+    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    let tiles: std::sync::Mutex<HashMap<TileKey, Arc<Tile>>> = Default::default();
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
+        if provider == Provider::Satellite && z > 14 {
+            return Lookup::Unavailable;
+        }
+        let mut tiles = tiles.lock().unwrap();
+        Lookup::Ready(Arc::clone(tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                crate::tests::probe_dem_tile(z, x, y)
+            } else {
+                crate::tests::probe_image_tile(z, x, y)
+            }
+        })))
+    };
+    let (width, height) = std::env::var("GLOBECRAFT_RELIEF_PROBE_SIZE")
+        .ok()
+        .and_then(|size| {
+            let (w, h) = size.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((320, 200));
+    let march = gpu
+        .relief
+        .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
+        .as_mut()
+        .unwrap();
+    for (name, alt, tilt, heading) in [
+        ("top-16km", 16.0, 0.0, 0.0),
+        ("tilt-16km", 16.0, 70.0, 0.0),
+        ("tilt-52km", 52.0, 75.0, 0.0),
+        ("tilt-6km", 6.0, 72.0, 30.0),
+    ] {
+        let cam = Cam {
+            lat: 30.3,
+            lon: 79.8,
+            heading,
+            alt,
+            tilt,
+            look_up: 0.0,
+        };
+        let mut cfg = crate::tests::batch_reference_config(Provider::Satellite);
+        cfg.grid = false;
+        cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+        cfg.sun = Some(globecraft_core::math::ll_to_v3(15.0, -10.0));
+        let request = RenderRequest {
+            width,
+            height,
+            cam,
+            basis: cam.basis_for_model(
+                width as f64 / height as f64,
+                globecraft_core::earth_model::EarthModel::Wgs84,
+            ),
+            cfg,
+            overlays: None,
+            aircraft: None,
+            live_layers: None,
+            presentation: 0,
+            compare: None,
+        };
+        let held = crate::render_pixels_with(
+            width,
+            height,
+            0..height,
+            &request.basis,
+            &request.cfg,
+            &lookup,
+            Vec::new(),
+            None,
+        )
+        .relief_tiles;
+        let grown = relief::grown_tiles(&held, lookup, std::time::Instant::now());
+        let mut best: Option<[std::time::Duration; 3]> = None;
+        let mut planes = Vec::new();
+        for run in 0..8 {
+            let walked = march
+                .starts(&gpu.device, &gpu.queue, &request, &grown)
+                .expect("relief march");
+            // The first runs upload the tiles.
+            if let (Some(took), true) = (walked.took.0, run >= 3) {
+                best =
+                    Some(best.map_or(took, |best| std::array::from_fn(|i| best[i].min(took[i]))));
+            }
+            planes = walked.pixels;
+        }
+        let count = width * height;
+        let hits: Vec<f64> = planes[count..2 * count]
+            .iter()
+            .filter(|&&hit| hit >= 0.0)
+            .map(|&hit| f64::from(hit))
+            .collect();
+        let trusted = planes[3 * count..4 * count]
+            .iter()
+            .filter(|&&t| t > 0.5)
+            .count();
+        let seen: f64 = planes[2 * count..3 * count]
+            .iter()
+            .filter(|&&s| s >= 0.0)
+            .map(|&s| f64::from(s))
+            .sum();
+        println!(
+            "WALK {name}: on the device {:?} (the view, the sun's even and odd columns); {} grounds (mean distance {:.6e}), {trusted} trusted, sun's shares summing to {seen:.1}",
+            best.map(|best| best.map(|d| d.as_secs_f64() * 1000.0)),
+            hits.len(),
+            hits.iter().sum::<f64>() / hits.len().max(1) as f64,
+        );
+    }
+}
