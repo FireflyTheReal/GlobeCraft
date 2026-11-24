@@ -1169,6 +1169,12 @@ fn gpu_relief_walk_timing() {
         ("tilt-52km", 52.0, 75.0, 0.0),
         ("tilt-6km", 6.0, 72.0, 30.0),
     ] {
+        // `GLOBECRAFT_RELIEF_PROBE_VIEWS=tilt-16km` walks only those (a GPU capture).
+        if std::env::var("GLOBECRAFT_RELIEF_PROBE_VIEWS")
+            .is_ok_and(|only| !only.split(',').any(|view| view == name))
+        {
+            continue;
+        }
         let cam = Cam {
             lat: 30.3,
             lon: 79.8,
