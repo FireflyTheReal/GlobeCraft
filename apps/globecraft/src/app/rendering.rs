@@ -462,20 +462,42 @@ impl App {
         // 1.6). The two textures swap roles, so the old picture costs no upload.
         // A playing time replaces its frames as a moving camera does: faded, each one
         // trailed the last and the sun moved in jumps (user, 2026-11-19).
-        let same_view = self.time.speed() == 0.0
-            && same_view(
-                self.frame.texture.is_some(),
-                self.frame.renderer.displayed,
-                self.frame.renderer.displayed_rect,
-                frame.request.cam,
-                frame.request.overlays.as_ref().map(|input| input.view.rect),
-            );
+        let playing = self.time.speed() != 0.0;
+        let same_place = same_view(
+            self.frame.texture.is_some(),
+            self.frame.renderer.displayed,
+            self.frame.renderer.displayed_rect,
+            frame.request.cam,
+            frame.request.overlays.as_ref().map(|input| input.view.rect),
+        );
+        let same_view = !playing && same_place;
         let fading = self.frame.fade_from.is_some()
             && self
                 .frame
                 .fade_started
-                .is_some_and(|started| started.elapsed() < super::globe::FRAME_FADE);
-        if same_view && fading {
+                .is_some_and(|started| started.elapsed() < self.frame.fade_length);
+        if !playing {
+            self.frame.playback_frames = None;
+        }
+        if playing && same_place {
+            // While the time plays, each frame fades in over about the time until the
+            // next one comes: the light and the sun move on between frames instead
+            // of jumping a step each frame (user, 2026-11-24: "the sun's disc jumping
+            // in the sky, day and night shading moving in steps"). Faded over 250 ms,
+            // as at rest, each one trailed the last (user, 2026-11-19).
+            let now = std::time::Instant::now();
+            let interval = self.frame.playback_frames.map_or(
+                PLAYBACK_FADE_FIRST.as_secs_f32(),
+                |(last, mean)| {
+                    mean + PLAYBACK_INTERVAL_WEIGHT
+                        * (now.duration_since(last).as_secs_f32() - mean)
+                },
+            );
+            self.frame.playback_frames = Some((now, interval));
+            std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
+            self.frame.fade_started = Some(now);
+            self.frame.fade_length = playback_fade(interval);
+        } else if same_view && fading {
             // A fade under way goes on from the same picture toward this newer
             // one. Starting over from the half-shown picture showed the rest of it
             // at once: while relief and imagery loaded, a frame every tenth of a
@@ -483,6 +505,7 @@ impl App {
         } else if same_view {
             std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
             self.frame.fade_started = Some(std::time::Instant::now());
+            self.frame.fade_length = super::globe::FRAME_FADE;
         } else {
             self.frame.fade_started = None;
         }
@@ -562,6 +585,20 @@ impl App {
 }
 
 /// Two frames show the same view when their cameras and viewport rectangles match exactly.
+/// While the time plays: the fade before the time between frames is known…
+const PLAYBACK_FADE_FIRST: std::time::Duration = std::time::Duration::from_millis(30);
+/// …how fast the running mean of that time follows it…
+const PLAYBACK_INTERVAL_WEIGHT: f32 = 0.3;
+/// …and the longest fade: with frames further apart than this (3D terrain, tilted),
+/// a longer fade drags the light behind the time.
+const PLAYBACK_FADE_MAX: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// How long a frame of a playing time fades in: the time between frames (seconds),
+/// up to `PLAYBACK_FADE_MAX`.
+fn playback_fade(interval_secs: f32) -> std::time::Duration {
+    std::time::Duration::from_secs_f32(interval_secs.clamp(0.0, PLAYBACK_FADE_MAX.as_secs_f32()))
+}
+
 fn same_view(
     has_texture: bool,
     displayed: Option<(Cam, Basis)>,
@@ -618,6 +655,14 @@ mod tests {
             displayed_basis(None, requested_basis).pick(rect, rect.center()),
             requested_basis.pick(rect, rect.center())
         );
+    }
+
+    #[test]
+    fn a_playing_time_fades_each_frame_over_the_time_between_frames() {
+        let ms = |secs: f32| playback_fade(secs).as_secs_f64() * 1e3;
+        assert!((ms(0.022) - 22.0).abs() < 0.01);
+        assert!((ms(0.4) - PLAYBACK_FADE_MAX.as_secs_f64() * 1e3).abs() < 0.01);
+        assert_eq!(ms(-1.0), 0.0);
     }
 
     #[test]

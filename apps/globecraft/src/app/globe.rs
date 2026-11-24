@@ -371,7 +371,9 @@ impl App {
         let fade = self
             .frame
             .fade_started
-            .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
+            .map(|started| {
+                started.elapsed().as_secs_f32() / self.frame.fade_length.as_secs_f32().max(1e-3)
+            })
             .filter(|&progress| progress < 1.0);
         if fade.is_none() {
             self.frame.fade_started = None;
