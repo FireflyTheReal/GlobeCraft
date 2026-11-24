@@ -33,7 +33,10 @@ const MAX_STEPS: u32 = 512;
 /// Heights are taken this much higher (metres): the f32 positions are within half a
 /// metre, a tile's edge may be read from its neighbour.
 const HEIGHT_MARGIN_M: f64 = 10.0;
-const WORKGROUP: u32 = 64;
+/// The passes' workgroups, square blocks of pixels (`main` and `sun`; `sun_shared`'s
+/// is `SHARED_SIDE`): a group of threads takes as long as its longest walk, and
+/// neighbouring rays walk alike, a row of 32 not as much (2026-11-24).
+const WORKGROUP_SIDE: u32 = 8;
 /// New tiles uploaded per frame at most (0.6 ms each to prepare in this container's
 /// release build): a whole tilted view's tiles in one frame (six a frame took a camera
 /// low among the relief 7 frames to be walked on an M1, 2026-11-23); after a jump the
@@ -41,8 +44,8 @@ const WORKGROUP: u32 = 64;
 const MAX_UPLOADS_PER_FRAME: usize = 64;
 /// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
-/// `sun_shared`'s workgroup (`SHARED_GROUP` in the shader).
-const SHARED_GROUP: u32 = 256;
+/// `sun_shared`'s workgroup side (`SHARED_GROUP` in the shader is its square).
+const SHARED_SIDE: u32 = 16;
 /// The walk's planes per pixel (`starts` in the shader): start, ground, sun's share,
 /// trust, slope east and north.
 pub(super) const PLANES: usize = 6;
@@ -528,10 +531,13 @@ impl ReliefMarch {
             .features()
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| Timing::new(device));
-        for (index, (pipeline, workgroup)) in [
-            (&self.pipeline, WORKGROUP),
-            (&self.sun, WORKGROUP),
-            (&self.sun_shared, SHARED_GROUP),
+        // The view's pixels, then the sun's even and odd columns, in workgroups across
+        // and down (one axis held at most 65,535 workgroups).
+        let (width, height) = (request.width as u32, request.height as u32);
+        for (index, (pipeline, (across, side))) in [
+            (&self.pipeline, (width, WORKGROUP_SIDE)),
+            (&self.sun, (width.div_ceil(2), WORKGROUP_SIDE)),
+            (&self.sun_shared, (width / 2, SHARED_SIDE)),
         ]
         .into_iter()
         .enumerate()
@@ -546,7 +552,7 @@ impl ReliefMarch {
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &group(pipeline), &[]);
-            pass.dispatch_workgroups((count as u32).div_ceil(workgroup), 1, 1);
+            pass.dispatch_workgroups(across.div_ceil(side), height.div_ceil(side), 1);
         }
         #[cfg(test)]
         if let Some(timing) = &timing {

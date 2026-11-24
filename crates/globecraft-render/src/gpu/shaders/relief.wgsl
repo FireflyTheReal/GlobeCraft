@@ -497,12 +497,12 @@ fn ray(i: u32, width: u32, height: u32) -> vec3<f32> {
 
 // The view's rays (`starts`, hits and trust); the sun's share comes in a pass of its
 // own (`sun`): the two walks in one kernel kept fewer pixels in flight.
-@compute @workgroup_size(64)
+@compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let i = id.x;
     let width = relief.raster.x; let height = relief.raster.y;
+    if id.x >= width || id.y >= height { return; }
+    let i = id.y * width + id.x;
     let count = width * height;
-    if i >= count { return; }
     starts[count + i] = -1.0;
     starts[2u * count + i] = -1.0;
     starts[3u * count + i] = 0.0;
@@ -538,13 +538,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
 // The share of the sun seen where `main` met the ground: the even columns (and a
 // last odd one), then `sun_shared` the odd ones.
-@compute @workgroup_size(64)
+@compute @workgroup_size(8, 8)
 fn sun(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = relief.raster.x; let height = relief.raster.y;
     let half = (width + 1u) / 2u;
-    if id.x >= half * height || relief.sun.w < 0.5 { return; }
-    let x = (id.x % half) * 2u;
-    let i = (id.x / half) * width + x;
+    if id.x >= half || id.y >= height || relief.sun.w < 0.5 { return; }
+    let x = id.x * 2u;
+    let i = id.y * width + x;
     let count = width * height;
     let hit = starts[count + i];
     if hit < 0.0 { return; }
@@ -568,16 +568,15 @@ const SAME_DEPTH_SHARE: f32 = __SAME_DEPTH_SHARE__;
 const SHARED_GROUP: u32 = 256u;
 var<workgroup> pending: array<u32, SHARED_GROUP>;
 var<workgroup> pending_count: atomic<u32>;
-@compute @workgroup_size(256)
+@compute @workgroup_size(16, 16)
 fn sun_shared(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local: u32) {
     if local == 0u { atomicStore(&pending_count, 0u); }
     workgroupBarrier();
     let width = relief.raster.x; let height = relief.raster.y;
     let count = width * height;
-    let odd = width / 2u;
-    let x = (id.x % max(odd, 1u)) * 2u + 1u;
-    let i = (id.x / max(odd, 1u)) * width + x;
-    if relief.sun.w > 0.5 && id.x < odd * height && x + 1u < width && starts[count + i] >= 0.0 {
+    let x = id.x * 2u + 1u;
+    let i = id.y * width + x;
+    if relief.sun.w > 0.5 && id.y < height && x + 1u < width && starts[count + i] >= 0.0 {
         let hit = starts[count + i];
         let left = starts[count + i - 1u];
         let right = starts[count + i + 1u];

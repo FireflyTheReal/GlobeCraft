@@ -429,7 +429,8 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             let (w, h) = size.split_once('x')?;
             Some((w.parse().ok()?, h.parse().ok()?))
         })
-        .unwrap_or((320, 200));
+        // Not whole workgroups (8 pixels) across or down: the edges' partial ones count.
+        .unwrap_or((324, 203));
     let mut failures = Vec::new();
     // `GLOBECRAFT_RELIEF_PROBE_VIEWS=tilt-16km,top-16km` runs only those.
     let only = std::env::var("GLOBECRAFT_RELIEF_PROBE_VIEWS").ok();
