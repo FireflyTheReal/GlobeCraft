@@ -140,7 +140,10 @@ pub struct FrameRenderer {
 /// pixel, the walk goes off for good. The second relief frame is the first check, and
 /// a frame without the walk in under half the time turns it off at once: on an M1 at
 /// 1920×1200 the walk made frames twice as slow, and three checks took 60 such frames
-/// (2026-11-23).
+/// (2026-11-23). Where the walk wins `RELIEF_SETTLED_WINS` checks in a row clearly
+/// (the frame without it taking `RELIEF_CLEAR_WIN` times as long or longer), the checks
+/// stop: since 2026-11-24 a frame without it took 4–6 times as long on an M1 (about
+/// 0.6–1 s at 1920×1200 against 0.14–0.18 s), a hitch every 20 relief frames.
 #[cfg(feature = "gpu")]
 #[derive(Default)]
 struct ReliefTiming {
@@ -148,17 +151,26 @@ struct ReliefTiming {
     /// The last frame with the walk: seconds per megapixel.
     with: Option<f64>,
     losses: u32,
+    wins: u32,
     off: bool,
+    /// The walk won clearly often enough: no more frames without it.
+    settled: bool,
 }
 #[cfg(feature = "gpu")]
 const RELIEF_CHECK_EVERY: u32 = 20;
 #[cfg(feature = "gpu")]
 const RELIEF_LOSSES: u32 = 3;
+#[cfg(feature = "gpu")]
+const RELIEF_SETTLED_WINS: u32 = 3;
+#[cfg(feature = "gpu")]
+const RELIEF_CLEAR_WIN: f64 = 1.5;
 
 #[cfg(feature = "gpu")]
 impl ReliefTiming {
     fn walks(&self) -> bool {
-        !self.off && self.frames != 1 && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)
+        !self.off
+            && (self.settled
+                || (self.frames != 1 && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)))
     }
     fn note(&mut self, walked: bool, seconds_per_megapixel: f64) {
         self.frames += 1;
@@ -174,6 +186,12 @@ impl ReliefTiming {
         } else {
             0
         };
+        self.wins = if seconds_per_megapixel >= with * RELIEF_CLEAR_WIN {
+            self.wins + 1
+        } else {
+            0
+        };
+        self.settled = self.wins >= RELIEF_SETTLED_WINS;
         if (self.losses >= RELIEF_LOSSES || seconds_per_megapixel * 2.0 < with) && !self.off {
             self.off = true;
             globecraft_data::log_line!(
@@ -476,7 +494,18 @@ mod relief_timing_tests {
         };
         let mut paying = ReliefTiming::default();
         run(&mut paying, 0.1, &[0.05, 0.05, 0.2, 0.05, 0.05, 0.2]);
-        assert!(!paying.off && paying.walks());
+        assert!(!paying.off && paying.walks() && !paying.settled);
+        // Clear wins in a row: no more frames without the walk; a narrow win in
+        // between starts the count again.
+        let mut clear = ReliefTiming::default();
+        run(&mut clear, 0.1, &[0.6, 0.6, 0.12, 0.6, 0.6]);
+        assert!(!clear.settled);
+        run(&mut clear, 0.1, &[0.6]);
+        assert!(clear.settled);
+        for _ in 0..10 * RELIEF_CHECK_EVERY {
+            assert!(clear.walks());
+            clear.note(true, 0.1);
+        }
         let mut slow = ReliefTiming::default();
         run(&mut slow, 0.3, &[0.2, 0.2, 0.2]);
         assert!(slow.off && !slow.walks());
