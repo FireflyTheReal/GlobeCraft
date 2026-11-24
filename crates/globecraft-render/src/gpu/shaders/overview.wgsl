@@ -1,5 +1,6 @@
-// Overview geometry uses f32 only after the host checks the altitude/LOD range.
-// Close views use the shared f64 planner. CPU repairs the exact sky/horizon.
+// The globe's ground in f32, from space down to the ground: places on the map from a
+// global f32 coordinate to level 13 and from the map near the camera past it (`Spot`).
+// The CPU repairs the exact sky, horizon, seams and what the near map does not hold.
 struct View {
     camera: vec4<f32>,
     right: vec4<f32>, up: vec4<f32>, forward: vec4<f32>,
@@ -10,7 +11,7 @@ struct View {
     effects: vec4<u32>, // sunlight, atmosphere, level-of-detail raster height, colour matching (1)
     limits: vec4<u32>, // tracked max zoom, the needs' set size (a power of two), table mask, water map width
     lights: vec4<u32>, // night lights shown, their max zoom, unused, tracked max zoom
-    // The camera's tile coordinates at zoom 19 (x, y): needs are kept relative to the
+    // The camera's tile coordinates at `MAP_ZOOM` (x, y): needs are kept relative to the
     // camera's tile at their own zoom.
     origin: vec4<u32>,
     // The camera inside the air (`atmosphere::Frame`): its distance from the centre
@@ -23,6 +24,19 @@ struct View {
     // The integrated table (`atmosphere::aerial`): its horizon's sine, reach (km), sun
     // cosine, and 1 when there is one.
     aerial: vec4<f32>,
+    // The map near the camera (`relief::NearMap`, in `MAP_ZOOM`'s texels): the
+    // camera's texel (whole part; fraction in `near_frac.xy`, range of the near map
+    // squared in `near_frac.z`), and the texel coordinates' first (`near_grad_*`, per
+    // world unit) and second derivatives (`near_hess_*`: xx, yy, zz, xy; xz, yz).
+    // `near_frac.w`: the camera's |c|² − 1 in the surface's metric, from f64.
+    near: vec4<i32>,
+    near_frac: vec4<f32>,
+    near_grad_x: vec4<f32>, near_grad_y: vec4<f32>,
+    near_hess_x: vec4<f32>, near_hess_x2: vec4<f32>,
+    near_hess_y: vec4<f32>, near_hess_y2: vec4<f32>,
+    // The third-order terms (`NearMap::cubic`): x's ten coefficients, then y's.
+    near_cubic_0: vec4<f32>, near_cubic_1: vec4<f32>, near_cubic_2: vec4<f32>,
+    near_cubic_3: vec4<f32>, near_cubic_4: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read_write> output: array<u32>;
@@ -228,6 +242,59 @@ const MEANS_PER_TILE_U: u32 = __MEANS_PER_TILE__u;
 // Marks the night lights' tiles in the tile table's level word.
 const LIGHTS_TAG: u32 = __LIGHTS_TAG__u;
 fn blend(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> { return a * (1.0 - t) + b * t; }
+// A point's place on the map in `MAP_ZOOM`'s texels: whole texels as integers and
+// the fraction, so a level's tile and the place in it keep f32's precision at every
+// level. From the global f32 map coordinate the result is the old one bit for bit
+// (scaling by powers of two is exact); from the near map (`spot_near`) it holds
+// past level `GLOBAL_MAX_LEVEL`, where an f32 map coordinate is a texel or coarser.
+struct Spot { whole: vec2<i32>, frac: vec2<f32> }
+const MAP_ZOOM: u32 = __MAP_ZOOM__u;
+const MAP_BITS: u32 = MAP_ZOOM + 8u;
+const GLOBAL_MAX_LEVEL: u32 = __GLOBAL_MAX_LEVEL__u;
+fn spot_from_uv(uv: vec2<f32>) -> Spot {
+    let p = uv * f32(1u << MAP_BITS);
+    let whole = floor(p);
+    return Spot(vec2<i32>(whole), p - whole);
+}
+// The spot of the point `d` from the camera, within the near map's range.
+fn spot_near(d: vec3<f32>) -> Spot {
+    let hx = view.near_hess_x; let hx2 = view.near_hess_x2;
+    let hy = view.near_hess_y; let hy2 = view.near_hess_y2;
+    let dd = d * d;
+    let cross = vec3<f32>(d.x * d.y, d.x * d.z, d.y * d.z);
+    // x³, y³, z³, x²y, x²z, y²x, y²z, z²x, z²y, xyz (`CUBIC_TERMS`).
+    let m0 = vec4<f32>(dd.x * d.x, dd.y * d.y, dd.z * d.z, dd.x * d.y);
+    let m1 = vec4<f32>(dd.x * d.z, dd.y * d.x, dd.y * d.z, dd.z * d.x);
+    let m2 = vec2<f32>(dd.z * d.y, d.x * d.y * d.z);
+    let c0 = view.near_cubic_0; let c1 = view.near_cubic_1; let c2 = view.near_cubic_2;
+    let c3 = view.near_cubic_3; let c4 = view.near_cubic_4;
+    let cubic = vec2<f32>(
+        dot(c0, m0) + dot(c1, m1) + dot(c2.xy, m2),
+        dot(vec4<f32>(c2.zw, c3.xy), m0) + dot(vec4<f32>(c3.zw, c4.xy), m1) + dot(c4.zw, m2),
+    );
+    let off = view.near_frac.xy + vec2<f32>(
+        dot(view.near_grad_x.xyz, d) + 0.5 * dot(hx.xyz, dd) + dot(vec3<f32>(hx.w, hx2.x, hx2.y), cross),
+        dot(view.near_grad_y.xyz, d) + 0.5 * dot(hy.xyz, dd) + dot(vec3<f32>(hy.w, hy2.x, hy2.y), cross),
+    ) + cubic;
+    let whole = floor(off);
+    let side = i32(1u << MAP_BITS);
+    let x = ((view.near.x + i32(whole.x)) % side + side) % side;
+    return Spot(vec2<i32>(x, view.near.y + i32(whole.y)), off - whole);
+}
+// The tile at level `z` under a spot, as the CPU sampler's signed floor (not below
+// 0 clamped, so the place in it reproduces the Mercator edge's choice).
+fn spot_tile(spot: Spot, z: u32) -> vec2<i32> {
+    return spot.whole >> vec2<u32>(MAP_BITS - z);
+}
+// The place in tile `coordinate` of level `z` (0 to 1 inside it).
+fn spot_local(spot: Spot, z: u32, coordinate: vec2<i32>) -> vec2<f32> {
+    let shift = MAP_BITS - z;
+    return (vec2<f32>(spot.whole - (coordinate << vec2<u32>(shift))) + spot.frac) / f32(1u << shift);
+}
+// `spot_tile` capped at the last tile, as the sampler's key coordinates.
+fn spot_coordinate(spot: Spot, z: u32) -> vec2<i32> {
+    return min(spot_tile(spot, z), vec2<i32>(i32((1u << z) - 1u)));
+}
 fn tile_hash(z: u32, x: u32, y: u32) -> u32 { return (z * 73856093u ^ x * 19349663u ^ y * 83492791u) & view.limits.z; }
 fn find_tile(z: u32, x: u32, y: u32) -> i32 {
     var index = tile_hash(z, x, y);
@@ -291,10 +358,10 @@ fn stride_at(zz: i32, base: i32, frac: f32) -> f32 {
 fn overflow() { atomicStore(&needs[2u * view.limits.y], 1u); }
 // A need's key: the source (top bit), the zoom (5 bits) and the tile's offset from the
 // camera's tile at that zoom (13 bits each, signed; x round the globe); 0xffffffff
-// (empty) is never one, the zoom being at most 19.
+// (empty) is never one, the zoom being at most 20.
 fn need_key(source: u32, z: u32, coord: vec2<u32>) -> u32 {
     let n = 1u << z;
-    let camera = view.origin.xy >> vec2<u32>(19u - z);
+    let camera = view.origin.xy >> vec2<u32>(MAP_ZOOM - z);
     var dx = i32((coord.x - camera.x) & (n - 1u));
     if dx >= i32(n / 2u) { dx -= i32(n); }
     let dy = i32(coord.y) - i32(camera.y);
@@ -326,13 +393,12 @@ fn need(source: u32, z: u32, coord: vec2<u32>, distance: f32) {
     }
     overflow();
 }
-// The mean colour of the tile at level `z` under `uv` over `cells` × `cells` blocks,
+// The mean colour of the tile at level `z` under `spot` over `cells` × `cells` blocks,
 // between the four nearest (`Tile::mean_colour`); w -1 when the tile is not held or
 // has none. Noted as a need, as the CPU asks for it.
-fn mean_colour(z: u32, uv: vec2<f32>, distance: f32, cells: u32) -> vec4<f32> {
-    let n = 1u << z;
-    let coordinate = min(floor(uv * f32(n)), vec2<f32>(f32(n - 1u)));
-    let coord = vec2<u32>(max(coordinate, vec2<f32>(0.0)));
+fn mean_colour(z: u32, spot: Spot, distance: f32, cells: u32) -> vec4<f32> {
+    let coordinate = spot_coordinate(spot, z);
+    let coord = vec2<u32>(max(coordinate, vec2<i32>(0)));
     need(0u, z, coord, distance);
     let layer = find_tile(z, coord.x, coord.y);
     if layer < 0 { return vec4<f32>(-1.0); }
@@ -342,7 +408,7 @@ fn mean_colour(z: u32, uv: vec2<f32>, distance: f32, cells: u32) -> vec4<f32> {
     while finer > cells { start += finer * finer; finer /= 2u; }
     if means[start].w < 0.0 { return vec4<f32>(-1.0); }
     let last = f32(cells - 1u);
-    let p = clamp((uv * f32(n) - coordinate) * f32(cells) - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(last));
+    let p = clamp(spot_local(spot, z, coordinate) * f32(cells) - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(last));
     let low = vec2<u32>(p);
     let high = min(low + vec2<u32>(1u), vec2<u32>(cells - 1u));
     let f = p - vec2<f32>(low);
@@ -350,16 +416,16 @@ fn mean_colour(z: u32, uv: vec2<f32>, distance: f32, cells: u32) -> vec4<f32> {
     let bottom = mix(means[start + high.y * cells + low.x], means[start + high.y * cells + high.x], f.x);
     return mix(top, bottom, f.y);
 }
-// `colour`, sampled at level `z`, brought toward level 11's colours where `uv` is
+// `colour`, sampled at level `z`, brought toward level 11's colours where `spot` is
 // (`colour_match::matched`): unchanged until both level 11's and 12's tiles there are
 // held, and for other maps than Esri's imagery.
-fn matched(colour: vec3<f32>, z: u32, uv: vec2<f32>, distance: f32) -> vec3<f32> {
+fn matched(colour: vec3<f32>, z: u32, spot: Spot, distance: f32) -> vec3<f32> {
     if view.effects.w == 0u || z < COLOUR_FINE_U { return colour; }
     let weight = clamp(f32(OWN_COLOURS_U - min(z, OWN_COLOURS_U)) / f32(OWN_COLOURS_U - COLOUR_FINE_U), 0.0, 1.0);
     if weight <= 0.0 { return colour; }
-    let coarse = mean_colour(COLOUR_COARSE_U, uv, distance, MEAN_CELLS_U);
+    let coarse = mean_colour(COLOUR_COARSE_U, spot, distance, MEAN_CELLS_U);
     if coarse.w < 0.0 { return colour; }
-    let fine = mean_colour(COLOUR_FINE_U, uv, distance, MEAN_CELLS_U / 2u);
+    let fine = mean_colour(COLOUR_FINE_U, spot, distance, MEAN_CELLS_U / 2u);
     if fine.w < 0.0 { return colour; }
     let floor = vec3<f32>(COLOUR_DARK_FLOOR);
     var gain = clamp((coarse.rgb + floor) / (fine.rgb + floor), vec3<f32>(1.0 / COLOUR_MAX_GAIN), vec3<f32>(COLOUR_MAX_GAIN));
@@ -368,25 +434,24 @@ fn matched(colour: vec3<f32>, z: u32, uv: vec2<f32>, distance: f32) -> vec3<f32>
 }
 // The colour of `source` (0: the base map, 1: the night lights) from level `zoom` or
 // the nearest coarser level loaded; `w` is 1 when a level was found.
-fn chain(source: u32, zoom: u32, uv: vec2<f32>, distance: f32, base: u32, frac: f32) -> vec4<f32> {
+fn chain(source: u32, zoom: u32, spot: Spot, distance: f32, base: u32, frac: f32) -> vec4<f32> {
     let tag = select(0u, LIGHTS_TAG, source == 1u);
     let tracked = select(view.limits.x, view.lights.w, source == 1u);
     var z = i32(zoom);
     loop {
-        let n = 1u << u32(z);
         // Preserve the CPU sampler's signed floor before saturating key coordinates.
-        let coordinate = min(floor(uv * f32(n)), vec2<f32>(f32(n-1u)));
-        let coord = vec2<u32>(max(coordinate,vec2<f32>(0.0)));
+        let coordinate = spot_coordinate(spot, u32(z));
+        let coord = vec2<u32>(max(coordinate,vec2<i32>(0)));
         // Track sampled keys as well as misses, so residency follows this view
         // instead of growing with the entire decoded cache.
         if u32(z) <= tracked { need(source, u32(z), coord, distance); } else { overflow(); }
         let layer = find_tile(u32(z) | tag,coord.x,coord.y);
         if layer >= 0 {
-            let local = uv * f32(n) - coordinate;
+            let local = spot_local(spot, u32(z), coordinate);
             let stride = stride_at(z, i32(base), frac);
             var colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE));
             if stride <= 1.0 { colour = sample_tile(local,layer); }
-            if source == 0u { colour = matched(colour, u32(z), uv, distance); }
+            if source == 0u { colour = matched(colour, u32(z), spot, distance); }
             return vec4<f32>(colour,1.0);
         }
         z -= 1;
@@ -633,9 +698,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = view.shape.xyz;
     let a = dot(dir * dir, q);
     let bb = dot(dir, camera * q);
-    let disc = bb * bb - a * (view.shape.w - 1.0);
+    // The camera's height term from f64, and the nearer root in the form that does not
+    // subtract two values of about one: close to the ground both give metres.
+    let height_term = view.near_frac.w;
+    let disc = bb * bb - a * height_term;
     if disc < HORIZON_PRECISION_MARGIN || bb >= 0.0 { output[i] = 0u; return; }
-    let t = (-bb - sqrt(disc)) / a;
+    let t = height_term / (-bb + sqrt(disc));
     let point = camera + dir * t;
     let normal = normalize(point * q);
     let incidence = max(-dot(normal,dir),0.0);
@@ -671,18 +739,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // The night lights use the level nearest the pixel's detail, up to their finest.
     let lights_zoom = min(z + select(0u,1u,fraction >= 0.5), view.lights.y);
     if view.lights.x != 0u { seam_zoom = max(seam_zoom, lights_zoom); }
-    let scaled_uv = uv*f32(1u << seam_zoom);
-    if any(abs(scaled_uv-round(scaled_uv)) < vec2<f32>(TILE_SEAM_PRECISION_MARGIN)) { output[i] = 0u; return; }
+    // Past `GLOBAL_MAX_LEVEL` the place comes from the near map, or the CPU draws it.
+    let d = dir * t;
+    var spot = spot_from_uv(uv);
+    if abs(lat) < POLAR_CAP_START && dot(d, d) < view.near_frac.z {
+        spot = spot_near(d);
+    } else if seam_zoom > GLOBAL_MAX_LEVEL { output[i] = 0u; return; }
+    let seam_local = spot_local(spot, seam_zoom, spot_tile(spot, seam_zoom));
+    if any(min(seam_local, vec2<f32>(1.0) - seam_local) < vec2<f32>(TILE_SEAM_PRECISION_MARGIN)) { output[i] = 0u; return; }
     let offset = vec2<f32>(f32(x)-f32(width)/2.0,f32(y)-f32(height)/2.0);
     let distance = dot(offset,offset);
-    var color = chain(0u,z,uv,distance,z,fraction).rgb;
+    var color = chain(0u,z,spot,distance,z,fraction).rgb;
     if fade > MIN_BLEND {
         // Sample the finer level first so the miss is recorded as a need, then
         // only blend when that level is actually resident; a coarser fallback
         // blended on top would flash while tiles load.
-        let fine = chain(0u,z+1u,uv,distance,z,fraction).rgb;
-        let n1 = 1u << (z+1u);
-        let c1 = vec2<u32>(max(min(floor(uv*f32(n1)),vec2<f32>(f32(n1-1u))),vec2<f32>(0.0)));
+        let fine = chain(0u,z+1u,spot,distance,z,fraction).rgb;
+        let c1 = vec2<u32>(max(spot_coordinate(spot, z+1u),vec2<i32>(0)));
         if find_tile(z+1u,c1.x,c1.y) >= 0 { color = blend(color,fine,fade); }
     }
     let sunlit = view.effects.x != 0u;
@@ -713,7 +786,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // As the CPU's `night_lights` and `finish_surface`: the lights glow where it is dark.
     var lights = vec4<f32>(0.0);
-    if view.lights.x != 0u && darkness >= MIN_LIGHTS_DARKNESS { lights = chain(1u,lights_zoom,uv,distance,z,fraction); }
+    if view.lights.x != 0u && darkness >= MIN_LIGHTS_DARKNESS { lights = chain(1u,lights_zoom,spot,distance,z,fraction); }
     // The air in front of the ground (`atmosphere::Tables::ground_from_space`,
     // `finish_surface`): low sunlight is orange, the air dims and adds its glow.
     let airy = view.effects.y != 0u;

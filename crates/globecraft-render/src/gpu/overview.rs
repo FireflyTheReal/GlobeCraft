@@ -3,15 +3,21 @@ use super::*;
 use crate::tuning;
 use globecraft_core::{EARTH_RADIUS_M, VERTICAL_FOV_HALF_TAN, earth_model::SurfaceGeometry};
 use globecraft_data::tiles::{Lookup, Provider, make_key, unkey};
-/// The finest level the GPU draws: a 2,000-pixel view from 92 km reaches 13, and an
-/// f32 map coordinate is still an eighth of a pixel there.
-const MAX_TRACKED_ZOOM: u8 = 13;
+/// The finest level the GPU draws (`MAP_ZOOM` in the shader, the finest any map has).
+/// Past `GLOBAL_MAX_LEVEL`, where an f32 map coordinate is a texel or coarser, a
+/// point's place on the map comes from its offset from the camera (`NearMap`).
+const MAX_TRACKED_ZOOM: u8 = 20;
+pub(super) const MAP_ZOOM: u8 = MAX_TRACKED_ZOOM;
+/// The finest level f32 map coordinates hold: an eighth of a texel at 13.
+pub(super) const GLOBAL_MAX_LEVEL: u8 = 13;
+/// Texels across the map at `MAX_TRACKED_ZOOM` (256-pixel tiles).
+const NEAR_SIDE: f64 = 256.0 * (1u64 << MAX_TRACKED_ZOOM) as f64;
 const TILE_TABLE_SIZE: usize = 2048;
 /// Slots of the set of tiles a frame sampled or missed (`need` in the shader): a few
 /// thousand at most even in a wide view; more fall back to the CPU.
 const NEEDS_SET_SIZE: usize = 16_384;
 /// The zoom the needs' origin is counted at (`need_key`).
-const ORIGIN_ZOOM: u32 = 19;
+const ORIGIN_ZOOM: u32 = MAX_TRACKED_ZOOM as u32;
 /// The inside air's entries (`atmosphere::InsideAir`).
 const INSIDE_ENTRIES: usize = crate::atmosphere::SCATTERING_VIEWS
     * crate::atmosphere::SCATTERING_PHASES
@@ -55,7 +61,7 @@ struct View {
     limits: [u32; 4],
     /// Night lights: shown, their finest level, unused, tracked level.
     lights: [u32; 4],
-    /// The camera's tile coordinates at zoom 19 (`need_key` in the shader).
+    /// The camera's tile coordinates at `ORIGIN_ZOOM` (`need_key` in the shader).
     origin: [u32; 4],
     /// The camera inside the air (`atmosphere::Frame::inside_air`): its distance from
     /// the centre (km), the sun's cosine there, √(radius² − ground²), and 1 (0: the
@@ -68,6 +74,13 @@ struct View {
     air_adapt: [f32; 4],
     /// The integrated table: its horizon's sine, reach (km) and sun cosine.
     aerial: [f32; 4],
+    /// The map near the camera (`relief::NearMap` in `MAX_TRACKED_ZOOM`'s texels): its
+    /// texel, the fraction, the range squared and the camera's |c|² − 1 in the
+    /// surface's metric (from f64), and the derivatives.
+    near: [i32; 4],
+    near_frac: [f32; 4],
+    near_derivatives: [[f32; 4]; 6],
+    near_cubic: [[f32; 4]; 5],
 }
 pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
@@ -79,6 +92,10 @@ pub(super) struct Context<'a> {
 pub(super) struct Frame {
     pub view: RenderedView,
     pub sampled: Vec<TileKey>,
+    /// The pixels the shader left to the CPU (sky, horizon, seams, polar caps, levels
+    /// past the near map).
+    #[cfg(test)]
+    pub repaired: usize,
 }
 pub(super) struct Overview {
     pipeline: wgpu::ComputePipeline,
@@ -325,6 +342,8 @@ impl Overview {
         let rotation = request.basis.rotation_from_view();
         let v4 = |vector: glam::DVec3, w| [vector.x as f32, vector.y as f32, vector.z as f32, w];
         let (shape, figure) = figure(request.basis.model.geometry(), request.basis.c);
+        let q = request.basis.model.geometry().inverse_axes_squared();
+        let near = super::relief::NearMap::at(request.basis.c, q, NEAR_SIDE, near_range(request));
         let view = View {
             camera: v4(request.basis.c, request.basis.aspect_ratio() as f32),
             right: v4(rotation.x_axis, 0.0),
@@ -396,6 +415,15 @@ impl Overview {
                 0,
                 u32::from(lights_zoom),
             ],
+            near: [near.whole[0] as i32, near.whole[1] as i32, 0, 0],
+            near_frac: [
+                near.fraction[0],
+                near.fraction[1],
+                (near.range * near.range) as f32,
+                (request.basis.c.dot(request.basis.c * q) - 1.0) as f32,
+            ],
+            near_derivatives: near.derivatives,
+            near_cubic: near.cubic,
         };
         let mut table = vec![[u32::MAX; 4]; TILE_TABLE_SIZE];
         for (&key, &layer) in slots {
@@ -555,6 +583,11 @@ impl Overview {
             .into_iter()
             .filter(|(key, _)| !slots.contains_key(key))
             .collect();
+        #[cfg(test)]
+        let repaired = pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] != 255)
+            .count();
         for (key, distance) in super::repair::pixels(request, &mut pixels, lookup) {
             let distance = distance.unwrap_or(f32::MAX);
             required_map
@@ -577,6 +610,8 @@ impl Overview {
                 requests,
             },
             sampled,
+            #[cfg(test)]
+            repaired,
         })
     }
 }
@@ -630,6 +665,24 @@ fn figure(geometry: SurfaceGeometry, camera: glam::DVec3) -> ([f32; 4], [f32; 4]
         ],
         [semi_major_m as f32, eccentricity_squared as f32, 0.0, 0.0],
     )
+}
+/// How far from the camera (world units at the equator) the view may sample a level
+/// past `GLOBAL_MAX_LEVEL`, or blend toward one (`lod` in the shader): the shader's
+/// level reaches `GLOBAL_MAX_LEVEL` no farther, with a twentieth to spare. Farther
+/// pixels of those levels are the CPU's.
+fn near_range(request: &RenderRequest) -> f64 {
+    near_range_for(lod_height(request), request.basis.model.geometry())
+}
+fn near_range_for(lod_height: u32, geometry: SurfaceGeometry) -> f64 {
+    let pa = 2.0 * VERTICAL_FOV_HALF_TAN / f64::from(lod_height);
+    // The largest prime vertical radius, at the poles (a²/b; world units).
+    let axes = geometry.axes();
+    let widest = axes.max_element() * axes.max_element() / axes.min_element();
+    1.05 * 2.0
+        * std::f64::consts::PI
+        * widest
+        * 2f64.powf(tuning::LOD_SHARPNESS_BIAS - f64::from(GLOBAL_MAX_LEVEL))
+        / (tuning::TILE_SIZE_PX * pa)
 }
 pub(super) fn supported_zoom(request: &RenderRequest) -> Option<u8> {
     let count = request.width.checked_mul(request.height)?;
@@ -704,7 +757,7 @@ mod tests {
             .filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. }))
             .count();
         assert!(storage <= 8, "{storage} storage buffers");
-        assert_eq!(std::mem::size_of::<View>(), 256);
+        assert_eq!(std::mem::size_of::<View>(), 464);
         assert_eq!(std::mem::offset_of!(View, lights), 160);
         assert_eq!(std::mem::offset_of!(View, origin), 176);
         assert_eq!(std::mem::offset_of!(View, raster), 112);
@@ -730,7 +783,7 @@ mod tests {
     /// `origin` at `ORIGIN_ZOOM`.
     fn need_key(source: u32, z: u32, (x, y): (u32, u32), origin: (u32, u32)) -> Option<u32> {
         let n = 1u32 << z;
-        let camera = (origin.0 >> (19 - z), origin.1 >> (19 - z));
+        let camera = (origin.0 >> (ORIGIN_ZOOM - z), origin.1 >> (ORIGIN_ZOOM - z));
         let mut dx = (x.wrapping_sub(camera.0) & (n - 1)) as i32;
         if dx >= (n / 2) as i32 {
             dx -= n as i32;
@@ -741,6 +794,105 @@ mod tests {
         )
     }
 
+    /// The near map's place for a point within its range (as the shader works it out
+    /// from the f32 derivatives) stays within a fiftieth of a texel of the exact one
+    /// at the finest level a pixel there can take (or blend toward), for the tallest
+    /// views, on both Earth models, also across the antimeridian and far north.
+    #[test]
+    fn the_near_map_holds_the_finest_levels_round_the_camera() {
+        use super::super::relief::{NearMap, near_texels};
+        use globecraft_core::earth_model::EarthModel;
+        for model in [EarthModel::Wgs84, EarthModel::PerfectSphere] {
+            let geometry = model.geometry();
+            let q = geometry.inverse_axes_squared();
+            for lod_height in [400, 1200, 2000] {
+                let range = near_range_for(lod_height, geometry);
+                let pa = 2.0 * VERTICAL_FOV_HALF_TAN / f64::from(lod_height);
+                for (lat, lon, height_km) in [
+                    (30.3, 79.8, 5.0),
+                    (46.5, 179.99, 0.3),
+                    (80.0, -20.0, 9.0),
+                    (0.0, 0.0, 40.0),
+                ] {
+                    let (lat, lon): (f64, f64) = (f64::to_radians(lat), f64::to_radians(lon));
+                    let up =
+                        glam::DVec3::new(lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin());
+                    let surface = up / up.dot(up * q).sqrt();
+                    let camera = surface + up * (height_km * 1000.0 / EARTH_RADIUS_M);
+                    let near = NearMap::at(camera, q, NEAR_SIDE, range);
+                    let lon0 = (camera * q).y.atan2((camera * q).x);
+                    let [gx, gy, hx, hx2, hy, hy2] = near.derivatives.map(|v| v.map(f64::from));
+                    for i in 0..256 {
+                        let a = f64::from(i) * 2.399;
+                        let share = (f64::from(i % 16) + 1.0) / 16.0;
+                        let d = glam::DVec3::new(a.cos(), a.sin(), (a * 0.37).sin() * 0.5)
+                            .normalize()
+                            * near.range
+                            * share
+                            * share;
+                        let quad = |h: [f64; 4], h2: [f64; 4]| {
+                            0.5 * (h[0] * d.x * d.x + h[1] * d.y * d.y + h[2] * d.z * d.z)
+                                + h[3] * d.x * d.y
+                                + h2[0] * d.x * d.z
+                                + h2[1] * d.y * d.z
+                        };
+                        let shader = glam::DVec2::new(
+                            f64::from(near.whole[0])
+                                + f64::from(near.fraction[0])
+                                + gx[0] * d.x
+                                + gx[1] * d.y
+                                + gx[2] * d.z
+                                + quad(hx, hx2),
+                            f64::from(near.whole[1])
+                                + f64::from(near.fraction[1])
+                                + gy[0] * d.x
+                                + gy[1] * d.y
+                                + gy[2] * d.z
+                                + quad(hy, hy2),
+                        );
+                        let c: Vec<f64> =
+                            near.cubic.iter().flatten().map(|&v| f64::from(v)).collect();
+                        let monomials = [
+                            d.x * d.x * d.x,
+                            d.y * d.y * d.y,
+                            d.z * d.z * d.z,
+                            d.x * d.x * d.y,
+                            d.x * d.x * d.z,
+                            d.y * d.y * d.x,
+                            d.y * d.y * d.z,
+                            d.z * d.z * d.x,
+                            d.z * d.z * d.y,
+                            d.x * d.y * d.z,
+                        ];
+                        let cubic =
+                            |at: usize| (0..10).map(|t| c[at + t] * monomials[t]).sum::<f64>();
+                        let shader = shader + glam::DVec2::new(cubic(0), cubic(10));
+                        let mut off = shader - near_texels(camera + d, q, lon0, NEAR_SIDE);
+                        off.x = (off.x + NEAR_SIDE / 2.0).rem_euclid(NEAR_SIDE) - NEAR_SIDE / 2.0;
+                        // The finest level a pixel `d` away takes or blends toward: no
+                        // finer than its texel at one pixel (the shader's `lod`).
+                        let n = (camera + d) * q;
+                        let cos = n
+                            .normalize()
+                            .truncate()
+                            .length()
+                            .max(tuning::MIN_LOD_LATITUDE_COSINE);
+                        let lod = (2.0 * std::f64::consts::PI * 1.01 * cos
+                            / (tuning::TILE_SIZE_PX * d.length() * pa))
+                            .log2()
+                            + tuning::LOD_SHARPNESS_BIAS;
+                        let level = (lod.floor() + 1.0).clamp(0.0, f64::from(MAX_TRACKED_ZOOM));
+                        let texel = 2f64.powf(f64::from(MAX_TRACKED_ZOOM) - level);
+                        assert!(
+                            off.abs().max_element() < 0.02 * texel,
+                            "{model:?} {lod_height} {lat} {lon} {height_km} {share}: {off} at level {level}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Every tile within reach of the camera's comes back from its key, round the
     /// antimeridian too, at every zoom; tiles too far off do not fit a key.
     #[test]
@@ -748,12 +900,12 @@ mod tests {
         for origin in [
             (0, 0),
             (1 << 18, 1 << 18),
-            ((1 << 19) - 1, 1000),
-            (5, (1 << 19) - 1),
+            ((1 << ORIGIN_ZOOM) - 1, 1000),
+            (5, (1 << ORIGIN_ZOOM) - 1),
         ] {
-            for z in 0..=19u32 {
+            for z in 0..=ORIGIN_ZOOM {
                 let n = 1u32 << z;
-                let camera = (origin.0 >> (19 - z), origin.1 >> (19 - z));
+                let camera = (origin.0 >> (ORIGIN_ZOOM - z), origin.1 >> (ORIGIN_ZOOM - z));
                 for (ox, oy) in [(0i64, 0i64), (1, -1), (-3, 7), (4000, -4000), (-4095, 4095)] {
                     let x = (i64::from(camera.0) + ox).rem_euclid(i64::from(n)) as u32;
                     let y = i64::from(camera.1) + oy;

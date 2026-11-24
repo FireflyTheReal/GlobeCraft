@@ -32,12 +32,18 @@ pixels; small frames keep CPU rendering because complete GPU/CPU timings were si
 at 512×384 on the baseline adapter. `GLOBECRAFT_RENDERER=gpu` also uses it for small
 supported frames. `GLOBECRAFT_RENDERER=cpu` never creates a GPU device.
 
-GPU rendering requires no geographic grid, no relief, the screen's level blending
-(not the sharper screenshot modes), at most 4 million pixels, and a checked LOD bound
-of zoom 13 or lower (worked out from the eye's height as the CPU's atmosphere measures
-it; a tilted view's eye lies far below the distance to the point it looks at). Closer
-views and exact grid rendering use the double-precision CPU renderer (roadmap D8
-brings the GPU closer step by step). The tiles a frame needs
+GPU rendering requires the eye above the ground, no geographic grid, no relief, the
+screen's level blending (not the sharper screenshot modes) and at most 4 million
+pixels; exact grid rendering and relief use the double-precision CPU renderer
+(roadmap D8 brings relief to the GPU step by step). Since 2026-11-24 every level a
+map has, to zoom 20, is the GPU's: to level 13 a point's place on the map is an f32
+map coordinate (an eighth of a texel there); past it, where that is a texel or
+coarser, it comes from the point's f32 offset from the camera on the map near the
+camera (`relief::NearMap` in zoom-20 texels: the camera's texel in integers and its
+first, second and third derivatives, within a fiftieth of a texel of the exact place
+at the finest level a pixel there can take, out as far as level 14 can reach in a
+2,000-pixel view). The ray meets the ground through the root form that does not
+subtract two values of about one, with the camera's height term from f64. The tiles a frame needs
 are kept in a hash set of 16,384 packed keys (zoom and offset from the camera's tile
 there); levels 12 to 15 of Esri's imagery are matched to level 11's colours from each
 atlas tile's mean colours, as the CPU's `colour_match`. Within that range it draws both

@@ -319,14 +319,12 @@ fn unsupported_views_choose_precision_instead_of_truncating_gpu_work() {
             globecraft_core::earth_model::EarthModel::Wgs84,
         );
     };
-    at(&mut request, 0.15, 0.0);
-    assert!(!GpuRenderer::supports(&request));
-    // Its eye's height counts, not the distance to the point looked at: 130 km out at
-    // 60° the eye is 65 km up, in the air; 260 km out, above it.
-    at(&mut request, 130.0, 60.0);
-    assert!(!GpuRenderer::supports(&request));
-    at(&mut request, 260.0, 60.0);
-    assert!(GpuRenderer::supports(&request));
+    // Close views are the GPU's too (roadmap D8): from inside the air (G2), with
+    // levels to 20 from the map near the camera (G3).
+    for (alt, tilt) in [(0.15, 0.0), (0.15, 80.0), (130.0, 60.0), (260.0, 60.0)] {
+        at(&mut request, alt, tilt);
+        assert!(GpuRenderer::supports(&request), "{alt} km at {tilt}°");
+    }
     at(&mut request, 14000.0, 0.0);
     request.cfg.grid = true;
     assert!(!GpuRenderer::supports(&request));
@@ -768,7 +766,11 @@ fn gpu_close_overview_matches_cpu() {
                 let u = (f64::from(x) + f64::from(px) / 256.0) / f64::from(1u32 << z);
                 let v = (f64::from(y) + f64::from(py) / 256.0) / f64::from(1u32 << z);
                 let wave = |f: f64| (0.5 + 0.5 * (f * std::f64::consts::TAU).sin()) as f32;
-                let detail = if (px / 16 + py / 16) % 2 == 0 {
+                // Past level 13 a sharp texel pattern, so a place a fraction of a
+                // texel off shows.
+                let detail = if z > 13 {
+                    if (px / 2 + py / 2) % 2 == 0 { 0.9 } else { 1.0 }
+                } else if (px / 16 + py / 16) % 2 == 0 {
                     0.98
                 } else {
                     1.0
@@ -791,23 +793,32 @@ fn gpu_close_overview_matches_cpu() {
     let (w, h) = (160usize, 100usize);
     let mut failures = Vec::new();
     for provider in [Provider::Satellite, Provider::Streets] {
-        for (lat, lon, alt, tilt, heading, sun_east) in [
-            (45.0, 9.0, 900.0, 0.0, 0.0, 30.0),
-            (45.0, 9.0, 500.0, 30.0, 40.0, 30.0),
-            (30.3, 79.8, 200.0, 0.0, 0.0, 30.0),
-            (30.3, 79.8, 150.0, 45.0, 10.0, 30.0),
-            (-33.9, 151.2, 125.0, 20.0, 200.0, 30.0),
-            (64.0, -150.0, 260.0, 60.0, 90.0, 30.0),
-            (20.0, -150.0, 2000.0, 80.0, 90.0, 30.0),
+        for (lat, lon, alt, tilt, heading, sun_east, fine) in [
+            (45.0, 9.0, 900.0, 0.0, 0.0, 30.0, false),
+            (45.0, 9.0, 500.0, 30.0, 40.0, 30.0, false),
+            (30.3, 79.8, 200.0, 0.0, 0.0, 30.0, false),
+            (30.3, 79.8, 150.0, 45.0, 10.0, 30.0, false),
+            (-33.9, 151.2, 125.0, 20.0, 200.0, 30.0, false),
+            (64.0, -150.0, 260.0, 60.0, 90.0, 30.0, false),
+            (20.0, -150.0, 2000.0, 80.0, 90.0, 30.0, false),
             // Inside the air: from its top down to the integrated table's heights,
             // the sun high, low over the horizon and just set.
-            (45.0, 9.0, 90.0, 0.0, 0.0, 30.0),
-            (64.0, -150.0, 130.0, 60.0, 90.0, 30.0),
-            (30.3, 79.8, 40.0, 30.0, 120.0, 80.0),
-            (-33.9, 151.2, 25.0, 50.0, 300.0, 86.0),
-            (45.0, 9.0, 12.0, 70.0, 90.0, 30.0),
-            (45.0, 9.0, 8.0, 0.0, 0.0, 95.0),
-            (10.0, -60.0, 3.0, 75.0, 270.0, 88.0),
+            (45.0, 9.0, 90.0, 0.0, 0.0, 30.0, false),
+            (64.0, -150.0, 130.0, 60.0, 90.0, 30.0, false),
+            (30.3, 79.8, 40.0, 30.0, 120.0, 80.0, false),
+            (-33.9, 151.2, 25.0, 50.0, 300.0, 86.0, false),
+            (45.0, 9.0, 12.0, 70.0, 90.0, 30.0, false),
+            (45.0, 9.0, 8.0, 0.0, 0.0, 95.0, false),
+            (10.0, -60.0, 3.0, 75.0, 270.0, 88.0, false),
+            // Close (G3): the levels of a 1,200-pixel-high view, to 20 near the
+            // camera, from the map near it; across the antimeridian and far north.
+            (45.0, 9.0, 8.0, 0.0, 0.0, 30.0, true),
+            (30.3, 79.8, 3.0, 45.0, 10.0, 30.0, true),
+            (64.0, -150.0, 1.0, 70.0, 90.0, 80.0, true),
+            (-33.9, 151.2, 0.3, 0.0, 0.0, 30.0, true),
+            (10.0, -60.0, 0.15, 80.0, 270.0, 30.0, true),
+            (46.5, 179.99, 2.0, 30.0, 90.0, 30.0, true),
+            (78.0, 15.0, 5.0, 20.0, 180.0, 30.0, true),
         ] {
             for (lit, lights) in [(false, false), (true, false), (false, true), (true, true)] {
                 let cam = Cam {
@@ -845,7 +856,8 @@ fn gpu_close_overview_matches_cpu() {
                     compare: None,
                     presentation: 0,
                 };
-                // The levels of a view up to 2,000 pixels high, no finer than 13.
+                // The levels of a view up to 2,000 pixels high, no finer than 13, or
+                // those of a 1,200-pixel view.
                 let mut request = request;
                 let c = request.basis.c;
                 let eye_km = (c
@@ -853,7 +865,11 @@ fn gpu_close_overview_matches_cpu() {
                     .sqrt()
                     - 1.0)
                     * globecraft_core::EARTH_RADIUS_KM;
-                let lod_height = (eye_km * 21.0).clamp(16.0, 2000.0);
+                let lod_height = if fine {
+                    1200.0
+                } else {
+                    (eye_km * 21.0).clamp(16.0, 2000.0)
+                };
                 request.cfg.lod_scale = (h as f64 / lod_height) as f32;
                 let name = format!(
                     "{provider:?} ({lat},{lon}) {alt} km tilt {tilt} (eye {eye_km:.0} km) sun east {sun_east} lit {lit} lights {lights}"
@@ -890,9 +906,10 @@ fn gpu_close_overview_matches_cpu() {
                     .unwrap_or_else(|(error, _, _)| panic!("{name}: {error}"));
                 let result = parity(&frame.view.pixels, &cpu);
                 println!(
-                    "{name}: {} tiles to level {deepest}, parity {result:?}, waiting {}",
+                    "{name}: {} tiles to level {deepest}, parity {result:?}, waiting {}, CPU pixels {}",
                     used.len(),
-                    frame.view.waiting.len()
+                    frame.view.waiting.len(),
+                    frame.repaired
                 );
                 if result.is_err() {
                     failures.push(name);

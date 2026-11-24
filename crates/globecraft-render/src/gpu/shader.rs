@@ -33,6 +33,11 @@ pub(super) fn source() -> String {
         ("AIR_SCATTERING_AT", super::overview::AIR_SCATTERING_AT),
         ("AIR_INSIDE_AT", super::overview::AIR_INSIDE_AT),
         ("AERIAL_AT", super::overview::AERIAL_AT),
+        ("MAP_ZOOM", usize::from(super::overview::MAP_ZOOM)),
+        (
+            "GLOBAL_MAX_LEVEL",
+            usize::from(super::overview::GLOBAL_MAX_LEVEL),
+        ),
     ] {
         source = source.replace(&format!("__{name}__"), &value.to_string());
     }
