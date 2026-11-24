@@ -63,8 +63,6 @@ struct Shared {
     previous: HashMap<TileKey, Arc<RgbaImage>>,
     /// For a GIBS layer's newest day (`gibs_domains_url`): the day shown instead.
     gibs_day: GibsDay,
-    /// A GIBS layer has sent a palette PNG: its RGBA PNGs are garbage.
-    palette_seen: bool,
     /// The GIBS RGBA PNGs shown before any palette PNG came, dropped when one does.
     rgba: std::collections::HashSet<TileKey>,
 }
@@ -150,6 +148,11 @@ pub struct RasterTiles {
     tile_px: u16,
     /// The day `{date}` stands for (`YYYY-MM-DD`).
     date: String,
+    /// A GIBS layer has sent a palette PNG: its RGBA PNGs are garbage. One flag for
+    /// all the days of a layer (`under`): GIBS's newest day sent almost only garbage
+    /// and seldom a palette PNG, so on its own it kept striped garbage on screen
+    /// (2026-11-24).
+    palette_seen: Arc<std::sync::atomic::AtomicBool>,
     /// Where GIBS lists the days of a template asking for its newest day.
     gibs_domains: Option<String>,
     /// For such a template, the days round the day shown: a daily map from orbits
@@ -175,6 +178,7 @@ impl RasterTiles {
             tile_px: tile_px.max(64),
             date: super::day_before(globecraft_core::math::now_unix()),
             gibs_domains: gibs_domains_url(template),
+            palette_seen: Arc::default(),
             under: None,
             shared: Arc::default(),
             snapshot: None,
@@ -278,8 +282,10 @@ impl RasterTiles {
                             self.tile_px,
                         )
                     };
-                    let mut next = of(&newest);
-                    next.under = Some(Box::new(of(&before)));
+                    let (mut next, mut earlier) = (of(&newest), of(&before));
+                    next.palette_seen = self.palette_seen.clone();
+                    earlier.palette_seen = self.palette_seen.clone();
+                    next.under = Some(Box::new(earlier));
                     self.under = Some(Box::new(next));
                 }
                 self.template
@@ -304,6 +310,15 @@ impl RasterTiles {
             .as_mut()
             .and_then(|under| under.update(runtime, view, repaint.clone()));
         let gibs = template.starts_with(GIBS_WMTS);
+        let palette_seen = self.palette_seen.load(std::sync::atomic::Ordering::Relaxed);
+        if palette_seen && !shared.rgba.is_empty() {
+            // Another day of the layer has sent a palette PNG since.
+            let shown: Vec<TileKey> = shared.rgba.drain().collect();
+            for earlier in shown {
+                shared.tiles.insert(earlier, retry_soon());
+            }
+            shared.revision += 1;
+        }
         let mut inflight = shared
             .tiles
             .values()
@@ -326,6 +341,7 @@ impl RasterTiles {
             let url = super::tile_url(&template, key.z, key.x, key.y, &self.date);
             let (state, key, repaint) = (self.shared.clone(), *key, repaint.clone());
             let archive = self.archive.clone();
+            let palette = self.palette_seen.clone();
             let day = shared.day;
             runtime.spawn(async move {
                 let result = match archive {
@@ -347,15 +363,19 @@ impl RasterTiles {
                                 .insert(key, Entry::Failed { at: Instant::now() });
                         }
                         Ok(Some((image, rgba)))
-                            if gibs && rgba && (shared.palette_seen || damaged(&image)) =>
+                            if gibs
+                                && rgba
+                                && (palette.load(std::sync::atomic::Ordering::Relaxed)
+                                    || damaged(&image)) =>
                         {
                             shared.tiles.insert(key, retry_soon());
                         }
                         Ok(Some((image, rgba))) => {
                             if gibs && rgba {
                                 shared.rgba.insert(key);
-                            } else if gibs && !shared.palette_seen {
-                                shared.palette_seen = true;
+                            } else if gibs
+                                && !palette.swap(true, std::sync::atomic::Ordering::Relaxed)
+                            {
                                 let shown: Vec<TileKey> = shared.rgba.drain().collect();
                                 for earlier in shown {
                                     shared.tiles.insert(earlier, retry_soon());
