@@ -259,6 +259,10 @@ struct Walk {
     least: f32,
 }
 
+// Where a walk met the ground: the last point above it and the first under it (their
+// clearances), at `level` (blended from the next coarser one by `weight`; -1: not met).
+struct Met { t0: f32, c0: f32, t1: f32, c1: f32, level: i32, blends: bool, weight: f32 }
+
 // Walks the ray from `rel` (from the camera) along `dir` from `from` to `end`, at levels by distance
 // for `angle` (view angle per pixel). `safe`: maxima with the margin and the levels
 // on both sides of an edge, for a start the CPU can trust. `lift`: toward the sun, the
@@ -278,6 +282,7 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
     var own_looked = Looked(vec3<u32>(0xffffffffu), -1);
     var coarse_looked = own_looked;
     var fine_looked = own_looked;
+    var met = Met(0.0, 0.0, 0.0, 0.0, -1, false, 1.0);
     for (var step = 0u; step < relief.raster.w; step++) {
         let d = rel + dir * t;
         let p = relief.camera.xyz + d;
@@ -358,27 +363,8 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
             }
             ground_world = ground * to_world;
             if h <= ground_world {
-                // Met the ground: refined between the last point above and this one.
-                var t0 = last.x; var c0 = last.y;
-                var t1 = t; var c1 = h - ground_world;
-                if t0 >= 0.0 {
-                    for (var i = 0; i < HIT_REFINEMENTS; i++) {
-                        if c0 - c1 <= 0.0 { break; }
-                        let tm = t0 + (t1 - t0) * c0 / (c0 - c1);
-                        let dm = rel + dir * tm;
-                        let pm = relief.camera.xyz + dm;
-                        let sm = spot(pm, dir);
-                        var gm = bilinear(locate(level, dm, sm.uv, &own_looked));
-                        if blends {
-                            let cm = bilinear(locate(level - 1, dm, sm.uv, &coarse_looked));
-                            gm = cm + (gm - cm) * weight;
-                        }
-                        let c = height_above(pm) - gm * to_world;
-                        if c > 0.0 { t0 = tm; c0 = c; } else { t1 = tm; c1 = c; }
-                    }
-                }
-                result.hit = t1;
-                return result;
+                met = Met(last.x, last.y, t, h - ground_world, level, blends, weight);
+                break;
             }
             if lift > 0.0 {
                 let texel_world = 2.0 * PI * at.latitude_cosine / texels;
@@ -398,7 +384,32 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         if over_top && !loose { result.above = t; }
         loose = loose || !over_top;
     }
-    result.unknown = true;
+    if met.level < 0 {
+        result.unknown = true;
+        return result;
+    }
+    // Met the ground: refined between the last point above and this one. Here, after
+    // the loop, a group of threads refines once; inside it, once for every step any of
+    // its threads met the ground on. Toward the sun only meeting it counts.
+    var t0 = met.t0; var c0 = met.c0;
+    var t1 = met.t1; var c1 = met.c1;
+    if t0 >= 0.0 && lift <= 0.0 {
+        for (var i = 0; i < HIT_REFINEMENTS; i++) {
+            if c0 - c1 <= 0.0 { break; }
+            let tm = t0 + (t1 - t0) * c0 / (c0 - c1);
+            let dm = rel + dir * tm;
+            let pm = relief.camera.xyz + dm;
+            let sm = spot(pm, dir);
+            var gm = bilinear(locate(met.level, dm, sm.uv, &own_looked));
+            if met.blends {
+                let cm = bilinear(locate(met.level - 1, dm, sm.uv, &coarse_looked));
+                gm = cm + (gm - cm) * met.weight;
+            }
+            let c = height_above(pm) - gm * to_world;
+            if c > 0.0 { t0 = tm; c0 = c; } else { t1 = tm; c1 = c; }
+        }
+    }
+    result.hit = t1;
     return result;
 }
 
