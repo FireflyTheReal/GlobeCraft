@@ -41,6 +41,11 @@ const WORKGROUP: u32 = 64;
 const MAX_UPLOADS_PER_FRAME: usize = 64;
 /// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
+/// The walk's planes per pixel (`starts` in the shader): start, ground, sun's share,
+/// trust, slope east and north.
+pub(super) const PLANES: usize = 6;
+/// Their bytes, per pixel.
+const PLANE_BYTES: usize = PLANES * 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -263,6 +268,7 @@ fn source() -> String {
         ("SHADOW_LIFT_TEXELS", terrain::SHADOW_LIFT_TEXELS),
         ("SHADOW_COARSER", terrain::SHADOW_DETAIL_COARSER),
         ("SUN_RISE_START", crate::tuning::SUN_RISE_START_COSINE),
+        ("MAX_SLOPE", terrain::MAX_SLOPE),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{:?}", value as f32));
     }
@@ -387,11 +393,16 @@ impl ReliefMarch {
             let storage = wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC;
-            self.output = overview::buffer(device, "GlobeCraft relief starts", count * 16, storage);
+            self.output = overview::buffer(
+                device,
+                "GlobeCraft relief starts",
+                count * PLANE_BYTES,
+                storage,
+            );
             self.staging = overview::buffer(
                 device,
                 "GlobeCraft relief readback",
-                count * 16 + layers * 4,
+                count * PLANE_BYTES + layers * 4,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
         }
@@ -464,7 +475,7 @@ impl ReliefMarch {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: binding(&self.output, (count * 16) as u64),
+                        resource: binding(&self.output, (count * PLANE_BYTES) as u64),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -503,16 +514,24 @@ impl ReliefMarch {
                 pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP), 1, 1);
             }
         }
-        encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(
+            &self.output,
+            0,
+            &self.staging,
+            0,
+            (count * PLANE_BYTES) as u64,
+        );
         encoder.copy_buffer_to_buffer(
             &self.read,
             0,
             &self.staging,
-            (count * 16) as u64,
+            (count * PLANE_BYTES) as u64,
             (layers * 4) as u64,
         );
         queue.submit(Some(encoder.finish()));
-        let slice = self.staging.slice(..(count * 16 + layers * 4) as u64);
+        let slice = self
+            .staging
+            .slice(..(count * PLANE_BYTES + layers * 4) as u64);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
@@ -530,7 +549,7 @@ impl ReliefMarch {
             let mapped = slice
                 .get_mapped_range()
                 .map_err(|error| error.to_string())?;
-            let (pixels, read) = mapped.split_at(count * 16);
+            let (pixels, read) = mapped.split_at(count * PLANE_BYTES);
             (
                 bytemuck::cast_slice::<u8, f32>(pixels).to_vec(),
                 bytemuck::cast_slice::<u8, u32>(read).to_vec(),
@@ -857,7 +876,12 @@ pub(super) fn past_the_ground(starts: &[f32], hits: &[(f64, f32)]) -> usize {
         .count()
 }
 
-impl ReliefMarch {}
+impl ReliefMarch {
+    /// The last walk's planes on the device (`starts` in the shader), for the overview.
+    pub(super) fn output(&self) -> &wgpu::Buffer {
+        &self.output
+    }
+}
 
 /// Ridges about 10 km apart up to 3,000 m, the same at every level.
 fn made_up_mountains(z: u8, x: u32, y: u32) -> Tile {
@@ -879,8 +903,8 @@ fn made_up_mountains(z: u8, x: u32, y: u32) -> Tile {
 /// it gave up on more (a camera low among the relief starts every ray at levels too
 /// fine for f32 map coordinates), the CPU's own cones start the rays further on.
 pub(super) fn helps(pixels: &[f32]) -> bool {
-    let count = pixels.len() / 4;
-    pixels[3 * count..]
+    let count = pixels.len() / PLANES;
+    pixels[3 * count..4 * count]
         .iter()
         .filter(|&&trusted| trusted < 0.0)
         .count()

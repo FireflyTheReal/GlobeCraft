@@ -487,7 +487,7 @@ fn frame_air(rays: &RayCaster, cfg: &RenderCfg) -> Option<atmosphere::Frame> {
 /// depth. The march toward the sun cost as much as the view's (2026-11-22); edges and
 /// the soft margins round them are still marched for every pixel.
 #[derive(Default)]
-struct SunSeen {
+pub(crate) struct SunSeen {
     /// The last pixel's column, light and distance, and whether its light was its
     /// left neighbour's too.
     last: Option<(usize, f32, f64, bool)>,
@@ -513,7 +513,7 @@ impl SunSeen {
 
 /// Where a row's relief marches may start.
 #[derive(Clone, Copy)]
-struct MarchStarts<'a> {
+pub(crate) struct MarchStarts<'a> {
     /// Per block of pixels (`terrain::beam_starts`; empty without relief or with
     /// `pixels`).
     beams: &'a [f64],
@@ -526,7 +526,19 @@ struct MarchStarts<'a> {
     trusted: Option<&'a [f32]>,
 }
 
-impl MarchStarts<'_> {
+impl<'a> MarchStarts<'a> {
+    /// Row `y`'s starts from the GPU's walk (`gpu::relief`: planes of `w × h`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn walked(walk: &'a [f32], w: usize, h: usize, y: usize) -> Self {
+        let row = |part: usize| Some(&walk[part * w * h + y * w..][..w]);
+        Self {
+            beams: &[],
+            pixels: row(0),
+            hits: row(1),
+            seen: row(2),
+            trusted: row(3),
+        }
+    }
     /// The share of the sun the GPU saw at pixel `x`'s ground, when it met the ground
     /// within a texel of `distance` (where the CPU did).
     fn gpu_sun(&self, x: usize, distance: f64, pixel_angle: f64) -> Option<f32> {
@@ -613,8 +625,6 @@ fn render_row<const ELLIPSOID: bool>(
     air: Option<&atmosphere::Frame>,
     row: &mut [u8],
 ) {
-    let (w, h) = rays.pixels();
-    let pixel_angle = pixel_angle(h, cfg);
     let pixels: &mut [[u8; RGBA_CHANNELS]] = bytemuck::cast_slice_mut(row);
     let mut sun_seen = SunSeen::default();
     for (pack, pixels) in pixels.chunks_mut(RAY_LANES).enumerate() {
@@ -622,112 +632,121 @@ fn render_row<const ELLIPSOID: bool>(
         let samples = rays.cast_model::<ELLIPSOID>(first_x, y);
         // A short final pack only shades real pixels; padded lanes make no lookups.
         for (lane, (pixel, ray)) in pixels.iter_mut().zip(samples).enumerate() {
-            let x = first_x + lane;
-            let bb = ray.camera_dot;
-            let disc = ray.discriminant;
-            let hits_surface = disc >= 0.0 && bb < 0.0;
-            let geometry = rays.model_geometry();
-            let mut alpha = 1.0;
-            let col = match cfg.terrain {
-                // Relief: the ray is marched through the elevation model, which can
-                // also stand above the horizon where the ellipsoid is missed.
-                Some(relief) => {
-                    let offset = (x as f32 - w as f32 / 2.0, y as f32 - h as f32 / 2.0);
-                    let priority = offset.0 * offset.0 + offset.1 * offset.1;
-                    let met = starts.gpu_hit(x).and_then(|t| {
-                        terrain::met_at(
-                            &ray,
-                            t,
-                            rays.camera(),
-                            geometry,
-                            relief,
-                            pixel_angle,
-                            priority,
-                            loc,
-                        )
-                    });
-                    match met.unwrap_or_else(|| {
-                        terrain::march(
-                            &ray,
-                            match starts.pixels {
-                                Some(pixels) => f64::from(pixels[x]),
-                                None => starts
-                                    .beams
-                                    .get(x / terrain::BEAM_COLUMNS)
-                                    .copied()
-                                    .unwrap_or(0.0),
-                            },
-                            hits_surface,
-                            rays.camera(),
-                            geometry,
-                            relief,
-                            pixel_angle,
-                            priority,
-                            loc,
-                        )
-                    }) {
-                        terrain::March::Hit(ground, slope) => {
-                            let light = match cfg.sun {
-                                Some(sun) => Relief {
-                                    chart: 1.0,
-                                    sun_cosine: Some(slope.sun_cosine(
-                                        ground.normal,
+            *pixel = pixel_colour::<ELLIPSOID>(
+                first_x + lane,
+                y,
+                &ray,
+                rays,
+                cfg,
+                loc,
+                &starts,
+                air,
+                &mut sun_seen,
+            );
+        }
+    }
+}
+
+/// Pixel `(x, y)`'s colour (`render_row`): the ground (the relief marched or taken
+/// from the GPU's walk, or the surface), or the sky.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pixel_colour<const ELLIPSOID: bool>(
+    x: usize,
+    y: usize,
+    ray: &rays::RaySample,
+    rays: &RayCaster,
+    cfg: &RenderCfg,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+    starts: &MarchStarts,
+    air: Option<&atmosphere::Frame>,
+    sun_seen: &mut SunSeen,
+) -> [u8; RGBA_CHANNELS] {
+    let (w, h) = rays.pixels();
+    let pixel_angle = pixel_angle(h, cfg);
+    let ray = *ray;
+    let bb = ray.camera_dot;
+    let disc = ray.discriminant;
+    let hits_surface = disc >= 0.0 && bb < 0.0;
+    let geometry = rays.model_geometry();
+    let mut alpha = 1.0;
+    let col = match cfg.terrain {
+        // Relief: the ray is marched through the elevation model, which can
+        // also stand above the horizon where the ellipsoid is missed.
+        Some(relief) => {
+            let offset = (x as f32 - w as f32 / 2.0, y as f32 - h as f32 / 2.0);
+            let priority = offset.0 * offset.0 + offset.1 * offset.1;
+            let met = starts.gpu_hit(x).and_then(|t| {
+                terrain::met_at(
+                    &ray,
+                    t,
+                    rays.camera(),
+                    geometry,
+                    relief,
+                    pixel_angle,
+                    priority,
+                    loc,
+                )
+            });
+            match met.unwrap_or_else(|| {
+                terrain::march(
+                    &ray,
+                    match starts.pixels {
+                        Some(pixels) => f64::from(pixels[x]),
+                        None => starts
+                            .beams
+                            .get(x / terrain::BEAM_COLUMNS)
+                            .copied()
+                            .unwrap_or(0.0),
+                    },
+                    hits_surface,
+                    rays.camera(),
+                    geometry,
+                    relief,
+                    pixel_angle,
+                    priority,
+                    loc,
+                )
+            }) {
+                terrain::March::Hit(ground, slope) => {
+                    let light = match cfg.sun {
+                        Some(sun) => Relief {
+                            chart: 1.0,
+                            sun_cosine: Some(slope.sun_cosine(ground.normal, sun, relief.fade)),
+                            sky: slope.sky_share(relief.fade),
+                            seen: match starts.gpu_sun(x, ground.distance, pixel_angle) {
+                                Some(seen) => seen,
+                                None => sun_seen.at(x, ground.distance, || {
+                                    terrain::sun_light(
+                                        &ground,
                                         sun,
-                                        relief.fade,
-                                    )),
-                                    sky: slope.sky_share(relief.fade),
-                                    seen: match starts.gpu_sun(x, ground.distance, pixel_angle) {
-                                        Some(seen) => seen,
-                                        None => sun_seen.at(x, ground.distance, || {
-                                            terrain::sun_light(
-                                                &ground,
-                                                sun,
-                                                geometry,
-                                                relief,
-                                                pixel_angle,
-                                                loc,
-                                            )
-                                        }),
-                                    },
-                                    dip: terrain::horizon_dip(&ground, geometry, relief),
-                                },
-                                None => Relief {
-                                    chart: slope.chart_light(relief.fade),
-                                    sky: slope.sky_share(relief.fade),
-                                    ..Relief::FLAT
-                                },
-                            };
-                            shade_surface(
-                                with_air(
-                                    surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
-                                    &ground,
-                                    air,
-                                ),
-                                cfg,
-                                cfg.rel,
-                                loc,
-                                light,
-                            )
-                        }
-                        terrain::March::Floor => shade_surface(
-                            with_air(
-                                surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
-                                &ray,
-                                air,
-                            ),
-                            cfg,
-                            cfg.rel,
-                            loc,
-                            Relief::FLAT,
+                                        geometry,
+                                        relief,
+                                        pixel_angle,
+                                        loc,
+                                    )
+                                }),
+                            },
+                            dip: terrain::horizon_dip(&ground, geometry, relief),
+                        },
+                        None => Relief {
+                            chart: slope.chart_light(relief.fade),
+                            sky: slope.sky_share(relief.fade),
+                            ..Relief::FLAT
+                        },
+                    };
+                    shade_surface(
+                        with_air(
+                            surface::<ELLIPSOID>(x, y, w, h, &ground, cfg, geometry),
+                            &ground,
+                            air,
                         ),
-                        terrain::March::Miss => {
-                            let sky = sky(&ray, rays, air, cfg);
-                            alpha = sky.w;
-                            sky
-                        }
-                    }
+                        cfg,
+                        cfg.rel,
+                        loc,
+                        light,
+                    )
                 }
-                None if hits_surface => shade_surface(
+                terrain::March::Floor => shade_surface(
                     with_air(
                         surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
                         &ray,
@@ -738,19 +757,37 @@ fn render_row<const ELLIPSOID: bool>(
                     loc,
                     Relief::FLAT,
                 ),
-                None => {
+                terrain::March::Miss => {
                     let sky = sky(&ray, rays, air, cfg);
                     alpha = sky.w;
                     sky
                 }
-            };
-            let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
-            pixel[0] = channels.x as u8;
-            pixel[1] = channels.y as u8;
-            pixel[2] = channels.z as u8;
-            pixel[3] = (alpha * COLOR_CHANNEL_MAX) as u8;
+            }
         }
-    }
+        None if hits_surface => shade_surface(
+            with_air(
+                surface::<ELLIPSOID>(x, y, w, h, &ray, cfg, geometry),
+                &ray,
+                air,
+            ),
+            cfg,
+            cfg.rel,
+            loc,
+            Relief::FLAT,
+        ),
+        None => {
+            let sky = sky(&ray, rays, air, cfg);
+            alpha = sky.w;
+            sky
+        }
+    };
+    let channels = col.clamp(Vec4::ZERO, Vec4::ONE) * COLOR_CHANNEL_MAX;
+    [
+        channels.x as u8,
+        channels.y as u8,
+        channels.z as u8,
+        (alpha * COLOR_CHANNEL_MAX) as u8,
+    ]
 }
 
 /// Renders an RGBA frame and queues missing tiles, coarse zoom levels first.
@@ -961,7 +998,8 @@ pub(crate) fn render_pixels_with(
     let unit_sphere = rays.uses_unit_sphere();
     let air = frame_air(&rays, cfg);
     let now = std::time::Instant::now();
-    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() == 4 * w * h);
+    // The GPU's walk: four planes the march reads (`gpu::relief`), more after them.
+    let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() >= 4 * w * h);
     let per_batch: Vec<_> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()

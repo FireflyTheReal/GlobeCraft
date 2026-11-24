@@ -32,10 +32,17 @@ pixels; small frames keep CPU rendering because complete GPU/CPU timings were si
 at 512×384 on the baseline adapter. `GLOBECRAFT_RENDERER=gpu` also uses it for small
 supported frames. `GLOBECRAFT_RENDERER=cpu` never creates a GPU device.
 
-GPU rendering requires the eye above the ground, no geographic grid, no relief, the
-screen's level blending (not the sharper screenshot modes) and at most 4 million
-pixels; exact grid rendering and relief use the double-precision CPU renderer
-(roadmap D8 brings relief to the GPU step by step). Since 2026-11-24 every level a
+GPU rendering requires the eye above the ground, no geographic grid, the screen's
+level blending (not the sharper screenshot modes) and at most 4 million pixels; exact
+grid rendering uses the double-precision CPU renderer. Relief views are the GPU's
+too since 2026-11-24 (roadmap D8, G4) when its relief walk (`gpu::relief`) answers
+most rays: the walk also gives the slope at each ground it found as the CPU would
+shade it (`terrain::hit_on`: the level for the distance, blended from the next
+coarser one's), and the overview draws that ground from the walk's buffer on the
+device with the CPU's light (the sun on the slope, the share of it the walk saw, the
+sun rising earlier over high ground, hill shading without the sun). Every pixel it
+does not take (the sky, grounds the CPU would march for, a level or the next coarser
+one not held) the CPU draws in the repair, marched from the walk's starts. Since 2026-11-24 every level a
 map has, to zoom 20, is the GPU's: to level 13 a point's place on the map is an f32
 map coordinate (an eighth of a texel there); past it, where that is a texel or
 coarser, it comes from the point's f32 offset from the camera on the map near the

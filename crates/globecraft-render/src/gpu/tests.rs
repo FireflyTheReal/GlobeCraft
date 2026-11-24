@@ -162,6 +162,7 @@ fn gpu_overview_matches_cpu() {
                             queue: &gpu.queue,
                             atlas: &gpu.view,
                             means: &gpu.means,
+                            walk: None,
                         },
                         &request,
                         &slots,
@@ -507,7 +508,12 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         // many of the GPU's grounds (they did not come and go, 2026-11-23; with six
         // uploads a frame a camera low among the relief waited 7 frames).
         let count = width * height;
-        let taken = |pixels: &[f32]| pixels[3 * count..].iter().filter(|&&t| t > 0.5).count();
+        let taken = |pixels: &[f32]| {
+            pixels[3 * count..4 * count]
+                .iter()
+                .filter(|&&t| t > 0.5)
+                .count()
+        };
         let mut tiles = held;
         let mut taken_by_frame = Vec::new();
         let mut uploads_by_frame = Vec::new();
@@ -585,7 +591,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             .iter()
             .filter(|&&hit| hit >= 0.0)
             .count();
-        let trusted = starts[3 * count..]
+        let trusted = starts[3 * count..4 * count]
             .iter()
             .filter(|&&trusted| trusted > 0.5)
             .count();
@@ -753,42 +759,11 @@ fn gpu_close_overview_matches_cpu() {
         asked.lock().unwrap().insert(key);
         let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
         let mut tiles = tiles.lock().unwrap();
-        Lookup::Ready(Arc::clone(tiles.entry(key).or_insert_with(|| {
-            // Smooth colour over the globe at every level with a faint pattern in each
-            // tile; Esri's imagery a third darker to level 11 (its mosaics) than from
-            // 12 (photographs), which colour matching evens out.
-            let gain = if provider == Provider::Satellite && z <= 11 {
-                0.7
-            } else {
-                1.0
-            };
-            let image = image::RgbaImage::from_fn(256, 256, |px, py| {
-                let u = (f64::from(x) + f64::from(px) / 256.0) / f64::from(1u32 << z);
-                let v = (f64::from(y) + f64::from(py) / 256.0) / f64::from(1u32 << z);
-                let wave = |f: f64| (0.5 + 0.5 * (f * std::f64::consts::TAU).sin()) as f32;
-                // Past level 13 a sharp texel pattern, so a place a fraction of a
-                // texel off shows.
-                let detail = if z > 13 {
-                    if (px / 2 + py / 2) % 2 == 0 { 0.9 } else { 1.0 }
-                } else if (px / 16 + py / 16) % 2 == 0 {
-                    0.98
-                } else {
-                    1.0
-                };
-                let channel = |value: f32| (value * gain * detail * 255.0) as u8;
-                image::Rgba([
-                    channel(wave(u * 37.0)),
-                    channel(wave(v * 53.0 + 0.3)),
-                    channel(wave((u + v) * 29.0 + 0.6)),
-                    255,
-                ])
-            });
-            let mut bytes = std::io::Cursor::new(Vec::new());
-            image::DynamicImage::ImageRgba8(image)
-                .write_to(&mut bytes, image::ImageFormat::Png)
-                .unwrap();
-            Arc::new(Tile::decode(bytes.get_ref()).unwrap())
-        })))
+        Lookup::Ready(Arc::clone(
+            tiles
+                .entry(key)
+                .or_insert_with(|| smooth_tile(provider, z, x, y)),
+        ))
     };
     let (w, h) = (160usize, 100usize);
     let mut failures = Vec::new();
@@ -897,6 +872,7 @@ fn gpu_close_overview_matches_cpu() {
                             queue: &gpu.queue,
                             atlas: &gpu.view,
                             means: &gpu.means,
+                            walk: None,
                         },
                         &request,
                         &slots,
@@ -918,4 +894,209 @@ fn gpu_close_overview_matches_cpu() {
         }
     }
     assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// Relief views drawn by the GPU from its walk (roadmap D8, G4): the ground the walk
+/// met and the CPU would take as its own, its slope, the sun's share there and the
+/// sun rising earlier over high ground, as the CPU draws the same frame from the same
+/// walk; the CPU draws the rest (its part printed). With the sun low and high, without
+/// it (hill shading), with more exaggeration and the relief half faded in.
+#[test]
+#[ignore = "needs a native GPU adapter; run explicitly to verify relief parity"]
+fn gpu_relief_view_matches_cpu() {
+    use std::sync::Mutex;
+    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
+    let asked: Mutex<std::collections::HashSet<TileKey>> = Mutex::new(Default::default());
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
+        if provider == Provider::Satellite && z > 14 {
+            return Lookup::Unavailable;
+        }
+        if provider != Provider::TerrainDem {
+            asked.lock().unwrap().insert(key);
+        }
+        let mut tiles = tiles.lock().unwrap();
+        Lookup::Ready(Arc::clone(tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                crate::tests::probe_dem_tile(z, x, y)
+            } else {
+                smooth_tile(provider, z, x, y)
+            }
+        })))
+    };
+    let (width, height) = std::env::var("GLOBECRAFT_RELIEF_PROBE_SIZE")
+        .ok()
+        .and_then(|size| {
+            let (w, h) = size.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((320, 200));
+    let mut failures = Vec::new();
+    for (name, alt, tilt, heading) in [
+        ("top-16km", 16.0, 0.0, 0.0),
+        ("tilt-16km", 16.0, 70.0, 0.0),
+        ("tilt-52km", 52.0, 75.0, 0.0),
+        ("tilt-6km", 6.0, 72.0, 30.0),
+    ] {
+        for (light, sun, exaggeration, fade) in [
+            (
+                "low sun",
+                Some(globecraft_core::math::ll_to_v3(15.0, -10.0)),
+                1.0,
+                1.0,
+            ),
+            (
+                "high sun",
+                Some(globecraft_core::math::ll_to_v3(25.0, 70.0)),
+                1.0,
+                1.0,
+            ),
+            ("no sun", None, 1.0, 1.0),
+            (
+                "low sun, 2× and half faded",
+                Some(globecraft_core::math::ll_to_v3(15.0, -10.0)),
+                2.0,
+                0.5,
+            ),
+        ] {
+            let cam = Cam {
+                lat: 30.3,
+                lon: 79.8,
+                heading,
+                alt,
+                tilt,
+                look_up: 0.0,
+            };
+            let mut cfg = crate::tests::batch_reference_config(Provider::Satellite);
+            cfg.grid = false;
+            cfg.terrain = Some(crate::TerrainCfg::new(exaggeration, fade));
+            cfg.sun = sun;
+            let request = RenderRequest {
+                width,
+                height,
+                cam,
+                basis: cam.basis_for_model(
+                    width as f64 / height as f64,
+                    globecraft_core::earth_model::EarthModel::Wgs84,
+                ),
+                cfg,
+                overlays: None,
+                aircraft: None,
+                live_layers: None,
+                presentation: 0,
+                compare: None,
+            };
+            let name = format!("{name}, {light}");
+            assert!(GpuRenderer::supports(&request), "{name}");
+            let render = |starts: Option<&[f32]>| {
+                crate::render_pixels_with(
+                    width,
+                    height,
+                    0..height,
+                    &request.basis,
+                    &request.cfg,
+                    &lookup,
+                    Vec::new(),
+                    starts,
+                )
+            };
+            // Frames one after another, as the backend draws them, until the walk
+            // holds what the CPU's frames held.
+            let mut held = render(None).relief_tiles;
+            let march = gpu
+                .relief
+                .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
+                .as_mut()
+                .unwrap();
+            let mut planes = Vec::new();
+            for _ in 0..4 {
+                let grown = relief::grown_tiles(&held, lookup, std::time::Instant::now());
+                let walked = march
+                    .starts(&gpu.device, &gpu.queue, &request, &grown)
+                    .expect("relief march");
+                held = relief::next_tiles(render(Some(&walked.pixels)).relief_tiles, &walked.read);
+                planes = walked.pixels;
+            }
+            asked.lock().unwrap().clear();
+            let cpu = render(Some(&planes)).pixels;
+            let used: Vec<_> = {
+                let asked = asked.lock().unwrap();
+                let tiles = tiles.lock().unwrap();
+                asked.iter().map(|key| (*key, tiles[key].clone())).collect()
+            };
+            let slots = gpu.upload(&used).expect("the view's tiles fit the atlas");
+            let march = gpu.relief.as_ref().unwrap().as_ref().unwrap();
+            let drawn = std::time::Instant::now();
+            let frame = gpu
+                .overview
+                .render(
+                    overview::Context {
+                        device: &gpu.device,
+                        queue: &gpu.queue,
+                        atlas: &gpu.view,
+                        means: &gpu.means,
+                        walk: Some((march.output(), &planes)),
+                    },
+                    &request,
+                    &slots,
+                    &lookup,
+                    Vec::new(),
+                )
+                .unwrap_or_else(|(error, _, _)| panic!("{name}: {error}"));
+            let drawn = drawn.elapsed();
+            let result = parity(&frame.view.pixels, &cpu);
+            println!(
+                "{name}: parity {result:?}, drawn in {drawn:?} after the walk, the CPU's part {:.1} % ({} pixels), waiting {}",
+                100.0 * frame.repaired as f64 / (width * height) as f64,
+                frame.repaired,
+                frame.view.waiting.len()
+            );
+            if result.is_err() {
+                failures.push(name);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// Smooth colour over the globe at every level with a faint pattern in each tile, a
+/// sharp texel pattern past level 13 (so a place a fraction of a texel off shows);
+/// Esri's imagery a third darker to level 11 (its mosaics) than from 12
+/// (photographs), which colour matching evens out.
+fn smooth_tile(provider: Provider, z: u8, x: u32, y: u32) -> Arc<Tile> {
+    // Smooth colour over the globe at every level with a faint pattern in each
+    // tile; Esri's imagery a third darker to level 11 (its mosaics) than from
+    // 12 (photographs), which colour matching evens out.
+    let gain = if provider == Provider::Satellite && z <= 11 {
+        0.7
+    } else {
+        1.0
+    };
+    let image = image::RgbaImage::from_fn(256, 256, |px, py| {
+        let u = (f64::from(x) + f64::from(px) / 256.0) / f64::from(1u32 << z);
+        let v = (f64::from(y) + f64::from(py) / 256.0) / f64::from(1u32 << z);
+        let wave = |f: f64| (0.5 + 0.5 * (f * std::f64::consts::TAU).sin()) as f32;
+        // Past level 13 a sharp texel pattern, so a place a fraction of a
+        // texel off shows.
+        let detail = if z > 13 {
+            if (px / 2 + py / 2) % 2 == 0 { 0.9 } else { 1.0 }
+        } else if (px / 16 + py / 16) % 2 == 0 {
+            0.98
+        } else {
+            1.0
+        };
+        let channel = |value: f32| (value * gain * detail * 255.0) as u8;
+        image::Rgba([
+            channel(wave(u * 37.0)),
+            channel(wave(v * 53.0 + 0.3)),
+            channel(wave((u + v) * 29.0 + 0.6)),
+            255,
+        ])
+    });
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    Arc::new(Tile::decode(bytes.get_ref()).unwrap())
 }

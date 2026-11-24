@@ -37,6 +37,9 @@ struct View {
     // The third-order terms (`NearMap::cubic`): x's ten coefficients, then y's.
     near_cubic_0: vec4<f32>, near_cubic_1: vec4<f32>, near_cubic_2: vec4<f32>,
     near_cubic_3: vec4<f32>, near_cubic_4: vec4<f32>,
+    // The relief (roadmap D8, G4): 1 when the view has it (the ground then comes from
+    // the GPU's walk, `walk`), its fade, its exaggeration; w unused.
+    relief: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<storage, read_write> output: array<u32>;
@@ -56,6 +59,19 @@ struct View {
 // (`atmosphere::aerial`: light and the share crossed for each view row, azimuth
 // column and distance slice), from `AERIAL_AT`.
 @group(0) @binding(5) var<storage, read> air_tables: array<vec4<f32>>;
+// The GPU's relief walk (`relief.wgsl`'s `starts`, planes of one value per pixel):
+// start, ground, the sun's share there, trust, slope east and north. Read only with
+// the relief on (`view.relief.x`).
+@group(0) @binding(6) var<storage, read> walk: array<f32>;
+const NO_SLOPE: f32 = 3.4e38;
+// Hill shading without the sun (`terrain::Slope::chart_light`).
+const LIGHT_UP: f32 = __LIGHT_UP__;
+const LIGHT_NORTH: f32 = __LIGHT_NORTH__;
+const LIGHT_WEST: f32 = __LIGHT_WEST__;
+const CHART_BASE: f32 = __CHART_BASE__;
+const CHART_GAIN: f32 = __CHART_GAIN__;
+const CHART_MIN: f32 = __CHART_MIN__;
+const CHART_MAX: f32 = __CHART_MAX__;
 const AIR_SCATTERING_AT: u32 = __AIR_SCATTERING_AT__u;
 const AIR_INSIDE_AT: u32 = __AIR_INSIDE_AT__u;
 const AERIAL_AT: u32 = __AERIAL_AT__u;
@@ -684,6 +700,33 @@ fn inside_ground(dir: vec3<f32>, distance_km: f32, sunlit: bool) -> InsideAir {
     }
     return InsideAir(scattered * adapt, transmitted.rgb, sunlight);
 }
+// The sky's light and the share of the sun's a surface facing it takes, for the sun's
+// cosine `e` over ground whose own horizon lies `dip` (radians) below the level one
+// (`pixel::Daylight::below`; `raised` with a dip): the sun rises and the sky
+// brightens that much earlier there.
+struct Day { sky: vec3<f32>, facing: f32 }
+fn day(e: f32, dip: f32) -> Day {
+    let over = e + dip;
+    // The eye adapted to twilight (`view.figure.z`) keeps the blue hour longer.
+    let night_end = TWILIGHT_OFFSET+(EYE_TWILIGHT-TWILIGHT_OFFSET)*view.figure.z;
+    var shaded = SHADE_RISE+(SHADE_DAY-SHADE_RISE)*smooth01((over-SUN_RISE_START)/(SKY_DAY-SUN_RISE_START));
+    if over <= SUN_RISE_START {
+        shaded = NIGHT_BRIGHTNESS+(SHADE_RISE-NIGHT_BRIGHTNESS)*smooth01((over+night_end)/(SUN_RISE_START+night_end));
+    }
+    let risen = smooth01((over-SUN_RISE_START)/(SUN_RISE_FULL-SUN_RISE_START));
+    let facing = risen*(DIRECT_RISE+(1.0-SHADE_DAY-DIRECT_RISE)*smooth01(e/SKY_DAY));
+    let colour = mix(TWILIGHT_SKY,DAY_SKY,smooth01(e/SKY_DAY));
+    return Day(colour/dot(colour,LUMINANCE)*shaded, facing);
+}
+// `terrain::Slope::chart_light`: the slope (unfaded) under a fixed light, faded.
+fn chart_light(slope: vec2<f32>, fade: f32) -> f32 {
+    let light_length = sqrt(LIGHT_UP*LIGHT_UP + LIGHT_NORTH*LIGHT_NORTH + LIGHT_WEST*LIGHT_WEST);
+    let flat = LIGHT_UP / light_length;
+    let slope_length = sqrt(1.0 + dot(slope, slope));
+    let lit = max((LIGHT_UP + slope.x*LIGHT_WEST - slope.y*LIGHT_NORTH) / (slope_length*light_length), 0.0);
+    let shade = clamp(CHART_BASE + CHART_GAIN*(lit - flat), CHART_MIN, CHART_MAX);
+    return 1.0 + (shade - 1.0)*fade;
+}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -701,9 +744,25 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // The camera's height term from f64, and the nearer root in the form that does not
     // subtract two values of about one: close to the ground both give metres.
     let height_term = view.near_frac.w;
-    let disc = bb * bb - a * height_term;
-    if disc < HORIZON_PRECISION_MARGIN || bb >= 0.0 { output[i] = 0u; return; }
-    let t = height_term / (-bb + sqrt(disc));
+    var t = 0.0;
+    // With the relief: the ground the walk met, where the CPU would take it as its own
+    // and the walk held what shading it takes; every other pixel is the CPU's.
+    let relief_on = view.relief.x > 0.0;
+    var slope = vec2<f32>(0.0);
+    var seen = 1.0;
+    if relief_on {
+        let count = width * height;
+        t = walk[count + i];
+        seen = walk[2u * count + i];
+        slope = vec2<f32>(walk[4u * count + i], walk[5u * count + i]);
+        if t < 0.0 || walk[3u * count + i] < 0.5 || slope.x >= NO_SLOPE || (view.effects.x != 0u && seen < 0.0) {
+            output[i] = 0u; return;
+        }
+    } else {
+        let disc = bb * bb - a * height_term;
+        if disc < HORIZON_PRECISION_MARGIN || bb >= 0.0 { output[i] = 0u; return; }
+        t = height_term / (-bb + sqrt(disc));
+    }
     let point = camera + dir * t;
     let normal = normalize(point * q);
     let incidence = max(-dot(normal,dir),0.0);
@@ -766,17 +825,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let e = dot(normal,view.sun.xyz);
         let k = smooth01((e+TWILIGHT_OFFSET)/TWILIGHT_WIDTH);
         night = NIGHT_BLUE*(1.0-k); darkness = 1.0-k;
-        // The eye adapted to twilight (`view.figure.z`) keeps the blue hour longer.
-        let night_end = TWILIGHT_OFFSET+(EYE_TWILIGHT-TWILIGHT_OFFSET)*view.figure.z;
-        var shaded = SHADE_RISE+(SHADE_DAY-SHADE_RISE)*smooth01((e-SUN_RISE_START)/(SKY_DAY-SUN_RISE_START));
-        if e <= SUN_RISE_START {
-            shaded = NIGHT_BRIGHTNESS+(SHADE_RISE-NIGHT_BRIGHTNESS)*smooth01((e+night_end)/(SUN_RISE_START+night_end));
-        }
-        let risen = smooth01((e-SUN_RISE_START)/(SUN_RISE_FULL-SUN_RISE_START));
-        let facing = risen*(DIRECT_RISE+(1.0-SHADE_DAY-DIRECT_RISE)*smooth01(e/SKY_DAY));
-        let colour = mix(TWILIGHT_SKY,DAY_SKY,smooth01(e/SKY_DAY));
-        sky = colour/dot(colour,LUMINANCE)*shaded;
-        direct = facing*max(e,0.0);
+        let flat = day(e, 0.0);
+        sky = flat.sky;
+        direct = flat.facing*max(e,0.0);
     }
     // Night lights without the sun: night everywhere (`RenderCfg::night_everywhere`).
     let all_night = !sunlit && view.lights.x != 0u;
@@ -832,6 +883,30 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     var light = vec3<f32>(shade);
     if sunlit || all_night { light = sky + sun_tint*direct; }
+    // The relief's slope in the light (`finish_surface` with `Relief`): the sun on the
+    // slope, the share of it seen and the share of the sky faced; the sun rises
+    // earlier over high ground (`terrain::horizon_dip`). Without the sun, hill shading.
+    if relief_on {
+        let fade = view.relief.y;
+        let faded = slope * fade;
+        let slope_length = sqrt(1.0 + dot(faded, faded));
+        let sky_share = 0.5 + 0.5 / slope_length;
+        if sunlit {
+            let sun = view.sun.xyz;
+            var east = vec3<f32>(-normal.y, normal.x, 0.0);
+            if dot(east, east) > 0.0 { east = normalize(east); } else { east = vec3<f32>(1.0, 0.0, 0.0); }
+            let north = cross(normal, east);
+            let cosine = (dot(sun, normal) - faded.x*dot(sun, east) - faded.y*dot(sun, north)) / slope_length;
+            let g = sqrt(dot(point, point * q));
+            let height = length(point) * (1.0 - 1.0 / g) / max(view.relief.z, 1e-30);
+            let raised = day(dot(normal, sun), sqrt(2.0 * max(height, 0.0)) * fade);
+            light = raised.sky*sky_share + sun_tint*(raised.facing*max(cosine, 0.0)*seen);
+        } else if all_night {
+            light = sky*sky_share;
+        } else {
+            light = vec3<f32>(shade * chart_light(slope, fade));
+        }
+    }
     color = color*light + vec3<f32>(0.0,0.0,night) + sunlight*glint;
     if lights.w > 0.0 { color += lights.rgb*darkness; }
     if airy {

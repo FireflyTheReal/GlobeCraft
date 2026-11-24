@@ -23,6 +23,9 @@ const WORKGROUP_SIZE: u32 = 256;
 /// matching imagery levels' colours (`colour_match`).
 const MEANS_PER_TILE: usize = 85;
 
+/// Why the GPU did not draw a frame, the buffer back, and whether the device failed.
+type Refused = (String, Vec<u8>, bool);
+
 struct Slot {
     key: TileKey,
     source: Weak<Tile>,
@@ -76,9 +79,10 @@ impl GpuRenderer {
             .expect("poll destroyed device");
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
-        // Relief and the unblended screenshot levels are the CPU's. So is a surface the
-        // shader has no kernel for (it has the unit sphere and ellipsoids).
-        if request.cfg.terrain.is_some() || !request.cfg.level_blend {
+        // The unblended screenshot levels are the CPU's. So is a surface the shader has
+        // no kernel for (it has the unit sphere and ellipsoids). Relief is the GPU's
+        // with its walk (`render`'s `walk`).
+        if !request.cfg.level_blend {
             return false;
         }
         use globecraft_core::{EARTH_RADIUS_KM, earth_model::SurfaceGeometry};
@@ -346,6 +350,7 @@ impl GpuRenderer {
                     queue: &self.queue,
                     atlas: &self.view,
                     means: &self.means,
+                    walk: None,
                 },
                 &request,
                 &slots,
@@ -466,6 +471,27 @@ impl GpuRenderer {
         cache: &TileCache,
         buffer: Vec<u8>,
     ) -> Result<RenderedView, (String, Vec<u8>, bool)> {
+        self.draw(request, cache, buffer, None)
+            .map(|(view, _)| view)
+    }
+    /// Draws a relief view from the walk just made for it (`relief_starts`, `walk` its
+    /// planes); and the elevation tiles the CPU's part held.
+    pub(crate) fn render_relief(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+        buffer: Vec<u8>,
+        walk: &[f32],
+    ) -> Result<(RenderedView, Vec<TileKey>), Refused> {
+        self.draw(request, cache, buffer, Some(walk))
+    }
+    fn draw(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+        buffer: Vec<u8>,
+        walk: Option<&[f32]>,
+    ) -> Result<(RenderedView, Vec<TileKey>), Refused> {
         if let Some(error) = self
             .failure
             .lock()
@@ -521,12 +547,14 @@ impl GpuRenderer {
                 Ok(slots) => slots,
                 Err(error) => return Err((error, buffer, false)),
             };
+            let walked = walk.zip(self.relief.as_ref().and_then(Option::as_ref));
             let frame = self.overview.render(
                 overview::Context {
                     device: &self.device,
                     queue: &self.queue,
                     atlas: &self.view,
                     means: &self.means,
+                    walk: walked.map(|(planes, march)| (march.output(), planes)),
                 },
                 request,
                 &slots,
@@ -550,7 +578,7 @@ impl GpuRenderer {
             let missing_ready = wanted.iter().any(|key| !slots.contains_key(key));
             self.preferred = frame.sampled;
             if !missing_ready {
-                return Ok(frame.view);
+                return Ok((frame.view, frame.relief_tiles));
             }
             buffer = frame.view.pixels;
             if pass + 1 == MAX_RESIDENCY_PASSES {

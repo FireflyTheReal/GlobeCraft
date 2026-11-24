@@ -85,15 +85,15 @@ const REANCHOR_TEXELS: f64 = 48.0;
 /// Secant refinements of a hit between the last point above and the first below.
 const HIT_REFINEMENTS: usize = 3;
 /// Hill shading: light from the north-west and above, independent of real sunlight.
-const LIGHT_UP: f64 = 0.7;
-const LIGHT_NORTH: f64 = 0.55;
-const LIGHT_WEST: f64 = 0.45;
-const SHADE_BASE: f64 = 0.9;
-const SHADE_GAIN: f64 = 0.7;
-const MIN_SHADE: f64 = 0.58;
-const MAX_SHADE: f64 = 1.25;
+pub(crate) const LIGHT_UP: f64 = 0.7;
+pub(crate) const LIGHT_NORTH: f64 = 0.55;
+pub(crate) const LIGHT_WEST: f64 = 0.45;
+pub(crate) const SHADE_BASE: f64 = 0.9;
+pub(crate) const SHADE_GAIN: f64 = 0.7;
+pub(crate) const MIN_SHADE: f64 = 0.58;
+pub(crate) const MAX_SHADE: f64 = 1.25;
 /// Steepest slope (rise over run) the shading uses; cliffs beyond it shade the same.
-const MAX_SLOPE: f64 = 5.0;
+pub(crate) const MAX_SLOPE: f64 = 5.0;
 /// Keeps slope distances finite next to the poles.
 pub(crate) const MIN_LATITUDE_COSINE: f64 = 0.015;
 

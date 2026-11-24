@@ -32,7 +32,9 @@ struct Relief {
 // Per pixel: where the CPU's march starts, then (after all of those) where the ray
 // met the ground (-1: nowhere it knows), then the share of the sun seen there (-1:
 // not known), then whether the CPU may take that ground as its own (1) or marches (0;
-// -1: the walk gave up without an answer).
+// -1: the walk gave up without an answer), then the ground's slope east and north
+// there as the CPU shades it (`terrain::hit_on`; NO_SLOPE where the walk does not
+// hold what that needs), for the overview to draw the ground (roadmap D8, G4).
 @group(0) @binding(1) var<storage, read_write> starts: array<f32>;
 @group(0) @binding(2) var tops: texture_2d_array<f32>;
 @group(0) @binding(3) var<storage, read> tiles: array<vec4<u32>>;
@@ -88,6 +90,8 @@ const SHADOW_LIFT_TEXELS: f32 = __SHADOW_LIFT_TEXELS__;
 const SHADOW_DETAIL_COARSER: f32 = __SHADOW_COARSER__;
 const SUN_RISE_START_COSINE: f32 = __SUN_RISE_START__;
 const HIT_REFINEMENTS: i32 = 3;
+const MAX_SLOPE: f32 = __MAX_SLOPE__;
+const NO_SLOPE: f32 = 3.4e38;
 // A tile not held.
 const NOT_HELD: f32 = -1.0;
 
@@ -419,6 +423,56 @@ fn sun_seen(rel: vec3<f32>, distance: f32) -> f32 {
     return 1.0 - fade * (1.0 - x * x * (3.0 - 2.0 * x));
 }
 
+// The relief's slope (rise over run east and north, exaggerated, capped) at `at` of
+// `level`, as `terrain::slope` reads `Elevation::slopes_m`.
+fn slope_of(at: Place, level: i32, latitude_cosine: f32) -> vec2<f32> {
+    let p = at.at - vec2<f32>(0.5);
+    let corner = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    let layer = at.layer;
+    var sample = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+    let offsets = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, -1), vec2<i32>(0, 1));
+    for (var k = 0; k < 4; k++) {
+        let c = corner + offsets[k];
+        let a = height_of(layer, c);
+        let b = height_of(layer, c + vec2<i32>(1, 0));
+        let cc = height_of(layer, c + vec2<i32>(0, 1));
+        let d = height_of(layer, c + vec2<i32>(1, 1));
+        let top = a + (b - a) * f.x;
+        sample[k] = top + (cc + (d - cc) * f.x - top) * f.y;
+    }
+    let run_m = 2.0 * PI * EARTH_RADIUS_M * max(latitude_cosine, MIN_LATITUDE_COSINE) / (exp2(f32(level)) * DEM_TEXELS);
+    let exaggeration = relief.march.x * EARTH_RADIUS_M;
+    let rise = vec2<f32>(sample[0] - sample[1], sample[2] - sample[3]);
+    return clamp(rise / (2.0 * run_m) * exaggeration, vec2<f32>(-MAX_SLOPE), vec2<f32>(MAX_SLOPE));
+}
+// The slope at the ground `t` along `dir`, as `terrain::met_at` and `hit_on` shade it:
+// the level for that distance held as itself, blended from the next coarser one's
+// slope over the level's band where the heights blend; NO_SLOPE where a tile that
+// needs is not held (or past the map's limit), and the CPU shades it.
+fn hit_slope(dir: vec3<f32>, t: f32) -> vec2<f32> {
+    let d = dir * t;
+    let p = relief.camera.xyz + d;
+    if abs(p.z) / length(p) > MERCATOR_MAX_SINE { return vec2<f32>(NO_SLOPE); }
+    let at = spot(p, dir);
+    let zoom = log2(2.0 * PI * EARTH_RADIUS_M * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / (DEM_TEXELS * max(t * EARTH_RADIUS_M * relief.march.y, 0.01) * PIXELS_PER_TEXEL));
+    let level = clamp(i32(floor(zoom)), 0, MAX_ZOOM);
+    if level >= COARSE_COORDINATE_LEVEL && !is_near(level, d) { return vec2<f32>(NO_SLOPE); }
+    var looked = Looked(vec3<u32>(0xffffffffu), -1);
+    let own = locate(level, d, at.uv, &looked);
+    if own.layer < 0 { return vec2<f32>(NO_SLOPE); }
+    var slope = slope_of(own, level, at.latitude_cosine);
+    let toward = clamp(zoom - f32(level), 0.0, 1.0);
+    if toward < 1.0 && relief.march.w > 0.5 && level > 0 {
+        var coarse_looked = Looked(vec3<u32>(0xffffffffu), -1);
+        let coarse = locate(level - 1, d, at.uv, &coarse_looked);
+        if coarse.layer < 0 { return vec2<f32>(NO_SLOPE); }
+        let before = slope_of(coarse, level - 1, at.latitude_cosine);
+        slope = before + (slope - before) * toward;
+    }
+    return slope;
+}
+
 // The view's ray for pixel `i` of `width` (unit).
 fn ray(i: u32, width: u32, height: u32) -> vec3<f32> {
     let x = i % width; let y = i / width;
@@ -438,6 +492,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     starts[count + i] = -1.0;
     starts[2u * count + i] = -1.0;
     starts[3u * count + i] = 0.0;
+    starts[4u * count + i] = NO_SLOPE;
+    starts[5u * count + i] = NO_SLOPE;
     let dir = ray(i, width, height);
     let camera = relief.camera.xyz;
     let shell = span(camera, dir, relief.axes.xyz + vec3<f32>(relief.axes.w));
@@ -454,7 +510,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if view.unknown && view.hit < 0.0 { starts[3u * count + i] = -1.0; }
     if view.hit >= 0.0 {
         starts[count + i] = view.hit;
-        starts[3u * count + i] = select(0.0, 1.0, view.hit - view.above <= TRUSTED_TEXELS * view.texel_t);
+        let trusted = view.hit - view.above <= TRUSTED_TEXELS * view.texel_t;
+        starts[3u * count + i] = select(0.0, 1.0, trusted);
+        if trusted {
+            let slope = hit_slope(dir, view.hit);
+            starts[4u * count + i] = slope.x;
+            starts[5u * count + i] = slope.y;
+        }
     }
 }
 

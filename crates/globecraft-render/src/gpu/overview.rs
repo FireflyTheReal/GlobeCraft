@@ -81,6 +81,8 @@ struct View {
     near_frac: [f32; 4],
     near_derivatives: [[f32; 4]; 6],
     near_cubic: [[f32; 4]; 5],
+    /// The relief: on (1), its fade and exaggeration.
+    relief: [f32; 4],
 }
 pub(super) struct Context<'a> {
     pub device: &'a wgpu::Device,
@@ -88,10 +90,15 @@ pub(super) struct Context<'a> {
     pub atlas: &'a wgpu::TextureView,
     /// The atlas tiles' mean colours (`GpuRenderer::means`).
     pub means: &'a wgpu::Buffer,
+    /// With the relief: the GPU's walk for this view (`relief::ReliefMarch::starts`),
+    /// on the device and read back (`relief::PLANES` planes).
+    pub walk: Option<(&'a wgpu::Buffer, &'a [f32])>,
 }
 pub(super) struct Frame {
     pub view: RenderedView,
     pub sampled: Vec<TileKey>,
+    /// The elevation tiles the CPU's part held (relief views).
+    pub relief_tiles: Vec<TileKey>,
     /// The pixels the shader left to the CPU (sky, horizon, seams, polar caps, levels
     /// past the near map).
     #[cfg(test)]
@@ -118,6 +125,8 @@ pub(super) struct Overview {
     aurora: wgpu::Buffer,
     aurora_for: Option<std::sync::Arc<globecraft_data::aurora::AuroraGrid>>,
     aerial_for: Option<std::sync::Arc<crate::atmosphere::aerial::Aerial>>,
+    /// Bound for the walk without the relief.
+    no_walk: wgpu::Buffer,
     staging: wgpu::Buffer,
     pixels: usize,
     dependency_count: usize,
@@ -194,6 +203,12 @@ impl Overview {
             aurora: buffer(device, "GlobeCraft aurora", 4, wgpu::BufferUsages::STORAGE),
             aurora_for: None,
             aerial_for: None,
+            no_walk: buffer(
+                device,
+                "GlobeCraft no relief walk",
+                16,
+                wgpu::BufferUsages::STORAGE,
+            ),
             staging: buffer(
                 device,
                 "GlobeCraft overview readback",
@@ -247,7 +262,20 @@ impl Overview {
             queue,
             atlas,
             means,
+            walk,
         } = context;
+        // The walk is for this view: planes of one value per pixel.
+        let walk = walk.filter(|(_, planes)| {
+            request.cfg.terrain.is_some()
+                && planes.len() == super::relief::PLANES * request.width * request.height
+        });
+        if request.cfg.terrain.is_some() && walk.is_none() {
+            return Err((
+                "Relief without the GPU's walk is the CPU's".into(),
+                pixels,
+                false,
+            ));
+        }
         let Some(max_zoom) = supported_zoom(request) else {
             return Err(("View requires the precise CPU renderer (close altitude, exact grid, or raster limits)".into(),pixels,false));
         };
@@ -424,6 +452,9 @@ impl Overview {
             ],
             near_derivatives: near.derivatives,
             near_cubic: near.cubic,
+            relief: request.cfg.terrain.map_or([0.0; 4], |relief| {
+                [1.0, relief.fade, relief.exaggeration() as f32, 0.0]
+            }),
         };
         let mut table = vec![[u32::MAX; 4]; TILE_TABLE_SIZE];
         for (&key, &layer) in slots {
@@ -474,6 +505,15 @@ impl Overview {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: self.air.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: match walk {
+                        Some((buffer, _)) => {
+                            binding(buffer, (super::relief::PLANES * count * 4) as u64)
+                        }
+                        None => self.no_walk.as_entire_binding(),
+                    },
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
@@ -588,7 +628,9 @@ impl Overview {
             .chunks_exact(4)
             .filter(|pixel| pixel[3] != 255)
             .count();
-        for (key, distance) in super::repair::pixels(request, &mut pixels, lookup) {
+        let (repaired_needs, relief_tiles) =
+            super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes));
+        for (key, distance) in repaired_needs {
             let distance = distance.unwrap_or(f32::MAX);
             required_map
                 .entry(key)
@@ -610,6 +652,7 @@ impl Overview {
                 requests,
             },
             sampled,
+            relief_tiles,
             #[cfg(test)]
             repaired,
         })
@@ -757,7 +800,7 @@ mod tests {
             .filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. }))
             .count();
         assert!(storage <= 8, "{storage} storage buffers");
-        assert_eq!(std::mem::size_of::<View>(), 464);
+        assert_eq!(std::mem::size_of::<View>(), 480);
         assert_eq!(std::mem::offset_of!(View, lights), 160);
         assert_eq!(std::mem::offset_of!(View, origin), 176);
         assert_eq!(std::mem::offset_of!(View, raster), 112);

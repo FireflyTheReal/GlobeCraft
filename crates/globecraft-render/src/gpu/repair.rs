@@ -4,11 +4,16 @@ use globecraft_data::tiles::{Lookup, TileKey};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
+/// Draws the pixels the shader left (alpha below 255) as the CPU does; with the
+/// relief, from the GPU's walk (`walk`, `relief::PLANES` planes): marched where the
+/// shader did not take the walk's ground. The tiles missed, and the elevation tiles
+/// held.
 pub(super) fn pixels(
     request: &RenderRequest,
     pixels: &mut [u8],
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
-) -> Vec<(TileKey, Option<f32>)> {
+    walk: Option<&[f32]>,
+) -> (Vec<(TileKey, Option<f32>)>, Vec<TileKey>) {
     let rays = crate::rays::RayCaster::new(request.width, request.height, &request.basis);
     let air = crate::frame_air(&rays, &request.cfg);
     let now = std::time::Instant::now();
@@ -27,6 +32,54 @@ pub(super) fn pixels(
             for (offset, row) in rows.chunks_mut(request.width * 4).enumerate() {
                 let y = batch * tuning::ROWS_PER_TILE_BATCH + offset;
                 let pixels: &mut [[u8; 4]] = bytemuck::cast_slice_mut(row);
+                // The relief: every pixel left as `render_row` draws it.
+                if let (Some(walk), Some(_)) = (walk, request.cfg.terrain) {
+                    let starts = crate::MarchStarts::walked(walk, request.width, request.height, y);
+                    let mut sun_seen = crate::SunSeen::default();
+                    for (pack, group) in pixels.chunks_mut(crate::rays::RAY_LANES).enumerate() {
+                        if group.iter().all(|pixel| pixel[3] == 255) {
+                            continue;
+                        }
+                        let first_x = pack * crate::rays::RAY_LANES;
+                        let samples = if rays.uses_unit_sphere() {
+                            rays.cast_model::<false>(first_x, y)
+                        } else {
+                            rays.cast_model::<true>(first_x, y)
+                        };
+                        for (lane, (pixel, ray)) in group.iter_mut().zip(samples).enumerate() {
+                            if pixel[3] == 255 {
+                                continue;
+                            }
+                            let x = first_x + lane;
+                            *pixel = if rays.uses_unit_sphere() {
+                                crate::pixel_colour::<false>(
+                                    x,
+                                    y,
+                                    &ray,
+                                    &rays,
+                                    &request.cfg,
+                                    &mut local,
+                                    &starts,
+                                    air.as_ref(),
+                                    &mut sun_seen,
+                                )
+                            } else {
+                                crate::pixel_colour::<true>(
+                                    x,
+                                    y,
+                                    &ray,
+                                    &rays,
+                                    &request.cfg,
+                                    &mut local,
+                                    &starts,
+                                    air.as_ref(),
+                                    &mut sun_seen,
+                                )
+                            };
+                        }
+                    }
+                    continue;
+                }
                 for (pack, group) in pixels.chunks_mut(crate::rays::RAY_LANES).enumerate() {
                     // Most surface packs need no CPU work. Sky/horizon packs retain
                     // f64 classification and the deterministic 64-bit stars.
@@ -66,7 +119,8 @@ pub(super) fn pixels(
                     }
                 }
             }
-            local
+            let held: Vec<TileKey> = local.dem_index.keys().copied().collect();
+            let missed = local
                 .map
                 .into_iter()
                 .filter_map(|(key, tile)| match tile {
@@ -74,8 +128,15 @@ pub(super) fn pixels(
                     crate::LocalTile::Pending => Some((key, None)),
                     crate::LocalTile::Ready(_) | crate::LocalTile::Unavailable => None,
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (missed, held)
         })
         .collect();
-    batches.into_iter().flatten().collect()
+    let mut held = std::collections::HashSet::new();
+    let mut missed = Vec::new();
+    for (batch_missed, batch_held) in batches {
+        missed.extend(batch_missed);
+        held.extend(batch_held);
+    }
+    (missed, held.into_iter().collect())
 }
