@@ -28,6 +28,14 @@ const MAX_MERCATOR_LAT: f64 = 85.051_128_78;
 const MAX_COVER_TILES: u32 = 16;
 /// The largest answer to GIBS's list of a layer's days (it is under a kilobyte).
 const MAX_DOMAINS_BYTES: u64 = 256 * 1024;
+const GIBS_WMTS: &str = "https://gibs.earthdata.nasa.gov/wmts/";
+/// GIBS sometimes answers a tile with garbage (2026-11-24: the same OMPS ozone tile
+/// came back as its true picture, a palette PNG, or as RGBA noise of another size,
+/// differently each time). Its maps have no partly transparent pixels, so a tile with
+/// more than this share of them is taken as damaged…
+const DAMAGED_PARTLY_TRANSPARENT_SHARE: f64 = 0.01;
+/// …and asked for again this soon.
+const DAMAGED_RETRY: Duration = Duration::from_secs(2);
 
 enum Entry {
     Loading,
@@ -73,12 +81,23 @@ pub struct RasterSnapshot {
     tiles: HashMap<TileKey, Arc<RgbaImage>>,
     zoom: u8,
     min_zoom: u8,
+    /// The day before's map, seen through this day's gaps (`RasterTiles::under`).
+    under: Option<Arc<RasterSnapshot>>,
 }
 
 impl RasterSnapshot {
     /// The colour at a point: from the finest loaded tile there, `None` where no tile
     /// covers it (or outside Web Mercator).
     pub fn sample(&self, lat: f64, lon: f64) -> Option<[u8; 4]> {
+        let own = self.sample_own(lat, lon);
+        match (&self.under, own) {
+            (Some(under), None) => under.sample(lat, lon),
+            (Some(under), Some(colour)) if colour[3] == 0 => under.sample(lat, lon).or(own),
+            _ => own,
+        }
+    }
+
+    fn sample_own(&self, lat: f64, lon: f64) -> Option<[u8; 4]> {
         if lat.abs() > MAX_MERCATOR_LAT {
             return None;
         }
@@ -112,6 +131,10 @@ impl RasterSnapshot {
     }
 }
 
+/// What a snapshot was built from: the tiles' revision and the day before's
+/// snapshot (its address, 0 for none).
+type SnapshotSource = (u64, usize);
+
 /// One web map layer's tiles.
 pub struct RasterTiles {
     template: String,
@@ -124,8 +147,13 @@ pub struct RasterTiles {
     date: String,
     /// Where GIBS lists the days of a template asking for its newest day.
     gibs_domains: Option<String>,
+    /// For such a template, the day before the day shown: a daily map from orbits
+    /// leaves a strip between its first and last orbit, filled from the day before.
+    under: Option<Box<RasterTiles>>,
     shared: Arc<Mutex<Shared>>,
-    snapshot: Option<(Vec<TileKey>, u64, Arc<RasterSnapshot>)>,
+    /// The last snapshot: the tiles wanted, the revision and the day before's
+    /// snapshot it was built from.
+    snapshot: Option<(Vec<TileKey>, SnapshotSource, Arc<RasterSnapshot>)>,
 }
 
 impl RasterTiles {
@@ -140,6 +168,7 @@ impl RasterTiles {
             tile_px: tile_px.max(64),
             date: super::day_before(globecraft_core::math::now_unix()),
             gibs_domains: gibs_domains_url(template),
+            under: None,
             shared: Arc::default(),
             snapshot: None,
         }
@@ -226,6 +255,20 @@ impl RasterTiles {
         let template = match (&self.gibs_domains, &shared.gibs_day) {
             (None, _) | (Some(_), GibsDay::Unknown) => self.template.clone(),
             (Some(_), GibsDay::Known(day)) => {
+                if self.under.is_none()
+                    && let Some(before) = previous_day(day)
+                {
+                    self.under = Some(Box::new(RasterTiles::new(
+                        &self.template.replacen(
+                            "/default/default/",
+                            &format!("/default/{before}/"),
+                            1,
+                        ),
+                        self.min_zoom,
+                        self.max_zoom,
+                        self.tile_px,
+                    )));
+                }
                 self.template
                     .replacen("/default/default/", &format!("/default/{day}/"), 1)
             }
@@ -243,6 +286,11 @@ impl RasterTiles {
                 return None;
             }
         };
+        let under = self
+            .under
+            .as_mut()
+            .and_then(|under| under.update(runtime, view, repaint.clone()));
+        let gibs = template.starts_with(GIBS_WMTS);
         let mut inflight = shared
             .tiles
             .values()
@@ -283,6 +331,11 @@ impl RasterTiles {
                                 .tiles
                                 .insert(key, Entry::Failed { at: Instant::now() });
                         }
+                        Ok(Some(image)) if gibs && damaged(&image) => {
+                            let at = Instant::now();
+                            let at = at.checked_sub(RETRY - DAMAGED_RETRY).unwrap_or(at);
+                            shared.tiles.insert(key, Entry::Failed { at });
+                        }
                         Ok(Some(image)) => {
                             shared.tiles.insert(
                                 key,
@@ -308,9 +361,12 @@ impl RasterTiles {
             });
         }
         let revision = shared.revision;
+        let under_ptr = under
+            .as_ref()
+            .map_or(0, |under| Arc::as_ptr(under) as usize);
         if let Some((keys, built, snapshot)) = &self.snapshot
             && *keys == wanted
-            && *built == revision
+            && *built == (revision, under_ptr)
         {
             return Some(snapshot.clone());
         }
@@ -338,8 +394,9 @@ impl RasterTiles {
             tiles,
             zoom,
             min_zoom: self.min_zoom,
+            under,
         });
-        self.snapshot = Some((wanted, revision, snapshot.clone()));
+        self.snapshot = Some((wanted, (revision, under_ptr), snapshot.clone()));
         Some(snapshot)
     }
 
@@ -388,6 +445,23 @@ fn gibs_domains_url(template: &str) -> Option<String> {
     let matrix_set = after.split('/').next()?;
     Some(format!(
         "{base}/1.0.0/{layer}/default/{matrix_set}/all/all.xml"
+    ))
+}
+
+/// Whether a GIBS tile is garbage (`DAMAGED_PARTLY_TRANSPARENT_SHARE`).
+fn damaged(image: &RgbaImage) -> bool {
+    let partly = image
+        .pixels()
+        .filter(|pixel| !matches!(pixel.0[3], 0 | 255))
+        .count();
+    partly as f64 > DAMAGED_PARTLY_TRANSPARENT_SHARE * f64::from(image.width() * image.height())
+}
+
+/// The day before `day` (`YYYY-MM-DD`).
+fn previous_day(day: &str) -> Option<String> {
+    let secs = globecraft_core::time::parse_iso(day)?;
+    Some(globecraft_core::time::date_utc(
+        secs - globecraft_core::time::DAY_SECS,
     ))
 }
 
@@ -481,6 +555,7 @@ mod tests {
             tiles,
             zoom: 1,
             min_zoom: 0,
+            under: None,
         };
         assert_eq!(snapshot.sample(40.0, -90.0), Some([200; 4]));
         assert_eq!(snapshot.sample(-40.0, 90.0), Some([10; 4]));
@@ -515,6 +590,58 @@ mod tests {
         let alone = "<Domain>2026-07-10/2026-07-10/P1D,2026-11-02</Domain>";
         assert_eq!(day_before_newest(alone).as_deref(), Some("2026-11-02"));
         assert_eq!(day_before_newest("no list"), None);
+        assert_eq!(previous_day("2026-03-01").as_deref(), Some("2026-02-28"));
+    }
+
+    #[test]
+    fn garbage_from_gibs_is_told_from_its_maps() {
+        // A map: opaque colours and clear pixels.
+        let map = RgbaImage::from_fn(16, 16, |x, _| {
+            image::Rgba(if x < 8 {
+                [0, 0, 0, 0]
+            } else {
+                [210, 237, 156, 255]
+            })
+        });
+        assert!(!damaged(&map));
+        // RGB bytes read as RGBA, as GIBS sent them: the alpha is any byte.
+        let garbage = RgbaImage::from_fn(16, 16, |x, y| {
+            let n = (x + y * 16) as u8;
+            image::Rgba([63, 21, 39, n.wrapping_mul(37)])
+        });
+        assert!(damaged(&garbage));
+    }
+
+    #[test]
+    fn a_gap_in_a_day_shows_the_day_before() {
+        let tile = |colour: [u8; 4]| {
+            let mut tiles = HashMap::new();
+            tiles.insert(
+                TileKey { z: 0, x: 0, y: 0 },
+                Arc::new(RgbaImage::from_pixel(4, 4, image::Rgba(colour))),
+            );
+            tiles
+        };
+        let before = Arc::new(RasterSnapshot {
+            tiles: tile([10, 20, 30, 255]),
+            zoom: 0,
+            min_zoom: 0,
+            under: None,
+        });
+        let gap = RasterSnapshot {
+            tiles: tile([0, 0, 0, 0]),
+            zoom: 0,
+            min_zoom: 0,
+            under: Some(before.clone()),
+        };
+        assert_eq!(gap.sample(10.0, 10.0), Some([10, 20, 30, 255]));
+        let filled = RasterSnapshot {
+            tiles: tile([200, 0, 0, 255]),
+            zoom: 0,
+            min_zoom: 0,
+            under: Some(before),
+        };
+        assert_eq!(filled.sample(10.0, 10.0), Some([200, 0, 0, 255]));
     }
 
     #[test]
