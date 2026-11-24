@@ -585,7 +585,23 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         let mut zeros = vec![0.0; width * height];
         zeros.resize(4 * width * height, -1.0);
         let from_camera = render(Some(&zeros)).0.pixels;
-        let hits = crate::relief_hits(width, height, &request.basis, &request.cfg, &lookup);
+        let hits = crate::relief_hits(
+            width,
+            height,
+            &request.basis,
+            &request.cfg,
+            &lookup,
+            crate::HitMarch::Frame,
+        );
+        // The GPU's grounds are measured exactly: so is the march they are checked against.
+        let exact_hits = crate::relief_hits(
+            width,
+            height,
+            &request.basis,
+            &request.cfg,
+            &lookup,
+            crate::HitMarch::Exact,
+        );
         let (mut past, mut share, mut counted, mut most) = (0, 0.0, 0, 0.0f64);
         let known = starts[2 * count..3 * count]
             .iter()
@@ -721,9 +737,9 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
                 );
             }
         }
-        let wrong = relief::trusted_past_the_ground(&starts, &hits);
+        let wrong = relief::trusted_past_the_ground(&starts, &exact_hits);
         println!("{name}: {wrong} grounds taken from the GPU past the CPU's");
-        for (i, &(hit, _)) in hits.iter().enumerate() {
+        for (i, &(hit, _)) in exact_hits.iter().enumerate() {
             let gpu = f64::from(starts[count + i]);
             if starts[3 * count + i] > 0.5 && gpu > hit * (1.0 + relief::PAST_THE_GROUND_SHARE) {
                 println!(

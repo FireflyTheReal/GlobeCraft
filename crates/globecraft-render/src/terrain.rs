@@ -82,6 +82,11 @@ const MAX_NUDGE: f64 = 1e-8;
 pub(crate) const DEM_TILE_TEXELS: f64 = 512.0;
 /// Linear steps between exact measurements, in texels.
 const REANCHOR_TEXELS: f64 = 48.0;
+/// The same for `march_exact`: measured exactly every texel, as the GPU's walk measures
+/// every step (2026-11-24: of the grounds the GPU took past the frame's march's, three
+/// in four were the frame's linear steps between measurements).
+#[cfg(feature = "gpu")]
+const EXACT_REANCHOR_TEXELS: f64 = 1.0;
 /// Secant refinements of a hit between the last point above and the first below.
 const HIT_REFINEMENTS: usize = 3;
 /// Hill shading: light from the north-west and above, independent of real sunlight.
@@ -254,6 +259,7 @@ pub(super) fn sun_light(
         SHADOW_REQUEST_PRIORITY,
         loc,
         Some(&mut margin),
+        REANCHOR_TEXELS,
     ) {
         March::Hit(..) => 0.0,
         March::Floor | March::Miss => margin.light(),
@@ -938,6 +944,37 @@ pub(super) fn march(
         dist,
         loc,
         None,
+        REANCHOR_TEXELS,
+    )
+}
+
+/// `march` measured exactly at every texel (`EXACT_REANCHOR_TEXELS`): slower, for the
+/// checks of the grounds the GPU found (`relief_hits` with `HitMarch::Exact`).
+#[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn march_exact(
+    ray: &rays::RaySample,
+    start: f64,
+    hits_surface: bool,
+    origin: DVec3,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> March {
+    march_near(
+        ray,
+        start,
+        hits_surface,
+        origin,
+        geometry,
+        terrain,
+        pixel_angle,
+        dist,
+        loc,
+        None,
+        EXACT_REANCHOR_TEXELS,
     )
 }
 
@@ -955,6 +992,7 @@ fn march_near(
     dist: f32,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
     mut margin: Option<&mut SunMargin>,
+    reanchor_texels: f64,
 ) -> March {
     let direction = ray.direction;
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
@@ -1047,7 +1085,7 @@ fn march_near(
         );
         let speed = (vx * vx + vy * vy).sqrt().max(1e-12);
         // Linear texel positions drift on long jumps: measure exactly again.
-        if (t - anchor.t) * speed > REANCHOR_TEXELS {
+        if (t - anchor.t) * speed > reanchor_texels {
             anchor = Anchor::at(geometry, origin, direction, t);
             uv = anchor.uv;
         }

@@ -6,9 +6,9 @@
 //! (`render_row`), in place of the 8×8-pixel cones (`terrain::beam`): the picture is
 //! the CPU's. The GPU goes on to the ground and toward the sun as
 //! `terrain::sun_light` does; where the CPU meets the ground at the same place it
-//! takes the share of the sun the GPU saw there. Where the GPU's walk went under the
-//! maxima for at most a texel before the ground, the CPU takes that ground as its own
-//! and only shades it (`terrain::met_at`). On the GPU too a cone as wide as an 8×8
+//! takes the share of the sun the GPU saw there. Every ground the GPU's walk met the CPU
+//! takes as its own and only shades (`terrain::met_at`): under the maxima the walk
+//! meets the heights exactly in each bilinear cell. On the GPU too a cone as wide as an 8×8
 //! block of pixels walks first (`cone` in the shader), and the block's rays start where
 //! it ended.
 //!
@@ -960,9 +960,10 @@ impl ReliefMarch {
         let held = render(None).relief_tiles;
         let tiles = grown_tiles(&held, lookup, std::time::Instant::now());
         let starts = self.starts(device, queue, &request, &tiles)?.pixels;
-        let hits = crate::relief_hits(WIDTH, HEIGHT, &request.basis, &request.cfg, &lookup);
-        let past = past_the_ground(&starts[..WIDTH * HEIGHT], &hits);
-        let trusted_past = trusted_past_the_ground(&starts, &hits);
+        let hits =
+            |how| crate::relief_hits(WIDTH, HEIGHT, &request.basis, &request.cfg, &lookup, how);
+        let past = past_the_ground(&starts[..WIDTH * HEIGHT], &hits(crate::HitMarch::Frame));
+        let trusted_past = trusted_past_the_ground(&starts, &hits(crate::HitMarch::Exact));
         if past > 0 || trusted_past * TRUSTED_PAST_PER > WIDTH * HEIGHT {
             return Err(format!(
                 "GPU relief self-check: {past} starts and {trusted_past} grounds of {} rays past the ground",
@@ -978,12 +979,13 @@ impl ReliefMarch {
 pub(super) const PAST_THE_GROUND_SHARE: f64 = 0.02;
 
 /// At most one ground in this many taken from the GPU may lie past a ridge tip the
-/// CPU's march meets (`TRUSTED_TEXELS` in the shader).
+/// CPU's march measured at every texel meets (the walk under the maxima meets the
+/// heights exactly in each bilinear cell, in f32 and along a straight line per cell).
 pub(super) const TRUSTED_PAST_PER: usize = 1_000;
 
 /// How many of the GPU's grounds the CPU may take as its own (`trusted`, from
-/// `ReliefMarch::starts`) lie past the ground its march meets (`hits`): a ridge the
-/// walk passed under the maxima.
+/// `ReliefMarch::starts`) lie past the ground the exact march meets (`hits`, with
+/// `HitMarch::Exact`): a ridge the walk passed under the maxima.
 pub(super) fn trusted_past_the_ground(gpu: &[f32], hits: &[(f64, f32)]) -> usize {
     let count = hits.len();
     hits.iter()

@@ -54,7 +54,15 @@ threads takes as long as its slowest: the ground's refinement runs after the wal
 loop, not inside it, and square blocks walk more alike than rows. On an M1 at
 1920×1200 the four views of `gpu_relief_walk_timing` walked in 56–94 ms on the
 device, from 117–192 ms before these four changes (2026-11-24; the sun's quarter
-alone 5–13 ms, the same shares summed). Since 2026-11-24 every level a
+alone 5–13 ms, the same shares summed). Under the maxima the view's ray meets the
+heights exactly in each bilinear cell (the ground along the ray there is a quadratic;
+its first root is bracketed for the refinement), and every ground it meets is the
+CPU's: the self-check and the march test compare those grounds with the CPU's march
+measured exactly at every texel (`HitMarch::Exact`). On the M1 the walk then took
+68–103 ms (more rays met the ground: in a top view 99.9 % from 91 %), and the
+frame after it 26–44 ms instead of 47–107 ms: the CPU's part fell from 2.5–9.1 % of
+the pixels (19–80 ms) to 0.1–1.1 % (2–7 ms); a tilted view at 16 km takes about
+140 ms in all, from about 200. Since 2026-11-24 every level a
 map has, to zoom 20, is the GPU's: to level 13 a point's place on the map is an f32
 map coordinate (an eighth of a texel there); past it, where that is a texel or
 coarser, it comes from the point's f32 offset from the camera on the map near the

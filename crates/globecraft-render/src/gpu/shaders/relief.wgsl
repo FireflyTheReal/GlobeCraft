@@ -72,14 +72,11 @@ const NUDGE_DROP_M: f32 = 1.0;
 const NEAR_LEVEL: i32 = 13;
 const COARSE_COORDINATE_LEVEL: i32 = 14;
 const NEAR_ZOOM: i32 = 15;
-// The CPU takes the GPU's ground as its own when the walk went under the maxima for
-// at most this many texels before it, read every quarter texel there: on synthetic
-// relief up to one ray in 2,000 then meets the ground past a ridge tip the CPU's own
-// steps meet, a pixel along a ridge's edge (where the f32 level falls on the other
-// side of a level's edge).
-const TRUSTED_TEXELS: f32 = 8.0;
-// Steps under the maxima at most this long.
+// The walk toward the sun steps at most this long under the maxima.
 const LOOSE_STEP_TEXELS: f32 = 0.25;
+// The exact piece's root is bracketed this closely (share of the way along the piece)
+// for the refinement, which measures the ground there itself.
+const ROOT_BRACKET: f32 = 0.01;
 // Texels the CPU walks again before the ground the GPU found.
 const BACK_TEXELS: f32 = 1.0;
 // As `terrain::sun_light` and `SunMargin`.
@@ -200,6 +197,24 @@ fn bilinear(at: Place) -> f32 {
     let d = height_of(at.layer, corner + vec2<i32>(1, 1));
     let top = a + (b - a) * f.x;
     return top + (c + (d - c) * f.x - top) * f.y;
+}
+// The bilinear height (metres) at `at` as it goes on along the map at `rate` (texels
+// per unit along the ray), within the same four samples: h0 + h1·s + h2·s² after s.
+fn bilinear_along(at: Place, rate: vec2<f32>) -> vec3<f32> {
+    let p = at.at - vec2<f32>(0.5);
+    let corner = vec2<i32>(floor(p));
+    let f = clamp(p - floor(p), vec2<f32>(0.0), vec2<f32>(1.0));
+    let a = height_of(at.layer, corner);
+    let b = height_of(at.layer, corner + vec2<i32>(1, 0));
+    let c = height_of(at.layer, corner + vec2<i32>(0, 1));
+    let d = height_of(at.layer, corner + vec2<i32>(1, 1));
+    let top = a + (b - a) * f.x;
+    let k = a - b - c + d;
+    return vec3<f32>(
+        top + (c + (d - c) * f.x - top) * f.y,
+        (b - a + k * f.y) * rate.x + (c - a + k * f.x) * rate.y,
+        k * rate.x * rate.y,
+    );
 }
 // Where the ray enters and leaves the ellipsoid with semi-axes `axes` (x > y: missed).
 fn span(camera: vec3<f32>, dir: vec3<f32>, axes: vec3<f32>) -> vec2<f32> {
@@ -354,12 +369,29 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         if finer { top = max(top, block_top(fine_at, 0)); }
         var ground_world = top * to_world + margin;
         let over_top = h > ground_world;
+        let rate = at.rate * texels;
+        let inside = own.at - floor(own.at);
+        var exit = min(leave(inside.x, rate.x, 1.0), leave(inside.y, rate.y, 1.0));
+        // The view's ray under the texel's highest point: the ground along the ray to
+        // the next of the heights' bilinear cells, exactly (the coarser level's cells
+        // end at this level's texel edges), in place of quarter-texel samples.
+        var along = vec3<f32>(0.0);
         if !over_top {
             // Under the texel's highest point: the heights themselves, as the CPU's.
-            var ground = bilinear(own);
-            if blends {
-                let coarse_m = bilinear(coarse_at);
-                ground = coarse_m + (ground - coarse_m) * weight;
+            var ground: f32;
+            if lift <= 0.0 {
+                along = bilinear_along(own, rate);
+                if blends {
+                    let coarse = bilinear_along(coarse_at, rate * 0.5);
+                    along = coarse + (along - coarse) * weight;
+                }
+                ground = along.x;
+            } else {
+                ground = bilinear(own);
+                if blends {
+                    let coarse_m = bilinear(coarse_at);
+                    ground = coarse_m + (ground - coarse_m) * weight;
+                }
             }
             ground_world = ground * to_world;
             if h <= ground_world {
@@ -373,13 +405,51 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
             }
         }
         last = vec2<f32>(t, h - ground_world);
-        let inside = own.at - floor(own.at);
-        let rate = at.rate * texels;
-        var exit = min(leave(inside.x, rate.x, 1.0), leave(inside.y, rate.y, 1.0));
-        if at.climb < 0.0 { exit = min(exit, (h - ground_world) / -at.climb); }
-        // Under the maxima the heights are read more densely than the CPU reads them:
-        // a ridge the CPU's steps meet, these meet too.
-        if !over_top { exit = min(exit, LOOSE_STEP_TEXELS / speed); }
+        if !over_top && lift <= 0.0 {
+            let cell = own.at - vec2<f32>(0.5) - floor(own.at - vec2<f32>(0.5));
+            exit = min(min(exit, longest), min(leave(cell.x, rate.x, 1.0), leave(cell.y, rate.y, 1.0)));
+            // A ray going down ends the piece where it would reach the ground's height
+            // here: a ray straight down crosses no cell.
+            if at.climb < 0.0 { exit = min(exit, 2.0 * (h - ground_world) / -at.climb); }
+            // The clearance over the piece: c0 + c1·s + c2·s² (the ray rises at `climb`).
+            let c0 = h - ground_world;
+            let c1 = at.climb - along.y * to_world;
+            let c2 = -along.z * to_world;
+            var low_s = max(exit, 0.0);
+            var low = c0 + low_s * (c1 + low_s * c2);
+            if c2 > 0.0 {
+                let s = -c1 / (2.0 * c2);
+                let there = c0 + s * (c1 + s * c2);
+                if s > 0.0 && s < low_s && there < low { low_s = s; low = there; }
+            }
+            if low <= 0.0 {
+                // The first root, bracketed closely for the refinement after the loop.
+                var root = low_s;
+                if abs(c2) * low_s <= 1e-6 * abs(c1) {
+                    if c1 < 0.0 { root = min(-c0 / c1, low_s); }
+                } else {
+                    let disc = max(c1 * c1 - 4.0 * c2 * c0, 0.0);
+                    let q = -0.5 * (c1 + select(-1.0, 1.0, c1 >= 0.0) * sqrt(disc));
+                    let r1 = q / c2;
+                    let r2 = c0 / q;
+                    let first = min(select(3.4e38, r1, r1 > 0.0), select(3.4e38, r2, r2 > 0.0));
+                    root = min(first, low_s);
+                }
+                let before = root * (1.0 - ROOT_BRACKET);
+                let after = min(root * (1.0 + ROOT_BRACKET), low_s);
+                met = Met(
+                    t + before, c0 + before * (c1 + before * c2),
+                    t + after, min(c0 + after * (c1 + after * c2), 0.0),
+                    level, blends, weight,
+                );
+                break;
+            }
+        } else {
+            if at.climb < 0.0 { exit = min(exit, (h - ground_world) / -at.climb); }
+            // Toward the sun under the maxima the heights are read more densely than
+            // the CPU reads them: a ridge the CPU's steps meet, these meet too.
+            if !over_top { exit = min(exit, LOOSE_STEP_TEXELS / speed); }
+        }
         t += max(exit, 0.0) + nudge;
         if over_top && !loose { result.above = t; }
         loose = loose || !over_top;
@@ -687,15 +757,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // -1: the walk gave up without an answer (`relief::helps`).
     if view.unknown && view.hit < 0.0 { starts[3u * count + i] = -1.0; }
     if !floor_met && !view.unknown && view.hit < 0.0 && view.above >= end { starts[4u * count + i] = SKY; }
+    // The CPU takes every ground the walk met as its own: under the maxima the walk
+    // meets the heights exactly in each bilinear cell (on synthetic relief one ray in
+    // 8,000 then meets the ground past a ridge tip the CPU's march measured at every
+    // texel meets, where the f32 level falls on the other side of a level's edge; the
+    // frame's march, measured every 48 texels, differs four times as often).
     if view.hit >= 0.0 {
         starts[count + i] = view.hit;
-        let trusted = view.hit - view.above <= TRUSTED_TEXELS * view.texel_t;
-        starts[3u * count + i] = select(0.0, 1.0, trusted);
-        if trusted {
-            let slope = hit_slope(dir, view.hit);
-            starts[4u * count + i] = slope.x;
-            starts[5u * count + i] = slope.y;
-        }
+        starts[3u * count + i] = 1.0;
+        let slope = hit_slope(dir, view.hit);
+        starts[4u * count + i] = slope.x;
+        starts[5u * count + i] = slope.y;
     }
 }
 

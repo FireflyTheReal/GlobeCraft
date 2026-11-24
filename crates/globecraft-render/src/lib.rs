@@ -553,6 +553,16 @@ impl<'a> MarchStarts<'a> {
     }
 }
 
+/// How the march of `relief_hits` measures the ray's place on the map.
+#[cfg(feature = "gpu")]
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum HitMarch {
+    /// As a frame marches: what a start for the march must not pass.
+    Frame,
+    /// Exactly at every texel: what a ground the GPU found exactly is checked against.
+    Exact,
+}
+
 /// How far each pixel's ray goes before the relief stops it, marched from the camera
 /// (row by row; infinite where it meets none): what a start for the march must not
 /// pass (`gpu::relief`'s self-check). With a sun, also the share of it seen there.
@@ -563,6 +573,7 @@ pub(crate) fn relief_hits(
     basis: &Basis,
     cfg: &RenderCfg,
     lookup: &(impl Fn(TileKey) -> Lookup + Sync),
+    how: HitMarch,
 ) -> Vec<(f64, f32)> {
     let Some(relief) = cfg.terrain else {
         return vec![(f64::INFINITY, 1.0); w * h];
@@ -581,8 +592,13 @@ pub(crate) fn relief_hits(
         for first_x in (0..w).step_by(RAY_LANES) {
             for ray in rays.cast(first_x, y).into_iter().take(w - first_x) {
                 let hits_surface = ray.discriminant >= 0.0 && ray.camera_dot < 0.0;
+                let march = if how == HitMarch::Exact {
+                    terrain::march_exact
+                } else {
+                    terrain::march
+                };
                 hits.push(
-                    match terrain::march(
+                    match march(
                         &ray,
                         0.0,
                         hits_surface,
