@@ -22,7 +22,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setDecorFitsSystemWindows(false)
-        handle = GlobeNative.create(filesDir.absolutePath)
+        handle = GlobeNative.create(applicationContext, filesDir.absolutePath)
         val root = FrameLayout(this)
         if (handle == 0L) {
             root.addView(TextView(this).apply {

@@ -2105,8 +2105,10 @@ dependencies = [
  "globecraft-core",
  "globecraft-data",
  "globecraft-render",
+ "jni",
  "jni-sys 0.3.1",
  "ndk-sys",
+ "rustls-platform-verifier",
 ]
 
 [[package]]

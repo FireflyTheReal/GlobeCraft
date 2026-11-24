@@ -6,8 +6,11 @@ object GlobeNative {
         System.loadLibrary("globecraft_mobile")
     }
 
-    /** Starts the globe with its caches below [appDir]; 0 if it could not start. */
-    external fun create(appDir: String): Long
+    /**
+     * Starts the globe with its caches below [appDir]; 0 if it could not start. [context]
+     * lets the Rust side check server certificates with Android's own verifier.
+     */
+    external fun create(context: android.content.Context, appDir: String): Long
     external fun destroy(handle: Long)
     /** The Surface to draw into, or null when it is gone. */
     external fun setSurface(handle: Long, surface: android.view.Surface?)

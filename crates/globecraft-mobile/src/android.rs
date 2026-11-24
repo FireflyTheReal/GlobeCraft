@@ -102,13 +102,56 @@ unsafe fn string(env: *mut JNIEnv, s: jstring) -> Option<String> {
     }
 }
 
+/// Sends Rust panics to logcat as well: the default hook writes to stderr, which Android
+/// drops, so a panicking background task would otherwise fail without a trace.
+fn log_panics() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            log(&format!("panic: {info}"));
+            default(info);
+        }));
+    });
+}
+
+/// Hands the app's Context to rustls-platform-verifier, which reqwest uses to check server
+/// certificates with Android's own trust store. Without it every TLS handshake panics.
+///
+/// # Safety
+/// `env` is the calling thread's JNI environment and `context` a live
+/// android.content.Context local reference of this native call.
+unsafe fn trust_android_certificates(env: *mut JNIEnv, context: jobject) -> Result<(), String> {
+    // SAFETY: the caller's contract; the reference stays owned by the JVM's call frame.
+    let mut unowned = unsafe { jni::EnvUnowned::from_raw(env.cast()) };
+    let outcome = unowned
+        .with_env(|env| {
+            // SAFETY: the caller's contract; no other wrapper owns this reference.
+            let context = unsafe { jni::objects::JObject::from_raw(env, context.cast()) };
+            rustls_platform_verifier::android::init_with_env(env, context)
+        })
+        .into_outcome();
+    match outcome {
+        jni::Outcome::Ok(()) => Ok(()),
+        jni::Outcome::Err(error) => Err(error.to_string()),
+        jni::Outcome::Panic(_) => Err("panicked".to_owned()),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_app_globecraft_mobile_GlobeNative_create(
     env: *mut JNIEnv,
     _class: jclass,
+    context: jobject,
     app_dir: jstring,
 ) -> jlong {
-    // SAFETY: called by the JVM with its environment and a String argument.
+    log_panics();
+    // SAFETY: called by the JVM with its environment, a Context and a String argument.
+    if let Err(error) = unsafe { trust_android_certificates(env, context) } {
+        log(&format!("certificate checks could not start: {error}"));
+        return 0;
+    }
+    // SAFETY: as above.
     let Some(dir) = (unsafe { string(env, app_dir) }) else {
         return 0;
     };

@@ -29,3 +29,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // Must be the version of `rustls-platform-verifier-android` in Cargo.lock: the Rust
+    // crate calls into these classes over JNI.
+    implementation("org.rustls:rustls-platform-verifier:0.2.0")
+}

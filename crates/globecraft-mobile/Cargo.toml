@@ -30,3 +30,7 @@ emath.workspace = true
 # ANativeWindow_lock, and logcat gets the frame timings.
 ndk-sys = { version = "0.6", features = ["nativewindow"] }
 jni-sys = "0.3"
+# reqwest's rustls checks certificates with Android's own verifier, which must be handed
+# the app's Context over JNI before the first download (`android::trust_android_certificates`).
+jni = "0.22"
+rustls-platform-verifier = "0.7"

@@ -700,3 +700,25 @@ fn only_fine_imagery_colours_the_buildings_again() {
     assert_eq!(cache.imagery_generation(), 1);
     assert_eq!(cache.generation(), 5);
 }
+
+#[test]
+fn a_panicking_download_becomes_an_error_and_its_worker_goes_on() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let panicked = CatchPanic(Box::pin(async {
+            tokio::task::yield_now().await;
+            panic!("no certificate verifier");
+        }))
+        .await;
+        assert_eq!(panicked, Err::<(), _>("no certificate verifier".to_owned()));
+        let finished = CatchPanic(Box::pin(async {
+            tokio::task::yield_now().await;
+            7
+        }))
+        .await;
+        assert_eq!(finished, Ok(7));
+    });
+}
