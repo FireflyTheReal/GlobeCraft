@@ -2,15 +2,20 @@ use crate::wayback::wayback_tile_url;
 use glam::Vec4;
 use globecraft_core::language::Lang;
 use std::hash::{BuildHasherDefault, Hasher};
-// Tile-key bit offsets/masks are part of the packed-key contract.
+// Tile-key bit offsets/masks are part of the packed-key contract (in memory only: the
+// disk cache keeps tiles by provider, release, zoom, x and y). Coordinates take 20
+// bits, so zoom 20 (Esri's finest) fits; until 2026-11-24 they took 19, and zoom
+// 20's tiles were asked for at the wrong place.
 const PROVIDER_SHIFT: u32 = 59;
 const ZOOM_SHIFT: u32 = 54;
-const RELEASE_SHIFT: u32 = 38;
-const X_SHIFT: u32 = 19;
+const RELEASE_SHIFT: u32 = 40;
+const X_SHIFT: u32 = 20;
 const PROVIDER_MASK: u64 = 31;
 const ZOOM_MASK: u64 = 31;
-const COORDINATE_MASK: u64 = 0x7FFFF;
-const RELEASE_MASK: u64 = 0xFFFF;
+const COORDINATE_MASK: u64 = 0xF_FFFF;
+const RELEASE_MASK: u64 = 0x3FFF;
+/// The most releases (or editions) a key holds.
+pub(crate) const MAX_RELEASES: usize = RELEASE_MASK as usize + 1;
 // Cache/network policy: preserve both the thresholds and the eviction strategy.
 
 // ───────────────────────────── Tiles ─────────────────────────────
@@ -122,6 +127,12 @@ pub type TileKey = u64;
 // `rel` is the index of the Wayback release, or of a dated source's edition (0 for
 // every other provider).
 pub fn make_key(p: Provider, z: u8, x: u32, y: u32, rel: u16) -> TileKey {
+    debug_assert!(
+        u64::from(z) <= ZOOM_MASK
+            && u64::from(x.max(y)) <= COORDINATE_MASK
+            && u64::from(rel) <= RELEASE_MASK,
+        "tile key out of range: {z}/{x}/{y} release {rel}"
+    );
     (p.id() << PROVIDER_SHIFT)
         | ((z as u64) << ZOOM_SHIFT)
         | ((rel as u64) << RELEASE_SHIFT)
@@ -446,6 +457,33 @@ mod sampling_tests {
 
     /// A tile black in its west quarter and white elsewhere: the mean over each grid
     /// of blocks is that grid's own average.
+    #[test]
+    fn keys_hold_every_tile_to_zoom_20_and_every_release() {
+        for (z, x, y, rel) in [
+            (
+                20u8,
+                (1u32 << 20) - 1,
+                (1u32 << 20) - 1,
+                (MAX_RELEASES - 1) as u16,
+            ),
+            (20, 964_123, 629_456, 0),
+            (19, 524_288, 1, 7),
+            (0, 0, 0, 0),
+        ] {
+            for provider in [
+                Provider::Satellite,
+                Provider::Wayback,
+                Provider::NightLights,
+            ] {
+                assert_eq!(
+                    unkey(make_key(provider, z, x, y, rel)),
+                    (provider, z, x, y, rel)
+                );
+            }
+        }
+        assert!(Provider::Satellite.max_zoom() <= 20);
+    }
+
     #[test]
     fn mean_colours_hold_every_grid_of_blocks() {
         let (w, h) = (64, 64);
