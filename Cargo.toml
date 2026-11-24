@@ -5,6 +5,7 @@ members = [
     "crates/globecraft-data",
     "crates/globecraft-render",
     "crates/globecraft-assistant",
+    "crates/globecraft-mobile",
 ]
 default-members = ["apps/globecraft"]
 # The fuzz targets are their own workspace (nightly-only dependencies); see fuzz/README.md.

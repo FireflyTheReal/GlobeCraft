@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GlobeCraft</string>
+    <string name="relief">Relief</string>
+    <string name="globe_description">Globe. Drag to turn, pinch to zoom, twist to rotate, drag up or down with two fingers to tilt.</string>
+</resources>

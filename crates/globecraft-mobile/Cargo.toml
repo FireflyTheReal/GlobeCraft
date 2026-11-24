@@ -1,0 +1,32 @@
+[package]
+name = "globecraft-mobile"
+description = "The globe for the native Android and iPadOS apps: a C and JNI interface over the core, data and render crates."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# The workspace's lints, except that `unsafe` is denied instead of forbidden: the two
+# boundary modules (`ffi`, `android`) allow it, and nothing else may.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+
+[lib]
+# cdylib: libglobecraft_mobile.so for Android; staticlib: libglobecraft_mobile.a for Xcode.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+globecraft-core.workspace = true
+globecraft-data.workspace = true
+globecraft-render = { workspace = true, features = ["gpu"] }
+emath.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Raw NDK bindings (the version wgpu already uses): the Surface is drawn with
+# ANativeWindow_lock, and logcat gets the frame timings.
+ndk-sys = { version = "0.6", features = ["nativewindow"] }
+jni-sys = "0.3"

@@ -55,5 +55,6 @@ pub mod wayback;
 pub use error::Error;
 pub use paths::{
     gpu_start_marker, migrate_cache, migrate_config, migrate_legacy_data, remove_retired_caches,
+    use_app_dir,
 };
 pub use view_query::ViewQuery;

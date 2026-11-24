@@ -21,10 +21,24 @@ fn data_base() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
+/// The app's own folder on Android and iPadOS, which only the host app knows (its
+/// sandbox). Set once at start-up, before anything reads or writes the cache.
+static APP_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Keeps caches and settings in `dir` (the mobile apps' sandbox folder). Returns false
+/// if a folder was set already: the first one stays.
+pub fn use_app_dir(dir: PathBuf) -> bool {
+    APP_DIR.set(dir).is_ok()
+}
+
 /// Downloads and anything else GlobeCraft can fetch again: `~/Library/Caches/GlobeCraft`
 /// on macOS, `%LOCALAPPDATA%\GlobeCraft` on Windows, `~/.cache/globecraft` elsewhere.
-/// `XDG_CACHE_HOME` names the parent on every system, so a run can be isolated.
+/// `XDG_CACHE_HOME` names the parent on every system, so a run can be isolated. The
+/// mobile apps name their own folder ([`use_app_dir`]).
 pub(crate) fn cache_dir() -> PathBuf {
+    if let Some(dir) = APP_DIR.get() {
+        return dir.join("cache");
+    }
     if let Some(base) = env_dir("XDG_CACHE_HOME") {
         return base.join("globecraft");
     }
@@ -83,6 +97,9 @@ const CONFIG_FILES: [&str; 5] = [
 /// that way (as the screenshot tests are) cannot write the user's real settings.
 pub(crate) fn config_dir() -> PathBuf {
     let var = env_dir;
+    if let Some(dir) = APP_DIR.get() {
+        return dir.join("config");
+    }
     if let Some(dir) = var("GLOBECRAFT_CONFIG_DIR") {
         return dir;
     }

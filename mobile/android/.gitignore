@@ -1,0 +1,6 @@
+.gradle/
+build/
+app/build/
+local.properties
+# Built by build-rust.sh from crates/globecraft-mobile.
+app/src/main/jniLibs/
