@@ -30,11 +30,12 @@ const MAX_COVER_TILES: u32 = 16;
 const MAX_DOMAINS_BYTES: u64 = 256 * 1024;
 const GIBS_WMTS: &str = "https://gibs.earthdata.nasa.gov/wmts/";
 /// GIBS sometimes answers a tile with garbage (2026-11-24: the same OMPS ozone tile
-/// came back as its true picture, a palette PNG, or as RGBA noise of another size,
-/// differently each time). Its maps have no partly transparent pixels, so a tile with
-/// more than this share of them is taken as damaged…
+/// came back as its true picture, a palette PNG, or as an RGBA PNG of noise or of
+/// flat colour, differently each time; RGBA four times in seven over the Arctic).
+/// Once a layer has sent a palette PNG, an RGBA one is garbage; before that, one with
+/// more than this share of partly transparent pixels is (its maps have none)…
 const DAMAGED_PARTLY_TRANSPARENT_SHARE: f64 = 0.01;
-/// …and asked for again this soon.
+/// …and is asked for again this soon.
 const DAMAGED_RETRY: Duration = Duration::from_secs(2);
 
 enum Entry {
@@ -62,6 +63,10 @@ struct Shared {
     previous: HashMap<TileKey, Arc<RgbaImage>>,
     /// For a GIBS layer's newest day (`gibs_domains_url`): the day shown instead.
     gibs_day: GibsDay,
+    /// A GIBS layer has sent a palette PNG: its RGBA PNGs are garbage.
+    palette_seen: bool,
+    /// The GIBS RGBA PNGs shown before any palette PNG came, dropped when one does.
+    rgba: std::collections::HashSet<TileKey>,
 }
 
 /// The day a GIBS template's `default` stands for.
@@ -81,7 +86,7 @@ pub struct RasterSnapshot {
     tiles: HashMap<TileKey, Arc<RgbaImage>>,
     zoom: u8,
     min_zoom: u8,
-    /// The day before's map, seen through this day's gaps (`RasterTiles::under`).
+    /// The next maps, seen through this day's gaps (`RasterTiles::under`).
     under: Option<Arc<RasterSnapshot>>,
 }
 
@@ -147,8 +152,10 @@ pub struct RasterTiles {
     date: String,
     /// Where GIBS lists the days of a template asking for its newest day.
     gibs_domains: Option<String>,
-    /// For such a template, the day before the day shown: a daily map from orbits
-    /// leaves a strip between its first and last orbit, filled from the day before.
+    /// For such a template, the days round the day shown: a daily map from orbits
+    /// leaves a strip between its first and last orbit (near the date line), filled
+    /// from the next day (GIBS's newest, whose first orbits are there) and then from
+    /// the day before (2026-11-24: the day before alone left a slit).
     under: Option<Box<RasterTiles>>,
     shared: Arc<Mutex<Shared>>,
     /// The last snapshot: the tiles wanted, the revision and the day before's
@@ -256,18 +263,24 @@ impl RasterTiles {
             (None, _) | (Some(_), GibsDay::Unknown) => self.template.clone(),
             (Some(_), GibsDay::Known(day)) => {
                 if self.under.is_none()
-                    && let Some(before) = previous_day(day)
+                    && let (Some(newest), Some(before)) =
+                        (shifted_day(day, 1), shifted_day(day, -1))
                 {
-                    self.under = Some(Box::new(RasterTiles::new(
-                        &self.template.replacen(
-                            "/default/default/",
-                            &format!("/default/{before}/"),
-                            1,
-                        ),
-                        self.min_zoom,
-                        self.max_zoom,
-                        self.tile_px,
-                    )));
+                    let of = |day: &str| {
+                        RasterTiles::new(
+                            &self.template.replacen(
+                                "/default/default/",
+                                &format!("/default/{day}/"),
+                                1,
+                            ),
+                            self.min_zoom,
+                            self.max_zoom,
+                            self.tile_px,
+                        )
+                    };
+                    let mut next = of(&newest);
+                    next.under = Some(Box::new(of(&before)));
+                    self.under = Some(Box::new(next));
                 }
                 self.template
                     .replacen("/default/default/", &format!("/default/{day}/"), 1)
@@ -316,8 +329,10 @@ impl RasterTiles {
             let day = shared.day;
             runtime.spawn(async move {
                 let result = match archive {
-                    Some(archive) => archive_tile(&archive, key).await,
-                    None => fetch_tile(url).await.map(Some),
+                    Some(archive) => archive_tile(&archive, key)
+                        .await
+                        .map(|image| image.map(|image| (image, false))),
+                    None => fetch_tile_png_rgba(url).await.map(Some),
                 };
                 if let Ok(mut shared) = state.lock() {
                     if shared.day != day {
@@ -331,12 +346,21 @@ impl RasterTiles {
                                 .tiles
                                 .insert(key, Entry::Failed { at: Instant::now() });
                         }
-                        Ok(Some(image)) if gibs && damaged(&image) => {
-                            let at = Instant::now();
-                            let at = at.checked_sub(RETRY - DAMAGED_RETRY).unwrap_or(at);
-                            shared.tiles.insert(key, Entry::Failed { at });
+                        Ok(Some((image, rgba)))
+                            if gibs && rgba && (shared.palette_seen || damaged(&image)) =>
+                        {
+                            shared.tiles.insert(key, retry_soon());
                         }
-                        Ok(Some(image)) => {
+                        Ok(Some((image, rgba))) => {
+                            if gibs && rgba {
+                                shared.rgba.insert(key);
+                            } else if gibs && !shared.palette_seen {
+                                shared.palette_seen = true;
+                                let shown: Vec<TileKey> = shared.rgba.drain().collect();
+                                for earlier in shown {
+                                    shared.tiles.insert(earlier, retry_soon());
+                                }
+                            }
                             shared.tiles.insert(
                                 key,
                                 Entry::Loaded {
@@ -457,11 +481,11 @@ fn damaged(image: &RgbaImage) -> bool {
     partly as f64 > DAMAGED_PARTLY_TRANSPARENT_SHARE * f64::from(image.width() * image.height())
 }
 
-/// The day before `day` (`YYYY-MM-DD`).
-fn previous_day(day: &str) -> Option<String> {
+/// The day `days` from `day` (`YYYY-MM-DD`).
+fn shifted_day(day: &str, days: i32) -> Option<String> {
     let secs = globecraft_core::time::parse_iso(day)?;
     Some(globecraft_core::time::date_utc(
-        secs - globecraft_core::time::DAY_SECS,
+        secs + f64::from(days) * globecraft_core::time::DAY_SECS,
     ))
 }
 
@@ -508,12 +532,33 @@ async fn archive_tile(
 }
 
 async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
+    fetch_tile_png_rgba(url).await.map(|(image, _)| image)
+}
+
+/// A tile, and whether it came as an RGBA PNG (colour type 6).
+async fn fetch_tile_png_rgba(url: String) -> Result<(RgbaImage, bool), crate::Error> {
     let client = crate::http::client(crate::http::Policy::UserData)?;
     let url = crate::keys::fill(&url)?;
     let bytes = crate::http::body(client.get(&url), MAX_TILE_BYTES)
         .await
         .map_err(crate::keys::redact_error)?;
-    crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes)).await
+    let rgba = png_is_rgba(&bytes);
+    crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes))
+        .await
+        .map(|image| (image, rgba))
+}
+
+/// Whether bytes are a PNG of colour type 6 (RGBA), read from its header.
+fn png_is_rgba(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.get(25) == Some(&6)
+}
+
+/// A failed tile asked for again `DAMAGED_RETRY` from now.
+fn retry_soon() -> Entry {
+    let now = Instant::now();
+    Entry::Failed {
+        at: now.checked_sub(RETRY - DAMAGED_RETRY).unwrap_or(now),
+    }
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
@@ -590,7 +635,8 @@ mod tests {
         let alone = "<Domain>2026-07-10/2026-07-10/P1D,2026-11-02</Domain>";
         assert_eq!(day_before_newest(alone).as_deref(), Some("2026-11-02"));
         assert_eq!(day_before_newest("no list"), None);
-        assert_eq!(previous_day("2026-03-01").as_deref(), Some("2026-02-28"));
+        assert_eq!(shifted_day("2026-03-01", -1).as_deref(), Some("2026-02-28"));
+        assert_eq!(shifted_day("2026-12-31", 1).as_deref(), Some("2027-01-01"));
     }
 
     #[test]
@@ -610,6 +656,12 @@ mod tests {
             image::Rgba([63, 21, 39, n.wrapping_mul(37)])
         });
         assert!(damaged(&garbage));
+        // Colour type at byte 25 of the header: 3 palette, 6 RGBA.
+        let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x01\0\0\0\x01\0\x08\x06".to_vec();
+        assert!(png_is_rgba(&header));
+        header[25] = 3;
+        assert!(!png_is_rgba(&header));
+        assert!(!png_is_rgba(b"\xff\xd8\xff jpeg"));
     }
 
     #[test]
