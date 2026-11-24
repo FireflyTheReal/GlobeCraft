@@ -72,8 +72,6 @@ const NUDGE_DROP_M: f32 = 1.0;
 const NEAR_LEVEL: i32 = 13;
 const COARSE_COORDINATE_LEVEL: i32 = 14;
 const NEAR_ZOOM: i32 = 15;
-// The walk toward the sun steps at most this long under the maxima.
-const LOOSE_STEP_TEXELS: f32 = 0.25;
 // The exact piece's root is bracketed this closely (share of the way along the piece)
 // for the refinement, which measures the ground there itself.
 const ROOT_BRACKET: f32 = 0.01;
@@ -323,6 +321,8 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         var nudge = max(EXIT_NUDGE_TEXELS, UV_STEP * texels) / speed;
         if at.climb < 0.0 { nudge = min(nudge, NUDGE_DROP_M * to_world / -at.climb); }
         result.texel_t = 1.0 / speed;
+        // Toward the sun, the soft edge's width past the sun's own (`SunMargin`).
+        let soft_base = min(2.0 * PI * at.latitude_cosine / texels * SHADOW_SOFT_TEXEL_SHARE * exaggeration, lift / 2.0);
         // Exits come from the map's rate here, but the ray's path over the map bends
         // (meridians converge, Mercator stretches north): a step stays short enough
         // that it strays less than a texel, within the maxima's widening of two.
@@ -374,40 +374,30 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         let rate = at.rate * texels;
         let inside = own.at - floor(own.at);
         var exit = min(leave(inside.x, rate.x, 1.0), leave(inside.y, rate.y, 1.0));
-        // The view's ray under the texel's highest point: the ground along the ray to
-        // the next of the heights' bilinear cells, exactly (the coarser level's cells
-        // end at this level's texel edges), in place of quarter-texel samples.
+        // Under the texel's highest point: the ground along the ray to the next of the
+        // heights' bilinear cells, exactly (the coarser level's cells end at this
+        // level's texel edges), in place of quarter-texel samples.
         var along = vec3<f32>(0.0);
         if !over_top {
-            // Under the texel's highest point: the heights themselves, as the CPU's.
-            var ground: f32;
-            if lift <= 0.0 {
-                along = bilinear_along(own, rate);
-                if blends {
-                    let coarse = bilinear_along(coarse_at, rate * 0.5);
-                    along = coarse + (along - coarse) * weight;
-                }
-                ground = along.x;
-            } else {
-                ground = bilinear(own);
-                if blends {
-                    let coarse_m = bilinear(coarse_at);
-                    ground = coarse_m + (ground - coarse_m) * weight;
-                }
+            // The heights themselves, as the CPU's.
+            along = bilinear_along(own, rate);
+            if blends {
+                let coarse = bilinear_along(coarse_at, rate * 0.5);
+                along = coarse + (along - coarse) * weight;
             }
+            let ground = along.x;
             ground_world = ground * to_world;
             if h <= ground_world {
                 met = Met(last.x, last.y, t, h - ground_world, level, blends, weight);
                 break;
             }
             if lift > 0.0 {
-                let texel_world = 2.0 * PI * at.latitude_cosine / texels;
-                let soft = (t - start) * SUN_RADIUS_RAD + min(texel_world * SHADOW_SOFT_TEXEL_SHARE * exaggeration, lift / 2.0);
+                let soft = (t - start) * SUN_RADIUS_RAD + soft_base;
                 if soft > 0.0 { result.least = min(result.least, (h - ground_world) / soft); }
             }
         }
         last = vec2<f32>(t, h - ground_world);
-        if !over_top && lift <= 0.0 {
+        if !over_top {
             let cell = own.at - vec2<f32>(0.5) - floor(own.at - vec2<f32>(0.5));
             exit = min(min(exit, longest), min(leave(cell.x, rate.x, 1.0), leave(cell.y, rate.y, 1.0)));
             // A ray going down ends the piece where it would reach the ground's height
@@ -425,16 +415,16 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
                 if s > 0.0 && s < low_s && there < low { low_s = s; low = there; }
             }
             if low <= 0.0 {
-                // Its root is found after the loop (fewer values live in it).
+                // The view's root is found after the loop (fewer values live in it);
+                // toward the sun only meeting the ground counts.
                 met = Met(t, c0, t + low_s, low, level, blends, weight);
-                piece = vec2<f32>(c1, c2);
+                if lift <= 0.0 { piece = vec2<f32>(c1, c2); }
                 break;
             }
-        } else {
-            if at.climb < 0.0 { exit = min(exit, (h - ground_world) / -at.climb); }
-            // Toward the sun under the maxima the heights are read more densely than
-            // the CPU reads them: a ridge the CPU's steps meet, these meet too.
-            if !over_top { exit = min(exit, LOOSE_STEP_TEXELS / speed); }
+            // Toward the sun: the least clearance over the piece for the soft edge.
+
+        } else if at.climb < 0.0 {
+            exit = min(exit, (h - ground_world) / -at.climb);
         }
         t += max(exit, 0.0) + nudge;
         if over_top && !loose { result.above = t; }
