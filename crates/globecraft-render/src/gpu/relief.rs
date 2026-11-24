@@ -35,8 +35,8 @@ const MAX_STEPS: u32 = 512;
 /// Heights are taken this much higher (metres): the f32 positions are within half a
 /// metre, a tile's edge may be read from its neighbour.
 const HEIGHT_MARGIN_M: f64 = 10.0;
-/// The passes' workgroups, square blocks of pixels (`main` and `sun`; `sun_shared`'s
-/// is `SHARED_SIDE`): a group of threads takes as long as its longest walk, and
+/// The passes' workgroups, square blocks of pixels (`main` and `sun`; `sun_rows`' and
+/// `sun_shared`'s is `SHARED_SIDE`): a group of threads takes as long as its longest walk, and
 /// neighbouring rays walk alike, a row of 32 not as much (2026-11-24).
 const WORKGROUP_SIDE: u32 = 8;
 /// Pixels across a cone's square block (`CONE_SIDE` in the shader).
@@ -48,7 +48,8 @@ const CONE_SIDE: usize = 8;
 const MAX_UPLOADS_PER_FRAME: usize = 64;
 /// Heights are held in quarter metres (to 16 km).
 const HEIGHT_STEPS_PER_M: f32 = 4.0;
-/// `sun_shared`'s workgroup side (`SHARED_GROUP` in the shader is its square).
+/// `sun_rows`' and `sun_shared`'s workgroup side (`SHARED_GROUP` in the shader is its
+/// square).
 const SHARED_SIDE: u32 = 16;
 /// The walk's planes per pixel (`starts` in the shader): start, ground, sun's share,
 /// trust, slope east and north.
@@ -83,6 +84,7 @@ pub(super) struct ReliefMarch {
     /// The sun's share where the view's rays met the ground (passes of their own:
     /// even columns, then odd ones, shared with their neighbours where they can).
     sun: wgpu::ComputePipeline,
+    sun_rows: wgpu::ComputePipeline,
     sun_shared: wgpu::ComputePipeline,
     /// One cone a block of pixels first, where their rays' walks start (`cone`).
     cone: wgpu::ComputePipeline,
@@ -118,8 +120,8 @@ pub(crate) struct Walked {
     /// How many tiles this walk uploaded first.
     #[cfg(test)]
     pub(super) uploads: usize,
-    /// How long each pass took on the device (the cones, the view's walk, the sun's even
-    /// and odd columns; where the adapter can time them), and the wait for the device
+    /// How long each pass took on the device (the cones, the view's walk, the sun's
+    /// quarter, other rows and odd columns; where the adapter can time them), and the wait for the device
     /// and the copy of what it found.
     #[cfg(test)]
     pub(super) took: (
@@ -363,9 +365,10 @@ impl ReliefMarch {
                 cache: None,
             })
         };
-        let (pipeline, sun, sun_shared, cone) = (
+        let (pipeline, sun, sun_rows, sun_shared, cone) = (
             pipeline("main"),
             pipeline("sun"),
+            pipeline("sun_rows"),
             pipeline("sun_shared"),
             pipeline("cone"),
         );
@@ -419,6 +422,7 @@ impl ReliefMarch {
         Self {
             pipeline,
             sun,
+            sun_rows,
             sun_shared,
             cone,
             layout,
@@ -585,8 +589,9 @@ impl ReliefMarch {
             .features()
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| Timing::new(device));
-        // The cones, the view's pixels, then the sun's even and odd columns, in
-        // workgroups across and down (one axis held at most 65,535 workgroups).
+        // The cones, the view's pixels, then the sun's quarter walked, its even columns'
+        // other rows and its odd columns, in workgroups across and down (one axis held
+        // at most 65,535 workgroups).
         let (width, height) = (request.width as u32, request.height as u32);
         let cone_side = CONE_SIDE as u32;
         for (index, (pipeline, (across, down, side))) in [
@@ -599,7 +604,11 @@ impl ReliefMarch {
                 ),
             ),
             (&self.pipeline, (width, height, WORKGROUP_SIDE)),
-            (&self.sun, (width.div_ceil(2), height, WORKGROUP_SIDE)),
+            (
+                &self.sun,
+                (width.div_ceil(2), height.div_ceil(2), WORKGROUP_SIDE),
+            ),
+            (&self.sun_rows, (width, height / 2, SHARED_SIDE)),
             (&self.sun_shared, (width / 2, height, SHARED_SIDE)),
         ]
         .into_iter()
@@ -995,9 +1004,10 @@ pub(super) fn past_the_ground(starts: &[f32], hits: &[(f64, f32)]) -> usize {
         .count()
 }
 
-/// The walk's passes: the cones, the view, the sun's even and odd columns.
+/// The walk's passes: the cones, the view, the sun's quarter walked, its even columns'
+/// other rows and its odd columns.
 #[cfg(test)]
-pub(super) const TIMED_PASSES: usize = 4;
+pub(super) const TIMED_PASSES: usize = 5;
 /// A start and an end per pass.
 #[cfg(test)]
 const TIMESTAMP_BYTES: usize = 2 * TIMED_PASSES * 8;

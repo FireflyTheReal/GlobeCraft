@@ -699,38 +699,79 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// The share of the sun seen where `main` met the ground: the even columns (and a
-// last odd one), then `sun_shared` the odd ones.
+// The share of the sun seen at pixel `i` where `main` met the ground.
+fn sun_at(i: u32, width: u32, height: u32) {
+    let count = width * height;
+    let hit = starts[count + i];
+    if hit >= 0.0 { starts[2u * count + i] = sun_seen(ray(i, width, height) * hit, hit); }
+}
+// The share of the sun seen where `main` met the ground, walked at every other pixel
+// of every other row (and at those with no neighbour on one side to share from: a
+// last odd column or row); `sun_rows` then the rest of the even columns, from above
+// and below, and `sun_shared` the odd columns, from left and right.
 @compute @workgroup_size(8, 8)
 fn sun(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = relief.raster.x; let height = relief.raster.y;
-    let half = (width + 1u) / 2u;
-    if id.x >= half || id.y >= height || relief.sun.w < 0.5 { return; }
-    let x = id.x * 2u;
-    let i = id.y * width + x;
-    let count = width * height;
-    let hit = starts[count + i];
-    if hit < 0.0 { return; }
-    starts[2u * count + i] = sun_seen(ray(i, width, height) * hit, hit);
-    // A last odd column has no right neighbour: walked here.
-    if x + 2u == width {
-        let j = i + 1u;
-        let next = starts[count + j];
-        if next >= 0.0 { starts[2u * count + j] = sun_seen(ray(j, width, height) * next, next); }
-    }
+    if id.x >= (width + 1u) / 2u || id.y >= (height + 1u) / 2u || relief.sun.w < 0.5 { return; }
+    let x = id.x * 2u; let y = id.y * 2u;
+    let last_column = x + 2u == width;
+    let last_row = y + 2u == height;
+    sun_at(y * width + x, width, height);
+    if last_column { sun_at(y * width + x + 1u, width, height); }
+    if last_row { sun_at((y + 1u) * width + x, width, height); }
+    if last_column && last_row { sun_at((y + 1u) * width + x + 1u, width, height); }
 }
 // Neighbours count as at the same depth within this share of the distance (the CPU's
 // `SAME_DEPTH_SHARE`).
 const SAME_DEPTH_SHARE: f32 = __SAME_DEPTH_SHARE__;
-// An odd column between two neighbours wholly lit, or wholly in shadow, at its own
-// depth takes their share, as the CPU's `SunSeen` (which looks left only); every
-// other is walked. A walk toward the sun was half of the relief walk's time on an M1
-// (2026-11-24). The columns still to walk are gathered in each workgroup first and
-// walked by its first threads: a group of threads takes as long as its longest walk,
-// so a walk or two among shared columns otherwise cost the group a whole walk.
+// Whether pixel `i` between the pixels `a` and `b`, both wholly lit or both wholly in
+// shadow at its own depth, takes their share, as the CPU's `SunSeen` (which looks left
+// only). A walk toward the sun was half of the relief walk's time on an M1 (2026-11-24).
+fn shares(i: u32, a: u32, b: u32, count: u32) -> bool {
+    let hit = starts[count + i];
+    let before = starts[count + a];
+    let after = starts[count + b];
+    let seen = starts[2u * count + a];
+    let full_shade = 1.0 - relief.shade.y;
+    return before >= 0.0 && after >= 0.0 && abs(before - hit) <= hit * SAME_DEPTH_SHARE
+        && abs(after - hit) <= hit * SAME_DEPTH_SHARE && seen == starts[2u * count + b]
+        && (seen == 1.0 || seen == full_shade);
+}
+// The pixels still to walk are gathered in each workgroup first and walked by its first
+// threads: a group of threads takes as long as its longest walk, so a walk or two among
+// shared pixels otherwise cost the group a whole walk.
 const SHARED_GROUP: u32 = 256u;
 var<workgroup> pending: array<u32, SHARED_GROUP>;
 var<workgroup> pending_count: atomic<u32>;
+// Takes the share of `a` and `b` at pixel `i` (with a ground), or queues `i` to walk.
+fn share_or_queue(i: u32, a: u32, b: u32, count: u32) {
+    if starts[count + i] < 0.0 { return; }
+    if shares(i, a, b, count) {
+        starts[2u * count + i] = starts[2u * count + a];
+    } else {
+        pending[atomicAdd(&pending_count, 1u)] = i;
+    }
+}
+fn walk_pending(local: u32, width: u32, height: u32) {
+    if local < atomicLoad(&pending_count) { sun_at(pending[local], width, height); }
+}
+// The even columns' odd rows (and a last odd column's), from the rows above and below.
+@compute @workgroup_size(16, 16)
+fn sun_rows(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local: u32) {
+    if local == 0u { atomicStore(&pending_count, 0u); }
+    workgroupBarrier();
+    let width = relief.raster.x; let height = relief.raster.y;
+    let count = width * height;
+    let x = id.x;
+    let y = id.y * 2u + 1u;
+    if relief.sun.w > 0.5 && x < width && y + 1u < height && (x % 2u == 0u || x + 1u == width) {
+        let i = y * width + x;
+        share_or_queue(i, i - width, i + width, count);
+    }
+    workgroupBarrier();
+    walk_pending(local, width, height);
+}
+// The odd columns, from the columns on either side.
 @compute @workgroup_size(16, 16)
 fn sun_shared(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local: u32) {
     if local == 0u { atomicStore(&pending_count, 0u); }
@@ -738,25 +779,10 @@ fn sun_shared(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
     let width = relief.raster.x; let height = relief.raster.y;
     let count = width * height;
     let x = id.x * 2u + 1u;
-    let i = id.y * width + x;
-    if relief.sun.w > 0.5 && id.y < height && x + 1u < width && starts[count + i] >= 0.0 {
-        let hit = starts[count + i];
-        let left = starts[count + i - 1u];
-        let right = starts[count + i + 1u];
-        let seen = starts[2u * count + i - 1u];
-        let full_shade = 1.0 - relief.shade.y;
-        if left >= 0.0 && right >= 0.0 && abs(left - hit) <= hit * SAME_DEPTH_SHARE && abs(right - hit) <= hit * SAME_DEPTH_SHARE
-            && seen == starts[2u * count + i + 1u] && (seen == 1.0 || seen == full_shade) {
-            starts[2u * count + i] = seen;
-        } else {
-            pending[atomicAdd(&pending_count, 1u)] = i;
-        }
+    if relief.sun.w > 0.5 && id.y < height && x + 1u < width {
+        let i = id.y * width + x;
+        share_or_queue(i, i - 1u, i + 1u, count);
     }
     workgroupBarrier();
-    let walks = atomicLoad(&pending_count);
-    if local < walks {
-        let j = pending[local];
-        let hit = starts[count + j];
-        starts[2u * count + j] = sun_seen(ray(j, width, height) * hit, hit);
-    }
+    walk_pending(local, width, height);
 }

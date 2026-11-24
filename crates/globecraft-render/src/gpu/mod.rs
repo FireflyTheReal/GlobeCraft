@@ -19,6 +19,8 @@ const MAX_ATLAS_LAYERS: u32 = GPU_TILE_BUDGET_BYTES / TILE_BYTES;
 const GLOBAL_RESIDENT_ZOOM: u8 = 3;
 const MAX_RESIDENCY_PASSES: usize = 2;
 const WORKGROUP_SIZE: u32 = 256;
+/// Workgroups along one dispatch axis at most (WebGPU's `maxComputeWorkgroupsPerDimension`).
+const MAX_WORKGROUPS_PER_AXIS: u32 = 65_535;
 /// Mean colours held per atlas tile (`Tile::means`: 8×8, 4×4, 2×2 and 1 blocks), for
 /// matching imagery levels' colours (`colour_match`).
 const MEANS_PER_TILE: usize = 85;

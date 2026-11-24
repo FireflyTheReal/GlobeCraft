@@ -814,9 +814,11 @@ fn chart_light(slope: vec2<f32>, fade: f32) -> f32 {
     let shade = clamp(CHART_BASE + CHART_GAIN*(lit - flat), CHART_MIN, CHART_MAX);
     return 1.0 + (shade - 1.0)*fade;
 }
+// Workgroups in rows of at most 65,535 (one axis holds no more): frames past 16.8
+// million pixels (a 6K display) were refused.
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let i = id.x;
+fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let i = id.y * groups.x * 256u + id.x;
     let width = view.raster.x; let height = view.raster.y;
     if i >= width * height { return; }
     let x = i % width; let y = i / width;

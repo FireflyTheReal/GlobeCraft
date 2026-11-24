@@ -548,7 +548,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         let (uploads, took) = (timed.uploads, timed.took);
         let walk_time = walked.elapsed();
         println!(
-            "{name}: the GPU's walk {walk_time:?} ({uploads} tiles uploaded first): on the device {:?} (the view, the sun's even and odd columns), waited {:?}, copied {:?}",
+            "{name}: the GPU's walk {walk_time:?} ({uploads} tiles uploaded first): on the device {:?} (the cones, the view, the sun's quarter, its other rows, its odd columns), waited {:?}, copied {:?}",
             took.0, took.1, took.2
         );
         if !relief::helps(&starts) {
@@ -1232,7 +1232,7 @@ fn gpu_relief_walk_timing() {
             "{name}: the walk met no ground"
         );
         println!(
-            "WALK {name}: on the device {:?} (the cones, the view, the sun's even and odd columns); {} grounds (mean distance {:.6e}), {trusted} trusted, sun's shares summing to {seen:.1}",
+            "WALK {name}: on the device {:?} (the cones, the view, the sun's quarter, its other rows, its odd columns); {} grounds (mean distance {:.6e}), {trusted} trusted, sun's shares summing to {seen:.1}",
             best.map(|best| best.map(|d| d.as_secs_f64() * 1000.0)),
             hits.len(),
             hits.iter().sum::<f64>() / hits.len().max(1) as f64,

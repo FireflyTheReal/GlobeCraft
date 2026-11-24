@@ -562,7 +562,9 @@ impl Overview {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((count as u32).div_ceil(WORKGROUP_SIZE), 1, 1);
+            let groups = (count as u32).div_ceil(WORKGROUP_SIZE);
+            let across = groups.min(MAX_WORKGROUPS_PER_AXIS);
+            pass.dispatch_workgroups(across, groups.div_ceil(across), 1);
         }
         encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, (count * 4) as u64);
         encoder.copy_buffer_to_buffer(
