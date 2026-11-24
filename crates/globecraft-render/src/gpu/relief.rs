@@ -109,6 +109,15 @@ pub(crate) struct Walked {
     /// How many tiles this walk uploaded first.
     #[cfg(test)]
     pub(super) uploads: usize,
+    /// How long each pass took on the device (the view's walk, the sun's even and odd
+    /// columns; where the adapter can time them), and the wait for the device and the
+    /// copy of what it found.
+    #[cfg(test)]
+    pub(super) took: (
+        Option<[std::time::Duration; 3]>,
+        std::time::Duration,
+        std::time::Duration,
+    ),
 }
 
 /// How far from the camera (world units, about 10 km, times the latitude's cosine as
@@ -514,20 +523,34 @@ impl ReliefMarch {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("GlobeCraft relief march"),
         });
+        #[cfg(test)]
+        let timing = device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+            .then(|| Timing::new(device));
+        for (index, (pipeline, workgroup)) in [
+            (&self.pipeline, WORKGROUP),
+            (&self.sun, WORKGROUP),
+            (&self.sun_shared, SHARED_GROUP),
+        ]
+        .into_iter()
+        .enumerate()
         {
+            #[cfg(test)]
+            let timestamp_writes = timing.as_ref().map(|timing| timing.writes(index));
+            #[cfg(not(test))]
+            let (timestamp_writes, _) = (None, index);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("GlobeCraft relief march"),
-                timestamp_writes: None,
+                timestamp_writes,
             });
-            for (pipeline, workgroup) in [
-                (&self.pipeline, WORKGROUP),
-                (&self.sun, WORKGROUP),
-                (&self.sun_shared, SHARED_GROUP),
-            ] {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &group(pipeline), &[]);
-                pass.dispatch_workgroups((count as u32).div_ceil(workgroup), 1, 1);
-            }
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &group(pipeline), &[]);
+            pass.dispatch_workgroups((count as u32).div_ceil(workgroup), 1, 1);
+        }
+        #[cfg(test)]
+        if let Some(timing) = &timing {
+            timing.resolve(&mut encoder);
         }
         encoder.copy_buffer_to_buffer(
             &self.output,
@@ -543,6 +566,8 @@ impl ReliefMarch {
             (count * READ_BYTES) as u64,
             (layers * 4) as u64,
         );
+        #[cfg(test)]
+        let submitted = std::time::Instant::now();
         queue.submit(Some(encoder.finish()));
         let slice = self
             .staging
@@ -557,6 +582,8 @@ impl ReliefMarch {
                 timeout: Some(overview::FRAME_WAIT_LIMIT),
             })
             .map_err(|error| format!("GPU relief march not finished: {error}"))?;
+        #[cfg(test)]
+        let (waited, copying) = (submitted.elapsed(), std::time::Instant::now());
         rx.recv()
             .map_err(|error| error.to_string())
             .and_then(|result| result.map_err(|error| error.to_string()))?;
@@ -571,6 +598,12 @@ impl ReliefMarch {
             )
         };
         self.staging.unmap();
+        #[cfg(test)]
+        let took = (
+            timing.map(|timing| timing.read(device, queue)),
+            waited,
+            copying.elapsed(),
+        );
         let read = slots
             .iter()
             .filter(|(_, layer)| read[*layer as usize] != 0)
@@ -581,6 +614,8 @@ impl ReliefMarch {
             read,
             #[cfg(test)]
             uploads: _uploads,
+            #[cfg(test)]
+            took,
         })
     }
 
@@ -889,6 +924,66 @@ pub(super) fn past_the_ground(starts: &[f32], hits: &[(f64, f32)]) -> usize {
         .zip(hits)
         .filter(|&(&start, &(hit, _))| f64::from(start) > hit * (1.0 + PAST_THE_GROUND_SHARE))
         .count()
+}
+
+/// The walk's passes timed on the device (tests, where the adapter can).
+#[cfg(test)]
+struct Timing {
+    queries: wgpu::QuerySet,
+    resolved: wgpu::Buffer,
+    staging: wgpu::Buffer,
+}
+#[cfg(test)]
+impl Timing {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("GlobeCraft relief timing"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 6,
+            }),
+            resolved: overview::buffer(
+                device,
+                "GlobeCraft relief timing",
+                48,
+                wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            ),
+            staging: overview::buffer(
+                device,
+                "GlobeCraft relief timing readback",
+                48,
+                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            ),
+        }
+    }
+    fn writes(&self, pass: usize) -> wgpu::ComputePassTimestampWrites<'_> {
+        wgpu::ComputePassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: Some(2 * pass as u32),
+            end_of_pass_write_index: Some(2 * pass as u32 + 1),
+        }
+    }
+    fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.resolve_query_set(&self.queries, 0..6, &self.resolved, 0);
+        encoder.copy_buffer_to_buffer(&self.resolved, 0, &self.staging, 0, 48);
+    }
+    fn read(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> [std::time::Duration; 3] {
+        let slice = self.staging.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(overview::FRAME_WAIT_LIMIT),
+            })
+            .unwrap();
+        let ticks: Vec<u64> = bytemuck::cast_slice(&slice.get_mapped_range().unwrap()).to_vec();
+        self.staging.unmap();
+        let period = f64::from(queue.get_timestamp_period());
+        std::array::from_fn(|pass| {
+            let ticks = ticks[2 * pass + 1].saturating_sub(ticks[2 * pass]);
+            std::time::Duration::from_nanos((ticks as f64 * period) as u64)
+        })
+    }
 }
 
 impl ReliefMarch {

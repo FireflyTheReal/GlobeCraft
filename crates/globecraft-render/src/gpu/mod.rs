@@ -137,7 +137,12 @@ impl GpuRenderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("GlobeCraft compute renderer"),
-                required_features: wgpu::Features::empty(),
+                // Tests time the relief walk's passes on the device where it can.
+                required_features: if cfg!(test) {
+                    adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+                } else {
+                    wgpu::Features::empty()
+                },
                 required_limits: limits,
                 ..Default::default()
             })

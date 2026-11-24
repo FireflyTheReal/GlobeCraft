@@ -541,12 +541,15 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         );
         let walked = std::time::Instant::now();
         let grown = relief::grown_tiles(&tiles, lookup, std::time::Instant::now());
-        let uploads = march
+        let timed = march
             .starts(&gpu.device, &gpu.queue, &request, &grown)
-            .expect("relief march")
-            .uploads;
+            .expect("relief march");
+        let (uploads, took) = (timed.uploads, timed.took);
         let walk_time = walked.elapsed();
-        println!("{name}: the GPU's walk {walk_time:?} ({uploads} tiles uploaded first)");
+        println!(
+            "{name}: the GPU's walk {walk_time:?} ({uploads} tiles uploaded first): on the device {:?} (the view, the sun's even and odd columns), waited {:?}, copied {:?}",
+            took.0, took.1, took.2
+        );
         if !relief::helps(&starts) {
             println!("{name}: the walk gave up on most rays; the CPU's cones start them");
             continue;
