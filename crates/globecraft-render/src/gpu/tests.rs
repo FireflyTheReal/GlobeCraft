@@ -1053,7 +1053,9 @@ fn gpu_relief_view_matches_cpu() {
             let drawn = drawn.elapsed();
             let result = parity(&frame.view.pixels, &cpu);
             println!(
-                "{name}: parity {result:?}, drawn in {drawn:?} after the walk, the CPU's part {:.1} % ({} pixels), waiting {}",
+                "{name}: parity {result:?}, drawn in {drawn:?} after the walk ({:?} on the device with the readback, {:?} the CPU's part), the CPU's part {:.1} % ({} pixels), waiting {}",
+                frame.took.0,
+                frame.took.1,
                 100.0 * frame.repaired as f64 / (width * height) as f64,
                 frame.repaired,
                 frame.view.waiting.len()

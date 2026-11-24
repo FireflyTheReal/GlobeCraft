@@ -512,7 +512,7 @@ impl SunSeen {
 }
 
 /// Where a row's relief marches may start.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct MarchStarts<'a> {
     /// Per block of pixels (`terrain::beam_starts`; empty without relief or with
     /// `pixels`).

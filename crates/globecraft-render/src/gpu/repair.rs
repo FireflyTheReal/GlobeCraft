@@ -32,90 +32,54 @@ pub(super) fn pixels(
             for (offset, row) in rows.chunks_mut(request.width * 4).enumerate() {
                 let y = batch * tuning::ROWS_PER_TILE_BATCH + offset;
                 let pixels: &mut [[u8; 4]] = bytemuck::cast_slice_mut(row);
-                // The relief: every pixel left as `render_row` draws it.
-                if let (Some(walk), Some(_)) = (walk, request.cfg.terrain) {
-                    let starts = crate::MarchStarts::walked(walk, request.width, request.height, y);
-                    let mut sun_seen = crate::SunSeen::default();
-                    for (pack, group) in pixels.chunks_mut(crate::rays::RAY_LANES).enumerate() {
-                        if group.iter().all(|pixel| *pixel != super::overview::UNDRAWN) {
-                            continue;
-                        }
-                        let first_x = pack * crate::rays::RAY_LANES;
-                        let samples = if rays.uses_unit_sphere() {
-                            rays.cast_model::<false>(first_x, y)
-                        } else {
-                            rays.cast_model::<true>(first_x, y)
-                        };
-                        for (lane, (pixel, ray)) in group.iter_mut().zip(samples).enumerate() {
-                            if *pixel != super::overview::UNDRAWN {
-                                continue;
-                            }
-                            let x = first_x + lane;
-                            *pixel = if rays.uses_unit_sphere() {
-                                crate::pixel_colour::<false>(
-                                    x,
-                                    y,
-                                    &ray,
-                                    &rays,
-                                    &request.cfg,
-                                    &mut local,
-                                    &starts,
-                                    air.as_ref(),
-                                    &mut sun_seen,
-                                )
-                            } else {
-                                crate::pixel_colour::<true>(
-                                    x,
-                                    y,
-                                    &ray,
-                                    &rays,
-                                    &request.cfg,
-                                    &mut local,
-                                    &starts,
-                                    air.as_ref(),
-                                    &mut sun_seen,
-                                )
-                            };
-                        }
+                // Every pixel left as `render_row` draws it; with the relief, marched
+                // from the walk's starts.
+                let starts = match (walk, request.cfg.terrain) {
+                    (Some(walk), Some(_)) => {
+                        crate::MarchStarts::walked(walk, request.width, request.height, y)
                     }
-                    continue;
-                }
+                    _ => crate::MarchStarts::default(),
+                };
+                let mut sun_seen = crate::SunSeen::default();
                 for (pack, group) in pixels.chunks_mut(crate::rays::RAY_LANES).enumerate() {
-                    // Most surface packs need no CPU work. Sky/horizon packs retain
-                    // f64 classification and the deterministic 64-bit stars.
+                    // Most packs need no CPU work. Sky/horizon packs retain f64
+                    // classification.
                     if group.iter().all(|pixel| *pixel != super::overview::UNDRAWN) {
                         continue;
                     }
-                    for (lane, (pixel, ray)) in group
-                        .iter_mut()
-                        .zip(rays.cast(pack * crate::rays::RAY_LANES, y))
-                        .enumerate()
+                    let first_x = pack * crate::rays::RAY_LANES;
+                    for (lane, (pixel, ray)) in
+                        group.iter_mut().zip(rays.cast(first_x, y)).enumerate()
                     {
                         if *pixel != super::overview::UNDRAWN {
                             continue;
                         }
-                        let color = if ray.discriminant >= 0.0 && ray.camera_dot < 0.0 {
-                            let (x, geometry) =
-                                (pack * crate::rays::RAY_LANES + lane, rays.model_geometry());
-                            let (w, h) = (request.width, request.height);
-                            let surface = if rays.uses_unit_sphere() {
-                                crate::surface::<false>(x, y, w, h, &ray, &request.cfg, geometry)
-                            } else {
-                                crate::surface::<true>(x, y, w, h, &ray, &request.cfg, geometry)
-                            };
-                            crate::shade_surface(
-                                crate::with_air(surface, &ray, air.as_ref()),
+                        let x = first_x + lane;
+                        *pixel = if rays.uses_unit_sphere() {
+                            crate::pixel_colour::<false>(
+                                x,
+                                y,
+                                &ray,
+                                &rays,
                                 &request.cfg,
-                                request.cfg.rel,
                                 &mut local,
-                                crate::Relief::FLAT,
+                                &starts,
+                                air.as_ref(),
+                                &mut sun_seen,
                             )
-                            .with_w(1.0)
                         } else {
-                            crate::sky(&ray, &rays, air.as_ref(), &request.cfg)
+                            crate::pixel_colour::<true>(
+                                x,
+                                y,
+                                &ray,
+                                &rays,
+                                &request.cfg,
+                                &mut local,
+                                &starts,
+                                air.as_ref(),
+                                &mut sun_seen,
+                            )
                         };
-                        let color = color.clamp(glam::Vec4::ZERO, glam::Vec4::ONE) * 255.0;
-                        *pixel = [color.x as u8, color.y as u8, color.z as u8, color.w as u8];
                     }
                 }
             }

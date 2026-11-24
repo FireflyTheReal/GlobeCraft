@@ -37,7 +37,7 @@ pub(super) fn source() -> String {
             "UNDRAWN",
             u32::from_le_bytes(super::overview::UNDRAWN) as usize,
         ),
-        ("MAP_ZOOM", usize::from(super::overview::MAP_ZOOM)),
+        ("MAP_ZOOM", usize::from(super::overview::MAX_TRACKED_ZOOM)),
         (
             "GLOBAL_MAX_LEVEL",
             usize::from(super::overview::GLOBAL_MAX_LEVEL),

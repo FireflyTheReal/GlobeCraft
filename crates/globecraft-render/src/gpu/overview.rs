@@ -6,8 +6,7 @@ use globecraft_data::tiles::{Lookup, Provider, make_key, unkey};
 /// The finest level the GPU draws (`MAP_ZOOM` in the shader, the finest any map has).
 /// Past `GLOBAL_MAX_LEVEL`, where an f32 map coordinate is a texel or coarser, a
 /// point's place on the map comes from its offset from the camera (`NearMap`).
-const MAX_TRACKED_ZOOM: u8 = 20;
-pub(super) const MAP_ZOOM: u8 = MAX_TRACKED_ZOOM;
+pub(super) const MAX_TRACKED_ZOOM: u8 = 20;
 /// The finest level f32 map coordinates hold: an eighth of a texel at 13.
 pub(super) const GLOBAL_MAX_LEVEL: u8 = 13;
 /// Texels across the map at `MAX_TRACKED_ZOOM` (256-pixel tiles).
@@ -110,6 +109,9 @@ pub(super) struct Frame {
     /// past the near map).
     #[cfg(test)]
     pub repaired: usize,
+    /// How long the frame took on the device with its readback, and the repair.
+    #[cfg(test)]
+    pub took: (std::time::Duration, std::time::Duration),
 }
 pub(super) struct Overview {
     pipeline: wgpu::ComputePipeline,
@@ -569,6 +571,8 @@ impl Overview {
             (count * 4) as u64,
             ((dependencies + 1) * 4) as u64,
         );
+        #[cfg(test)]
+        let submitted = std::time::Instant::now();
         queue.submit(Some(encoder.finish()));
         let slice = self
             .staging
@@ -648,8 +652,12 @@ impl Overview {
             .chunks_exact(4)
             .filter(|pixel| **pixel == UNDRAWN[..])
             .count();
+        #[cfg(test)]
+        let (on_device, repairing) = (submitted.elapsed(), std::time::Instant::now());
         let (repaired_needs, relief_tiles) =
             super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes));
+        #[cfg(test)]
+        let took = (on_device, repairing.elapsed());
         for (key, distance) in repaired_needs {
             let distance = distance.unwrap_or(f32::MAX);
             required_map
@@ -675,6 +683,8 @@ impl Overview {
             relief_tiles,
             #[cfg(test)]
             repaired,
+            #[cfg(test)]
+            took,
         })
     }
 }
