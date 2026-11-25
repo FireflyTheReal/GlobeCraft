@@ -1216,7 +1216,12 @@ fn gpu_relief_walk_timing() {
         let grown = relief::grown_tiles(&held, lookup, std::time::Instant::now());
         let mut best: Option<[std::time::Duration; relief::TIMED_PASSES]> = None;
         let mut planes = Vec::new();
-        for run in 0..8 {
+        // `GLOBECRAFT_RELIEF_PROBE_RUNS`: walks of each view (a GPU capture: 2).
+        let runs = std::env::var("GLOBECRAFT_RELIEF_PROBE_RUNS")
+            .ok()
+            .and_then(|runs| runs.parse().ok())
+            .unwrap_or(8);
+        for run in 0..runs {
             let walked = march
                 .starts(&gpu.device, &gpu.queue, &request, &grown)
                 .expect("relief march");
