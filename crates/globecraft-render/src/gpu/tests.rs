@@ -1423,6 +1423,19 @@ fn walk_ablation(name: &str) -> Vec<(String, String)> {
             "            along = bilinear_along(own, rate);\n",
             "            along = bilinear_along(own, rate);\n            along += dbg_zero() * bilinear_along(Place(own.layer, own.at + vec2<f32>(1.0, 1.0)), rate);\n",
         )],
+        // Not a doubling: the walk with one tile cache for the levels on either side
+        // and the stand-ins (fewer registers: 576 threads a group on an M1, not 512).
+        "caches" => vec![
+            patch(
+                "    var fine_looked = own_looked;\n    var fallback_looked = own_looked;\n",
+                "",
+            ),
+            patch("&fallback_looked)", "&coarse_looked)"),
+            patch(
+                "fine_at = locate(level + 1, d, at.uv, &fine_looked)",
+                "fine_at = locate(level + 1, d, at.uv, &coarse_looked)",
+            ),
+        ],
         other => panic!("unknown ablation {other}"),
     });
     patches
