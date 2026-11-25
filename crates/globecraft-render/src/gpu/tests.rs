@@ -771,6 +771,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
 #[test]
 #[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
 fn gpu_close_overview_matches_cpu() {
+    overview_variant();
     use std::sync::Mutex;
     let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
     let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
@@ -928,6 +929,7 @@ fn gpu_close_overview_matches_cpu() {
 #[test]
 #[ignore = "needs a native GPU adapter; run explicitly to verify relief parity"]
 fn gpu_relief_view_matches_cpu() {
+    overview_variant();
     use std::sync::Mutex;
     let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
     let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
@@ -1439,4 +1441,40 @@ fn walk_ablation(name: &str) -> Vec<(String, String)> {
         other => panic!("unknown ablation {other}"),
     });
     patches
+}
+
+/// `GLOBECRAFT_OVERVIEW_VARIANT=<name>`: the overview shader with a variant, to time it
+/// against the shader as it is (the parity tests print the device's time).
+fn overview_variant() {
+    let Ok(name) = std::env::var("GLOBECRAFT_OVERVIEW_VARIANT") else {
+        return;
+    };
+    let patch = |from: &str, to: &str| (from.to_string(), to.to_string());
+    *super::shader::SHADER_PATCH.lock().unwrap() = match name.as_str() {
+        "none" => vec![],
+        // The air's scattering table read corner by corner in a loop the compiler
+        // cannot unroll (its bound is the table's length): fewer of its 16 reads in
+        // flight at once, fewer registers.
+        "airloop" => vec![patch(
+            "    let h = u32(height.x);
+    if height.y == 0.0 { return air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
+    if height.y == 1.0 { return air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
+    return air_lerp(
+        air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase),
+        air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase),
+        height.y);
+}",
+            "    let h = u32(height.x);
+    var sum = vec4<f32>(0.0);
+    for (var k = 0u; k < min(8u, arrayLength(&air_tables)); k++) {
+        let dh = k >> 2u; let dv = (k >> 1u) & 1u; let ds = k & 1u;
+        let w = select(1.0 - height.y, height.y, dh == 1u) * select(1.0 - view.y, view.y, dv == 1u) * select(1.0 - sun.y, sun.y, ds == 1u);
+        if w > 0.0 { sum += air_at(h + dh, u32(view.x) + dv, u32(sun.x) + ds, phase) * w; }
+    }
+    return sum;
+}",
+        )],
+        other => panic!("unknown overview variant {other}"),
+    };
+    println!("OVERVIEW VARIANT {name}");
 }

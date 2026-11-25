@@ -154,5 +154,24 @@ pub(super) fn source() -> String {
             &format!("vec3<f32>({r:?}, {g:?}, {b:?})"),
         );
     }
+    #[cfg(test)]
+    let source = SHADER_PATCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .fold(source, |source, (from, to)| {
+            assert!(
+                source.contains(from.as_str()),
+                "shader patch anchor missing: {from}"
+            );
+            source.replacen(from.as_str(), to, 1)
+        });
     source
 }
+
+/// Test only: text replacements in the overview shader before it is compiled (timing
+/// a variant against the shader as it is: `GLOBECRAFT_OVERVIEW_VARIANT` in the GPU
+/// parity tests).
+#[cfg(test)]
+pub(super) static SHADER_PATCH: std::sync::Mutex<Vec<(String, String)>> =
+    std::sync::Mutex::new(Vec::new());
