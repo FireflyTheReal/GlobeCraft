@@ -1474,6 +1474,15 @@ fn overview_variant() {
     return sum;
 }",
         )],
+        // The area average computed for every pixel and dropped where bilinear
+        // sampling is taken (the shader before 25 Nov).
+        "oldarea" => vec![patch(
+            "            var colour: vec3<f32>;
+            if stride <= 1.0 { colour = sample_tile(local,layer); }
+            else { colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE)); }",
+            "            var colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE));
+            if stride <= 1.0 { colour = sample_tile(local,layer); }",
+        )],
         other => panic!("unknown overview variant {other}"),
     };
     println!("OVERVIEW VARIANT {name}");

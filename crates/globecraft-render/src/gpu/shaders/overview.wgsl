@@ -483,8 +483,11 @@ fn chain(source: u32, zoom: u32, spot: Spot, distance: f32, base: u32, frac: f32
         if layer >= 0 {
             let local = spot_local(spot, u32(z), coordinate);
             let stride = stride_at(z, i32(base), frac);
-            var colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE));
+            // Bilinear where the level is not minified; the area average (a loop over
+            // up to 11 × 11 texels) only where it is.
+            var colour: vec3<f32>;
             if stride <= 1.0 { colour = sample_tile(local,layer); }
+            else { colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE)); }
             if source == 0u { colour = matched(colour, u32(z), spot, distance); }
             return vec4<f32>(colour,1.0);
         }
