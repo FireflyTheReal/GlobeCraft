@@ -301,8 +301,27 @@ fn source() -> String {
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{:?}", value as f32));
     }
-    source.replace("__MAX_ZOOM__", &terrain::DEM_MAX_ZOOM.to_string())
+    let source = source.replace("__MAX_ZOOM__", &terrain::DEM_MAX_ZOOM.to_string());
+    #[cfg(test)]
+    let source = SHADER_PATCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .fold(source, |source, (from, to)| {
+            assert!(
+                source.contains(from.as_str()),
+                "shader patch anchor missing: {from}"
+            );
+            source.replacen(from.as_str(), to, 1)
+        });
+    source
 }
+
+/// Test only: text replacements in the shader before it is compiled (timing what a
+/// part of the walk costs, `gpu_relief_walk_timing`'s `GLOBECRAFT_RELIEF_ABLATION`).
+#[cfg(test)]
+pub(super) static SHADER_PATCH: std::sync::Mutex<Vec<(String, String)>> =
+    std::sync::Mutex::new(Vec::new());
 
 impl ReliefMarch {
     pub(super) fn new(device: &wgpu::Device, layers: u32) -> Self {

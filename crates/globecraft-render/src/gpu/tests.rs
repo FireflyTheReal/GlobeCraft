@@ -1158,6 +1158,13 @@ fn gpu_relief_walk_timing() {
             Some((w.parse().ok()?, h.parse().ok()?))
         })
         .unwrap_or((320, 200));
+    // `GLOBECRAFT_RELIEF_ABLATION=<name>`: the walk with one of its parts done twice
+    // (the copy adds nothing to the results), so the time it adds is what that part
+    // costs on this GPU (no shader profiler on an M1 for compute work).
+    if let Ok(ablation) = std::env::var("GLOBECRAFT_RELIEF_ABLATION") {
+        *relief::SHADER_PATCH.lock().unwrap() = walk_ablation(&ablation);
+        println!("ABLATION {ablation}");
+    }
     let march = gpu
         .relief
         .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
@@ -1373,4 +1380,50 @@ fn a_level_not_held_yet_is_stood_in_for_over_the_open_air() {
         .filter(|&(&start, &(hit, _))| hit.is_finite() && f64::from(start) > hit * (1.0 + 1e-4))
         .count();
     assert_eq!(past, 0, "starts past the ground");
+}
+
+/// The shader patches of a walk ablation (`gpu_relief_walk_timing`): each does one part
+/// of a step a second time and adds it times a zero the compiler cannot see.
+fn walk_ablation(name: &str) -> Vec<(String, String)> {
+    let zero = (
+        "fn walk(".to_string(),
+        "fn dbg_zero() -> f32 { return f32(relief.raster.w >> 31u); }\nfn walk(".to_string(),
+    );
+    let patch = |from: &str, to: &str| (from.to_string(), to.to_string());
+    let mut patches = vec![zero];
+    patches.extend(match name {
+        "none" => vec![],
+        // The point's place on the map (atan2, log, normalize).
+        "spot" => vec![patch(
+            "        let at = spot(p, dir);\n",
+            "        let at = spot(p, dir);\n        let at_dup = spot(p * (1.0 + 1e-7 * dbg_zero()) + dir * 1e-9, dir);\n        t += dbg_zero() * (at_dup.rate.x + at_dup.uv.y + at_dup.climb);\n",
+        )],
+        // The level from the distance.
+        "zoom" => vec![patch(
+            "        let wanted = clamp(",
+            "        t += dbg_zero() * log2(2.0 * PI * EARTH_RADIUS_M * max(at.latitude_cosine, MIN_LATITUDE_COSINE) / (DEM_TEXELS * max(t * 1.0001 * EARTH_RADIUS_M * angle, 0.01) * PIXELS_PER_TEXEL));\n        let wanted = clamp(",
+        )],
+        // A tile looked up in the hash table every step.
+        "hash" => vec![patch(
+            "        var level = wanted;\n",
+            "        var level = wanted;\n        t += dbg_zero() * f32(layer_of(u32(wanted), u32(at.uv.x * 4096.0), u32(at.uv.y * 4096.0)));\n",
+        )],
+        // A second block maximum, another mip, at every mip tried.
+        "mip" => vec![patch(
+            "            var top = block_top(own, mip);\n",
+            "            var top = block_top(own, mip);\n            top = max(top, block_top(own, max(mip - 1, 0)) - 1e30 * (1.0 - dbg_zero()));\n",
+        )],
+        // A second texel maximum (the next texel) at every texel step.
+        "peaks" => vec![patch(
+            "        var top = texel_top(own);\n",
+            "        var top = texel_top(own);\n        top = max(top, texel_top(Place(own.layer, own.at + vec2<f32>(1.0, 1.0))) - 1e30 * (1.0 - dbg_zero()));\n",
+        )],
+        // The cell's heights along the ray twice, at the next cell.
+        "cell" => vec![patch(
+            "            along = bilinear_along(own, rate);\n",
+            "            along = bilinear_along(own, rate);\n            along += dbg_zero() * bilinear_along(Place(own.layer, own.at + vec2<f32>(1.0, 1.0)), rate);\n",
+        )],
+        other => panic!("unknown ablation {other}"),
+    });
+    patches
 }
