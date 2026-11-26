@@ -2012,7 +2012,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ab_glyph",
  "chrono",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-assistant"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "globecraft-core",
  "serde_json",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "emath",
  "fluent-bundle",
@@ -2067,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-data"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bytemuck",
  "chrono",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "globecraft-render"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bytemuck",
  "emath",

@@ -513,12 +513,12 @@ The Explorer, live meteorological/aircraft layers, moon and custom planet
 remain integrated in `apps/globecraft`. See [GPU_RENDERER.md](docs/features/GPU_RENDERER.md)
 for hardware limits, performance and CPU-only build instructions.
 
-The self-updater (`updater`), the AI assistant (`assistant`) and the live feeds
-(`live`) are features, on by default; `standard` names the three together, and release
-downloads are built with `--no-default-features --features standard` (everything but
-the experimental GPU renderer). Packagers who update GlobeCraft through a package
-manager can build without the updater: `cargo build -p globecraft --release
---no-default-features --features assistant,live`. No update check runs then, and
+The self-updater (`updater`), the AI assistant (`assistant`), the live feeds
+(`live`) and the GPU renderer (`gpu`) are features, on by default; `standard` names the
+four together, and release downloads are built with `--no-default-features --features
+standard` (the GPU renderer since v0.5.0). Packagers who update GlobeCraft through a
+package manager can build without the updater: `cargo build -p globecraft --release
+--no-default-features --features assistant,live,gpu`. No update check runs then, and
 nothing is downloaded from GitHub. Without `assistant` the assistant pane and its
 commands are left out, and so is the `globecraft-assistant` crate. Without `live` the
 layers for aircraft, vessels, satellites, the aurora forecast, traffic, clouds and

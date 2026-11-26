@@ -3,8 +3,8 @@
 Builds with the `gpu` feature (on by default when building from source) include a
 wgpu 30 compute renderer alongside the CPU renderer and use it for overview frames
 on every platform, unless it is turned off in Settings → Graphics. Published release
-downloads still exclude it (`--features standard`): add `gpu` to `standard` once
-native Windows and Linux runs are reported.
+downloads include it since v0.5.0 (`--features standard`); before its first frame each
+adapter checks itself against the CPU renderer, which stays the fallback.
 The GPU renderer ray-casts the overview globe, calculates Mercator coordinates and LOD, samples
 imagery, blends zoom levels, and applies sunlight and atmosphere on the GPU.
 The render crate owns it; the egui presentation backend stays in the app.
@@ -131,7 +131,7 @@ that is "on" but draws no frames shows there.
 For a desktop build without GPU globe rendering:
 
 ```sh
-cargo build -p globecraft --no-default-features --features standard --locked
+cargo build -p globecraft --no-default-features --features updater,assistant,live --locked
 ```
 
 CPU globe rendering still uses wgpu presentation and requires a working graphics
