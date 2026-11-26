@@ -21,7 +21,7 @@ const REFRESH: Duration = Duration::from_secs(6 * 3600);
 const RETRY: Duration = Duration::from_secs(10 * 60);
 const SECONDS_PER_DAY: f64 = 86_400.0;
 /// Element sets are shown up to this long from their epoch.
-const MAX_EPOCH_AGE_SECS: f64 = 14.0 * SECONDS_PER_DAY;
+pub const MAX_EPOCH_AGE_SECS: f64 = 14.0 * SECONDS_PER_DAY;
 /// 2000-01-01 12:00 UTC (J2000), in Unix seconds.
 const J2000_UNIX_SECS: f64 = 946_728_000.0;
 const SECONDS_PER_JULIAN_YEAR: f64 = 365.25 * SECONDS_PER_DAY;

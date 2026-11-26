@@ -9,14 +9,15 @@ Parameters are a JSON object; none is required unless marked.
 
 | Command | Name | What it does | Parameters | Assistant |
 | --- | --- | --- | --- | --- |
-| `camera.flyTo` | Fly To | Fly the camera to a latitude and longitude, optionally at an altitude and heading. | `altitude_km` (number): Camera altitude above the surface in km (0.15..40000); default keeps the current altitude<br>`heading_deg` (number): View heading clockwise from north<br>`lat` (number), required: Latitude in degrees, -90..90<br>`lon` (number), required: Longitude in degrees, -180..180<br>`tilt_deg` (number): View tilt from straight down, 0..80; default keeps the current tilt | yes |
-| `camera.set` | Go To XY | Move the camera instantly; parameters left out keep their current value. | `altitude_km` (number)<br>`heading_deg` (number)<br>`lat` (number)<br>`lon` (number)<br>`tilt_deg` (number): 0 (straight down) .. 80 | yes |
+| `camera.flyTo` | Fly To | Fly the camera to a latitude and longitude, optionally at an altitude and heading. | `altitude_km` (number): Camera altitude above the surface in km (0.03..40000); default keeps the current altitude<br>`heading_deg` (number): View heading clockwise from north<br>`lat` (number), required: Latitude in degrees, -90..90<br>`lon` (number), required: Longitude in degrees, -180..180<br>`tilt_deg` (number): View tilt from straight down, 0..85; default keeps the current tilt | yes |
+| `camera.set` | Go To XY | Move the camera instantly; parameters left out keep their current value. | `altitude_km` (number)<br>`heading_deg` (number)<br>`lat` (number)<br>`lon` (number)<br>`tilt_deg` (number): 0 (straight down) .. 85 | yes |
 | `search.place` | Find Place | Search for a place, an address or coordinates (OpenStreetMap Nominatim) and fly to the best result. | `fly` (boolean): Fly to the best result when it arrives (default true)<br>`query` (string), required: A place name, an address, or coordinates such as 48.85, 2.35 | yes |
 | `search.clear` | Clear Search Results | Remove the last search's results from Places and empty the search box. | — | yes |
 | `camera.zoomIn` | Zoom In | Move the camera closer to the surface. | — | yes |
 | `camera.zoomOut` | Zoom Out | Move the camera away from the surface. | — | yes |
 | `camera.resetNorth` | North Up | Turn the view so north points up (N). | — | yes |
-| `camera.tilt` | Tilt | Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down). Close to the ground the camera backs off as far as the tilt needs. | `step` (number): Degrees to add to the current tilt<br>`tilt_deg` (number): Tilt from straight down, 0..80 (less close to the ground) | yes |
+| `camera.tilt` | Tilt | Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down). Close to the ground the camera backs off as far as the tilt needs. | `step` (number): Degrees to add to the current tilt<br>`tilt_deg` (number): Tilt from straight down, 0..85 (less close to the ground and far out) | yes |
+| `camera.lookAround` | Look Around | Turn the view about the camera, as you turn your head: the camera stays where it is and looks elsewhere (Ctrl+drag, ⌘+drag on a Mac; the button makes every drag look around until pressed again). Past the horizon the view rises to the sky, up to near the zenith; lowered, it comes back down to the ground. | `raise_deg` (number): Degrees to raise the view (negative: lower it), about the camera: past the horizon toward the sky<br>`turn_deg` (number): Degrees to turn the view to the right (negative: left), about the camera. Without either angle the command switches look-around dragging on or off | yes |
 | `camera.topDown` | Top-Down View | Look straight down again (U). | — | yes |
 | `camera.globalView` | Global View | Fly out until the whole globe is in view. | — | yes |
 | `camera.autoRotate` | Auto-Rotate | Slowly spin the globe. | `on` (boolean): Omit to toggle | yes |
@@ -33,8 +34,8 @@ Parameters are a JSON object; none is required unless marked.
 | `ruler.profile` | Elevation Profile | The ground's height along the ruler: lowest and highest point, climbing, descending and the heights along the way. | — | yes |
 | `ruler.unit` | Ruler Unit | Choose the unit measurements are shown in. | `unit` (string), required: one of `automatic`, `centimeters`, `meters`, `kilometers`, `inches`, `feet`, `yards`, `miles`, `nautical_miles`, `smoots`, `degrees`, `arcseconds`, `football_fields` | yes |
 | `ruler.editPoints` | Edit Points | Type exact coordinates for ruler points. | — | no |
-| `edit.undo` | Undo | Undo the last ruler edit. | — | yes |
-| `edit.redo` | Redo | Redo the last undone ruler edit. | — | yes |
+| `edit.undo` | Undo | Undo the last ruler edit or deleted place. | — | yes |
+| `edit.redo` | Redo | Redo the last undone ruler edit or deletion. | — | yes |
 | `view.copyLink` | Copy View Link | Copy a globecraft:// link to this view (place, height, angle, basemap, layers and web data). Paste it into the search box, or send it to someone, to open the same view. | — | yes |
 | `view.openLink` | Open View Link | Open a globecraft:// view link: its place, height and angle, basemap, layers and web data. | `link` (string), required: A globecraft://view?lat=…&lon=… link (optional alt, heading, tilt, basemap, layers, data) | asks first when it names a web address |
 | `file.screenshot` | Screenshot | Save the globe without the interface as a PNG in the screenshot folder. | `quality` (string): one of `normal`, `plus`, `pro`, `pro_max`: normal: screen size once every tile has loaded; plus: twice the size, one zoom level deeper; pro: four times the size, two levels deeper; pro_max: eight times the size, three levels deeper. Default: the chosen quality | asks first: it reads or writes files on this computer |
@@ -64,18 +65,20 @@ Parameters are a JSON object; none is required unless marked.
 | `layer.opacity` | Layer Opacity | Set how opaque the clouds, radar, aurora, time zones or traffic layer is (0 to 1). | `layer` (string), required: one of `clouds`, `radar`, `aurora`, `time_zones`, `traffic`<br>`opacity` (number), required | yes |
 | `layer.solo` | Show Layer Alone | Show only one layer of the map's content (Alt-click it in the Layers pane); the same again, or without a layer, shows what was visible before. | `layer` (string): A layer code as in layer.show; omit to show again what was visible before | yes |
 | `layer.terrainExaggeration` | Exaggeration | Set the vertical exaggeration of 3D terrain. | `value` (number), required: Vertical exaggeration, 0.5..3 | yes |
-| `layer.flatLiveObjects` | Aircraft and satellites on the ground | Draw aircraft and satellites flat on the ground below them instead of at their real height. | `on` (boolean): true: aircraft and satellites drawn on the ground; false: at their height. Omit to toggle | yes |
-| `layer.stateAltitude` | States visible below | Set the camera altitude below which state and province borders are drawn. | `km` (number), required: States and provinces are drawn below this camera altitude, 0..8000 km (default 1609) | yes |
+| `layer.flatLiveObjects` | Aircraft and Satellites on the Ground | Draw aircraft and satellites flat on the ground below them instead of at their real height. | `on` (boolean): true: aircraft and satellites drawn on the ground; false: at their height. Omit to toggle | yes |
+| `layer.stateAltitude` | States Visible Below | Set the camera altitude below which state and province borders are drawn. | `km` (number), required: States and provinces are drawn below this camera altitude, 0..8000 km (default 1609) | yes |
 | `world.earthModel` | Earth Model | Choose the WGS 84 ellipsoid or a perfect sphere for geometry and distances. | `model` (string), required: one of `wgs84_g2296`, `perfect_sphere` | yes |
 
 ## Live
 
 | Command | Name | What it does | Parameters | Assistant |
 | --- | --- | --- | --- | --- |
-| `flight.select` | Select a flight | Follows one plane: its track so far, where it flies from and to, and its position every few seconds. | `callsign` (string): Its callsign, for its route; left out, the one it reports<br>`hex` (string), required: The plane's transponder (ICAO 24-bit) address, 6 hex digits | yes |
-| `satellite.select` | Select a satellite | Shows one full revolution of a satellite's orbit at its height, predicted from its orbital elements, and a card with its height and speed. | `norad` (string), required: The satellite's NORAD catalogue number, e.g. 25544 for the ISS | yes |
-| `satellite.clear` | Close the satellite | Hides the selected satellite's orbit and card. | — | yes |
-| `flight.clear` | Close the flight | Stops following the selected plane. | — | yes |
+| `layer.cloudResolution` | Cloud Detail | How fine a cloud map is kept: finer shows more detail close in, coarser loads and plays faster on the timeline. | `pixels` (integer), required: one of `2048`, `4096`, `8192`: The cloud map's width: finer shows more detail close in, coarser loads and plays faster on the timeline | yes |
+| `flight.select` | Select a Flight | Follows one plane: its track so far, where it flies from and to, and its position every few seconds. | `callsign` (string): Its callsign, for its route; left out, the one it reports<br>`hex` (string), required: The plane's transponder (ICAO 24-bit) address, 6 hex digits | yes |
+| `satellite.select` | Select a Satellite | Shows one full revolution of a satellite's orbit at its height, predicted from its orbital elements, and a card with its height and speed. | `norad` (string), required: The satellite's NORAD catalogue number, e.g. 25544 for the ISS | yes |
+| `satellite.clear` | Close the Satellite | Hides the selected satellite's orbit and card. | — | yes |
+| `flight.clear` | Close the Flight | Stops following the selected plane. | — | yes |
+| `time.loop` | Loop | While playing, go round between two moments; the clouds of the moments in it load ahead. | `from`: The loop's start: an ISO 8601 date or seconds since 1970<br>`to`: The loop's end | yes |
 
 ## View
 
@@ -88,19 +91,23 @@ Parameters are a JSON object; none is required unless marked.
 | `ui.pane.assistant` | AI Assistant | Ask questions about the globe or tell GlobeCraft what to do, with a model of your choice. | `ask` (string) | no |
 | `assistant.stop` | Stop the AI Assistant | End the assistant's current request; actions it hasn't run yet are skipped and a late reply is ignored. | — | no |
 | `ui.pane.measure` | Measure Pane | Show the ruler's measurements, units and history. | — | no |
-| `ui.leftPane` | Side Pane | Show or hide the pane on the left of the globe. | — | no |
+| `ui.leftPane` | Side Pane | Show or hide the side pane (its tabs stay). | — | no |
+| `ui.pane.side` | Side Pane Position | Put the side pane on the left or the right of the globe. | `side` (string): one of `left`, `right`: The side of the globe the side pane is on; omit to switch sides | no |
+| `ui.pane.moveTab` | Move Pane Tab | Move a tab of the side pane to another position. | `tab` (string), required: one of `assistant`, `measure`, `legend`, `explorer`, `layers`, `places`, `flight`, `satellite`, `here`<br>`to` (integer), required: The tab's new position, 0 first | no |
 | `ui.navigationControls` | Navigator | Show or hide the on-globe compass and zoom controls. | `on` (boolean): Omit to toggle | yes |
 | `ui.legend` | Legend | Shows what the colours on the globe mean: a selected flight's altitudes, rain radar, aurora and places of interest. Opens by itself when one of them appears. | `on` (boolean): Omit to toggle | no |
 | `ui.timeline` | Timeline | Show the timeline: the app's date and time, steps, play, and the window of past events. | `on` (boolean): Omit to toggle | no |
-| `time.set` | Set time | Show the globe at a date and time, or back at the real time (now): sunlight, stars, daily imagery, Wayback and timed points follow. | `time`, required: now (back to the real time), an ISO 8601 date or date and time (UTC unless a zone is given), or seconds since 1970 | yes |
-| `time.step` | Step time | Move the app's time by some hours, forward or back. | `hours` (number), required: Hours to move the app's time, negative to go back | yes |
-| `time.play` | Play time | Run the app's time at a speed, such as an hour per second. | `hours_per_second` (number): How fast the time runs; left out, the timeline's speed | yes |
-| `time.pause` | Pause time | Hold the app's time where it is. | — | yes |
-| `time.speed` | Time speed | How fast the time runs when it plays, such as an hour per second. | `hours_per_second` (number), required: How fast the time runs when it plays; a playing time takes it at once | yes |
-| `time.window` | Event window | Show timed points (earthquakes…) only from the hours before the app's time. | `hours` (number), required: Timed points (earthquakes…) show when they happened within this many hours before the app's time; 0 shows all | yes |
-| `ui.tileDiagnostics` | Tile diagnostics | Show the imagery tiles in view by state, the download queues per source and the download rates. | `on` (boolean): Omit to toggle | yes |
-| `ui.navigatorStyle` | Navigator style | Choose the navigator with the mini globe or the classic ring, move pad and zoom slider. | `style` (string), required: one of `globe`, `classic`: globe: mini globe in the rotation ring; classic: ring, move pad and zoom slider | yes |
+| `time.set` | Set Time | Show the globe at a date and time, or back at the real time (now): sunlight, stars, daily imagery, Wayback and timed points follow. | `time`, required: now (back to the real time), an ISO 8601 date or date and time (UTC unless a zone is given), or seconds since 1970 | yes |
+| `time.step` | Step Time | Move the app's time by some hours, forward or back. | `hours` (number), required: Hours to move the app's time, negative to go back | yes |
+| `time.play` | Play Time | Run the app's time at a speed, such as an hour per second. | `hours_per_second` (number): How fast the time runs; left out, the timeline's speed | yes |
+| `time.pause` | Pause Time | Hold the app's time where it is. | — | yes |
+| `time.speed` | Time Speed | How fast the time runs when it plays, such as an hour per second. | `hours_per_second` (number), required: How fast the time runs when it plays; a playing time takes it at once | yes |
+| `time.window` | Event Window | Show timed points (earthquakes…) only from the hours before the app's time. | `hours` (number), required: Timed points (earthquakes…) show when they happened within this many hours before the app's time; 0 shows all | yes |
+| `time.range` | Timeline Span | How much time the timeline's track spans: a day, a week, a month, a year or ten years. | `days` (number), required: How many days the timeline's track spans, 1 to 3650 | yes |
+| `ui.tileDiagnostics` | Tile Diagnostics | Show the imagery tiles in view by state, the download queues per source and the download rates. | `on` (boolean): Omit to toggle | yes |
+| `ui.navigatorStyle` | Navigator Style | Choose the navigator with the mini globe or the classic ring, move pad and zoom slider. | `style` (string), required: one of `globe`, `classic`: globe: mini globe in the rotation ring; classic: ring, move pad and zoom slider | yes |
 | `ui.ribbon` | Collapse Ribbon | Collapse or expand the ribbon (Ctrl+F1). | — | no |
+| `ui.ribbonCompact` | Compact Ribbon | Show the ribbon as one row of small buttons, without group titles, to leave more room for the globe. | — | no |
 | `ui.focusNext` | Next Region | Move the keyboard focus to the next part of the window: the ribbon, the left pane, the right pane, the globe. Tab and the arrow keys then move between its controls; Enter or Space presses one. | — | no |
 | `ui.focusPrevious` | Previous Region | Move the keyboard focus to the previous part of the window. | — | no |
 | `ui.ribbon.pin` | Pin to Toolbar | Show a tool of a ribbon group on the ribbon, or keep it in the group's menu only. | `group` (string), required: Ribbon group id, such as home.navigate<br>`on` (boolean): Omit to toggle<br>`tool` (string), required: Command id, then a space and its parameters as JSON when it has any | no |
@@ -113,12 +120,12 @@ Parameters are a JSON object; none is required unless marked.
 | `ui.minimize` | Minimize | Minimize the window. | — | no |
 | `ui.commandSearch` | Command Search | Find and run any command by name. | — | no |
 | `settings.units` | Units | Show distances and altitudes in metric or imperial units, or follow the system. | `units` (string), required: one of `system`, `metric`, `imperial` | yes |
-| `settings.experience` | Experience level | Basic shows the everyday tools; Advanced adds the Earth models, other worlds and the forms for web services and feature URLs. | `level` (string), required: one of `basic`, `advanced` | yes |
+| `settings.experience` | Experience Level | Basic shows the everyday tools; Advanced adds the Earth models, other worlds and the forms for web services and feature URLs. | `level` (string), required: one of `basic`, `advanced` | yes |
 | `settings.coordinateFormat` | Coordinates | Choose how coordinates are shown. | `format` (string), required: one of `dd`, `dms`, `ddm`, `utm_ups`, `mgrs` | yes |
 | `settings.language` | Language | Choose the interface language. | `language` (string), required: one of `system`, `en`, `pt-BR` | yes |
-| `style.line` | Map line style | Set the color, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines. | `color` (string): Hex colour #rrggbb or #rrggbbaa (aa is opacity)<br>`dash` (string): one of `solid`, `dashed`, `dotted`<br>`line` (string), required: one of `country`, `state`, `municipal`, `disputed`, `major_road`, `minor_road`, `roadworks`, `railway`, `service_rail`, `subway`, `tram`, `ferry`, `runway`, `taxiway`, `river`, `canal`, `park`, `time_zone`: Borders (country, state/province, municipal, disputed), roads (motorway to secondary, smaller roads, roadworks), transport (railways, yards and sidings, subways, trams, ferries, runways, taxiways), rivers, canals, park outlines or time zone lines<br>`width` (number): Line width in points, 0.5..6 | yes |
-| `style.labelSize` | Name size | Set the font size of country, state, city or street names, or of the time zones' offsets. | `label` (string), required: one of `country`, `state`, `city`, `road`, `time_zone`<br>`size` (number), required: Font size in points before the map text scale, 6..24 | yes |
-| `style.reset` | Reset map style | Restore the default border colors, widths, dashes and name sizes. | — | asks first: it discards work or closes GlobeCraft |
+| `style.line` | Map Line Style | Set the colour, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines. | `color` (string): Hex colour #rrggbb or #rrggbbaa (aa is opacity)<br>`dash` (string): one of `solid`, `dashed`, `dotted`<br>`line` (string), required: one of `country`, `state`, `municipal`, `disputed`, `major_road`, `minor_road`, `roadworks`, `railway`, `service_rail`, `subway`, `tram`, `ferry`, `runway`, `taxiway`, `river`, `canal`, `park`, `time_zone`: Borders (country, state/province, municipal, disputed), roads (motorway to secondary, smaller roads, roadworks), transport (railways, yards and sidings, subways, trams, ferries, runways, taxiways), rivers, canals, park outlines or time zone lines<br>`width` (number): Line width in points, 0.5..6 | yes |
+| `style.labelSize` | Name Size | Set the font size of country, state, city or street names, or of the time zones' offsets. | `label` (string), required: one of `country`, `state`, `city`, `road`, `time_zone`<br>`size` (number), required: Font size in points before the map text scale, 6..24 | yes |
+| `style.reset` | Reset Map Style | Restore the default border colours, widths, dashes and name sizes. | — | asks first: it discards work or closes GlobeCraft |
 
 ## File
 

@@ -10,6 +10,7 @@ mod screenshots;
 mod test_ui;
 use eframe::egui;
 use globecraft_core::{camera::Cam, language::Lang};
+use globecraft_data::settings::{MAX_UI_SCALE, MIN_UI_SCALE};
 use globecraft_data::{
     boundaries::{BoundaryUpdates, StatusLog, load_boundaries_async},
     search::Suggestion,
@@ -70,7 +71,9 @@ mod saved;
 mod search;
 mod selected_flight;
 mod selected_satellite;
+mod sky_layer;
 mod still_shot;
+mod system_access;
 mod time;
 mod timezones;
 mod tools;
@@ -628,14 +631,49 @@ impl eframe::App for App {
         self.chrome.font_atlas_fill = atlas_fill;
         ui.set_theme(egui_theme(self.settings.appearance.theme));
         let dt = frame_timing::animation_delta_secs(ui);
+        // Interface size is egui's zoom, so text, icons, spacing and hit areas all scale.
+        // egui's own zoom keys (⌘+, ⌘−, ⌘0) change the zoom too: keep that as the setting.
+        let zoom = ui.zoom_factor();
+        if let Some(styled) = self.chrome.styled_scale
+            && (zoom - styled).abs() > 1e-4
+            && (self.settings.ui_scale - styled).abs() <= 1e-4
+        {
+            self.settings.ui_scale = zoom.clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+            self.windows.ui_scale_edit = self.settings.ui_scale;
+            self.chrome.styled_scale = Some(zoom);
+        }
         if self
             .chrome
             .styled_scale
             .is_none_or(|scale| (self.settings.ui_scale - scale).abs() > 1e-4)
         {
-            ui::theme::apply(ui, self.settings.ui_scale);
+            ui.set_zoom_factor(self.settings.ui_scale);
             self.chrome.styled_scale = Some(self.settings.ui_scale);
         }
+        self.chrome.access = system_access::read();
+        let appearance = &self.settings.appearance;
+        // A monochrome colour of one's own replaces the accent everywhere, not only in icons.
+        let own = appearance
+            .mono_icons
+            .then_some(appearance.mono_icon_color)
+            .flatten()
+            .map(|c| {
+                let [r, g, b, _] = c.0;
+                egui::Color32::from_rgb(r, g, b)
+            });
+        let look = ui::theme::Look {
+            increase_contrast: self.chrome.access.increase_contrast,
+            reduce_motion: self.reduce_motion(),
+            accent: own.or(self.chrome.access.accent),
+        };
+        if self.chrome.styled_look != Some(look) {
+            ui::theme::apply(ui, look);
+            self.chrome.styled_look = Some(look);
+        }
+        let mono = appearance
+            .mono_icons
+            .then(|| own.unwrap_or(ui::theme::Tokens::get(ui).accent));
+        ui::icons::set_mono(ui, mono);
         // persist settings once a slider is released; frames with no input (animation)
         // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more
         let (pointer_down, had_input) = ui.input(|i| (i.pointer.any_down(), !i.events.is_empty()));
@@ -667,8 +705,7 @@ impl eframe::App for App {
         profile_checkpoint!(watchdog, "ui.slow.status");
         self.status_bar(ui);
         profile_checkpoint!(watchdog, "ui.slow.panes");
-        self.left_pane(ui);
-        self.right_pane(ui);
+        self.side_pane(ui);
         profile_checkpoint!(watchdog, "ui.slow.windows");
         self.settings_window(ui);
         self.menu_windows(ui);
@@ -681,8 +718,29 @@ impl eframe::App for App {
         self.live.maps.update(
             ui,
             &self.runtime,
-            self.layer(MapLayer::Clouds),
-            self.layer(MapLayer::Radar),
+            globecraft_data::live_maps::CloudWish {
+                shown: self.layer(MapLayer::Clouds),
+                // Set back, the app's time shows the clouds kept for it.
+                time: (!self.time.is_live()).then(|| self.scene_unix()),
+                // Playing, the moments ahead load meanwhile.
+                playing: self.time.speed(),
+                max_px: self.settings.layers.cloud_resolution_px,
+                loop_range: self.time.loop_range(),
+            },
+            globecraft_data::live_maps::RadarWish {
+                shown: self.layer(MapLayer::Radar),
+                // Away from now, the frame of that time, within the two hours kept;
+                // further back the newest, dimmed.
+                time: self
+                    .away_from_now()
+                    .then(|| self.scene_unix())
+                    .filter(|time| {
+                        let back = globecraft_core::math::now_unix() - time;
+                        (0.0..=globecraft_data::live_maps::RADAR_PAST_SECS).contains(&back)
+                    }),
+            },
+            // The sun's glint on the water.
+            self.layer(MapLayer::Sunlight) && self.explorer.on_earth(),
         );
         profile_checkpoint!(watchdog, "ui.slow.boundary");
         let earth_visible = self.earth_shown();
@@ -713,6 +771,7 @@ impl eframe::App for App {
             ui.request_repaint_after(BOUNDARY_POLL_INTERVAL);
         }
         self.log_downloads();
+        self.poll_screen_capture(&ui.ctx().clone());
         self.poll_still_shot();
         self.follow_ground(ui);
         profile_checkpoint!(watchdog, "ui.slow.globe");

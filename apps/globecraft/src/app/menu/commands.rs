@@ -1,6 +1,11 @@
-//! One command catalog for native menus and the in-window fallback.
+//! The menu bar's catalog: which command each item runs, in which menu. Items run the same
+//! commands as the ribbon and Command Search, and take their names and states from them.
 use eframe::egui;
-use globecraft_core::language::Lang;
+use globecraft_core::{
+    language::Lang,
+    layers::{LayerGroup, MapLayer},
+};
+use std::sync::LazyLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Section {
@@ -8,17 +13,23 @@ pub(super) enum Section {
     File,
     Edit,
     View,
+    Go,
+    Map,
+    Live,
     Add,
     Tools,
     Window,
     Help,
 }
 impl Section {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 11] = [
         Self::Application,
         Self::File,
         Self::Edit,
         Self::View,
+        Self::Go,
+        Self::Map,
+        Self::Live,
         Self::Add,
         Self::Tools,
         Self::Window,
@@ -30,6 +41,9 @@ impl Section {
             Self::File => "menu-file-title",
             Self::Edit => "menu-edit-title",
             Self::View => "menu-view-title",
+            Self::Go => "menu-go-title",
+            Self::Map => "ribbon-tab-map",
+            Self::Live => "ribbon-tab-live",
             Self::Add => "menu-add-title",
             Self::Tools => "menu-tools-title",
             Self::Window => "menu-window-title",
@@ -37,202 +51,165 @@ impl Section {
         })
     }
 }
+
+/// One menu item: a catalog command, or the switch of one map layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::app) enum Action {
-    About,
-    Settings,
-    Open,
-    AddData,
-    Save,
-    SaveAs,
-    Export,
-    Screenshot,
-    Quit,
-    Undo,
-    Redo,
-    Sidebar,
-    ShowLayers,
-    ShowPlaces,
-    NavigationControls,
-    Grid,
-    Atmosphere,
-    Sunlight,
-    North,
-    GlobalView,
-    Placemark,
-    Folder,
-    Ruler,
-    Explorer,
-    Fullscreen,
-    Minimize,
-    Help,
-    Documentation,
-    ReportIssue,
+pub(in crate::app) struct Action {
+    pub(super) section: Section,
+    pub(super) id: &'static str,
+    /// For `layer.show`: the layer it switches.
+    pub(super) layer: Option<MapLayer>,
+    /// Shown with a check mark.
+    pub(super) toggle: bool,
+    /// The menu's own wording; otherwise the command's name.
+    label: Option<&'static str>,
 }
-impl Action {
-    pub(super) const ALL: [Self; 29] = [
-        Self::About,
-        Self::Settings,
-        Self::Open,
-        Self::AddData,
-        Self::Save,
-        Self::SaveAs,
-        Self::Export,
-        Self::Screenshot,
-        Self::Quit,
-        Self::Undo,
-        Self::Redo,
-        Self::Sidebar,
-        Self::ShowLayers,
-        Self::ShowPlaces,
-        Self::NavigationControls,
-        Self::Grid,
-        Self::Atmosphere,
-        Self::Sunlight,
-        Self::North,
-        Self::GlobalView,
-        Self::Placemark,
-        Self::Folder,
-        Self::Ruler,
-        Self::Explorer,
-        Self::Fullscreen,
-        Self::Minimize,
-        Self::Help,
-        Self::Documentation,
-        Self::ReportIssue,
-    ];
-    pub(super) fn section(self) -> Section {
-        match self {
-            Self::About | Self::Settings | Self::Quit => Section::Application,
-            Self::Open
-            | Self::AddData
-            | Self::Save
-            | Self::SaveAs
-            | Self::Export
-            | Self::Screenshot => Section::File,
-            Self::Undo | Self::Redo => Section::Edit,
-            Self::Sidebar
-            | Self::ShowLayers
-            | Self::ShowPlaces
-            | Self::NavigationControls
-            | Self::Grid
-            | Self::Atmosphere
-            | Self::Sunlight
-            | Self::North
-            | Self::GlobalView => Section::View,
-            Self::Placemark | Self::Folder => Section::Add,
-            Self::Ruler | Self::Explorer => Section::Tools,
-            Self::Fullscreen | Self::Minimize => Section::Window,
-            Self::Help | Self::Documentation | Self::ReportIssue => Section::Help,
-        }
+
+const fn item(section: Section, id: &'static str, label: Option<&'static str>) -> Action {
+    Action {
+        section,
+        id,
+        layer: None,
+        toggle: false,
+        label,
     }
-    pub(super) fn label(self, lang: Lang) -> &'static str {
-        lang.text(match self {
-            Self::Open => "menu-kml-open",
-            Self::AddData => "menu-add-data",
-            Self::Save => "menu-kml-save",
-            Self::SaveAs => "menu-kml-save-as",
-            Self::Export => "menu-places-export",
-            Self::Screenshot => "menu-screenshot-save",
-            Self::Quit => "menu-quit-action",
-            Self::Undo => "edit-undo-action",
-            Self::Redo => "edit-redo-action",
-            Self::About => "menu-about-action",
-            Self::Settings => "menu-settings-action",
-            Self::Sidebar => "menu-sidebar-toggle",
-            Self::ShowLayers => "layers-section-title",
-            Self::ShowPlaces => "sidebar-places-title",
-            Self::NavigationControls => "menu-navigation-toggle",
-            Self::Grid => "layers-grid-toggle",
-            Self::Atmosphere => "layers-atmosphere-toggle",
-            Self::Sunlight => "layers-sunlight-toggle",
-            Self::North => "navigation-reset-north-action",
-            Self::GlobalView => "navigation-global-view-action",
-            Self::Placemark => "menu-add-placemark",
-            Self::Folder => "places-add-folder-action",
-            Self::Ruler => "ruler-enable-toggle",
-            Self::Explorer => "top-explore-action",
-            Self::Fullscreen => "menu-fullscreen-toggle",
-            Self::Minimize => "menu-minimize-action",
-            Self::Help => "menu-controls-help",
-            Self::Documentation => "menu-documentation-action",
-            Self::ReportIssue => "menu-report-issue-action",
-        })
-    }
-    /// The command this menu item runs.
-    pub(in crate::app) fn command(self) -> (&'static str, serde_json::Value) {
-        use serde_json::{Value, json};
-        match self {
-            Self::About => ("ui.about", Value::Null),
-            Self::Settings => ("ui.settings", Value::Null),
-            Self::Open => ("places.open", Value::Null),
-            Self::AddData => ("ui.addData", Value::Null),
-            Self::Save => ("places.save", Value::Null),
-            Self::SaveAs => ("places.saveAs", Value::Null),
-            Self::Export => ("places.export", Value::Null),
-            Self::Screenshot => ("file.screenshot", Value::Null),
-            Self::Quit => ("app.quit", Value::Null),
-            Self::Undo => ("edit.undo", Value::Null),
-            Self::Redo => ("edit.redo", Value::Null),
-            Self::Sidebar => ("ui.leftPane", Value::Null),
-            Self::ShowLayers => ("ui.pane.layers", Value::Null),
-            Self::ShowPlaces => ("ui.pane.places", Value::Null),
-            Self::NavigationControls => ("ui.navigationControls", Value::Null),
-            Self::Grid => ("layer.show", json!({"layer": "grid"})),
-            Self::Atmosphere => ("layer.show", json!({"layer": "atmosphere"})),
-            Self::Sunlight => ("layer.show", json!({"layer": "sunlight"})),
-            Self::North => ("camera.resetNorth", Value::Null),
-            Self::GlobalView => ("camera.globalView", Value::Null),
-            Self::Placemark => ("places.addAtCenter", Value::Null),
-            Self::Folder => ("places.addFolder", Value::Null),
-            Self::Ruler => ("ruler.enable", Value::Null),
-            Self::Explorer => ("ui.explorer", Value::Null),
-            Self::Fullscreen => ("ui.fullscreen", Value::Null),
-            Self::Minimize => ("ui.minimize", Value::Null),
-            Self::Help => ("ui.shortcuts", Value::Null),
-            Self::Documentation => ("help.documentation", Value::Null),
-            Self::ReportIssue => ("help.reportIssue", Value::Null),
-        }
-    }
-    pub(super) fn shortcut(self) -> Option<egui::KeyboardShortcut> {
-        crate::app::commands::shortcut(self.command().0)
+}
+const fn toggle(section: Section, id: &'static str, label: Option<&'static str>) -> Action {
+    Action {
+        toggle: true,
+        ..item(section, id, label)
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct MenuState {
-    pub image: bool,
-    pub undo: bool,
-    pub redo: bool,
-    pub sidebar: bool,
-    pub navigation: bool,
-    pub grid: bool,
-    pub atmosphere: bool,
-    pub sunlight: bool,
-    pub ruler: bool,
-    pub explorer: bool,
-    pub fullscreen: bool,
-}
-impl MenuState {
-    pub(super) fn enabled(self, action: Action) -> bool {
-        match action {
-            Action::Screenshot => self.image,
-            Action::Undo => self.undo,
-            Action::Redo => self.redo,
-            _ => true,
+use Section::*;
+
+/// The items before the map layers, by menu.
+const COMMANDS: &[Action] = &[
+    item(Application, "ui.about", Some("menu-about-action")),
+    item(Application, "ui.settings", Some("menu-settings-action")),
+    item(Application, "app.quit", Some("menu-quit-action")),
+    item(File, "places.open", Some("menu-kml-open")),
+    item(File, "ui.addData", Some("menu-add-data")),
+    item(File, "places.save", Some("menu-kml-save")),
+    item(File, "places.saveAs", Some("menu-kml-save-as")),
+    item(File, "places.export", Some("menu-places-export")),
+    item(File, "file.screenshot", Some("menu-screenshot-save")),
+    item(File, "file.exportSettings", None),
+    item(File, "file.importSettings", None),
+    toggle(File, "app.workOffline", None),
+    item(Edit, "edit.undo", Some("edit-undo-action")),
+    item(Edit, "edit.redo", Some("edit-redo-action")),
+    item(Edit, "view.copyLink", None),
+    toggle(View, "ui.leftPane", Some("menu-sidebar-toggle")),
+    toggle(View, "ui.pane.layers", Some("layers-section-title")),
+    toggle(View, "ui.pane.places", Some("sidebar-places-title")),
+    toggle(View, "ui.pane.measure", None),
+    toggle(View, "ui.legend", None),
+    toggle(
+        View,
+        "ui.navigationControls",
+        Some("menu-navigation-toggle"),
+    ),
+    toggle(View, "ui.ribbon", None),
+    toggle(View, "ui.ribbonCompact", None),
+    item(View, "ui.commandSearch", None),
+    toggle(View, "ui.fullscreen", Some("menu-fullscreen-toggle")),
+    item(Go, "search.place", None),
+    item(
+        Go,
+        "camera.globalView",
+        Some("navigation-global-view-action"),
+    ),
+    item(
+        Go,
+        "camera.resetNorth",
+        Some("navigation-reset-north-action"),
+    ),
+    item(Go, "camera.topDown", None),
+    item(Go, "camera.zoomIn", None),
+    item(Go, "camera.zoomOut", None),
+    toggle(Go, "camera.lookAround", None),
+    toggle(Go, "camera.autoRotate", None),
+    item(Go, "ui.here", None),
+    toggle(Live, "ui.timeline", None),
+    toggle(Live, "time.play", None),
+    item(Add, "places.addAtCenter", Some("menu-add-placemark")),
+    item(Add, "places.addFolder", Some("places-add-folder-action")),
+    toggle(Tools, "ruler.enable", Some("ruler-enable-toggle")),
+    item(Tools, "ruler.profile", None),
+    toggle(Tools, "ui.explorer", Some("top-explore-action")),
+    toggle(Tools, "ui.pane.assistant", None),
+    item(Window, "ui.minimize", Some("menu-minimize-action")),
+    item(Help, "ui.shortcuts", Some("menu-controls-help")),
+    item(
+        Help,
+        "help.documentation",
+        Some("menu-documentation-action"),
+    ),
+    item(Help, "help.reportIssue", Some("menu-report-issue-action")),
+    item(Help, "help.copyDiagnostics", None),
+];
+
+impl Action {
+    /// Every item, menu by menu: the commands above, then each layer this build offers in
+    /// Map, or in Live for weather and moving objects, in the Layers pane's order.
+    pub(super) fn all() -> &'static [Action] {
+        static ALL: LazyLock<Vec<Action>> = LazyLock::new(|| {
+            let layers = LayerGroup::ALL.into_iter().flat_map(|group| {
+                MapLayer::ALL
+                    .into_iter()
+                    .filter(move |layer| layer.group() == group && crate::app::App::offers(*layer))
+                    .map(|layer| Action {
+                        section: match layer.group() {
+                            LayerGroup::Weather | LayerGroup::LiveObjects => Live,
+                            _ => Map,
+                        },
+                        id: "layer.show",
+                        layer: Some(layer),
+                        toggle: true,
+                        label: None,
+                    })
+            });
+            let mut all: Vec<Action> = COMMANDS.iter().copied().chain(layers).collect();
+            // Stable: keeps the order within each menu.
+            all.sort_by_key(|action| Section::ALL.iter().position(|s| *s == action.section));
+            all
+        });
+        &ALL
+    }
+    pub(super) fn label(self, lang: Lang) -> &'static str {
+        if let Some(layer) = self.layer {
+            return crate::app::ui::short_layer_label(lang, layer);
+        }
+        lang.text(self.label.unwrap_or_else(|| {
+            globecraft_core::commands::find(self.id).map_or(self.id, |spec| spec.label)
+        }))
+    }
+    /// The command this menu item runs.
+    pub(in crate::app) fn command(self) -> (&'static str, serde_json::Value) {
+        match self.layer {
+            Some(layer) => (self.id, serde_json::json!({"layer": layer.code()})),
+            None => (self.id, serde_json::Value::Null),
         }
     }
-    pub(super) fn checked(self, action: Action) -> Option<bool> {
-        Some(match action {
-            Action::Sidebar => self.sidebar,
-            Action::NavigationControls => self.navigation,
-            Action::Grid => self.grid,
-            Action::Atmosphere => self.atmosphere,
-            Action::Sunlight => self.sunlight,
-            Action::Ruler => self.ruler,
-            Action::Explorer => self.explorer,
-            Action::Fullscreen => self.fullscreen,
-            _ => return None,
+    pub(super) fn shortcut(self) -> Option<egui::KeyboardShortcut> {
+        // A layer's shortcut belongs to its ribbon button, which passes the layer too.
+        self.layer
+            .is_none()
+            .then(|| crate::app::commands::shortcut(self.id))
+            .flatten()
+    }
+    /// Whether a separator goes before this item: between groups of layers, and before the
+    /// first layer after other items.
+    #[cfg(target_os = "macos")]
+    pub(super) fn starts_group(self, previous: Option<Action>) -> bool {
+        previous.is_some_and(|previous| {
+            previous.section == self.section
+                && self.layer.map(MapLayer::group) != previous.layer.map(MapLayer::group)
         })
     }
 }
+
+/// Each item's state, in `Action::all()` order.
+#[cfg(target_os = "macos")]
+pub(super) type MenuState = Vec<crate::app::commands::CommandState>;

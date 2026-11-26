@@ -2,7 +2,7 @@
 use crate::app::App;
 use globecraft_core::commands::{LayerCommand, WorldCommand};
 use globecraft_core::{body::Body, earth_model::EarthModel, layers::MapLayer};
-use globecraft_data::settings::workspace::RightPane;
+use globecraft_data::settings::workspace::PaneTab;
 use serde_json::{Value, json};
 
 impl App {
@@ -127,6 +127,15 @@ impl App {
                 }
                 json!({"layer": layer.code(), "opacity": self.settings.layers.opacity.get(layer)})
             }
+            LayerCommand::CloudResolution(p) => {
+                use globecraft_data::settings::layers::CLOUD_RESOLUTIONS_PX;
+                let pixels = u32::try_from(p.pixels)
+                    .ok()
+                    .filter(|px| CLOUD_RESOLUTIONS_PX.contains(px))
+                    .ok_or("pixels must be 2048, 4096 or 8192")?;
+                self.settings.layers.cloud_resolution_px = pixels;
+                json!({"pixels": pixels})
+            }
             LayerCommand::Solo(p) => self.solo_layer(p.layer)?,
             LayerCommand::TerrainExaggeration(p) => {
                 let value = p.value as f32;
@@ -178,13 +187,13 @@ impl App {
                 self.flat_earth.open = false;
                 self.explorer.choose(body, &self.files.jobs);
                 if body == Body::Custom {
-                    self.settings.workspace.open_right(RightPane::Explorer);
+                    self.settings.workspace.open_right(PaneTab::Explorer);
                 }
                 self.touch();
                 json!({"body": p.body})
             }
             WorldCommand::Explorer => {
-                self.settings.workspace.toggle_right(RightPane::Explorer);
+                self.settings.workspace.toggle_right(PaneTab::Explorer);
                 json!({})
             }
         })

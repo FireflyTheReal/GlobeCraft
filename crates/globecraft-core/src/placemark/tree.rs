@@ -169,6 +169,45 @@ impl Places {
         }
         remove(&mut self.roots, id)
     }
+    /// Removes node `id`, returning its folder (`None` at the top), its index there and the
+    /// node itself, for [`Self::insert_at`] to put it back.
+    pub fn take(&mut self, id: u64) -> Option<(Option<u64>, usize, PlaceNode)> {
+        fn take(
+            nodes: &mut Vec<PlaceNode>,
+            parent: Option<u64>,
+            id: u64,
+        ) -> Option<(Option<u64>, usize, PlaceNode)> {
+            if let Some(index) = nodes.iter().position(|node| node.id == id) {
+                return Some((parent, index, nodes.remove(index)));
+            }
+            for node in nodes {
+                let folder = node.id;
+                if let PlaceItem::Folder { children, .. } = &mut node.item
+                    && let Some(found) = take(children, Some(folder), id)
+                {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        take(&mut self.roots, None, id)
+    }
+    /// Puts `node` at `index` in folder `parent` (the end when shorter), or at the end of the
+    /// top level when that folder is gone.
+    pub fn insert_at(&mut self, parent: Option<u64>, index: usize, node: PlaceNode) {
+        let siblings = match parent.and_then(|id| self.find_mut(id)) {
+            Some(PlaceNode {
+                item: PlaceItem::Folder { children, .. },
+                ..
+            }) => children,
+            _ if parent.is_none() => &mut self.roots,
+            _ => {
+                self.roots.push(node);
+                return;
+            }
+        };
+        siblings.insert(index.min(siblings.len()), node);
+    }
     pub fn insert(&mut self, parent: Option<u64>, node: PlaceNode) {
         if let Some(parent) = parent.and_then(|id| self.find_mut(id))
             && let PlaceItem::Folder { children, .. } = &mut parent.item
@@ -211,6 +250,7 @@ mod tests {
             desc: String::new(),
             lat: 27.0,
             lon: 86.0,
+            time: None,
         });
         let mark_id = mark.id();
         let nested = PlaceNode::folder("Asia".into(), String::new(), false, vec![mark]);
@@ -240,5 +280,40 @@ mod tests {
         assert_eq!(depths, [(0, root_id), (1, nested_id), (0, mark_id)]);
         assert!(places.remove(nested_id).is_some());
         assert!(places.find_mut(mark_id).is_some());
+    }
+
+    #[test]
+    fn a_taken_node_goes_back_where_it_was() {
+        let marker = |name: &str| {
+            PlaceNode::marker(Placemark {
+                name: name.into(),
+                desc: String::new(),
+                lat: 0.0,
+                lon: 0.0,
+                time: None,
+            })
+        };
+        let folder = PlaceNode::folder(
+            "f".into(),
+            String::new(),
+            false,
+            vec![marker("a"), marker("b")],
+        );
+        let folder_id = folder.id();
+        let mut places = Places {
+            roots: vec![folder, marker("c")],
+        };
+        let b = places.find_by_name("b").map(PlaceNode::id).unwrap();
+        let (parent, index, node) = places.take(b).unwrap();
+        assert_eq!((parent, index), (Some(folder_id), 1));
+        places.insert_at(parent, 0, node);
+        let mut order = Vec::new();
+        places.walk(|_, node| order.push(node.name().to_owned()));
+        assert_eq!(order, ["f", "b", "a", "c"]);
+        // The folder gone: back at the end of the top level.
+        let (_, _, node) = places.take(b).unwrap();
+        places.remove(folder_id);
+        places.insert_at(Some(folder_id), 0, node);
+        assert_eq!(places.roots.last().map(PlaceNode::name), Some("b"));
     }
 }

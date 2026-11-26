@@ -295,6 +295,7 @@ mod tests {
             desc: desc.into(),
             lat,
             lon,
+            time: None,
         })
     }
 

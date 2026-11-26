@@ -1,4 +1,5 @@
-//! Ruler history commands and keyboard routing; text edits keep their own history.
+//! Undo and Redo of ruler edits and deleted places, and their keyboard routing; text edits
+//! keep their own history.
 use super::App;
 use eframe::egui::{self, Key, Modifiers};
 
@@ -46,6 +47,10 @@ fn consume_shortcut(ctx: &egui::Context) -> Option<HistoryCommand> {
 
 impl App {
     pub(super) fn apply_ruler_history(&mut self, command: HistoryCommand, ctx: &egui::Context) {
+        if self.apply_place_history(command) {
+            ctx.request_repaint();
+            return;
+        }
         let changed = match command {
             HistoryCommand::Undo => self.measure.paths.undo(),
             HistoryCommand::Redo => self.measure.paths.redo(),
@@ -54,6 +59,49 @@ impl App {
             self.measure.drag = None;
             ctx.request_repaint();
         }
+    }
+    /// Takes back (or redoes) a place deletion when it is the newest step: when the ruler
+    /// has not recorded more steps since. Whether it did. Only the deleted node moves, so
+    /// places added or opened in between stay.
+    fn apply_place_history(&mut self, command: HistoryCommand) -> bool {
+        let ruler = &self.measure.paths;
+        let (undo_steps, redo_steps) = (ruler.undo_steps(), ruler.redo_steps());
+        match command {
+            HistoryCommand::Undo => {
+                if self
+                    .places
+                    .undo
+                    .last()
+                    .is_none_or(|(_, at)| undo_steps > *at)
+                {
+                    return false;
+                }
+                if let Some(id) = self.places.restore() {
+                    self.places.redo.push((id, redo_steps));
+                }
+            }
+            HistoryCommand::Redo => {
+                if self
+                    .places
+                    .redo
+                    .last()
+                    .is_none_or(|(_, at)| redo_steps > *at)
+                {
+                    return false;
+                }
+                if let Some((id, _)) = self.places.redo.pop() {
+                    self.places.delete(id, undo_steps, true);
+                }
+            }
+        }
+        self.places.selection = None;
+        true
+    }
+    pub(super) fn can_undo(&self) -> bool {
+        self.measure.paths.can_undo() || !self.places.undo.is_empty()
+    }
+    pub(super) fn can_redo(&self) -> bool {
+        self.measure.paths.can_redo() || !self.places.redo.is_empty()
     }
     pub(super) fn ruler_shortcuts(&mut self, ctx: &egui::Context) {
         // AppKit dispatches native accelerators through the menu event queue.

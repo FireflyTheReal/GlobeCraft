@@ -3,7 +3,7 @@ use super::galleys::LabelGalleys;
 use super::meshes::PreparedOverlay;
 use super::place_memory::PlaceNameMemory;
 use super::projected;
-use eframe::egui::{self, Rect, Shape};
+use eframe::egui::{self, Rect, Shape, emath::TSTransform};
 use globecraft_core::{camera::Basis, language::Lang};
 use globecraft_data::boundaries::BoundaryData;
 use globecraft_data::settings::map_style::MapStyle;
@@ -330,12 +330,18 @@ impl OverlayCache {
             {
                 self.geometry = Some(completed);
             }
-            let this_view = self
-                .geometry
-                .as_ref()
-                .filter(|prepared| prepared.geometry.view == geometry_view);
-            let current_data = this_view
-                .is_some_and(|prepared| prepared.geometry.matches(geometry_view, boundaries));
+            // The displayed frame's own geometry, moved and scaled with its picture
+            // while a pane slides or the window is resized (user, 2026-11-20/21).
+            let moved = self.geometry.as_ref().and_then(|prepared| {
+                moved_between(prepared.geometry.view, geometry_view).map(|by| (prepared, by))
+            });
+            let this_view = moved.map(|(prepared, _)| prepared);
+            let moved = moved.map_or(TSTransform::IDENTITY, |(_, by)| by);
+            let current_data = this_view.is_some_and(|prepared| {
+                prepared
+                    .geometry
+                    .matches(prepared.geometry.view, boundaries)
+            });
             if let Some(prepared) = this_view {
                 // Geometry for exactly this view. When it was projected from the
                 // previous dataset (a patch arrived while the camera moved), paint it
@@ -347,7 +353,7 @@ impl OverlayCache {
                     .fading_out
                     .as_ref()
                     .filter(|_| style.arrival.exchange < ARRIVAL_FADE_STEPS)
-                    .filter(|old| old.geometry.view == geometry_view);
+                    .filter(|old| old.geometry.view == prepared.geometry.view);
                 let built = projected::build_prepared(
                     painter,
                     prepared,
@@ -358,7 +364,16 @@ impl OverlayCache {
                     &self.place_memory,
                 );
                 self.shapes = built.shapes;
-                self.placed.replace(built.label_rects);
+                let mut label_rects = built.label_rects;
+                if moved != TSTransform::IDENTITY {
+                    self.shapes
+                        .iter_mut()
+                        .for_each(|shape| shape.transform(moved));
+                    label_rects
+                        .iter_mut()
+                        .for_each(|rect| *rect = moved.mul_rect(*rect));
+                }
+                self.placed.replace(label_rects);
                 self.place_memory.finish(Instant::now(), built.drawn);
                 if built.labels_pending {
                     // Rebuild next frame to lay out the names left over (cheap: the
@@ -390,16 +405,36 @@ impl OverlayCache {
                     self.worker.submit(geometry_view, boundaries.clone());
                     self.requested = Some(request);
                 }
-                // Hold the previous dataset's shapes while the worker prepares
-                // the replacement, but only when they were projected for
-                // exactly this camera and layer set; a moved camera must never
-                // paint geometry from another view.
-                return self.stale == Some(current);
+                // Hold the previous shapes while the worker prepares the
+                // replacement, but only when they were projected for exactly this
+                // camera; a moved camera must never paint geometry from another
+                // view. Another layer set keeps them too: a layer turned on or off
+                // blanked every border for a moment (user 2026-11-19).
+                return self.stale.is_some_and(|stale| stale.view == current.view);
             }
         }
         // Never paint shapes projected for a different displayed camera or layer set.
         self.key == Some(current)
     }
+}
+
+/// How `to` lies on screen from `from` when it is the same view moved or scaled: the
+/// same camera, its rectangle elsewhere or larger in the same proportions (a frame's
+/// picture shown while the globe's size changes, `globe::shown_rect`).
+fn moved_between(
+    from: globecraft_render::overlays::OverlayView,
+    to: globecraft_render::overlays::OverlayView,
+) -> Option<TSTransform> {
+    let same_camera = globecraft_render::overlays::OverlayView {
+        rect: to.rect,
+        ..from
+    } == to;
+    let (a, b) = (from.rect.size(), to.rect.size());
+    let same_shape = a.y > 0.0 && (a.x * b.y - b.x * a.y).abs() <= 1e-3 * a.x * b.y;
+    (same_camera && same_shape).then(|| {
+        let scaling = b.y / a.y;
+        TSTransform::new(to.rect.center() - from.rect.center() * scaling, scaling)
+    })
 }
 
 fn projected_view(

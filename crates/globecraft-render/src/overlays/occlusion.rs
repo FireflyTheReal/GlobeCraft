@@ -22,9 +22,92 @@ const MIN_OCCLUSION_TILT_DEG: f64 = 1.0;
 /// the ridge. Farther points are cut away by clipping and skip the test.
 const NEAR_VIEW_MARGIN: f32 = 0.25;
 
+/// How far a point may lie past the ground drawn at its pixel and still show, as a
+/// share of that distance: the overlays' heights come from coarser elevation tiles
+/// than the frame's, so a point on the ground may sit a little under the drawn
+/// surface (most of all along grazing rays).
+const DEPTH_SLACK: f64 = 0.03;
+
+/// How far the frame's rays went before they met the drawn ground (the GPU's relief
+/// walk, `relief::Walked::pixels`): a point farther than that at its pixel is behind
+/// the relief. Its planes are the walk's, row by row: where each ray may start, where
+/// it met the ground (world units from the camera; below 0: it did not), the sun's
+/// share, and whether the CPU took that ground as it is (above one half).
+pub struct DepthMap {
+    width: usize,
+    height: usize,
+    planes: std::sync::Arc<Vec<f32>>,
+}
+
+impl DepthMap {
+    /// The walk's planes for a `width` × `height` frame (four planes of that size).
+    pub fn new(width: usize, height: usize, planes: std::sync::Arc<Vec<f32>>) -> Option<Self> {
+        (width > 0 && height > 0 && planes.len() >= 4 * width * height).then_some(Self {
+            width,
+            height,
+            planes,
+        })
+    }
+    /// The farthest drawn ground among pixel `(x, y)` and its eight neighbours (a point
+    /// at a ridge's edge falls between them), or `None` where any of them has no
+    /// ground the walk was sure of.
+    fn ground_near(&self, x: usize, y: usize) -> Option<f64> {
+        let count = self.width * self.height;
+        let mut farthest = 0.0f32;
+        for ny in y.saturating_sub(1)..=(y + 1).min(self.height - 1) {
+            for nx in x.saturating_sub(1)..=(x + 1).min(self.width - 1) {
+                let i = ny * self.width + nx;
+                let (hit, trusted) = (self.planes[count + i], self.planes[3 * count + i]);
+                if !(hit >= 0.0 && trusted > 0.5) {
+                    return None;
+                }
+                farthest = farthest.max(hit);
+            }
+        }
+        Some(f64::from(farthest))
+    }
+}
+
+/// Whether the counts below are kept (`GLOBECRAFT_FRAME_TIMES` set): shared counters
+/// bumped by every lookup cost threads that project in parallel.
+pub(super) static COUNTING: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some());
+/// Bumps `counter` when the counts are kept.
+pub(super) fn count(counter: &std::sync::atomic::AtomicUsize) {
+    if *COUNTING {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Line-of-sight tests since `take_counts`: answered by the drawn ground, and by the
+/// line of elevation lookups (`GLOBECRAFT_FRAME_TIMES`).
+static BY_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static BY_LINE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Of those by the line: off the frame, and on it where the ground was not sure.
+static OFF_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static NOT_SURE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Loaded-elevation lookups (`GroundHeights::height`) since `take_counts`.
+pub(super) static HEIGHTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Since the last call: the line-of-sight tests by the drawn ground and by the line
+/// (of those, off the frame and where its ground was not sure), and the
+/// loaded-elevation lookups.
+pub fn take_counts() -> [usize; 5] {
+    use std::sync::atomic::Ordering::Relaxed;
+    [
+        BY_DEPTH.swap(0, Relaxed),
+        BY_LINE.swap(0, Relaxed),
+        OFF_FRAME.swap(0, Relaxed),
+        NOT_SURE.swap(0, Relaxed),
+        HEIGHTS.swap(0, Relaxed),
+    ]
+}
+
 pub struct TerrainVisibility<'a> {
     basis: &'a Basis,
     ground: &'a dyn Ground,
+    /// The frame's drawn ground and the rectangle it covers, when there is one.
+    depth: Option<(&'a DepthMap, Rect)>,
 }
 
 impl<'a> TerrainVisibility<'a> {
@@ -32,7 +115,18 @@ impl<'a> TerrainVisibility<'a> {
     /// oblique enough for an occluder to stand between the camera and a point.
     pub fn new(basis: &'a Basis, ground: Option<&'a dyn Ground>) -> Option<Self> {
         let ground = ground?;
-        (basis.tilt_deg >= MIN_OCCLUSION_TILT_DEG).then_some(Self { basis, ground })
+        (basis.tilt_deg >= MIN_OCCLUSION_TILT_DEG).then_some(Self {
+            basis,
+            ground,
+            depth: None,
+        })
+    }
+    /// The test against the frame's drawn ground `depth` (covering `rect`), where it
+    /// has one: one comparison instead of a line of elevation lookups (on an M1, a
+    /// view tilted 70° at 16 km spent 36–77 ms a frame on those, 2026-11-26).
+    pub fn with_depth(mut self, depth: Option<&'a DepthMap>, rect: Rect) -> Self {
+        self.depth = depth.map(|depth| (depth, rect));
+        self
     }
 
     /// Whether a point projected to `at` is near enough to the view `rect` to be
@@ -47,6 +141,11 @@ impl<'a> TerrainVisibility<'a> {
     pub fn visible(&self, lat: f64, lon: f64) -> bool {
         let target = super::ground_position(self.basis, Some(self.ground), lat, lon);
         let eye = self.basis.c;
+        if let Some(visible) = self.visible_in_depth(target) {
+            count(&BY_DEPTH);
+            return visible;
+        }
+        count(&BY_LINE);
         let geometry = self.basis.model.geometry();
         let ceiling = self.ground.max_height();
         // The target itself is not an occluder; stop one sample short of it so the
@@ -68,6 +167,23 @@ impl<'a> TerrainVisibility<'a> {
             }
         }
         true
+    }
+    /// Whether `target` lies no farther than the ground drawn at its pixel; `None`
+    /// off the frame or where the walk was not sure of the ground there.
+    fn visible_in_depth(&self, target: glam::DVec3) -> Option<bool> {
+        let (depth, rect) = self.depth?;
+        let at = self.basis.project_precise(target, rect)?;
+        let x = (at.x - f64::from(rect.min.x)) / f64::from(rect.width()) * depth.width as f64;
+        let y = (at.y - f64::from(rect.min.y)) / f64::from(rect.height()) * depth.height as f64;
+        if !(0.0..depth.width as f64).contains(&x) || !(0.0..depth.height as f64).contains(&y) {
+            count(&OFF_FRAME);
+            return None;
+        }
+        let Some(ground) = depth.ground_near(x as usize, y as usize) else {
+            count(&NOT_SURE);
+            return None;
+        };
+        Some((target - self.basis.c).length() <= ground * (1.0 + DEPTH_SLACK))
     }
 }
 
@@ -129,6 +245,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 60.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let visibility = TerrainVisibility::new(&basis, Some(&Flat)).unwrap();
@@ -143,6 +260,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 60.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let visibility = TerrainVisibility::new(&basis, Some(&Ridge)).unwrap();
@@ -156,6 +274,7 @@ mod tests {
             heading: 0.0,
             alt: 20.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         assert!(TerrainVisibility::new(&down, Some(&Ridge)).is_none());
@@ -180,6 +299,7 @@ mod tests {
             heading: 0.0,
             alt: 30.0,
             tilt: 65.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let ground = Counted(std::sync::atomic::AtomicUsize::new(0));
@@ -190,6 +310,52 @@ mod tests {
             "{} elevation lookups for one point",
             ground.0.load(std::sync::atomic::Ordering::Relaxed)
         );
+    }
+
+    /// With the frame's drawn ground, a point farther than the ground at its pixel is
+    /// hidden without a lookup along the line, a nearer one shows, and a pixel whose
+    /// ground the walk was not sure of falls back to the line test.
+    #[test]
+    fn the_drawn_ground_hides_what_lies_behind_it() {
+        let basis = Cam {
+            lat: 0.0,
+            lon: 0.0,
+            heading: 0.0,
+            alt: 20.0,
+            tilt: 60.0,
+            look_up: 0.0,
+        }
+        .basis(1.0);
+        let rect = Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(800.0, 600.0));
+        let (width, height) = (80, 60);
+        let count = width * height;
+        let near = super::super::ground_position(&basis, Some(&Flat), 0.1, 0.0);
+        let ground = (near - basis.c).length() as f32 * 1.1;
+        let planes = |trusted: f32| {
+            let mut planes = vec![0.0f32; 4 * count];
+            planes[count..2 * count].fill(ground);
+            planes[3 * count..].fill(trusted);
+            DepthMap::new(width, height, std::sync::Arc::new(planes)).unwrap()
+        };
+        let (sure, unsure) = (planes(1.0), planes(-1.0));
+        for (lat, _) in [(0.1, ()), (0.4, ())] {
+            let target = super::super::ground_position(&basis, Some(&Flat), lat, 0.0);
+            assert!(
+                basis
+                    .project_precise(target, rect)
+                    .is_some_and(|at| rect.contains(emath::pos2(at.x as f32, at.y as f32))),
+                "{lat} on screen"
+            );
+        }
+        let visibility = TerrainVisibility::new(&basis, Some(&Flat))
+            .unwrap()
+            .with_depth(Some(&sure), rect);
+        assert!(visibility.visible(0.1, 0.0), "nearer than the drawn ground");
+        assert!(!visibility.visible(0.4, 0.0), "behind the drawn ground");
+        let fallback = TerrainVisibility::new(&basis, Some(&Flat))
+            .unwrap()
+            .with_depth(Some(&unsure), rect);
+        assert!(fallback.visible(0.4, 0.0), "flat ground by the line test");
     }
 
     #[test]
@@ -229,6 +395,7 @@ mod cost {
             heading: 0.0,
             alt: 30.0,
             tilt: 65.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let unbounded = Counted(std::sync::atomic::AtomicUsize::new(0), f64::INFINITY);
@@ -308,6 +475,7 @@ mod benchmarks {
             heading: 0.0,
             alt: 25.0,
             tilt: 65.0,
+            look_up: 0.0,
         }
         .basis(1.6);
         let rect = Rect::from_min_size(emath::Pos2::ZERO, emath::vec2(1600.0, 1000.0));

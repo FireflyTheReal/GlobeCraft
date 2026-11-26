@@ -33,15 +33,37 @@ impl App {
             }
         }
         let (icon, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-        icons::paint(ui.painter(), icon, "search", t.text_dim, t.accent);
+        icons::paint(ui.painter(), icon, "search", t.text_dim, t.icon_accent);
         let id = egui::Id::new(SEARCH_FIELD_ID);
+        // Offline, the field says so where a search would fail, not only in the status bar
+        // at the window's bottom (HIG: Windows, no critical information in a bottom bar).
+        let offline = self.settings.offline.then(|| lg.text("statusbar-offline"));
+        let offline_w = offline.map_or(0.0, |text| {
+            super::widgets::text_w(ui, text, super::theme::regular(11.0))
+                + ui.spacing().item_spacing.x
+        });
         let r = ui.add(
             egui::TextEdit::singleline(&mut self.search.query)
                 .id(id)
                 .frame(egui::Frame::NONE)
                 .hint_text(lg.text("search-input-placeholder"))
-                .desired_width(ui.available_width()),
+                .vertical_align(egui::Align::Center)
+                .min_size(vec2(0.0, 20.0))
+                .desired_width(ui.available_width() - offline_w),
         );
+        super::widgets::name_widget(&r, lg.text("search-input-placeholder"));
+        if let Some(text) = offline {
+            let chip = egui::Label::new(egui::RichText::new(text).size(11.0).color(t.amber_text))
+                .sense(egui::Sense::click());
+            if ui
+                .add(chip)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(lg.text("statusbar-offline-help"))
+                .clicked()
+            {
+                self.run_reporting("app.workOffline", serde_json::json!({"on": false}));
+            }
+        }
         if std::mem::take(&mut self.search.focus) {
             r.request_focus();
         }

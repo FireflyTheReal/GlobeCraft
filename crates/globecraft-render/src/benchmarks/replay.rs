@@ -211,6 +211,7 @@ fn hole_rgba(cfg: &RenderCfg) -> [u8; 4] {
         heading: 0.0,
         alt: 1_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis(1.0);
     let (pixels, _, _) =
@@ -258,7 +259,7 @@ fn replay(
         // GLOBECRAFT_REPLAY_TERRAIN=1 adds relief, as the app draws it below 150 km.
         terrain: std::env::var("GLOBECRAFT_REPLAY_TERRAIN")
             .is_ok()
-            .then(|| crate::TerrainCfg::new(1.0))
+            .then(|| crate::TerrainCfg::new(1.0, 1.0))
             .filter(|_| cam_alt.get() <= crate::TERRAIN_MAX_ALTITUDE_KM),
         rel: 0,
         grid: false,
@@ -269,7 +270,11 @@ fn replay(
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
+        sky_behind: false,
+        clouds: None,
+        glint: None,
+        aurora: None,
     };
     let hole = hole_rgba(&config(1.0));
     let used = Mutex::new(HashSet::<TileKey>::new());
@@ -425,6 +430,7 @@ fn streaming_replay() {
         heading,
         alt,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let reports = [
         // Zoom into Munich from a whole-globe view, exponentially like a scroll zoom.

@@ -2,9 +2,7 @@
 use super::CommandState;
 use crate::app::App;
 use globecraft_core::{body::Body, layers::MapLayer};
-use globecraft_data::settings::{
-    UnitPreference, appearance::ThemePreference, sidebar::SidebarPanel, workspace::RightPane,
-};
+use globecraft_data::settings::{UnitPreference, appearance::ThemePreference, workspace::PaneTab};
 use serde_json::Value;
 
 /// A choice's text parameter, as the buttons and menus pass it.
@@ -26,14 +24,18 @@ impl App {
         let earth = self.explorer.on_earth();
         match id {
             "camera.autoRotate" => on(self.motion.auto_rotate),
+            "camera.lookAround" => CommandState {
+                enabled: earth,
+                checked: self.motion.look_mode && params.as_object().is_none_or(|p| p.is_empty()),
+            },
             "ruler.enable" => on(self.measure.on),
             "ruler.closeShape" => on(self.measure.paths.closed()),
             "edit.undo" => CommandState {
-                enabled: self.measure.paths.can_undo(),
+                enabled: self.can_undo(),
                 checked: false,
             },
             "edit.redo" => CommandState {
-                enabled: self.measure.paths.can_redo(),
+                enabled: self.can_redo(),
                 checked: false,
             },
             "file.screenshot" => CommandState {
@@ -117,27 +119,24 @@ impl App {
                 Some("custom") => self.explorer.active == Body::Custom,
                 _ => false,
             }),
-            "ui.explorer" => on(self.settings.workspace.right_pane == Some(RightPane::Explorer)),
-            "ui.pane.layers" => {
-                on(self.settings.sidebar.open
-                    && self.settings.sidebar.panel == SidebarPanel::Layers)
-            }
-            "ui.pane.places" => {
-                on(self.settings.sidebar.open
-                    && self.settings.sidebar.panel == SidebarPanel::Places)
-            }
+            "ui.explorer" => on(self.settings.workspace.right_pane == Some(PaneTab::Explorer)),
+            "ui.pane.layers" => on(self.settings.workspace.right_pane == Some(PaneTab::Layers)),
+            "ui.pane.places" => on(self.settings.workspace.right_pane == Some(PaneTab::Places)),
+            "ui.pane.side" => on(str_param(params, "side")
+                .is_some_and(|side| side == self.settings.workspace.pane_side.code())),
             "ui.pane.assistant" => CommandState {
                 enabled: cfg!(feature = "assistant"),
-                checked: self.settings.workspace.right_pane == Some(RightPane::Assistant),
+                checked: self.settings.workspace.right_pane == Some(PaneTab::Assistant),
             },
-            "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(RightPane::Measure)),
-            "ui.leftPane" => on(self.settings.sidebar.open),
+            "ui.pane.measure" => on(self.settings.workspace.right_pane == Some(PaneTab::Measure)),
+            "ui.leftPane" => on(self.settings.workspace.right_pane.is_some()),
             "ui.navigationControls" => on(!self.settings.hide_navigation_controls),
             "app.workOffline" => on(self.settings.offline),
             "ui.tileDiagnostics" => on(self.frame.diagnostics),
             "ui.timeline" => on(self.timeline.open),
             "ui.legend" => on(self.legend_open()),
             "time.play" => on(self.time.speed() != 0.0),
+            "time.loop" => on(self.time.loop_range().is_some()),
             "time.pause" => CommandState {
                 enabled: self.time.speed() != 0.0,
                 checked: false,
@@ -145,6 +144,7 @@ impl App {
             "ui.navigatorStyle" => on(str_param(params, "style")
                 .is_some_and(|style| style == self.settings.navigation.navigator.code())),
             "ui.ribbon" => on(self.settings.workspace.ribbon_minimized),
+            "ui.ribbonCompact" => on(self.settings.workspace.ribbon_compact),
             "ui.ribbon.pin" => on(str_param(params, "group")
                 .zip(str_param(params, "tool"))
                 .is_some_and(|(g, t)| self.tool_pinned(g, t))),
@@ -172,6 +172,10 @@ impl App {
                 on(str_param(params, "language")
                     .is_some_and(|l| l == self.locale.preference.code()))
             }
+            "layer.cloudResolution" => on(params
+                .get("pixels")
+                .and_then(Value::as_u64)
+                .is_some_and(|px| px == u64::from(self.settings.layers.cloud_resolution_px))),
             "ruler.unit" => {
                 on(str_param(params, "unit").is_some_and(|u| u == self.settings.ruler_unit.code()))
             }

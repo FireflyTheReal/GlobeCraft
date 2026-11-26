@@ -50,7 +50,7 @@ fn ruler_profile_screenshot() {
     app.cam.lat = 45.95;
     app.cam.lon = 6.75;
     app.cam.alt = 180.0;
-    app.settings.workspace.open_right(RightPane::Measure);
+    app.settings.workspace.open_right(PaneTab::Measure);
     for (lat, lon) in [(46.204, 6.143), (45.833, 6.865), (45.737, 7.320)] {
         let _ = app.run("ruler.addPoint", json!({"lat": lat, "lon": lon}));
     }

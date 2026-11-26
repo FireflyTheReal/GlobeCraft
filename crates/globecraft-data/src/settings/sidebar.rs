@@ -1,44 +1,23 @@
-//! Stored desktop layout; invalid fields retain their last valid preference.
+//! Stored layout of the Places list pinned under the side pane's other tabs; invalid
+//! fields retain their last valid preference. (The pane itself, its tabs, side and
+//! width, is `WorkspaceLayout`; its Layers and Places tabs were a left pane of their
+//! own before 2026-11-19, whose `open`, `panel` and `width_points` a file may still hold.)
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_SIDEBAR_WIDTH_POINTS: f32 = 240.0;
-pub const MIN_SIDEBAR_WIDTH_POINTS: f32 = 210.0;
-pub const MAX_SIDEBAR_WIDTH_POINTS: f32 = 600.0;
 pub const DEFAULT_PINNED_PLACES_HEIGHT_POINTS: f32 = 300.0;
 pub const MIN_PINNED_PLACES_HEIGHT_POINTS: f32 = 180.0;
 pub const MAX_PINNED_PLACES_HEIGHT_POINTS: f32 = 1000.0;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SidebarPanel {
-    /// `data` in files from before the Layers pane.
-    #[serde(alias = "data")]
-    Layers,
-    /// `explore` in files from before the Places pane.
-    #[default]
-    #[serde(alias = "explore")]
-    Places,
-}
-impl SidebarPanel {
-    pub const ALL: [Self; 2] = [Self::Layers, Self::Places];
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SidebarLayout {
-    pub panel: SidebarPanel,
-    pub open: bool,
     pub places_pinned: bool,
-    pub width_points: f32,
     pub pinned_places_height_points: f32,
 }
 impl Default for SidebarLayout {
     fn default() -> Self {
         Self {
-            panel: SidebarPanel::Places,
-            open: true,
             places_pinned: false,
-            width_points: DEFAULT_SIDEBAR_WIDTH_POINTS,
             pinned_places_height_points: DEFAULT_PINNED_PLACES_HEIGHT_POINTS,
         }
     }
@@ -46,9 +25,6 @@ impl Default for SidebarLayout {
 impl SidebarLayout {
     pub(super) fn apply_json(&mut self, value: &serde_json::Value) {
         super::lenient::apply(self, value, &[]);
-        self.width_points = self
-            .width_points
-            .clamp(MIN_SIDEBAR_WIDTH_POINTS, MAX_SIDEBAR_WIDTH_POINTS);
         self.pinned_places_height_points = self.pinned_places_height_points.clamp(
             MIN_PINNED_PLACES_HEIGHT_POINTS,
             MAX_PINNED_PLACES_HEIGHT_POINTS,
@@ -60,49 +36,68 @@ impl SidebarLayout {
 mod tests {
     use super::*;
     use crate::settings::Settings;
+    use crate::settings::workspace::PaneTab;
 
     #[test]
     fn sidebar_layout_roundtrips_and_preserves_old_or_invalid_preferences() {
-        for panel in SidebarPanel::ALL {
-            let layout = SidebarLayout {
-                panel,
-                open: false,
-                places_pinned: true,
-                width_points: 345.0,
-                pinned_places_height_points: 420.0,
-            };
-            let settings = Settings {
-                sidebar: layout.clone(),
-                ..Settings::default()
-            };
-            let mut restored = Settings::default();
-            restored
-                .apply_json(&serde_json::to_vec(&settings).unwrap())
-                .unwrap();
-            assert_eq!(restored.sidebar, layout);
-            for bytes in [br#"{}"#.as_slice(), br#"{"sidebar":null}"#, br#"{"sidebar":42}"#, br#"{"sidebar":{"panel":"future","open":"yes","rail_visible":42,"places_pinned":[],"width_points":"wide","pinned_places_height_points":null}}"#] {
-                restored.apply_json(bytes).unwrap();
-                assert_eq!(restored.sidebar, layout);
-            }
-        }
+        let layout = SidebarLayout {
+            places_pinned: true,
+            pinned_places_height_points: 420.0,
+        };
+        let settings = Settings {
+            sidebar: layout.clone(),
+            ..Settings::default()
+        };
         let mut restored = Settings::default();
         restored
-            .apply_json(br#"{"sidebar":{"width_points":1e200,"pinned_places_height_points":-10}}"#)
+            .apply_json(&serde_json::to_vec(&settings).unwrap())
             .unwrap();
-        assert_eq!(restored.sidebar.width_points, MAX_SIDEBAR_WIDTH_POINTS);
+        assert_eq!(restored.sidebar, layout);
+        for bytes in [
+            br#"{}"#.as_slice(),
+            br#"{"sidebar":null}"#,
+            br#"{"sidebar":42}"#,
+            br#"{"sidebar":{"places_pinned":[],"pinned_places_height_points":null}}"#,
+        ] {
+            restored.apply_json(bytes).unwrap();
+            assert_eq!(restored.sidebar, layout);
+        }
+        restored
+            .apply_json(br#"{"sidebar":{"pinned_places_height_points":-10}}"#)
+            .unwrap();
         assert_eq!(
             restored.sidebar.pinned_places_height_points,
             MIN_PINNED_PLACES_HEIGHT_POINTS
         );
-        restored.apply_json(br#"{"sidebar":{"panel":"layers","open":false,"rail_visible":"bad","places_pinned":true}}"#).unwrap();
-        assert_eq!(restored.sidebar.panel, SidebarPanel::Layers);
-        assert!(!restored.sidebar.open);
-        assert!(
-            serde_json::to_value(&restored.sidebar)
-                .unwrap()
-                .get("rail_visible")
-                .is_none()
+    }
+
+    #[test]
+    fn the_old_left_pane_becomes_the_side_panes_first_tabs() {
+        let mut restored = Settings::default();
+        restored
+            .apply_json(br#"{"sidebar":{"panel":"layers","open":true,"width_points":420},"workspace":{"right_open":["measure"],"right_pane":null,"right_width_points":300}}"#)
+            .unwrap();
+        let workspace = &restored.workspace;
+        assert_eq!(
+            workspace.right_open,
+            [PaneTab::Layers, PaneTab::Places, PaneTab::Measure]
         );
-        assert!(restored.sidebar.places_pinned);
+        assert_eq!(workspace.right_pane, Some(PaneTab::Layers));
+        assert_eq!(
+            workspace.right_width_points, 420.0,
+            "the wider pane's width"
+        );
+        // Closed, it stays closed; the right pane's tab stays in view.
+        let mut restored = Settings::default();
+        restored
+            .apply_json(br#"{"sidebar":{"open":false},"workspace":{"right_open":["legend"],"right_pane":"legend"}}"#)
+            .unwrap();
+        assert_eq!(restored.workspace.right_open, [PaneTab::Legend]);
+        assert_eq!(restored.workspace.right_pane, Some(PaneTab::Legend));
+        // A file written since keeps its tabs as they are.
+        let saved = serde_json::to_vec(&restored).unwrap();
+        let mut again = Settings::default();
+        again.apply_json(&saved).unwrap();
+        assert_eq!(again.workspace, restored.workspace);
     }
 }

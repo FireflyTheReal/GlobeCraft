@@ -1,4 +1,4 @@
-//! The ribbon and the right pane, kept across launches (the left pane is `SidebarLayout`).
+//! The ribbon and the side pane, kept across launches.
 use globecraft_core::commands::Tab;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
@@ -14,29 +14,82 @@ pub const DEFAULT_QUICK_TOOLS: [&str; 3] = ["edit.undo", "edit.redo", "file.scre
 const MAX_SAVED_TOOLS: usize = 500;
 const MAX_TOOL_KEY_LEN: usize = 200;
 
-/// Panes on the right of the globe.
+/// The tabs of the side pane (one pane beside the globe since 2026-11-19; the Layers
+/// and Places tabs were a pane of their own on the left before).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RightPane {
+pub enum PaneTab {
     Assistant,
     Measure,
     Legend,
     /// Places, sky and planets (the Explorer).
     Explorer,
+    Layers,
+    Places,
+    /// The selected flight's details (a card over the globe before).
+    Flight,
+    /// The selected satellite's details.
+    Satellite,
+    /// What's here: the point pressed on the globe.
+    Here,
 }
 
-impl RightPane {
-    pub const ALL: [Self; 4] = [Self::Assistant, Self::Measure, Self::Legend, Self::Explorer];
-    fn code(self) -> &'static str {
+impl PaneTab {
+    pub const ALL: [Self; 9] = [
+        Self::Assistant,
+        Self::Measure,
+        Self::Legend,
+        Self::Explorer,
+        Self::Layers,
+        Self::Places,
+        Self::Flight,
+        Self::Satellite,
+        Self::Here,
+    ];
+    pub fn code(self) -> &'static str {
         match self {
             Self::Assistant => "assistant",
             Self::Measure => "measure",
             Self::Legend => "legend",
             Self::Explorer => "explorer",
+            Self::Layers => "layers",
+            Self::Places => "places",
+            Self::Flight => "flight",
+            Self::Satellite => "satellite",
+            Self::Here => "here",
         }
     }
-    fn from_code(code: &str) -> Option<Self> {
+    pub fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|pane| pane.code() == code)
+    }
+    /// Tabs showing one selected thing: they open with the selection and close with it.
+    pub fn is_details(self) -> bool {
+        matches!(self, Self::Flight | Self::Satellite | Self::Here)
+    }
+}
+
+/// Which side of the globe the side pane is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSide {
+    Left,
+    #[default]
+    Right,
+}
+
+impl PaneSide {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            _ => None,
+        }
     }
 }
 
@@ -46,11 +99,16 @@ pub struct WorkspaceLayout {
     #[serde(serialize_with = "serialize_tab", deserialize_with = "deserialize_tab")]
     pub ribbon_tab: Tab,
     pub ribbon_minimized: bool,
-    /// The right pane in view, if any.
-    pub right_pane: Option<RightPane>,
-    /// Right panes open as tabs, in the order they were opened.
-    pub right_open: Vec<RightPane>,
+    /// One row of small buttons instead of the ribbon's large ones and group titles.
+    pub ribbon_compact: bool,
+    /// The side pane's tab in view; `None`: the pane is hidden (its tabs stay).
+    /// (`right_*`: named when the pane was on the right only; kept for saved files.)
+    pub right_pane: Option<PaneTab>,
+    /// The side pane's tabs, in their order.
+    pub right_open: Vec<PaneTab>,
     pub right_width_points: f32,
+    /// The side of the globe the pane is on.
+    pub pane_side: PaneSide,
     /// Ribbon tools whose place differs from the default, as `group/tool`: a tool shown on
     /// the ribbon by default and hidden by the user, or one the user pinned to it.
     pub ribbon_toggled: Vec<String>,
@@ -66,9 +124,11 @@ impl Default for WorkspaceLayout {
         Self {
             ribbon_tab: Tab::Explore,
             ribbon_minimized: false,
-            right_pane: None,
-            right_open: Vec::new(),
+            ribbon_compact: false,
+            right_pane: Some(PaneTab::Places),
+            right_open: vec![PaneTab::Layers, PaneTab::Places],
             right_width_points: DEFAULT_RIGHT_PANE_WIDTH_POINTS,
+            pane_side: PaneSide::Right,
             ribbon_toggled: Vec::new(),
             quick_tools: DEFAULT_QUICK_TOOLS.map(String::from).to_vec(),
             shortcuts: BTreeMap::new(),
@@ -130,14 +190,14 @@ impl WorkspaceLayout {
         }
     }
     /// Shows `pane`, opening its tab.
-    pub fn open_right(&mut self, pane: RightPane) {
+    pub fn open_right(&mut self, pane: PaneTab) {
         if !self.right_open.contains(&pane) {
             self.right_open.push(pane);
         }
         self.right_pane = Some(pane);
     }
     /// Opens `pane`'s tab without taking the view from a pane already shown.
-    pub fn add_right(&mut self, pane: RightPane) {
+    pub fn add_right(&mut self, pane: PaneTab) {
         if !self.right_open.contains(&pane) {
             self.right_open.push(pane);
         }
@@ -146,18 +206,33 @@ impl WorkspaceLayout {
         }
     }
     /// Whether `pane` has a tab.
-    pub fn right_is_open(&self, pane: RightPane) -> bool {
+    pub fn right_is_open(&self, pane: PaneTab) -> bool {
         self.right_open.contains(&pane)
     }
     /// Closes `pane`'s tab; the next open tab, if any, comes into view.
-    pub fn close_right(&mut self, pane: RightPane) {
+    pub fn close_right(&mut self, pane: PaneTab) {
         self.right_open.retain(|p| *p != pane);
         if self.right_pane == Some(pane) {
             self.right_pane = self.right_open.last().copied();
         }
     }
+    /// Moves `pane`'s tab to position `to` (clamped to the tabs).
+    pub fn move_tab(&mut self, pane: PaneTab, to: usize) {
+        if let Some(from) = self.right_open.iter().position(|p| *p == pane) {
+            self.right_open.remove(from);
+            self.right_open.insert(to.min(self.right_open.len()), pane);
+        }
+    }
+    /// Hides the pane (keeping its tabs), or shows it with the last tab or Places.
+    pub fn toggle_pane(&mut self) {
+        if self.right_pane.is_some() {
+            self.right_pane = None;
+        } else {
+            self.open_right(self.right_open.last().copied().unwrap_or(PaneTab::Places));
+        }
+    }
     /// Shows `pane`, or closes it when it is already in view.
-    pub fn toggle_right(&mut self, pane: RightPane) {
+    pub fn toggle_right(&mut self, pane: PaneTab) {
         if self.right_pane == Some(pane) {
             self.close_right(pane);
         } else {
@@ -180,7 +255,7 @@ impl WorkspaceLayout {
         if let Some(open) = value.get("right_open").and_then(|v| v.as_array()) {
             self.right_open = open
                 .iter()
-                .filter_map(|v| v.as_str().and_then(RightPane::from_code))
+                .filter_map(|v| v.as_str().and_then(PaneTab::from_code))
                 .fold(Vec::new(), |mut panes, pane| {
                     if !panes.contains(&pane) {
                         panes.push(pane);
@@ -188,13 +263,18 @@ impl WorkspaceLayout {
                     panes
                 });
         }
+        // The selection a details tab shows is not kept across launches.
+        self.right_open.retain(|pane| !pane.is_details());
         match value.get("right_pane") {
             Some(serde_json::Value::Null) => self.right_pane = None,
-            Some(v) => {
-                if let Some(pane) = v.as_str().and_then(RightPane::from_code) {
-                    self.open_right(pane);
+            Some(v) => match v.as_str().and_then(PaneTab::from_code) {
+                // Its selection is gone: the last tab still open shows instead.
+                Some(pane) if pane.is_details() => {
+                    self.right_pane = self.right_open.last().copied();
                 }
-            }
+                Some(pane) => self.open_right(pane),
+                None => {}
+            },
             None => {}
         }
         if self
@@ -235,22 +315,38 @@ mod tests {
 
     #[test]
     fn layout_roundtrips_and_keeps_tabs_consistent() {
-        let mut layout = WorkspaceLayout::default();
-        layout.open_right(RightPane::Measure);
-        layout.open_right(RightPane::Assistant);
+        let mut layout = WorkspaceLayout {
+            right_open: Vec::new(),
+            right_pane: None,
+            ..WorkspaceLayout::default()
+        };
+        layout.open_right(PaneTab::Measure);
+        layout.open_right(PaneTab::Assistant);
         layout.ribbon_tab = Tab::Live;
         layout.ribbon_minimized = true;
         let mut restored = WorkspaceLayout::default();
         restored.apply(&serde_json::to_value(&layout).unwrap());
         assert_eq!(restored, layout);
-        restored.close_right(RightPane::Assistant);
-        assert_eq!(restored.right_pane, Some(RightPane::Measure));
-        restored.toggle_right(RightPane::Measure);
+        restored.close_right(PaneTab::Assistant);
+        assert_eq!(restored.right_pane, Some(PaneTab::Measure));
+        restored.toggle_right(PaneTab::Measure);
         assert_eq!(restored.right_pane, None);
         restored.apply(&serde_json::json!({"ribbon_tab": "nope", "right_width_points": 1e9, "right_open": ["x", "measure", "measure"]}));
         assert_eq!(restored.ribbon_tab, Tab::Live);
         assert_eq!(restored.right_width_points, MAX_RIGHT_PANE_WIDTH_POINTS);
-        assert_eq!(restored.right_open, [RightPane::Measure]);
+        assert_eq!(restored.right_open, [PaneTab::Measure]);
+        // Tabs move; a selection's details are not kept across launches.
+        restored.open_right(PaneTab::Layers);
+        restored.open_right(PaneTab::Flight);
+        restored.move_tab(PaneTab::Flight, 0);
+        assert_eq!(
+            restored.right_open,
+            [PaneTab::Flight, PaneTab::Measure, PaneTab::Layers]
+        );
+        restored.apply(&serde_json::to_value(restored.clone()).unwrap());
+        assert_eq!(restored.right_open, [PaneTab::Measure, PaneTab::Layers]);
+        // The pane was on the flight's details: it opens on the last tab left.
+        assert_eq!(restored.right_pane, Some(PaneTab::Layers));
     }
 
     #[test]

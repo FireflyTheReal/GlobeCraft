@@ -1,6 +1,7 @@
 //! Geographic preparation for roads, buildings, AIS, predicted satellites and traffic.
 mod buildings;
 mod poi;
+mod sun_march;
 mod transport;
 mod worker;
 use crate::motion;
@@ -100,9 +101,8 @@ impl LiveView {
 pub struct BuildingImagery {
     pub provider: globecraft_data::tiles::Provider,
     pub release: u16,
-    /// The tile cache's generation: imagery arriving colours the blocks again.
-    /// shortcut: any finished tile counts, so blocks are coloured again for each tile
-    /// while a view loads; count imagery tiles alone if that shows in profiles.
+    /// The tile cache's imagery generation: fine imagery arriving colours the blocks
+    /// again.
     pub generation: u64,
 }
 #[derive(Clone)]
@@ -126,7 +126,16 @@ pub struct LiveInput {
     pub poi_layers: PoiLayers,
     /// The place names on screen, which keep their places (`poi::PoiShown`).
     pub poi_shown: Option<Arc<poi::PoiShown>>,
+    /// The frame's drawn ground (`overlays::DepthMap`), for hiding what lies behind
+    /// the relief; the frame worker adds it.
+    pub depth: Option<Arc<crate::overlays::DepthMap>>,
     pub unix_secs: f64,
+    /// The app's time less the wall clock (0 when live): satellites are drawn where
+    /// they are at the app's time, so the timeline moves them; ships, reported
+    /// live, age by the wall clock.
+    pub scene_offset_secs: f64,
+    /// When the input was made: building tiles fade in and out by it.
+    pub now: std::time::Instant,
     /// Satellites at their height; off, on the ground below them.
     pub satellite_heights: bool,
 }
@@ -168,11 +177,19 @@ impl LiveInput {
             && (self.vessels.is_none() || self.same_vessel_time(other))
             && (self.satellites.is_none() || self.same_satellite_time(other))
     }
-    /// The same blocks under the same light (the app moves the sun in steps).
+    /// The same blocks under the same light (the app moves the sun in steps), and
+    /// no tile of them fading in or out.
     fn same_buildings(&self, other: &Self) -> bool {
         same(&self.buildings, &other.buildings)
             && self.imagery == other.imagery
             && self.sun == other.sun
+            && (self.now == other.now || !self.buildings_fading())
+    }
+    /// Whether a building tile is fading in or out.
+    fn buildings_fading(&self) -> bool {
+        self.buildings
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.fading(self.now))
     }
     fn same_transport(&self, other: &Self) -> bool {
         same(&self.transport, &other.transport)
@@ -187,7 +204,11 @@ impl LiveInput {
     }
     fn same_satellite_time(&self, other: &Self) -> bool {
         let step = self.view.satellite_step();
-        motion::tick(self.unix_secs, step) == motion::tick(other.unix_secs, step)
+        motion::tick(self.satellite_unix(), step) == motion::tick(other.satellite_unix(), step)
+    }
+    /// The moment satellites are drawn for: the app's time.
+    pub fn satellite_unix(&self) -> f64 {
+        self.unix_secs + self.scene_offset_secs
     }
 }
 
@@ -325,7 +346,8 @@ fn project_roads(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projecte
     let Some(roads) = &input.roads else {
         return Vec::new();
     };
-    let visibility = TerrainVisibility::new(&input.view.basis, ground);
+    let visibility = TerrainVisibility::new(&input.view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), input.view.rect));
     roads
         .iter()
         .enumerate()
@@ -381,7 +403,8 @@ fn project_vessels(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projec
         return Vec::new();
     };
     let view = input.view;
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     vessels
         .iter()
         .enumerate()
@@ -446,7 +469,7 @@ fn project_satellites(input: &LiveInput) -> Vec<ProjectedSatellite> {
     let now: Vec<(usize, globecraft_data::satellites::SatellitePosition)> = satellites
         .iter()
         .enumerate()
-        .filter_map(|(index, sat)| sat.position(input.unix_secs).map(|at| (index, at)))
+        .filter_map(|(index, sat)| sat.position(input.satellite_unix()).map(|at| (index, at)))
         .collect();
     let positions: Vec<_> = now.iter().map(|(_, at)| *at).collect();
     let norads: Vec<&str> = now

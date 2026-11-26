@@ -77,5 +77,14 @@ impl MapDataState {
         } else {
             None
         };
+        // Their tiles fade in and out: drawn again until they are done.
+        if self
+            .buildings
+            .current
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.fading(std::time::Instant::now()))
+        {
+            ctx.request_repaint();
+        }
     }
 }

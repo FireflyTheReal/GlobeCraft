@@ -25,7 +25,8 @@ pub enum MapLayer {
     /// Buildings as blocks close up (Overture Maps: OpenStreetMap, Microsoft, Google).
     Buildings,
     Traffic,
-    /// City lights at night (NASA Black Marble), on the night side with Sunlight.
+    /// City lights at night (NASA Black Marble), on the night side with Sunlight and
+    /// over the whole globe, as at night, without it.
     NightLights,
     /// Railways, subways and trams (GlobeCraft's transport tiles, OpenStreetMap).
     Railways,
@@ -309,7 +310,23 @@ impl MapLayer {
     pub fn default_visible(self) -> bool {
         matches!(
             self,
-            Self::CountryBorders | Self::StateBorders | Self::PlaceLabels | Self::Atmosphere
+            Self::CountryBorders
+                | Self::StateBorders
+                | Self::PlaceLabels
+                | Self::Atmosphere
+                // The sun's light and the sun in the sky (user, 2026-11-18).
+                | Self::Sunlight
+        )
+    }
+
+    /// Whether the layer has only the present: its feed keeps no past, so it cannot
+    /// follow the app's time and is drawn dimmed while another time is shown (user,
+    /// 2026-11-20). Satellites, clouds, imagery and the sun follow the time; the rain
+    /// radar has its last two hours, aircraft the last hour this session saw.
+    pub fn present_only(self) -> bool {
+        matches!(
+            self,
+            Self::Flights | Self::Vessels | Self::Aurora | Self::Traffic
         )
     }
 
@@ -460,16 +477,19 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_previous_release() {
+    fn defaults_are_borders_labels_the_air_and_the_sun() {
+        // Sunlight joined the defaults after v0.4.0 (user, 2026-11-18).
         let set = LayerSet::default();
-        assert_eq!(
-            set.iter().collect::<Vec<_>>(),
-            [
-                MapLayer::CountryBorders,
-                MapLayer::StateBorders,
-                MapLayer::PlaceLabels,
-                MapLayer::Atmosphere,
-            ]
-        );
+        let mut shown = set.iter().collect::<Vec<_>>();
+        shown.sort_by_key(|layer| layer.code());
+        let mut expected = [
+            MapLayer::CountryBorders,
+            MapLayer::StateBorders,
+            MapLayer::PlaceLabels,
+            MapLayer::Atmosphere,
+            MapLayer::Sunlight,
+        ];
+        expected.sort_by_key(|layer| layer.code());
+        assert_eq!(shown, expected);
     }
 }

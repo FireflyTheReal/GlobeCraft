@@ -26,8 +26,14 @@ impl App {
         let peek_click = self.chrome.ribbon_peek
             && ui.input(|i| i.pointer.any_click())
             && !egui::Popup::is_any_open(ui.ctx());
+        let compact = self.settings.workspace.ribbon_compact;
+        super::widgets::set_compact(ui.ctx(), compact);
         let ribbon = egui::Panel::top("ribbon")
-            .exact_size(CONTENT_H + LABEL_H + 12.0)
+            .exact_size(if compact {
+                super::widgets::COMPACT_H + 8.0
+            } else {
+                CONTENT_H + LABEL_H + 12.0
+            })
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin {
                 left: 8,
@@ -76,7 +82,15 @@ impl App {
         let pw = text_w(ui, file, semibold(12.5)) + 26.0;
         let (pr, presp) = ui.allocate_exact_size(vec2(pw, 26.0), Sense::click());
         presp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, file));
-        let fill = if presp.hovered() { BRAND_DARK } else { BRAND };
+        // Monochrome: the accent (already the own colour, if one is set), darkened for white text.
+        let (fill, hover) = match super::icons::mono(ui.ctx()) {
+            Some(_) => {
+                let t = Tokens::get(ui.ctx());
+                (t.accent, t.accent.lerp_to_gamma(egui::Color32::BLACK, 0.2))
+            }
+            None => (BRAND, BRAND_DARK),
+        };
+        let fill = if presp.hovered() { hover } else { fill };
         ui.painter().rect_filled(pr, CornerRadius::same(6), fill);
         ui.painter().text(
             pr.center(),
@@ -158,6 +172,7 @@ impl App {
                                 *caption,
                             )
                         });
+                        super::widgets::tab_role(&resp, active);
                         let body = Rect::from_min_max(pos2(r.min.x, r.min.y + 3.0), r.max);
                         let top = CornerRadius {
                             nw: 6,
@@ -229,7 +244,13 @@ impl App {
         }
         let minimized = self.settings.workspace.ribbon_minimized;
         let icon = if minimized { "chevron_down" } else { "up" };
-        icons::paint(ui.painter(), cr.shrink(5.0), icon, t.text_dim, t.accent);
+        icons::paint(
+            ui.painter(),
+            cr.shrink(5.0),
+            icon,
+            t.text_dim,
+            t.icon_accent,
+        );
         let tip = lang.text(if minimized {
             "ribbon-expand-tooltip"
         } else {
@@ -389,7 +410,7 @@ fn scroll_buttons<R>(
             Rect::from_center_size(r.center(), vec2(16.0, 16.0)),
             icon,
             t.text_dim,
-            t.accent,
+            t.icon_accent,
         );
         let tip = lang.text(if left {
             "ribbon-scroll-left"

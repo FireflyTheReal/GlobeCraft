@@ -12,6 +12,10 @@ pub use ruler::RulerUnit;
 pub const KM_PER_MILE: f64 = 1.609_344;
 const FEET_PER_MILE: f64 = 5280.0;
 const METERS_PER_FOOT: f64 = 0.3048;
+/// A knot (a nautical mile an hour), km/h: aircraft and ships report in knots.
+pub const KMH_PER_KNOT: f64 = 1.852;
+/// A foot a minute, metres a second: aircraft report climbs in feet a minute.
+pub const MS_PER_FOOT_PER_MINUTE: f64 = METERS_PER_FOOT / 60.0;
 // GlobeCraft's regional display policy includes mixed/traditional mile usage.
 // This deliberately extends CLDR's general length defaults (US/GB); it does not
 // describe statutory measurement systems. Users can override it in Settings.
@@ -84,6 +88,35 @@ impl DistanceUnits {
         match self {
             Self::Metric => format!("{metres:.0} m"),
             Self::Imperial => format!("{:.0} ft", metres / METERS_PER_FOOT),
+        }
+    }
+    /// A length in metres to `decimals` places: metres, or feet (a ship's size).
+    pub fn length(self, metres: f64, decimals: usize) -> String {
+        match self {
+            Self::Metric => format!("{metres:.decimals$} m"),
+            Self::Imperial => format!("{:.decimals$} ft", metres / METERS_PER_FOOT),
+        }
+    }
+    /// A speed in km/h: km/h, or mph.
+    pub fn speed(self, kmh: f64) -> String {
+        match self {
+            Self::Metric => format!("{kmh:.0} km/h"),
+            Self::Imperial => format!("{:.0} mph", kmh / KM_PER_MILE),
+        }
+    }
+    /// A climb (positive) or descent in metres a second: m/s, or ft/min as pilots
+    /// read it.
+    pub fn vertical_rate(self, metres_per_second: f64) -> String {
+        match self {
+            Self::Metric => format!("{metres_per_second:+.1} m/s"),
+            Self::Imperial => format!("{:+.0} ft/min", metres_per_second / MS_PER_FOOT_PER_MINUTE),
+        }
+    }
+    /// A temperature in °C: °C, or °F.
+    pub fn temperature(self, celsius: f64) -> String {
+        match self {
+            Self::Metric => format!("{celsius:.0} °C"),
+            Self::Imperial => format!("{:.0} °F", celsius * 9.0 / 5.0 + 32.0),
         }
     }
     /// Choose feet for short scale bars and miles for larger ones.
@@ -159,6 +192,25 @@ fn locale_region(locale: &str) -> Option<unic_langid::subtags::Region> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reported_values_follow_the_units() {
+        let (m, i) = (DistanceUnits::Metric, DistanceUnits::Imperial);
+        assert_eq!(m.length(10_668.0, 0), "10668 m");
+        assert_eq!(i.length(10_668.0, 0), "35000 ft");
+        assert_eq!(m.speed(450.0 * KMH_PER_KNOT), "833 km/h");
+        assert_eq!(i.speed(450.0 * KMH_PER_KNOT), "518 mph");
+        assert_eq!(
+            i.vertical_rate(1_000.0 * MS_PER_FOOT_PER_MINUTE),
+            "+1000 ft/min"
+        );
+        assert_eq!(
+            m.vertical_rate(-1_000.0 * MS_PER_FOOT_PER_MINUTE),
+            "-5.1 m/s"
+        );
+        assert_eq!(m.temperature(-40.0), "-40 °C");
+        assert_eq!(i.temperature(-40.0), "-40 °F");
+        assert_eq!(i.temperature(20.0), "68 °F");
+    }
     #[test]
     fn areas_read_in_fitting_units() {
         let metric = DistanceUnits::Metric;

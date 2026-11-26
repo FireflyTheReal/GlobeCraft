@@ -189,11 +189,7 @@ impl App {
                     let first = v[0].clone();
                     self.search.results = v;
                     // The results are listed at the top of Places.
-                    let sidebar = &mut self.settings.sidebar;
-                    if !sidebar.places_pinned {
-                        sidebar.panel = globecraft_data::settings::sidebar::SidebarPanel::Places;
-                    }
-                    sidebar.open = true;
+                    self.places.reveal_requested = true;
                     if self.search.fly {
                         self.fly_to(first.lat, first.lon, first.alt);
                     }

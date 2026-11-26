@@ -212,7 +212,9 @@ mod tests {
         codes.dedup();
         assert_eq!(codes.len(), sources.len());
         for source in sources {
-            assert!(source.max_zoom >= source.min_zoom && source.max_zoom <= 24);
+            assert!(
+                source.max_zoom >= source.min_zoom && source.max_zoom <= 20 /* what a tile key holds */
+            );
             assert!(source.tile_px.is_power_of_two());
             assert!(source.max_parallel >= 1);
             if let Access::Xyz { template } = &source.access {

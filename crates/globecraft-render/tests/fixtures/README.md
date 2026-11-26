@@ -102,3 +102,45 @@ pole camera whose base is the single level-0 tile), and the small
 fixture `.misses` files on disk here remain the state after the LOD-policy regen
 above; regenerating under the area filter produced byte-identical misses for
 every case, verifying request behavior is unchanged.
+
+## Stars leave the frame (2026-11-18)
+
+The made-up stars (one per 1/900-radian cell, fixed to the Earth) were removed from
+the renderer: the catalogue stars are drawn behind the frame instead
+(`stars::paint_behind`, the app's sky layer), and `RenderCfg::stars` became the
+sky's moment. The batch references were rendered with the old stars on; only
+`odd-satellite.rgba` showed any, and exactly its 2 star pixels changed to space
+when regenerated (`GLOBECRAFT_RECORD_FIXTURES=1 cargo test -p globecraft-render
+ray_batches`). Every other fixture is byte-identical.
+
+## Sun and sky light apart, multiple scattering, twilight adaptation (2026-11-22)
+
+Daylight now comes in two parts (`pixel::Daylight`): the sun's direct light, coloured
+by the air it crossed, and the sky's, cool; relief and shadows hide only the first,
+and the scene's exposure follows the eye's adaptation into the blue hour. The air's
+tables gained Hillaire's multiple-scattering term, and inside the air its light is
+adapted to twilight (`atmosphere::adaptation`). Every fixture with the sun or the
+atmosphere changed (`GLOBECRAFT_RECORD_FIXTURES=1 cargo test -p globecraft-render --lib
+-- raster_matches ray_batches`); checked against Bing Maps' sunrise recordings with
+the `bing_sun_comparison` probe.
+
+## Daylight as two rising curves (2026-11-22, later)
+
+The fixed split of daylight (65 % sun, 35 % sky) made shaded ground darker just
+before sunset than just after, and lit ground dimmer at sunrise than in the blue hour
+(a dark band, then a light one, past the terminator; Julien's screenshot and
+recording). Lit and shaded ground now each follow a brightness curve that only rises
+with the sun (`pixel::Daylight`, test `lit_and_shaded_ground_brighten_with_the_sun`),
+shade at 65 % of light by day, the sun's colour no longer squared, a slope's gain at
+most 1.5, and the blue-hour exposure only with the camera in the air. Every fixture
+with the sun changed.
+
+## First light, light on the walls, air toward the horizon (2026-11-22, 10:59 note)
+
+Daylight is now the sky's light plus the sun's on a surface facing it, by the cosine
+(no floor, no cap): at sunrise the sun's is strong against the sky's, so tops and
+walls facing it take the first light while flat ground stays blue (`pixel::Daylight`,
+`SHADE_RISE`, `DIRECT_RISE`). With the camera low in the air, the air toward the ground
+is integrated along the ray per frame (`atmosphere/aerial.rs`) instead of the tables'
+subtraction, which put a band of light along distant ground under the horizon. Every
+fixture with the sun changed.

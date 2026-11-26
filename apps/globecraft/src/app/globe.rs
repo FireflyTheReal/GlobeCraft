@@ -18,6 +18,14 @@ mod ruler_input;
 /// (roadmap 1.6: arriving tiles and the sharp frame after motion no longer pop in).
 /// Relief growing in is drawn again this often.
 const RELIEF_FADE_STEP: Duration = Duration::from_millis(40);
+/// A window resize is over once the size has held still this long: then one frame of
+/// the new size is rendered.
+const WINDOW_RESIZE_SETTLE: Duration = Duration::from_millis(120);
+/// While the window is resized, without the screen's size: frames this many times as
+/// wide as the globe's area.
+const RESIZE_RENDER_WIDTH: f32 = 2.0;
+/// The shown frame covers the globe's area when it falls short by no more than this.
+const COVERED_SLACK_POINTS: f32 = 0.5;
 pub(super) const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
@@ -37,7 +45,11 @@ const POINT_FLY_ALTITUDE_RATIO: f64 = 0.35;
 const MIN_POINT_FLY_ALTITUDE_KM: f64 = 0.3;
 const AUTO_ROTATE_DEG_PER_SECOND: f64 = 6.0;
 // Lower resolution while interacting; recover full resolution after the idle delay.
-const IDLE_RENDER_DELAY: Duration = Duration::from_millis(250);
+// A drag held still keeps the lower resolution (`dragged`): the delay covers the gap
+// after a release, a scroll step or a key. 250 ms put the sharp frame half a second
+// after a turn over the Alps stopped on an M1 (250 + 230 ms to draw it); 150
+// (2026-11-26).
+const IDLE_RENDER_DELAY: Duration = Duration::from_millis(150);
 const OVERVIEW_WARMUP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 impl App {
@@ -59,7 +71,7 @@ impl App {
     pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         let viewport = ui.available_rect_before_wrap();
-        let rect = self.frame.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = shown_rect(self.frame.renderer.displayed_rect(), viewport);
         let resp = ui.allocate_rect(viewport, Sense::click_and_drag());
         let ppp = ui.pixels_per_point();
         let aspect = (rect.width() / rect.height()) as f64;
@@ -80,16 +92,62 @@ impl App {
                 .request_repaint_after(Duration::from_secs_f64(secs));
         }
         let interacting = self.navigation_input(ui, &resp, rect, ruler_captured, press.swallow);
-        if interacting || resp.dragged() {
+        // While the side pane slides or its edge is dragged the globe renders at the
+        // width it has with the pane shut, centred: the view's vertical angle is
+        // fixed, so that one frame is exact for every narrower width, and the slide
+        // or the drag needs no new frame (user, 2026-11-21: a new frame came too late
+        // for a 0.2 s slide, and black bars showed until it did).
+        let window_resized =
+            viewport.size() != self.frame.last_globe_size && !self.frame.pane_moving;
+        self.frame.last_globe_size = viewport.size();
+        if window_resized && self.frame.texture.is_some() {
+            self.frame.window_resized_at = Some(Instant::now());
+        }
+        // While the window is being resized the last frame is shown scaled to the new
+        // size (`shown_rect`), and one frame of the new size follows once the size
+        // holds still. A frame for every step of the resize (each a new size, read
+        // back from the graphics card and uploaded again) made the resize lag (user,
+        // 2026-11-21). A window growing wider then showed black at the sides until
+        // that frame came (Julien, 2026-11-26: laggy "mostly when expanding"): a frame
+        // as wide as the screen is drawn when the shown one no longer covers the
+        // globe, and the window grows into it as into the pane's.
+        let window_resizing = self
+            .frame
+            .window_resized_at
+            .map(|at| at.elapsed())
+            .filter(|&since| since < WINDOW_RESIZE_SETTLE);
+        if window_resizing.is_none() {
+            self.frame.window_resized_at = None;
+        }
+        let render_rect = if self.frame.pane_moving {
+            let full = ui.ctx().content_rect().width().max(viewport.width());
+            Rect::from_center_size(viewport.center(), egui::vec2(full, viewport.height()))
+        } else if window_resizing.is_some() {
+            let screen = ui
+                .ctx()
+                .input(|input| input.viewport().monitor_size)
+                .map_or(viewport.width() * RESIZE_RENDER_WIDTH, |size| size.x);
+            let wide = screen.max(viewport.width());
+            Rect::from_center_size(viewport.center(), egui::vec2(wide, viewport.height()))
+        } else {
+            viewport
+        };
+        let resized = render_rect.size() != self.frame.last_viewport;
+        self.frame.last_viewport = render_rect.size();
+        if interacting || resp.dragged() || resized {
             self.touch();
         }
+        // The shown frame covers the globe's area across: a resize waits for the size
+        // to hold still.
+        let covered = rect.min.x <= viewport.min.x + COVERED_SLACK_POINTS
+            && rect.max.x >= viewport.max.x - COVERED_SLACK_POINTS;
 
         let basis = self.view_basis(aspect);
         // ── rendering
         let relief = self.terrain_active();
         // Relief that just arrived grows in: the view is drawn again for each step
         // of it, also at rest.
-        let relief_step = if relief {
+        let relief_step = if relief && self.settings.smooth_relief {
             self.tiles.cache.elevation_fade_step(RELIEF_FADE_STEP)
         } else {
             0
@@ -106,10 +164,30 @@ impl App {
             && !resp.dragged()
             && self.time.speed() == 0.0
             && relief_step == 0;
-        let render_aspect = (viewport.width() / viewport.height()) as f64;
-        let motion_scale = self.settings.motion_resolution;
-        let (w, h) =
-            globecraft_render::view::raster_size(viewport.size(), ppp, idle, relief, motion_scale);
+        let render_aspect = (render_rect.width() / render_rect.height()) as f64;
+        // Without a setting, moving relief frames shrink while slow, as on the phone.
+        let motion_scale = if relief {
+            self.settings.motion_resolution_relief.or_else(|| {
+                Some(globecraft_render::view::relief_motion_scale(
+                    self.frame.renderer.motion_step,
+                ))
+            })
+        } else {
+            self.settings.motion_resolution
+        };
+        // The quality setting draws the frame with fewer pixels than the screen's.
+        let raster_ppp = globecraft_render::view::quality_pixels_per_point(
+            render_rect.size(),
+            ppp,
+            self.settings.render_quality.max_height_px(),
+        );
+        let (w, h) = globecraft_render::view::raster_size(
+            render_rect.size(),
+            raster_ppp,
+            idle,
+            relief,
+            motion_scale,
+        );
         let keys = globecraft_render::view::RasterView {
             camera: self.cam,
             model: self.active_earth_model(),
@@ -122,7 +200,13 @@ impl App {
             grid: self.layer(MapLayer::Grid),
             atmosphere: self.layer(MapLayer::Atmosphere),
             terrain: relief,
+            // The setting, not the height relief is drawn at: that one changes with the
+            // altitude (`relief_fade`), and this key is also the presentation key, so
+            // every frame finished while zooming through the fade was thrown away as
+            // out of date and the view froze there (user, 2026-11-17). The altitude is
+            // in the key already.
             terrain_exaggeration: self.settings.layers.terrain_exaggeration,
+            smooth_relief: self.settings.smooth_relief,
             ground_km: self.motion.ground_km,
             sunlight: self.layer(MapLayer::Sunlight),
             night_lights: self
@@ -130,13 +214,25 @@ impl App {
                 .then(|| self.night_lights_edition()),
             sky: self.sky_ready(),
             stars: self.layer(MapLayer::Stars),
+            // A new map raises the live maps' generation (so does the radar's).
+            clouds: self
+                .frame_clouds()
+                .map(|clouds| (clouds.opacity.to_bits(), self.live.maps.generation())),
+            glint: (self.layer(MapLayer::Sunlight) && self.live.maps.water_map().is_some())
+                .then(|| self.live.maps.generation()),
+            aurora: self
+                .frame_aurora()
+                .map(|aurora| (aurora.opacity.to_bits(), aurora.grid.forecast.to_bits())),
         }
-        .keys(now_unix());
+        // The app's time, not the clock's: moved on the timeline or played, the sun,
+        // the night and the clouds change with it while the camera holds (they changed
+        // only while it moved, user 2026-11-19).
+        .keys(self.frame_time());
         let state = keys.state.wrapping_add(relief_step);
         let generation = self.tiles.cache.generation();
         let presentation = keys.presentation;
         self.poll_render(presentation, ui);
-        let rect = self.frame.renderer.displayed_rect().unwrap_or(viewport);
+        let rect = shown_rect(self.frame.renderer.displayed_rect(), viewport);
 
         let pick_basis = self.frame.renderer.picking_basis(basis);
         let ground = self.ground_source();
@@ -239,11 +335,17 @@ impl App {
             self.frame.last_state,
             Some(self.frame.last_render.elapsed()),
         );
+        let outcome = match (outcome, window_resizing) {
+            (WakeOutcome::Submit, Some(since)) if covered => {
+                WakeOutcome::Defer(WINDOW_RESIZE_SETTLE - since)
+            }
+            (outcome, _) => outcome,
+        };
         match outcome {
             WakeOutcome::Submit => {
                 let lod_scale = globecraft_render::view::render_scale(
-                    viewport.size(),
-                    ppp,
+                    render_rect.size(),
+                    raster_ppp,
                     idle,
                     relief,
                     motion_scale,
@@ -256,7 +358,7 @@ impl App {
                     },
                     render_aspect,
                     presentation,
-                    viewport,
+                    render_rect,
                     ppp,
                 );
                 self.frame.last_state = state;
@@ -277,27 +379,67 @@ impl App {
         self.pump_warmups(ui, idle, state, h, render_aspect);
 
         // ── drawing
-        ui.painter_at(viewport)
-            .rect_filled(viewport, 0.0, Color32::BLACK);
+        let backdrop = ui.painter_at(viewport);
+        backdrop.rect_filled(viewport, 0.0, Color32::BLACK);
+        // Where the shown frame leaves part of the view open (the window made wider,
+        // the pane shut at once with Reduce Motion on), the same frame enlarged to
+        // cover it fills the gap until the frame of the new size comes, instead of
+        // black bars.
+        if let Some(tex) = &self.frame.texture
+            && !rect.contains_rect(viewport)
+            && rect.width() > 0.0
+            && rect.height() > 0.0
+        {
+            let cover = (viewport.width() / rect.width()).max(viewport.height() / rect.height());
+            backdrop.image(
+                tex.id(),
+                Rect::from_center_size(viewport.center(), rect.size() * cover),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
         // Until a matching frame arrives, clip the previous view at its original
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
         let fade = self
             .frame
             .fade_started
-            .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
+            .map(|started| {
+                started.elapsed().as_secs_f32() / self.frame.fade_length.as_secs_f32().max(1e-3)
+            })
             .filter(|&progress| progress < 1.0);
         if fade.is_none() {
             self.frame.fade_started = None;
         }
+        if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
+            self.frame.sky_layer.draw(ui.ctx(), &painter, rect, sky);
+        }
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         if let (Some(progress), Some(from)) = (fade, &self.frame.fade_from) {
-            painter.image(from.id(), rect, whole, Color32::WHITE);
             ui.ctx().request_repaint();
             if let Some(tex) = &self.frame.texture {
                 // Eased, so the change starts and ends gently.
                 let alpha = progress * progress * (3.0 - 2.0 * progress);
-                painter.image(tex.id(), rect, whole, Color32::WHITE.gamma_multiply(alpha));
+                // old × (1 − alpha) + new × alpha, with the sky behind seen through
+                // what the two leave open. Drawn one over the other, both frames'
+                // glow over the sky layer added up and the air flashed at every
+                // fade (user, 2026-11-17).
+                let (old, new) = ((255.0 * (1.0 - alpha)) as u8, (255.0 * alpha) as u8);
+                painter.image(
+                    from.id(),
+                    rect,
+                    whole,
+                    Color32::from_rgba_premultiplied(old, old, old, 255),
+                );
+                // Alpha 0: added on top, it hides nothing.
+                painter.image(
+                    tex.id(),
+                    rect,
+                    whole,
+                    Color32::from_rgba_premultiplied(new, new, new, 0),
+                );
+            } else {
+                painter.image(from.id(), rect, whole, Color32::WHITE);
             }
         } else if let Some(tex) = &self.frame.texture {
             painter.image(tex.id(), rect, whole, Color32::WHITE);
@@ -311,9 +453,15 @@ impl App {
                 .filter(|(_, shown)| *shown == compare_release(self)),
         ) {
             let x = rect.left() + rect.width() * compare.split;
-            painter
-                .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max))
-                .image(texture.id(), rect, whole, Color32::WHITE);
+            let right =
+                painter.with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max));
+            // Its sky is left to the sky layer too: drawn straight over the main
+            // frame, the air's glow of both added up right of the split.
+            if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
+                right.rect_filled(rect, 0.0, Color32::BLACK);
+                self.frame.sky_layer.draw(ui.ctx(), &right, rect, sky);
+            }
+            right.image(texture.id(), rect, whole, Color32::WHITE);
         }
         if !self.explorer.on_earth() {
             painter.rect_filled(rect, 0.0, Color32::BLACK);
@@ -349,26 +497,37 @@ impl App {
 
         // Google Earth style navigation controls (rotate / move / zoom)
         let dt_nav = super::frame_timing::navigation_delta_secs(ui);
-        if self.nav_controls(ui, rect, dt_nav) {
+        if !self.capturing_globe() && self.nav_controls(ui, viewport, dt_nav) {
             self.touch();
             ui.request_repaint();
         }
-        self.timeline_bar(&ui.ctx().clone(), rect);
-        // One card at a time (the last selected; see `close_other_cards`).
-        self.selected_flight_card(&ui.ctx().clone(), rect);
-        if self.layer(MapLayer::Satellites) {
-            self.selected_satellite_card(&ui.ctx().clone(), rect);
-        }
-        self.here_window(&ui.ctx().clone(), rect);
+        // The controls on the globe (timeline, scale bar, note, credits, navigator)
+        // stand in the globe's area on screen, not on the frame's picture: a frame of
+        // another size (shown while the pane slides or the window is resized) reaches
+        // under the pane or past the window's edge, and the navigator vanished under
+        // the pane until the next frame came (user's recording, 2026-11-21).
+        let timeline = if self.capturing_globe() {
+            None
+        } else {
+            self.timeline_bar(&ui.ctx().clone(), viewport)
+        };
         self.legend_watch();
-        super::ui::surface::remember_globe_rect(ui.ctx(), rect);
+        super::ui::surface::remember_globe_rect(ui.ctx(), viewport);
 
-        self.paint_scale_bar(&painter, rect, &display_basis, display_cam);
+        // The scale bar, the note and the credits sit above the open timeline, which
+        // would cover them (the credits must stay in sight, HIG: Maps).
+        let above = timeline.map_or(viewport, |bar| {
+            Rect::from_min_max(
+                viewport.min,
+                Pos2::new(viewport.max.x, bar.top().min(viewport.max.y)),
+            )
+        });
+        let controls = ui.painter_at(viewport);
+        self.paint_scale_bar(&controls, rect, above, &display_basis, display_cam);
+        self.paint_present_only_note(&controls, above);
         self.compare_split(ui, &painter, rect);
         let credits = self.map_credits(lg, &display_basis, rect);
-        self.paint_credits(&painter, rect, &credits);
-
-        self.paint_live_map_credit(&painter, rect);
+        self.paint_credits(&controls, above, &credits);
 
         self.globe_context_menu(ui, &resp, menu_suppressed);
 
@@ -395,13 +554,27 @@ impl App {
     ) -> bool {
         let aspect = (rect.width() / rect.height()) as f64;
         let shift = ui.input(|i| i.modifiers.shift);
+        // Ctrl (⌘ on a Mac) + drag looks around from the eye (`camera.lookAround`).
+        let look = (self.motion.look_mode || ui.input(|i| i.modifiers.command))
+            && self.explorer.on_earth();
         let mut interacting = self.controller_input(ui, rect.height());
         if swallow {
             // The held press stays put.
+        } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && look {
+            // The picture stays under the pointer, as a pan holds the ground.
+            let d = ui.input(|i| i.pointer.delta());
+            if let Some(to) = resp.interact_pointer_pos() {
+                self.motion.fly = None;
+                self.motion.last_drag = None;
+                self.look_drag(to - d, to, rect);
+            }
+            interacting = true;
         } else if !ruler_captured && resp.dragged_by(PointerButton::Primary) && !shift {
             let d =
                 ui.input(|i| i.pointer.delta()) * self.settings.navigation.pan_sensitivity as f32;
             self.motion.fly = None;
+            self.motion.glide = None;
+            self.motion.last_drag = Some(super::motion::DragKind::Pan);
             if self.explorer.on_earth() {
                 self.pan(d.x as f64, d.y as f64, rect.height());
             } else {
@@ -431,9 +604,17 @@ impl App {
                     })
                 }
             };
+            self.motion.glide = None;
+            self.motion.last_drag = tilts.map(|tilts| {
+                if tilts {
+                    super::motion::DragKind::Tilt
+                } else {
+                    super::motion::DragKind::Turn
+                }
+            });
             match tilts {
-                Some(true) => self.cam.tilt_zooming_out(
-                    self.cam.tilt - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
+                Some(true) => self.cam.tilt_view(
+                    self.cam.view_tilt() - drag.y as f64 * DRAG_TILT_DEG_PER_POINT * sensitivity,
                 ),
                 Some(false) => {
                     self.cam.heading = wrap_lon(
@@ -445,6 +626,7 @@ impl App {
             interacting = true;
         } else {
             self.motion.turn_drag = None;
+            interacting |= self.glide(ui, resp, rect);
         }
         if resp.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
@@ -456,7 +638,7 @@ impl App {
                 if amount != 0.0 {
                     self.motion.fly = None;
                     self.cam
-                        .tilt_zooming_out(self.cam.tilt + amount * SCROLL_TILT_DEG_PER_POINT);
+                        .tilt_view(self.cam.view_tilt() + amount * SCROLL_TILT_DEG_PER_POINT);
                     interacting = true;
                 }
             }
@@ -517,7 +699,7 @@ impl App {
                 if tilt != 0.0 {
                     self.motion.fly = None;
                     self.cam
-                        .tilt_zooming_out(self.cam.tilt + tilt * KEY_TILT_DEG_PER_SECOND * dt);
+                        .tilt_view(self.cam.view_tilt() + tilt * KEY_TILT_DEG_PER_SECOND * dt);
                     interacting = true;
                 }
             }
@@ -679,9 +861,18 @@ impl App {
     ) {
         // Layers with an opacity (roadmap 6.1) draw through a faded painter.
         let opacity = self.settings.layers.opacity;
+        // Traffic has only the present, the radar its last two hours: dimmed while
+        // another time is shown that they do not have.
+        let traffic_dim = self.time_dim(MapLayer::Traffic);
+        let radar_dim = self.time_dim(MapLayer::Radar);
         let faded = |layer: MapLayer| {
             let mut faded = painter.clone();
-            faded.multiply_opacity(opacity.get(layer));
+            let dim = if layer == MapLayer::Traffic {
+                traffic_dim
+            } else {
+                1.0
+            };
+            faded.multiply_opacity(opacity.get(layer) * dim);
             faded
         };
         self.live.maps.draw(
@@ -691,7 +882,9 @@ impl App {
             self.layer(MapLayer::Clouds)
                 .then(|| opacity.get(MapLayer::Clouds)),
             self.layer(MapLayer::Radar)
-                .then(|| opacity.get(MapLayer::Radar)),
+                .then(|| opacity.get(MapLayer::Radar) * radar_dim),
+            self.cloud_light(),
+            self.frame.last_interact.elapsed() <= IDLE_RENDER_DELAY,
         );
         self.user_layers
             .draw_rasters(painter, &display_basis, rect, &self.settings.user_layers);
@@ -712,7 +905,6 @@ impl App {
         } else {
             None
         };
-        self.paint_aurora(&faded(MapLayer::Aurora), &display_basis, rect);
         self.paint_time_zones(&faded(MapLayer::TimeZones), &display_basis, rect);
         self.paint_antarctic_claims(painter, &display_basis, rect);
         // All map names share one screen, placed in priority order, each layer
@@ -797,12 +989,10 @@ impl App {
             self.map_data.transport_shapes.draw_lines(painter);
         }
         self.draw_overlays(painter, &display_basis, rect);
-        if let Some(geometry) = &live_geometry {
+        // No hover card on airports, as on places and peaks (user 2026-11-19).
+        if live_geometry.is_some() {
             self.map_data.poi_shapes.draw_labels(painter);
             self.map_data.transport_shapes.draw_airports(painter);
-            self.map_data
-                .transport_shapes
-                .hover(painter, geometry, self.lang);
         }
         self.user_layers.paint_features(painter);
         self.user_layers.hover(painter, rect, self.lang);
@@ -816,11 +1006,44 @@ impl App {
         self.draw_tile_diagnostics(painter, &display_basis, rect);
     }
 
-    /// The scale bar at the bottom left.
+    /// While another time is shown, which of the visible layers do not have it and are
+    /// dimmed for it, above the scale bar.
+    fn paint_present_only_note(&self, painter: &egui::Painter, rect: Rect) {
+        if !self.away_from_now() {
+            return;
+        }
+        let names: Vec<&str> = MapLayer::ALL
+            .into_iter()
+            .filter(|&layer| self.layer(layer) && self.time_dim(layer) < 1.0)
+            .map(|layer| super::ui::short_layer_label(self.lang, layer))
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        let text = self.lang.format(
+            "present-only-dimmed",
+            &[("layers", names.join(" · ").into())],
+        );
+        let scale = self.settings.map_scale;
+        let galley = painter.layout_no_wrap(
+            text,
+            FontId::proportional(12.0 * scale),
+            Color32::from_gray(225),
+        );
+        let x = rect.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
+        let at = Pos2::new(x, rect.bottom() - 52.0 * scale - galley.size().y);
+        let back = Rect::from_min_size(at, galley.size()).expand2(egui::vec2(8.0, 4.0) * scale);
+        painter.rect_filled(back, 6.0 * scale, Color32::from_black_alpha(150));
+        painter.galley(at, galley, Color32::from_gray(225));
+    }
+
+    /// The scale bar at the bottom left of `area`, measured on the frame shown in
+    /// `rect`.
     fn paint_scale_bar(
         &mut self,
         painter: &egui::Painter,
         rect: Rect,
+        area: Rect,
         display_basis: &Basis,
         display_cam: Cam,
     ) {
@@ -831,8 +1054,8 @@ impl App {
             self.distance_units(),
         ) {
             let len = scale_bar.width_points;
-            let y = rect.bottom() - scale_bar.bottom_inset_points;
-            let x0 = rect.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
+            let y = area.bottom() - scale_bar.bottom_inset_points;
+            let x0 = area.left() + globecraft_render::scale_bar::SCALE_LEFT_INSET_POINTS;
             painter.line_segment(
                 [Pos2::new(x0, y), Pos2::new(x0 + len, y)],
                 Stroke::new(3.0_f32, Color32::BLACK),
@@ -847,37 +1070,6 @@ impl App {
                 Align2::LEFT_BOTTOM,
                 label,
                 FontId::proportional(12.0 * self.settings.map_scale),
-                Color32::WHITE,
-            );
-        }
-    }
-
-    /// The source and credit of the cloud and radar layers, when either is shown.
-    fn paint_live_map_credit(&self, painter: &egui::Painter, rect: Rect) {
-        let lg = self.lang;
-        if self.explorer.on_earth() && (self.layer(MapLayer::Clouds) || self.layer(MapLayer::Radar))
-        {
-            let source = self.live.maps.status(
-                self.layer(MapLayer::Clouds),
-                self.layer(MapLayer::Radar),
-                lg,
-            );
-            let credit = if self.layer(MapLayer::Clouds) && self.layer(MapLayer::Radar) {
-                format!(
-                    "{}\n{}",
-                    lg.text("live-cloud-credit"),
-                    lg.text("live-radar-credit")
-                )
-            } else if self.layer(MapLayer::Clouds) {
-                lg.text("live-cloud-credit").into()
-            } else {
-                lg.text("live-radar-credit").into()
-            };
-            painter.text(
-                rect.left_bottom() + Vec2::new(12.0, -58.0),
-                Align2::LEFT_BOTTOM,
-                format!("{source}\n{credit}"),
-                FontId::proportional(11.0),
                 Color32::WHITE,
             );
         }
@@ -1088,3 +1280,79 @@ pub(super) const OSM_TILES_CREDIT: &str = "OpenFreeMap © OpenMapTiles Data from
 /// The building layer's sources, as Overture asks (ODbL).
 pub(super) const BUILDINGS_CREDIT: &str =
     "Buildings © OpenStreetMap contributors, Overture Maps Foundation (ODbL)";
+
+impl App {
+    /// Starts the view coasting when a drag is let go while still moving, and moves
+    /// it on while it coasts: whether it moved. A press, a scroll or a flight stops it.
+    fn glide(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect) -> bool {
+        let turn_deg_per_point =
+            DRAG_HEADING_DEG_PER_POINT * self.settings.navigation.rotation_sensitivity;
+        if resp.drag_stopped() && !self.reduce_motion() {
+            let pan_sensitivity = self.settings.navigation.pan_sensitivity as f32;
+            let velocity = ui.input(|i| i.pointer.velocity());
+            self.motion.glide = self.motion.last_drag.take().and_then(|kind| {
+                let velocity = if kind == super::motion::DragKind::Pan {
+                    velocity * pan_sensitivity
+                } else {
+                    velocity
+                };
+                super::motion::Glide::after(kind, velocity, turn_deg_per_point)
+            });
+        }
+        let pressed =
+            ui.input(|i| i.pointer.any_pressed() || i.smooth_scroll_delta != egui::Vec2::ZERO);
+        if pressed || self.motion.fly.is_some() || !self.explorer.on_earth() {
+            self.motion.glide = None;
+        }
+        let Some(glide) = self.motion.glide else {
+            return false;
+        };
+        let dt = super::frame_timing::animation_delta_secs(ui) as f32;
+        let (moved, next) = glide.step(dt, turn_deg_per_point);
+        match moved {
+            super::motion::Glide::Pan(d) => self.pan(d.x as f64, d.y as f64, rect.height()),
+            super::motion::Glide::Turn(degrees) => {
+                self.cam.heading = wrap_lon(self.cam.heading + degrees);
+            }
+        }
+        self.motion.glide = next;
+        ui.ctx().request_repaint();
+        true
+    }
+}
+
+/// Where the displayed frame is drawn: centred on the globe's viewport, in its own
+/// proportions, scaled to the viewport's height. The view's vertical angle is fixed,
+/// so that is what a frame of the new size will show: while a pane slides or the
+/// window is resized the last frame moves (and grows or shrinks) with the view
+/// instead of sitting where it was, smaller, inside black bars until a new one comes
+/// (user, 2026-11-20/21).
+fn shown_rect(displayed: Option<Rect>, viewport: Rect) -> Rect {
+    displayed
+        .filter(|displayed| displayed.height() > 0.0)
+        .map_or(viewport, |displayed| {
+            let scale = viewport.height() / displayed.height();
+            Rect::from_center_size(viewport.center(), displayed.size() * scale)
+        })
+}
+
+#[cfg(test)]
+mod shown_rect_tests {
+    use super::*;
+
+    #[test]
+    fn an_old_frame_follows_the_centre_of_a_resized_globe() {
+        let viewport = Rect::from_min_size(Pos2::new(0.0, 100.0), egui::vec2(1200.0, 800.0));
+        assert_eq!(shown_rect(None, viewport), viewport);
+        assert_eq!(shown_rect(Some(viewport), viewport), viewport);
+        let narrower = Rect::from_min_size(Pos2::new(0.0, 100.0), egui::vec2(900.0, 800.0));
+        let shown = shown_rect(Some(narrower), viewport);
+        assert_eq!(shown.center(), viewport.center());
+        assert_eq!(shown.size(), narrower.size());
+        // The window made taller: the frame grows with it, in its own proportions.
+        let smaller = Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let shown = shown_rect(Some(smaller), viewport);
+        assert_eq!(shown.center(), viewport.center());
+        assert_eq!(shown.size(), egui::vec2(1200.0, 800.0));
+    }
+}

@@ -1,15 +1,16 @@
 //! The legend: what the colours and symbols on the globe mean. It opens by itself when
 //! something coded appears (aircraft, ships, satellites, a selected flight, rain
-//! radar, aurora, places of interest),
-//! closes with its ✕, and `ui.legend` (View tab, Command Search) brings it back.
+//! radar, aurora, places of interest), closes by itself when the last of them goes or
+//! with its ✕, and `ui.legend` (View tab, Command Search) brings it back.
 //! Each key takes its colours from the code that draws them, so the two never differ.
 use super::App;
 use super::live_layers::{
     PoiGroup, VesselClass, aurora_colour, class_symbol, satellite_symbol, vessel_symbol,
 };
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2};
+use globecraft_core::units::DistanceUnits;
 use globecraft_core::{commands::LegendCommand, layers::MapLayer};
-use globecraft_data::settings::workspace::RightPane;
+use globecraft_data::settings::workspace::PaneTab;
 use globecraft_data::{
     aircraft::AircraftClass, live_maps::RADAR_BANDS, satellites::SatelliteGroup,
 };
@@ -56,6 +57,31 @@ const RADAR_BAND_KEYS: [&str; 5] = [
 ];
 
 /// A colour bar from `colour(0.0)` to `colour(1.0)`, with labels under it.
+/// The altitude ramp's marks: every 10,000 ft, or every 3 km in metric units (the
+/// ramp itself runs to `TRACK_TOP_FEET`).
+fn altitude_ticks(units: DistanceUnits) -> [(f32, &'static str); 5] {
+    match units {
+        DistanceUnits::Imperial => [
+            (0.0, "0"),
+            (0.25, "10k"),
+            (0.5, "20k"),
+            (0.75, "30k"),
+            (1.0, "40k ft"),
+        ],
+        DistanceUnits::Metric => {
+            const FEET_PER_KM: f64 = 3_280.84;
+            let at = |km: f64| (km * FEET_PER_KM / TRACK_TOP_FEET) as f32;
+            [
+                (0.0, "0"),
+                (at(3.0), "3"),
+                (at(6.0), "6"),
+                (at(9.0), "9"),
+                (at(12.0), "12 km"),
+            ]
+        }
+    }
+}
+
 fn ramp(ui: &mut egui::Ui, colour: impl Fn(f32) -> Color32, ticks: &[(f32, &str)]) {
     let (rect, _) = ui.allocate_exact_size(RAMP_SIZE_POINTS, Sense::hover());
     let painter = ui.painter_at(rect.expand(1.0));
@@ -174,26 +200,29 @@ impl App {
         let LegendCommand::Show(p) = command;
         let on = p.toggled(self.legend_open());
         if on {
-            self.settings.workspace.open_right(RightPane::Legend);
+            self.settings.workspace.open_right(PaneTab::Legend);
         } else {
-            self.settings.workspace.close_right(RightPane::Legend);
+            self.settings.workspace.close_right(PaneTab::Legend);
         }
         json!({"visible": on})
     }
 
     pub(super) fn legend_open(&self) -> bool {
-        self.settings.workspace.right_is_open(RightPane::Legend)
+        self.settings.workspace.right_is_open(PaneTab::Legend)
     }
 
     /// Opens the legend's pane when a key appears on the globe (without taking the view
-    /// from another pane).
+    /// from another pane), and closes it when the last key goes (user, 2026-11-18).
+    /// Opened by hand with nothing on the globe, it stays.
     pub(super) fn legend_watch(&mut self) {
         let kinds = self.legend_kinds();
         if kinds
             .iter()
             .any(|kind| !self.panes.legend.seen.contains(kind))
         {
-            self.settings.workspace.add_right(RightPane::Legend);
+            self.settings.workspace.add_right(PaneTab::Legend);
+        } else if kinds.is_empty() && !self.panes.legend.seen.is_empty() {
+            self.settings.workspace.close_right(PaneTab::Legend);
         }
         self.panes.legend.seen = kinds;
     }
@@ -202,6 +231,7 @@ impl App {
     pub(super) fn legend_pane(&mut self, ui: &mut egui::Ui) {
         let kinds = self.legend_kinds();
         let lang = self.lang;
+        let units = self.distance_units();
         if kinds.is_empty() {
             ui.label(lang.text("legend-empty"));
         }
@@ -254,13 +284,7 @@ impl App {
                                 f64::from(t) * TRACK_TOP_FEET,
                             ))
                         },
-                        &[
-                            (0.0, "0"),
-                            (0.25, "10k"),
-                            (0.5, "20k"),
-                            (0.75, "30k"),
-                            (1.0, "40k ft"),
-                        ],
+                        &altitude_ticks(units),
                     );
                     swatch(
                         ui,

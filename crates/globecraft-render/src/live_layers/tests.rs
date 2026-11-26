@@ -9,6 +9,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         heading: 0.0,
         alt: 100.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     LiveInput {
         view: LiveView {
@@ -64,7 +65,10 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         poi: None,
         poi_layers: Default::default(),
         poi_shown: None,
+        depth: None,
         unix_secs: 1_700_000_000.0,
+        scene_offset_secs: 0.0,
+        now: std::time::Instant::now(),
         satellite_heights: true,
     }
 }
@@ -97,6 +101,7 @@ fn terrain_occlusion_drops_a_road_hidden_behind_a_ridge() {
         heading: 0.0,
         alt: 30.0,
         tilt: 65.0,
+        look_up: 0.0,
     }
     .basis(1.0);
     input.view.altitude_km = 30.0;
@@ -131,6 +136,7 @@ fn live_lines_are_raised_onto_the_relief() {
         heading: 0.0,
         alt: 100.0,
         tilt: 60.0,
+        look_up: 0.0,
     }
     .basis(1.0);
     input.view.altitude_km = 100.0;
@@ -233,6 +239,7 @@ fn orbital_updates_reuse_roads_and_project_only_current_valid_subpoints() {
         alt: 1000.0,
         heading: 0.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis_for_model(1.0, EarthModel::Wgs84);
     request.satellites = Some(
@@ -253,6 +260,54 @@ fn orbital_updates_reuse_roads_and_project_only_current_valid_subpoints() {
     assert!(Arc::ptr_eq(&first.roads, &second.roads));
     assert!(!Arc::ptr_eq(&first.satellites, &second.satellites));
     assert_ne!(first.satellites[0].position, second.satellites[0].position);
+}
+#[test]
+fn satellites_follow_the_apps_time() {
+    let mut request = input(EarthModel::Wgs84);
+    let orbit = globecraft_core::orbit::OrbitalElements {
+        inclination_deg: 0.0,
+        raan_deg: 0.0,
+        eccentricity: 0.001,
+        argument_perigee_deg: 0.0,
+        mean_anomaly_deg: 0.0,
+        mean_motion_rev_per_day: 15.0,
+        epoch_unix_secs: request.unix_secs,
+    };
+    let (lat, lon) = orbit.ground_position(request.unix_secs).unwrap();
+    request.view.basis = Cam {
+        lat,
+        lon,
+        alt: 20_000.0,
+        heading: 0.0,
+        tilt: 0.0,
+        look_up: 0.0,
+    }
+    .basis_for_model(1.0, EarthModel::Wgs84);
+    request.satellites = Some(
+        vec![Satellite {
+            name: "Orbit".into(),
+            norad: "1".into(),
+            group: globecraft_data::satellites::SatelliteGroup::Station,
+            orbit,
+            sgp4: None,
+        }]
+        .into(),
+    );
+    let live = LivePreparer::default().prepare(request.clone());
+    // The timeline ten minutes ahead: the satellite is where it will be then.
+    let mut ahead = request.clone();
+    ahead.scene_offset_secs = 600.0;
+    let ahead = LivePreparer::default().prepare(ahead);
+    let mut later = request;
+    later.unix_secs += 600.0;
+    let later = LivePreparer::default().prepare(later);
+    assert_ne!(live.satellites[0].position, ahead.satellites[0].position);
+    assert!(
+        ahead.satellites[0]
+            .position
+            .distance(later.satellites[0].position)
+            < 0.01
+    );
 }
 #[test]
 fn worker_publishes_before_waking_and_reuses_an_unchanged_request() {

@@ -45,6 +45,8 @@ impl App {
                 }
                 self.cam.clamp_tilt();
                 if let Some(tilt) = p.tilt_deg {
+                    // A tilt given leans about the ground point, without a look up.
+                    self.cam.look_up = 0.0;
                     // A given altitude is kept (the tilt yields); otherwise the tilt
                     // wins and the camera backs off as far as it needs.
                     if p.altitude_km.is_some() {
@@ -97,15 +99,28 @@ impl App {
                 self.motion.fly = None;
                 let tilt = match (p.tilt_deg, p.step) {
                     (Some(tilt), _) => tilt,
-                    (None, Some(step)) => self.cam.tilt + step,
+                    (None, Some(step)) => self.cam.view_tilt() + step,
                     (None, None) => return Err("give tilt_deg or step".into()),
                 };
-                self.cam.tilt_zooming_out(tilt);
+                self.cam.tilt_view(tilt);
+                self.touch();
+                self.camera_json()
+            }
+            CameraCommand::LookAround(p) if p.turn_deg.is_none() && p.raise_deg.is_none() => {
+                self.motion.look_mode = !self.motion.look_mode;
+                json!({"look_mode": self.motion.look_mode})
+            }
+            CameraCommand::LookAround(p) => {
+                let (turn, raise) = (p.turn_deg.unwrap_or(0.0), p.raise_deg.unwrap_or(0.0));
+                self.motion.fly = None;
+                if !self.look_around(turn, raise) {
+                    return Err("the view cannot turn that way from here".into());
+                }
                 self.touch();
                 self.camera_json()
             }
             CameraCommand::TopDown => {
-                self.cam.tilt = 0.0;
+                (self.cam.tilt, self.cam.look_up) = (0.0, 0.0);
                 self.touch();
                 self.camera_json()
             }
@@ -123,6 +138,6 @@ impl App {
     pub(super) fn camera_json(&self) -> Value {
         json!({"lat": self.cam.lat, "lon": self.cam.lon, "altitude_km": self.cam.alt,
             "heading_deg": self.cam.heading, "tilt_deg": self.cam.tilt,
-            "max_tilt_deg": self.cam.max_tilt()})
+            "max_tilt_deg": self.cam.max_tilt(), "look_up_deg": self.cam.look_up})
     }
 }

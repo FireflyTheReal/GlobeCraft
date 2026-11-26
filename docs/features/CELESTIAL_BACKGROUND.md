@@ -12,6 +12,13 @@ bright Hipparcos/Tycho foreground. No additional procedural stars are painted ov
 it. This slice is directional imagery, not a selectable star catalog, deep-sky
 search, HiPS survey or a physically navigable universe.
 
+The Stars layer draws the 9,096 stars of the Yale Bright Star Catalogue (to about
+magnitude 6.5, `crates/globecraft-render/assets/stars`) in the same celestial frame,
+sized and coloured by magnitude and spectral class. Until 2026-11-18 the stars were
+made up and fixed to the Earth. On screen the app's sky layer draws them behind the
+frame at full resolution; screenshots paint them behind each strip
+(`stars::paint_behind`).
+
 `assets/sky/manifest.json` pins source and derivative SHA-256 values, release,
 credit, map convention, usage assessment and offline preparation. The 2.5 MB JPEG
 is a fixed-exposure Reinhard/sRGB **SDR derivative**, not HDR-equivalent fidelity.

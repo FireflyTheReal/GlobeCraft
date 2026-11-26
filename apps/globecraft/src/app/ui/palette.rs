@@ -162,13 +162,14 @@ impl App {
             ui.set_width(width);
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-                icons::paint(ui.painter(), r, "search", t.text_dim, t.accent);
+                icons::paint(ui.painter(), r, "search", t.text_dim, t.icon_accent);
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut state.query)
                         .hint_text(lang.text("palette-hint"))
                         .desired_width(width - 30.0)
                         .frame(egui::Frame::NONE),
                 );
+                super::widgets::name_widget(&edit, lang.text("palette-hint"));
                 edit.request_focus();
                 if edit.changed() {
                     state.selected = 0;
@@ -206,7 +207,7 @@ impl App {
                             ),
                             hit.icon,
                             t.icon,
-                            t.accent,
+                            t.icon_accent,
                         );
                         ui.painter().text(
                             pos2(r.min.x + 34.0, r.center().y),

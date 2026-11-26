@@ -1,6 +1,9 @@
 //! The words of the selected flight's card: its aircraft, route, what ADSB.lol
 //! reports about it and how far it has come.
-use globecraft_core::{language::Lang, units::DistanceUnits};
+use globecraft_core::{
+    language::Lang,
+    units::{DistanceUnits, KMH_PER_KNOT, MS_PER_FOOT_PER_MINUTE},
+};
 use globecraft_data::aircraft::{
     Aircraft,
     route::{RouteAirport, SelectedFlight},
@@ -9,6 +12,8 @@ use globecraft_data::aircraft::{
 /// Climbs and descents slower than this read as level flight, ft/min.
 const LEVEL_RATE_FPM: f64 = 50.0;
 const KM_PER_MILE: f64 = 1.609_344;
+/// Aircraft report heights in feet.
+const FEET_TO_METRES: f64 = 0.3048;
 
 pub(super) struct CardLines {
     pub title: String,
@@ -72,63 +77,58 @@ fn aircraft_line(flight: &SelectedFlight, lang: Lang) -> Option<String> {
 
 /// What ADSB.lol reports of its flight: heights, speeds, heading and weather, and
 /// its transponder.
-fn reported_lines(aircraft: &Aircraft, lang: Lang) -> (Vec<String>, Option<String>) {
+fn reported_lines(
+    aircraft: &Aircraft,
+    lang: Lang,
+    units: DistanceUnits,
+) -> (Vec<String>, Option<String>) {
+    // Reported in feet and knots; shown in the user's units (user, 2026-11-20).
+    let height = |feet: f64| units.length(feet * FEET_TO_METRES, 0);
+    let speed = |knots: f64| units.speed(knots * KMH_PER_KNOT);
     let details = aircraft.details.as_deref();
     let message = |id: &str, name: &str, value: String| lang.format(id, &[(name, value.into())]);
     let mut lines = Vec::new();
 
     let mut heights = Vec::new();
     if let Some(feet) = aircraft.altitude_feet {
-        heights.push(message(
-            "flight-card-altitude",
-            "feet",
-            format!("{feet:.0}"),
-        ));
+        heights.push(message("flight-card-altitude", "height", height(feet)));
     }
     if let Some(feet) = details.and_then(|d| d.geometric_altitude_feet) {
-        heights.push(message(
-            "flight-card-gps-altitude",
-            "feet",
-            format!("{feet:.0}"),
-        ));
+        heights.push(message("flight-card-gps-altitude", "height", height(feet)));
     }
     if let Some(rate) = aircraft.vertical_rate_fpm {
         heights.push(if rate.abs() < LEVEL_RATE_FPM {
             lang.text("flight-card-level").into()
         } else {
-            message("flight-card-vertical-rate", "rate", format!("{rate:+.0}"))
+            message(
+                "flight-card-vertical-rate",
+                "rate",
+                units.vertical_rate(rate * MS_PER_FOOT_PER_MINUTE),
+            )
         });
     }
     if let Some(feet) = details.and_then(|d| d.selected_altitude_feet) {
         heights.push(message(
             "flight-card-selected-altitude",
-            "feet",
-            format!("{feet:.0}"),
+            "height",
+            height(feet),
         ));
     }
     lines.extend(join(heights));
 
     let mut speeds = Vec::new();
     if let Some(knots) = aircraft.speed_knots {
-        speeds.push(message(
-            "flight-card-ground-speed",
-            "knots",
-            format!("{knots:.0}"),
-        ));
+        speeds.push(message("flight-card-ground-speed", "speed", speed(knots)));
     }
     if let Some(knots) = details.and_then(|d| d.indicated_airspeed_knots) {
         speeds.push(message(
             "flight-card-indicated-airspeed",
-            "knots",
-            format!("{knots:.0}"),
+            "speed",
+            speed(knots),
         ));
     }
     if let Some(knots) = details.and_then(|d| d.true_airspeed_knots) {
-        speeds.push(message(
-            "flight-card-true-airspeed",
-            "knots",
-            format!("{knots:.0}"),
-        ));
+        speeds.push(message("flight-card-true-airspeed", "speed", speed(knots)));
     }
     if let Some(mach) = details.and_then(|d| d.mach) {
         speeds.push(message("flight-card-mach", "mach", format!("{mach:.2}")));
@@ -152,15 +152,15 @@ fn reported_lines(aircraft: &Aircraft, lang: Lang) -> (Vec<String>, Option<Strin
             "flight-card-wind",
             &[
                 ("degrees", format!("{from:.0}").into()),
-                ("knots", format!("{knots:.0}").into()),
+                ("speed", speed(knots).into()),
             ],
         ));
     }
     if let Some(celsius) = details.and_then(|d| d.outside_air_celsius) {
         heading.push(message(
             "flight-card-temperature",
-            "celsius",
-            format!("{celsius:.0}"),
+            "temperature",
+            units.temperature(celsius),
         ));
     }
     lines.extend(join(heading));
@@ -227,7 +227,7 @@ pub(super) fn lines(
     details.extend(aircraft_line(flight, lang));
     let mut warning = None;
     if let Some(aircraft) = &flight.position {
-        let (reported, emergency) = reported_lines(aircraft, lang);
+        let (reported, emergency) = reported_lines(aircraft, lang, units);
         details.extend(reported);
         warning = emergency;
     }
@@ -327,7 +327,18 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("2015"), "{text}");
-        assert!(text.contains("22975"), "{text}");
+        // Metric: 22,975 ft is 7,003 m, 454 kt 841 km/h, a 1,152 ft/min climb 5.9 m/s.
+        assert!(text.contains("7003 m"), "{text}");
+        assert!(text.contains("841 km/h over ground"), "{text}");
+        assert!(text.contains("+5.9 m/s"), "{text}");
+        assert!(!text.contains(" ft") && !text.contains(" kt"), "{text}");
+        // Imperial: feet, miles an hour and feet a minute.
+        let imperial = lines(&flight, Lang::En, DistanceUnits::Imperial, false)
+            .details
+            .join("\n");
+        assert!(imperial.contains("22975 ft"), "{imperial}");
+        assert!(imperial.contains("523 mph"), "{imperial}");
+        assert!(imperial.contains("+1152 ft/min"), "{imperial}");
         assert!(text.contains("0.81"), "{text}");
         assert!(text.contains("110"), "{text}");
         assert!(text.contains("7700"), "{text}");

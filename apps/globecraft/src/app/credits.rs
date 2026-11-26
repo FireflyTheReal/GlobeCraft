@@ -63,6 +63,10 @@ impl App {
         if self.layer(MapLayer::NightLights) {
             credits.push(self.night_lights_credit(lg));
         }
+        // The sun's glint comes from Matt Eason's water map (EUMETSAT data).
+        if earth && self.layer(MapLayer::Sunlight) && self.live.maps.water_map().is_some() {
+            credits.push(lg.text("glint-credit").to_owned());
+        }
         // The polar caps show NASA's imagery past the Mercator limit.
         if earth
             && globecraft_render::polar::under(self.effective_provider())
@@ -94,6 +98,23 @@ impl App {
         }
         if self.layer(MapLayer::TimeZones) && self.live.time_zones.zones().is_some() {
             credits.push(lg.text("timezones-credit").to_owned());
+        }
+        // The clouds' and the radar's source (and its time) with their credits.
+        let (clouds, radar) = (self.layer(MapLayer::Clouds), self.layer(MapLayer::Radar));
+        if earth && (clouds || radar) {
+            credits.extend(
+                self.live
+                    .maps
+                    .status(clouds, radar, lg)
+                    .lines()
+                    .map(str::to_owned),
+            );
+            if clouds {
+                credits.push(lg.text("live-cloud-credit").to_owned());
+            }
+            if radar {
+                credits.push(lg.text("live-radar-credit").to_owned());
+            }
         }
         if self.layer(MapLayer::Aurora) && self.live.aurora.grid().is_some() {
             credits.push(lg.text("aurora-credit").to_owned());

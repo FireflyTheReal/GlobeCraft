@@ -2,10 +2,11 @@
 //! Each group shows at most one large button and two columns of small ones; its other
 //! tools are in the group's menu (`tools::EXTRAS`). A set of choices is one button.
 use super::widgets::{
-    Choice, Look, big, big_with, choice_big, col, group, small, small_menu, small_with,
+    Choice, Look, big, big_with, big_with_menu, choice_big, col, group, small, small_menu,
+    small_with,
 };
 use crate::app::App;
-use eframe::egui::Ui;
+use eframe::egui::{self, Ui};
 use globecraft_core::{layers::MapLayer, units::RulerUnit};
 use serde_json::{Value, json};
 
@@ -245,7 +246,7 @@ impl App {
                 lang.text("sidebar-weather-title"),
                 |ui, app| {
                     app.layer_big(ui, MapLayer::Radar);
-                    app.layer_big(ui, MapLayer::Clouds);
+                    app.clouds_big(ui);
                     app.layer_big(ui, MapLayer::Aurora);
                 },
             );
@@ -342,6 +343,7 @@ impl App {
                 });
                 col(ui, |ui| {
                     small(ui, app, "ui.pane.assistant", Value::Null);
+                    small(ui, app, "ui.ribbonCompact", Value::Null);
                 });
             },
         );
@@ -351,10 +353,47 @@ impl App {
             "view.window",
             lang.text("ribbon-group-window"),
             |ui, app| {
+                // No full screen or minimize here: the window's own buttons do
+                // that, and the ribbon's copies misbehaved (user 2026-11-19).
                 big(ui, app, "ui.navigationControls", Value::Null);
-                col(ui, |ui| {
-                    small(ui, app, "ui.fullscreen", Value::Null);
-                });
+            },
+        );
+    }
+
+    /// The Clouds layer's button: a click shows or hides them, its label opens the
+    /// cloud map's detail (user, 2026-11-19).
+    fn clouds_big(&mut self, ui: &mut Ui) {
+        let layer = MapLayer::Clouds;
+        if !Self::offers(layer) {
+            return;
+        }
+        let lang = self.lang;
+        big_with_menu(
+            ui,
+            self,
+            "layer.show",
+            json!({"layer": layer.code()}),
+            Look {
+                icon: Some(layer.icon()),
+                label: Some(short_layer_label(lang, layer)),
+                help: Some(lang.text(layer.label_key())),
+                ..Look::default()
+            },
+            |ui, app| {
+                ui.label(egui::RichText::new(lang.text("cmd-layer-cloud-resolution")).strong())
+                    .on_hover_text(lang.text("cmd-layer-cloud-resolution-help"));
+                for pixels in globecraft_data::settings::layers::CLOUD_RESOLUTIONS_PX {
+                    let params = json!({ "pixels": pixels });
+                    let on = app.command_state("layer.cloudResolution", &params).checked;
+                    let label = lang.format(
+                        "cloud-resolution-option",
+                        &[("pixels", pixels.into()), ("height", (pixels / 2).into())],
+                    );
+                    if ui.radio(on, label).clicked() {
+                        app.run_reporting("layer.cloudResolution", params);
+                        ui.close();
+                    }
+                }
             },
         );
     }
@@ -389,7 +428,10 @@ impl App {
 }
 
 /// The ribbon's short caption of a layer (the Layers pane shows the long one).
-fn short_layer_label(lang: globecraft_core::language::Lang, layer: MapLayer) -> &'static str {
+pub(in crate::app) fn short_layer_label(
+    lang: globecraft_core::language::Lang,
+    layer: MapLayer,
+) -> &'static str {
     lang.text(match layer {
         MapLayer::CountryBorders => "ribbon-layer-countries",
         MapLayer::StateBorders => "ribbon-layer-states",

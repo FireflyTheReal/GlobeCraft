@@ -3,7 +3,7 @@ use glam::{DMat3, DVec2, DVec3};
 use std::f64::consts::{PI, TAU};
 const UNIX_EPOCH_JULIAN_DATE: f64 = 2_440_587.5;
 const SECONDS_PER_DAY: f64 = 86_400.0;
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CelestialFrame {
     celestial_from_earth_fixed: DMat3,
 }
@@ -43,6 +43,10 @@ impl CelestialFrame {
     pub fn direction(self, earth_fixed: DVec3) -> DVec3 {
         self.celestial_from_earth_fixed * earth_fixed
     }
+    /// [`Self::direction`] backwards: the Earth-fixed direction of a celestial one.
+    pub fn earth_fixed(self, celestial: DVec3) -> DVec3 {
+        self.celestial_from_earth_fixed.transpose() * celestial
+    }
 }
 /// The published map centers RA 0h and increases RA leftward; declination is up.
 pub fn equatorial_uv(direction: DVec3) -> DVec2 {
@@ -53,9 +57,27 @@ pub fn equatorial_uv(direction: DVec3) -> DVec2 {
         (0.5 - dec / PI).clamp(0.0, 1.0),
     )
 }
+/// [`equatorial_uv`] backwards: the unit direction a point of the map shows.
+pub fn equatorial_direction(uv: DVec2) -> DVec3 {
+    let (ra, dec) = ((0.5 - uv.x) * TAU, (0.5 - uv.y) * PI);
+    DVec3::new(dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_map_point_and_its_direction_agree_both_ways() {
+        for uv in [
+            DVec2::new(0.1, 0.2),
+            DVec2::new(0.75, 0.5),
+            DVec2::new(0.4, 0.9),
+        ] {
+            assert!(equatorial_uv(equatorial_direction(uv)).abs_diff_eq(uv, 1e-12));
+        }
+        let frame = CelestialFrame::at_unix(1.7e9).unwrap();
+        let d = DVec3::new(0.3, -0.4, 0.5).normalize();
+        assert!(frame.earth_fixed(frame.direction(d)).abs_diff_eq(d, 1e-12));
+    }
     #[test]
     fn map_ra_is_leftward_and_poles_are_not_mirrored() {
         assert_eq!(equatorial_uv(DVec3::X), DVec2::new(0.5, 0.5));

@@ -438,6 +438,7 @@ pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
                 heading: 0.0,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(f64::from(rect.width() / rect.height())),
             rect,
@@ -469,7 +470,10 @@ pub(in crate::app) fn river_scene(rect: Rect) -> Arc<LiveGeometry> {
             parks: true,
         },
         poi_shown: None,
+        depth: None,
         unix_secs: 0.0,
+        scene_offset_secs: 0.0,
+        now: std::time::Instant::now(),
         satellite_heights: true,
     };
     LivePreparer::default().prepare(input)

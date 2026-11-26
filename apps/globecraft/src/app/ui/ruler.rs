@@ -11,8 +11,8 @@ pub(super) fn unit_selector(
     lang: Lang,
 ) -> RulerUnit {
     ui.horizontal(|ui| {
-        ui.label(lang.text("ruler-units-label"));
-        egui::ComboBox::from_id_salt("ruler_units")
+        let label = ui.label(lang.text("ruler-units-label"));
+        let combo = egui::ComboBox::from_id_salt("ruler_units")
             .width(ui.available_width())
             .wrap()
             .selected_text(selected.selector_label(lang, us_locale))
@@ -33,6 +33,8 @@ pub(super) fn unit_selector(
                     .on_hover_text(unit.help(lang));
                 }
             });
+        // Read out with its label, which egui does not tie to it by itself.
+        combo.response.labelled_by(label.id);
     });
     selected
 }

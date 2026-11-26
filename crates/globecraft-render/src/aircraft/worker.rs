@@ -42,6 +42,8 @@ pub struct ProjectionInput {
     pub view: ProjectionView,
     pub data: Arc<AircraftSnapshot>,
     pub unix_secs: f64,
+    /// The clouds, which hide planes on the other side of their layer.
+    pub clouds: Option<crate::clouds::CloudsCfg>,
 }
 impl ProjectionInput {
     pub fn same_request(&self, other: &Self) -> bool {
@@ -59,8 +61,14 @@ pub struct AircraftGeometry {
     pub labels: Vec<usize>,
 }
 impl AircraftGeometry {
+    /// Whether the planes as projected at `self.unix_secs` may still show at
+    /// `unix_secs`: for `MAX_PRESENTATION_AGE_SECS` past the end of their motion step.
+    /// A step is projected once (its geometry reused through it), and far out a step
+    /// lasts up to 5 s: aged out after 2 s, every plane vanished for the rest of each
+    /// step above about 2,500 km (user, 2026-11-19).
     pub fn is_recent(&self, unix_secs: f64) -> bool {
-        (0.0..=MAX_PRESENTATION_AGE_SECS).contains(&(unix_secs - self.unix_secs))
+        let max_age = self.view.motion_step() + MAX_PRESENTATION_AGE_SECS;
+        (0.0..=max_age).contains(&(unix_secs - self.unix_secs))
     }
     pub fn matches(&self, view: ProjectionView, data: &Arc<AircraftSnapshot>) -> bool {
         self.view == view && Arc::ptr_eq(&self.data, data)
@@ -81,7 +89,7 @@ impl AircraftPreparer {
         }
         #[cfg(feature = "profiling")]
         let _profile = globecraft_data::profiling::Span::new("aircraft.project");
-        let flights = project_flights(
+        let mut flights = project_flights(
             &input.view.basis,
             input.view.rect,
             &input.data.aircraft,
@@ -89,6 +97,22 @@ impl AircraftPreparer {
             input.view.map_scale,
             input.view.heights,
         );
+        // Under thick cloud seen from above (or over it from below) a plane fades out,
+        // by where it was last reported: a texel of the cloud map is 5 km.
+        if let (Some(clouds), true) = (&input.clouds, input.view.heights) {
+            for flight in &mut flights {
+                let report = &input.data.aircraft[flight.source_index];
+                let km =
+                    report.altitude_feet.unwrap_or(0.0).max(0.0) * crate::aircraft::KM_PER_FOOT;
+                flight.opacity *= crate::clouds::seen_through(
+                    clouds,
+                    &input.view.basis,
+                    report.latitude,
+                    report.longitude,
+                    km,
+                );
+            }
+        }
         let mut labels: Vec<usize> = Vec::new();
         if input.view.altitude_km <= LABEL_MAX_ALTITUDE_KM {
             for (index, flight) in flights.iter().enumerate() {

@@ -2,6 +2,7 @@
 use super::shapes::{Symbol, add_symbol_mesh, parse_symbol};
 use eframe::egui::{self, Align2, Color32, Pos2, Shape, Stroke, Vec2};
 use globecraft_core::language::Lang;
+use globecraft_core::units::{DistanceUnits, KMH_PER_KNOT};
 use globecraft_data::{
     satellites::{Satellite, SatelliteGroup},
     vessels::Vessel,
@@ -353,7 +354,7 @@ fn build_vessels(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape>
     }
     shapes
 }
-pub(super) fn vessel_tooltip(lang: Lang, ship: &Vessel) -> String {
+pub(super) fn vessel_tooltip(lang: Lang, ship: &Vessel, units: DistanceUnits) -> String {
     let name = if ship.name.is_empty() {
         lang.text("vessels-unnamed")
     } else {
@@ -361,14 +362,21 @@ pub(super) fn vessel_tooltip(lang: Lang, ship: &Vessel) -> String {
     };
     let destination = ship.destination.as_deref().unwrap_or("—");
     let dimensions = match (ship.length_m, ship.beam_m) {
-        (Some(length), Some(beam)) => format!("{length:.0} × {beam:.0} m"),
-        (Some(length), None) => format!("{length:.0} m"),
-        (None, Some(beam)) => format!("{beam:.0} m"),
+        (Some(length), Some(beam)) => {
+            // "200 × 32 m": the unit once, after both.
+            let beam = units.length(beam, 0);
+            let (number, unit) = beam.split_once(' ').unwrap_or((&beam, ""));
+            let length = units.length(length, 0);
+            let length = length.split_once(' ').map_or(length.as_str(), |(n, _)| n);
+            format!("{length} × {number} {unit}")
+        }
+        (Some(length), None) => units.length(length, 0),
+        (None, Some(beam)) => units.length(beam, 0),
         (None, None) => "—".to_owned(),
     };
     let draught = ship
         .draught_m
-        .map_or_else(|| "—".to_owned(), |draught| format!("{draught:.1} m"));
+        .map_or_else(|| "—".to_owned(), |draught| units.length(draught, 1));
     lang.format(
         "vessels-hover-tooltip",
         &[
@@ -390,7 +398,7 @@ pub(super) fn vessel_tooltip(lang: Lang, ship: &Vessel) -> String {
             (
                 "speed",
                 ship.speed_knots
-                    .map_or_else(|| "?".to_owned(), |speed| format!("{speed:.1}"))
+                    .map_or_else(|| "?".to_owned(), |knots| units.speed(knots * KMH_PER_KNOT))
                     .into(),
             ),
             (
@@ -413,6 +421,7 @@ pub(super) fn satellite_tooltip(
     satellite: &Satellite,
     altitude_km: Option<f64>,
     together: &[&str],
+    units: DistanceUnits,
 ) -> String {
     let period = satellite
         .orbit
@@ -420,7 +429,7 @@ pub(super) fn satellite_tooltip(
         .map_or_else(|| "—".to_owned(), |minutes| format!("{minutes:.1} min"));
     let altitude = altitude_km
         .or_else(|| satellite.orbit.altitude_km())
-        .map_or_else(|| "—".to_owned(), |km| format!("{km:.0} km"));
+        .map_or_else(|| "—".to_owned(), |km| units.altitude(km));
     let inclination = format!("{:.1}°", satellite.orbit.inclination_deg);
     let text = lang.format(
         "satellites-hover-tooltip",
@@ -445,11 +454,30 @@ pub(super) fn satellite_tooltip(
     if together.is_empty() {
         return text;
     }
-    let with = lang.format(
-        "satellites-together",
-        &[("names", together.join(", ").into())],
-    );
-    format!("{text}\n{with}")
+    format!("{text}\n{}", together_with(lang, together))
+}
+
+/// The craft flying with a satellite: a line break every few names, so a station with
+/// many visitors does not make one long line (user 2026-11-19).
+const TOGETHER_LINE_CHARS: usize = 36;
+
+pub(in crate::app) fn together_with(lang: Lang, names: &[&str]) -> String {
+    let mut wrapped = String::new();
+    let mut line = 0;
+    for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+            if line + name.len() > TOGETHER_LINE_CHARS {
+                wrapped.push_str(",\n");
+                line = 0;
+            } else {
+                wrapped.push_str(", ");
+                line += 2;
+            }
+        }
+        wrapped.push_str(name);
+        line += name.len();
+    }
+    lang.format("satellites-together", &[("names", wrapped.into())])
 }
 
 fn build_satellites(painter: &egui::Painter, geometry: &LiveGeometry) -> Vec<Shape> {
@@ -570,11 +598,15 @@ mod tests {
 
     #[test]
     fn vessel_tooltip_surfaces_type_destination_and_dimensions() {
-        let text = vessel_tooltip(Lang::En, &ship());
+        let text = vessel_tooltip(Lang::En, &ship(), DistanceUnits::Metric);
         assert!(text.contains("Cargo ship"), "{text}");
         assert!(text.contains("Destination: RIO"), "{text}");
         assert!(text.contains("200 × 32 m"), "{text}");
         assert!(text.contains("Draught: 8.4 m"), "{text}");
+        // In feet and miles an hour with the imperial units.
+        let text = vessel_tooltip(Lang::En, &ship(), DistanceUnits::Imperial);
+        assert!(text.contains("656 × 105 ft"), "{text}");
+        assert!(text.contains("Draught: 27.6 ft"), "{text}");
         assert!(text.contains("MMSI 123456789"), "{text}");
         let unnamed = Vessel {
             name: String::new(),
@@ -585,9 +617,10 @@ mod tests {
             ship_type: None,
             ..ship()
         };
-        assert!(vessel_tooltip(Lang::En, &unnamed).contains("Unidentified vessel"));
-        assert!(vessel_tooltip(Lang::PtBr, &unnamed).contains("Navio não identificado"));
-        assert!(vessel_tooltip(Lang::En, &unnamed).contains("Vessel type not reported"));
+        let metric = DistanceUnits::Metric;
+        assert!(vessel_tooltip(Lang::En, &unnamed, metric).contains("Unidentified vessel"));
+        assert!(vessel_tooltip(Lang::PtBr, &unnamed, metric).contains("Navio não identificado"));
+        assert!(vessel_tooltip(Lang::En, &unnamed, metric).contains("Vessel type not reported"));
     }
 
     #[test]
@@ -607,9 +640,11 @@ mod tests {
             group: SatelliteGroup::Station,
             sgp4: None,
         };
-        let text = satellite_tooltip(Lang::En, &satellite, None, &[]);
+        let text = satellite_tooltip(Lang::En, &satellite, None, &[], DistanceUnits::Metric);
         assert!(text.contains("Period 96.0 min"), "{text}");
         assert!(text.contains("Altitude 574 km"), "{text}");
+        let text = satellite_tooltip(Lang::En, &satellite, None, &[], DistanceUnits::Imperial);
+        assert!(text.contains("Altitude 357 mi"), "{text}");
         assert!(text.contains("Inclination 51.6°"), "{text}");
     }
 
@@ -638,6 +673,7 @@ mod tests {
                     heading: 0.0,
                     alt: 10.0,
                     tilt: 0.0,
+                    look_up: 0.0,
                 }
                 .basis(1.0),
                 rect: egui::Rect::from_min_size(Pos2::ZERO, Vec2::splat(300.0)),
@@ -660,7 +696,10 @@ mod tests {
             poi: None,
             poi_layers: Default::default(),
             poi_shown: None,
+            depth: None,
             unix_secs: 1_700_000_000.0,
+            scene_offset_secs: 0.0,
+            now: std::time::Instant::now(),
             satellite_heights: true,
         };
         let geometry = LivePreparer::default().prepare(input);
@@ -678,5 +717,27 @@ mod tests {
                 matches!((&first,repeated),(Shape::Mesh(a),Shape::Mesh(b)) if Arc::ptr_eq(a,b))
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod together_tests {
+    use super::*;
+
+    #[test]
+    fn many_craft_together_wrap_onto_lines() {
+        let names = [
+            "SOYUZ-MS 28",
+            "PROGRESS-MS 31",
+            "PROGRESS-MS 32",
+            "CREW DRAGON 11",
+        ];
+        let text = together_with(Lang::En, &names);
+        assert!(text.lines().count() >= 2, "{text}");
+        assert!(
+            text.lines().all(|line| line.chars().count() <= 60),
+            "{text}"
+        );
+        assert_eq!(together_with(Lang::En, &["SOYUZ"]).lines().count(), 1);
     }
 }

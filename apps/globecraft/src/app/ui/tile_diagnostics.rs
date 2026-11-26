@@ -78,7 +78,11 @@ impl App {
         // The levels of the full-resolution frame, as the renderer picks them.
         let (w, h) = globecraft_render::view::raster_size(
             rect.size(),
-            painter.ctx().pixels_per_point(),
+            globecraft_render::view::quality_pixels_per_point(
+                rect.size(),
+                painter.ctx().pixels_per_point(),
+                self.settings.render_quality.max_height_px(),
+            ),
             true,
             false,
             None,
@@ -101,7 +105,11 @@ impl App {
             level_blend: true,
             fixed_level: None,
             night_lights: None,
-            stars: false,
+            stars: None,
+            sky_behind: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
         };
         let tiles = globecraft_render::diagnostics::view_tiles(w, h, basis, &cfg, rect);
         let mut counts = [0usize; 4];

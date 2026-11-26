@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod benchmarks;
 pub(crate) mod decode;
+pub mod history;
 pub mod route;
 mod snapshot;
 #[cfg(test)]
@@ -180,6 +181,11 @@ pub struct LiveAircraft {
     control: watch::Sender<AircraftQuery>,
     updates: watch::Receiver<Arc<AircraftSnapshot>>,
     latest: Arc<AircraftSnapshot>,
+    /// The last hour of planes seen, for the timeline.
+    history: history::AircraftHistory,
+    /// The replayed snapshot last made, by the whole second it is of: kept while
+    /// the time shown stays in that second, so it is projected once.
+    replayed: std::sync::Mutex<Option<(i64, Arc<AircraftSnapshot>)>>,
     stopped: bool,
     /// The worker's end of `updates` in a build without live feeds, where no worker
     /// runs: kept so the snapshot stays the empty one, not "service stopped".
@@ -222,6 +228,8 @@ impl LiveAircraft {
             control,
             updates,
             latest,
+            history: history::AircraftHistory::default(),
+            replayed: std::sync::Mutex::new(None),
             stopped: false,
             _unused_publisher: unused_publisher,
         }
@@ -232,6 +240,8 @@ impl LiveAircraft {
         match self.updates.has_changed() {
             Ok(true) => {
                 let latest = self.updates.borrow_and_update().clone();
+                self.history
+                    .record(&latest.aircraft, globecraft_core::math::now_unix());
                 self.latest = latest;
             }
             Ok(false) => {}
@@ -276,5 +286,35 @@ impl LiveAircraft {
 
     pub fn snapshot(&self) -> Arc<AircraftSnapshot> {
         self.latest.clone()
+    }
+
+    /// Whether the planes of `unix` can be shown: it is within the last hour this
+    /// session has recorded.
+    pub fn replays(&self, unix: f64) -> bool {
+        self.history.covers(unix, globecraft_core::math::now_unix())
+    }
+
+    /// The planes as they were at `unix`, from this session's history (see
+    /// [`history`]), when it covers that time.
+    pub fn replay(&self, unix: f64) -> Option<Arc<AircraftSnapshot>> {
+        if !self.replays(unix) {
+            return None;
+        }
+        let second = unix.floor() as i64;
+        let mut replayed = self.replayed.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, snapshot)) = replayed.as_ref()
+            && *at == second
+        {
+            return Some(snapshot.clone());
+        }
+        let snapshot = Arc::new(AircraftSnapshot {
+            aircraft: self.history.at(second as f64).into(),
+            global: self.latest.global.clone(),
+            local: self.latest.local.clone(),
+            error: None,
+            valid_until: None,
+        });
+        *replayed = Some((second, snapshot.clone()));
+        Some(snapshot)
     }
 }

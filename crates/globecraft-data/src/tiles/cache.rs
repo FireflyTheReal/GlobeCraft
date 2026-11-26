@@ -16,6 +16,9 @@ use std::{
     time::{Duration, Instant},
 };
 /// Download tasks; each source's own `max_parallel` limits how many serve it at once.
+/// Imagery this fine or finer colours the buildings: one texel at zoom 12 spans about
+/// 40 m, a block or two.
+pub const FINE_IMAGERY_ZOOM: u8 = 12;
 const TILE_WORKER_COUNT: usize = 16;
 /// Idle download tasks look at the queue this often even without a wake-up (a source's
 /// throttling pause ending, a slot freed for a waiting source).
@@ -121,6 +124,9 @@ pub struct TileCache {
     generation: AtomicU64,
     /// Like `generation`, for elevation tiles only: what raises overlays onto the relief.
     elevation_generation: AtomicU64,
+    /// Like `generation`, for imagery tiles of `FINE_IMAGERY_ZOOM` or finer only: what
+    /// colours the buildings again.
+    imagery_generation: AtomicU64,
     /// When the last elevation tile arrived.
     elevation_arrived: Mutex<Option<Instant>>,
     inflight: AtomicUsize,
@@ -168,6 +174,68 @@ struct Job {
 const IMAGERY_TILE_PX: f64 = 256.0;
 
 /// Web Mercator coordinates (0–1 across the world, `v` downward) of a point.
+/// A loaded elevation tile: its level, coordinates and the tile.
+type ElevationTile = (u8, u32, u32, Arc<Tile>);
+
+/// `TileCache::loaded_elevation_m` for many points at one `zoom`, each tile of that
+/// level looked up in the cache once: the points of a line or a line of sight mostly
+/// share a tile, and each cache lookup tries the levels down to a loaded one (the
+/// overlays of a view tilted 70° at 16 km made about 50,000 lookups a frame on an M1,
+/// 2026-11-26). The same heights, for as long as the cache holds the same tiles.
+pub struct LoadedElevation<'a> {
+    cache: &'a TileCache,
+    zoom: u8,
+    /// Direct-mapped by the zoom tile's coordinates: the tile and what it read.
+    memo: std::sync::Mutex<Vec<Option<MemoEntry>>>,
+}
+/// A zoom tile's coordinates and the loaded elevation tile its points read.
+type MemoEntry = ((u32, u32), Option<ElevationTile>);
+
+/// Entries of `LoadedElevation::memo`.
+const LOADED_ELEVATION_MEMO: usize = 256;
+
+impl<'a> LoadedElevation<'a> {
+    pub fn new(cache: &'a TileCache, zoom: u8) -> Self {
+        Self {
+            cache,
+            zoom: zoom.min(super::Provider::TerrainDem.max_zoom()),
+            memo: std::sync::Mutex::new(vec![None; LOADED_ELEVATION_MEMO]),
+        }
+    }
+    /// As `TileCache::loaded_elevation_m(lat, lon, zoom)`.
+    pub fn height_m(&self, lat: f64, lon: f64) -> Option<f32> {
+        let (u, v) = mercator(lat, lon);
+        let n = f64::from(1u32 << self.zoom);
+        let (x, y) = (
+            (u * n).floor().min(n - 1.0) as u32,
+            (v * n).floor().min(n - 1.0) as u32,
+        );
+        let slot = (x as usize).wrapping_mul(31).wrapping_add(y as usize) % LOADED_ELEVATION_MEMO;
+        let found = {
+            // Another thread on it (a layer projected in parallel): the cache itself.
+            let Ok(mut memo) = self.memo.try_lock() else {
+                return self.cache.loaded_elevation_m(lat, lon, self.zoom);
+            };
+            match &memo[slot] {
+                Some((at, found)) if *at == (x, y) => found.clone(),
+                _ => {
+                    let found = self.cache.loaded_elevation_tile(self.zoom, x, y);
+                    memo[slot] = Some(((x, y), found.clone()));
+                    found
+                }
+            }
+        };
+        let (level, tx, ty, tile) = found?;
+        let elevation = tile.elevation()?;
+        let n = f64::from(1u32 << level);
+        let size = elevation.size() as f64;
+        Some(elevation.height_m(
+            (u * n - f64::from(tx)) * size,
+            (v * n - f64::from(ty)) * size,
+        ))
+    }
+}
+
 fn mercator(lat: f64, lon: f64) -> (f64, f64) {
     let lat = lat.clamp(-85.05, 85.05);
     let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
@@ -219,6 +287,7 @@ impl TileCache {
             tx,
             generation: AtomicU64::new(0),
             elevation_generation: AtomicU64::new(0),
+            imagery_generation: AtomicU64::new(0),
             elevation_arrived: Mutex::new(None),
             inflight: AtomicUsize::new(0),
             fixture_source: None,
@@ -344,6 +413,20 @@ impl TileCache {
     pub fn loaded_elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
         self.elevation_at(lat, lon, zoom, false)
     }
+    /// The loaded elevation tile `loaded_elevation_m` reads for a point in tile
+    /// `(x, y)` of level `zoom` (every point of it reads the same one): its level, its
+    /// coordinates and the tile.
+    fn loaded_elevation_tile(&self, zoom: u8, x: u32, y: u32) -> Option<ElevationTile> {
+        for level in (0..=zoom).rev() {
+            let shift = zoom - level;
+            let (tx, ty) = (x >> shift, y >> shift);
+            let key = make_key(super::Provider::TerrainDem, level, tx, ty, 0);
+            if let Some(tile) = self.ready.get(&key) {
+                return tile.elevation().is_some().then_some((level, tx, ty, tile));
+            }
+        }
+        None
+    }
     /// The colour (RGB, 0–1) of `provider`'s imagery around `(lat, lon)`, averaged
     /// over about `span_deg` of longitude, from the finest loaded tile not coarser
     /// than `coarsest_zoom`. Nothing is requested: buildings take the colour of what
@@ -391,18 +474,20 @@ impl TileCache {
             let n = f64::from(1u32 << level);
             let (tx, ty) = ((u * n).floor().min(n - 1.0), (v * n).floor().min(n - 1.0));
             let key = make_key(super::Provider::TerrainDem, level, tx as u32, ty as u32, 0);
-            match self.lookup(key) {
-                Lookup::Ready(tile) => {
-                    let elevation = tile.elevation()?;
-                    let size = elevation.size() as f64;
-                    return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
-                }
-                Lookup::Absent if request && level == zoom => {
-                    // Admitted like a load ahead of need: the view's own admission
-                    // (which may not sample this tile) must not stop it.
-                    self.request_under_limit(key, MAX_INFLIGHT - 1);
-                }
-                _ => {}
+            if let Some(tile) = self.ready.get(&key) {
+                let elevation = tile.elevation()?;
+                let size = elevation.size() as f64;
+                return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
+            }
+            // Only a lookup that may request asks the request table (behind a lock the
+            // frames take for every tile they ask for): the overlays' terrain test
+            // makes 16 lookups a point, each trying the levels down to a loaded one,
+            // and in a view tilted 70° at 16 km on an M1 it took 36–77 ms a frame
+            // (2026-11-26).
+            if request && level == zoom && matches!(self.lookup(key), Lookup::Absent) {
+                // Admitted like a load ahead of need: the view's own admission
+                // (which may not sample this tile) must not stop it.
+                self.request_under_limit(key, MAX_INFLIGHT - 1);
             }
         }
         None
@@ -783,6 +868,9 @@ impl TileCache {
             self.inflight.fetch_sub(1, Ordering::Relaxed);
         }
         self.generation.fetch_add(1, Ordering::Relaxed);
+        if admitted {
+            self.note_fine_imagery(key);
+        }
         if admitted && unkey(key).0 == super::Provider::TerrainDem {
             self.elevation_generation.fetch_add(1, Ordering::Relaxed);
             *self
@@ -806,6 +894,18 @@ impl TileCache {
     /// Changes whenever a tile request finishes, including failures.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+    /// Changes whenever an imagery tile of `FINE_IMAGERY_ZOOM` or finer arrives: the
+    /// buildings take their colours from these, and were coloured again for every
+    /// tile that finished, labels, relief and failures too.
+    pub fn imagery_generation(&self) -> u64 {
+        self.imagery_generation.load(Ordering::Relaxed)
+    }
+    fn note_fine_imagery(&self, key: TileKey) {
+        let (provider, zoom, ..) = unkey(key);
+        if provider.is_imagery() && zoom >= FINE_IMAGERY_ZOOM {
+            self.imagery_generation.fetch_add(1, Ordering::Relaxed);
+        }
     }
     /// While relief is growing in (`ELEVATION_FADE` after an elevation tile arrived):
     /// a step number that changes every `step`, so a view at rest is drawn again
@@ -1100,17 +1200,45 @@ async fn worker(
     }
 }
 
+/// A future whose panic becomes an error: a panicking download (as every TLS handshake on
+/// Android did before its certificate verifier was set up) would otherwise end its worker
+/// task with the tile's request slot still counted, and after `TILE_WORKER_COUNT` of them
+/// nothing would ever download again.
+struct CatchPanic<F>(std::pin::Pin<Box<F>>);
+impl<F: std::future::Future> std::future::Future for CatchPanic<F> {
+    type Output = Result<F::Output, String>;
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let future = self.0.as_mut();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.poll(cx))) {
+            Ok(std::task::Poll::Ready(output)) => std::task::Poll::Ready(Ok(output)),
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Err(payload) => std::task::Poll::Ready(Err(payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("non-string panic payload")
+                .to_owned())),
+        }
+    }
+}
+
 async fn download(cache: &TileCache, job: Job, repaint: &Arc<dyn Fn() + Send + Sync>) {
     let revalidating = job.revalidate.clone();
-    let fetch = fetch_tile(
+    let fetch = CatchPanic(Box::pin(fetch_tile(
         job.key,
         &cache.disk,
         cache.fixture_source.as_deref(),
         job.ahead,
         revalidating.clone(),
-    );
+    )));
     let outcome = tokio::select! {
-        result = fetch => Some(result),
+        result = fetch => Some(result.unwrap_or_else(|panic| {
+            crate::log_line!("Tile download panicked: {panic}");
+            Err(TileFailure::Error)
+        })),
         () = job.cancel.notified() => None,
     };
     cache
@@ -1183,6 +1311,7 @@ async fn finish_revalidation(
             if tile.bytes() <= cache.budget {
                 cache.ready.insert(job.key, Arc::new(tile));
                 cache.generation.fetch_add(1, Ordering::Relaxed);
+                cache.note_fine_imagery(job.key);
                 repaint();
             }
             report_disk_failure(

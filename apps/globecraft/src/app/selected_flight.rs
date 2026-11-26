@@ -2,7 +2,6 @@
 //! ADSB.lol's map), the rest of its way to its destination, both airports and a card
 //! with its route. Its position comes every few seconds.
 use super::App;
-use super::ui::surface::Surface;
 mod card;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Shape, Stroke};
 use globecraft_core::{camera::Basis, commands::FlightCommand, layers::MapLayer, math::now_unix};
@@ -195,6 +194,13 @@ impl App {
 
     /// The flights to draw: with the selected one's newest position.
     pub(super) fn aircraft_snapshot(&self) -> Arc<AircraftSnapshot> {
+        // Away from now, the planes as they were then, while the history has them.
+        if let Some(replayed) = self
+            .aircraft_replay_time()
+            .and_then(|time| self.live.aircraft.replay(time))
+        {
+            return replayed;
+        }
         let snapshot = self.live.aircraft.snapshot();
         match &self.picked.snapshot {
             Some(shown) if Arc::ptr_eq(&shown.from, &snapshot) => shown.flights.clone(),
@@ -264,12 +270,26 @@ impl App {
             return;
         };
         let scale = self.settings.map_scale;
-        let now = now_unix();
-        let current = flight
-            .position
-            .as_ref()
-            .map(|aircraft| flown_on(aircraft, basis.model, now))
-            .or_else(|| flight.track.last().map(|p| (p.lat, p.lon)));
+        // In a replay the plane is where it was then, and its track ends there.
+        let replay = self.aircraft_replay_time();
+        let (current, track) = match replay {
+            Some(time) => (
+                self.aircraft_snapshot()
+                    .aircraft
+                    .iter()
+                    .find(|aircraft| *aircraft.hex == *flight.hex)
+                    .map(|aircraft| flown_on(aircraft, basis.model, time)),
+                &flight.track[..flight.track.partition_point(|p| p.unix <= time)],
+            ),
+            None => (
+                flight
+                    .position
+                    .as_ref()
+                    .map(|aircraft| flown_on(aircraft, basis.model, now_unix()))
+                    .or_else(|| flight.track.last().map(|p| (p.lat, p.lon))),
+                &flight.track[..],
+            ),
+        };
         let mut shapes = Vec::new();
         let ends_at = TrackEnd {
             ground: current,
@@ -280,7 +300,7 @@ impl App {
             &mut shapes,
             basis,
             rect,
-            &flight.track,
+            track,
             ends_at,
             TrackHeights {
                 heights,
@@ -346,8 +366,9 @@ impl App {
         painter.extend(shapes);
     }
 
-    /// The card of the selected flight, at the top left of the globe.
-    pub(super) fn selected_flight_card(&mut self, ctx: &egui::Context, rect: Rect) {
+    /// The selected flight's details, in its tab of the side pane (a card over the
+    /// globe before 2026-11-19); the tab closes with the selection.
+    pub(super) fn flight_details(&mut self, ui: &mut egui::Ui) {
         let Some(flight) = self.picked.flight.selected() else {
             return;
         };
@@ -358,25 +379,25 @@ impl App {
             self.distance_units(),
             self.picked.flight.loading(),
         );
-        // A card at the globe's top left, closed by its ✕ (or a click beside the
-        // planes, see `globe.rs`).
-        let (open, _) = Surface::card("selected-flight-card", &lines.title, rect)
-            .subtitle(&lines.route)
-            .show(ctx, lang, |ui| {
-                if let Some(warning) = &lines.warning {
-                    ui.label(egui::RichText::new(warning).strong().color(EMERGENCY));
-                }
-                for line in &lines.details {
-                    ui.label(line);
-                }
-                ui.add_space(4.0);
-                ui.small(lang.text("flight-card-source"));
-            });
-        if !open {
-            // Clearing cannot fail.
-            let _ = self.run("flight.clear", json!({}));
+        details_heading(ui, &lines.title, Some(&lines.route));
+        if let Some(warning) = &lines.warning {
+            ui.label(egui::RichText::new(warning).strong().color(EMERGENCY));
         }
+        for line in &lines.details {
+            ui.label(line);
+        }
+        ui.add_space(4.0);
+        ui.small(lang.text("flight-card-source"));
     }
+}
+
+/// The name (and a second line) at the top of a details tab.
+pub(super) fn details_heading(ui: &mut egui::Ui, title: &str, subtitle: Option<&str>) {
+    ui.label(egui::RichText::new(title).font(super::ui::theme::semibold(15.0)));
+    if let Some(subtitle) = subtitle.filter(|s| !s.is_empty()) {
+        ui.weak(subtitle);
+    }
+    ui.add_space(4.0);
 }
 
 /// A line of points at their heights on screen, cut where it leaves the view or goes

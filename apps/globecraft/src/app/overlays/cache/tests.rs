@@ -11,6 +11,7 @@ fn scene() -> (OverlayView, OverlayStyle, BoundaryData) {
         heading: 0.0,
         alt: 1000.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let view = OverlayView {
         basis: cam.basis(4.0 / 3.0),
@@ -57,7 +58,7 @@ fn texts(shapes: &[Shape]) -> Vec<&str> {
     shapes
         .iter()
         .filter_map(|shape| match shape {
-            Shape::Text(text) if text.fallback_color != Color32::from_black_alpha(180) => {
+            Shape::Text(text) if text.fallback_color != super::super::projected::LABEL_HALO => {
                 Some(text.galley.job.text.as_str())
             }
             _ => None,
@@ -158,6 +159,7 @@ fn a_moving_camera_never_paints_a_blank_frame_when_a_patch_arrives() {
             view: geometry_view,
             data: old.clone(),
             fading_out: None,
+            depth: None,
         });
         cache.accept(PreparedOverlay::new(geometry, painter.ctx()));
         // Meanwhile a patch replaced the dataset.
@@ -210,6 +212,7 @@ fn camera_viewport_altitude_density_layers_language_and_map_scale_invalidate() {
                         heading: 30.0,
                         alt: 1000.0,
                         tilt: 0.0,
+                        look_up: 0.0,
                     }
                     .basis(4.0 / 3.0),
                     ..view
@@ -415,6 +418,7 @@ fn label_limit_remains_five_hundred() {
             heading: 0.0,
             alt: view.altitude_km,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         data.labels = (0..625)
@@ -503,6 +507,7 @@ fn place_names_reserve_their_room_before_names_that_loaded_first() {
                 heading: 0.0,
                 alt: 100.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(4.0 / 3.0),
             altitude_km: 100.0,
@@ -621,5 +626,47 @@ fn worker_meshes_tinted_on_the_ui_match_the_triangles_egui_would_draw() {
         assert_eq!(meshes.tinted(colors).vertices, expected(colors));
         colors = [Color32::TRANSPARENT; super::super::projected::BORDER_KINDS.len()];
         assert!(meshes.tinted(colors).is_empty());
+    });
+}
+
+#[test]
+fn a_frame_moved_on_screen_keeps_its_lines_moved_with_it() {
+    headless(|painter| {
+        let (view, style, data) = scene();
+        let data = Arc::new(data);
+        let mut cache = OverlayCache::new(painter.ctx().clone(), None);
+        draw_ready(&mut cache, painter, view, &data, style);
+        let before = cache.shapes.clone();
+        // A pane slides: the same frame, its picture moved 40 points left.
+        let moved = OverlayView {
+            rect: view.rect.translate(vec2(-40.0, 0.0)),
+            ..view
+        };
+        cache.draw(painter, moved, &data, style);
+        assert!(cache.show, "the lines stay on screen");
+        let mut expected = before;
+        expected
+            .iter_mut()
+            .for_each(|shape| shape.translate(vec2(-40.0, 0.0)));
+        assert_eq!(cache.shapes, expected);
+        // Another size is another view: never one moved.
+        let wider = OverlayView {
+            rect: Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0)),
+            ..view
+        };
+        assert_eq!(
+            moved_between(projected_view(view, style), projected_view(wider, style)),
+            None
+        );
+        // The same view half as large again (a window resized in proportion): its
+        // lines scaled about the centres.
+        let larger = OverlayView {
+            rect: Rect::from_center_size(view.rect.center(), view.rect.size() * 1.5),
+            ..view
+        };
+        let by = moved_between(projected_view(view, style), projected_view(larger, style))
+            .expect("same view, scaled");
+        assert_eq!(by.scaling, 1.5);
+        assert_eq!(by * view.rect.center(), larger.rect.center());
     });
 }

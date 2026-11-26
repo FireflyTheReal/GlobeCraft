@@ -45,6 +45,7 @@ fn raster_matches_regression_fixtures() {
         heading: 25.0,
         alt: 14000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis(w as f64 / h as f64);
     let config = |grid, atmo, sun| RenderCfg {
@@ -60,7 +61,11 @@ fn raster_matches_regression_fixtures() {
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
+        sky_behind: false,
+        clouds: None,
+        glint: None,
+        aurora: None,
     };
     let sun = Some(ll_to_v3(20.0, 45.0));
     let scenarios = [
@@ -166,6 +171,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 25.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -179,6 +185,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: -130.0,
                 alt: 1_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -192,6 +199,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 70.0,
                 alt: 500.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -205,6 +213,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 180.0,
                 alt: 30_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -218,6 +227,7 @@ fn batch_references() -> [BatchReference; 6] {
                 heading: 25.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
         BatchReference {
@@ -232,11 +242,12 @@ fn batch_references() -> [BatchReference; 6] {
                 // The closest distance when the fixture was recorded.
                 alt: 0.15,
                 tilt: 0.0,
+                look_up: 0.0,
             },
         },
     ]
 }
-fn batch_reference_config(provider: Provider) -> RenderCfg {
+pub(crate) fn batch_reference_config(provider: Provider) -> RenderCfg {
     RenderCfg {
         sky: None,
         provider,
@@ -250,7 +261,11 @@ fn batch_reference_config(provider: Provider) -> RenderCfg {
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
+        sky_behind: false,
+        clouds: None,
+        glint: None,
+        aurora: None,
     }
 }
 
@@ -416,6 +431,7 @@ fn celestial_backdrop_changes_only_sky_and_preserves_tile_priorities() {
         heading: 20.0,
         alt: 14_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let basis = cam.basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);
@@ -491,6 +507,7 @@ fn without_level_blend_every_pixel_shows_one_level() {
         heading: 0.0,
         alt: 300.0,
         tilt: 70.0,
+        look_up: 0.0,
     }
     .basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);
@@ -533,7 +550,7 @@ fn probe_height(lat: f64, lon: f64) -> f32 {
     h.max(0.0) as f32
 }
 
-fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
+pub(crate) fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     let size = 512;
     let n = f64::from(1u32 << z);
     let heights = (0..size * size)
@@ -551,7 +568,7 @@ fn probe_dem_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     ))
 }
 
-fn probe_image_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
+pub(crate) fn probe_image_tile(z: u8, tx: u32, ty: u32) -> Arc<Tile> {
     let hue = [(200, 80, 60), (60, 160, 80), (70, 90, 200), (190, 170, 60)]
         [((tx + ty + u32::from(z)) % 4) as usize];
     let image = image::RgbaImage::from_fn(256, 256, |x, y| {
@@ -585,21 +602,38 @@ fn terrain_views() {
             return Lookup::Unavailable;
         }
         let mut tiles = tiles.lock().unwrap();
-        let tile = tiles.entry(key).or_insert_with(|| {
-            if provider == Provider::TerrainDem {
-                probe_dem_tile(z, x, y)
-            } else {
-                probe_image_tile(z, x, y)
-            }
-        });
+        let tile =
+            tiles.entry(key).or_insert_with(|| {
+                if provider == Provider::TerrainDem {
+                    // PROBE_GROWING: every level is arriving, growing in throughout (a
+                    // jump to a new place).
+                    if std::env::var_os("PROBE_GROWING").is_some() {
+                        let tile = Arc::try_unwrap(probe_dem_tile(z, x, y)).ok().unwrap();
+                        Arc::new(tile.arriving(
+                            std::time::Instant::now() + std::time::Duration::from_secs(3600),
+                        ))
+                    } else {
+                        probe_dem_tile(z, x, y)
+                    }
+                } else {
+                    probe_image_tile(z, x, y)
+                }
+            });
         Lookup::Ready(tile.clone())
     };
-    let (width, height) = (960, 600);
+    // PROBE_SCALE: a motion frame's size (its level of detail held to the full one's).
+    let scale = std::env::var("PROBE_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(1.0);
+    let (width, height) = ((960.0 * scale) as usize, (600.0 * scale) as usize);
     for (name, alt, tilt, heading) in [
         ("top-16km", 16.0, 0.0, 0.0),
         ("tilt-16km", 16.0, 70.0, 0.0),
         ("tilt-52km", 52.0, 75.0, 0.0),
         ("tilt-6km", 6.0, 72.0, 30.0),
+        ("tilt82-3km", 3.0, 82.0, 30.0),
+        ("tilt85-3km", 3.0, 85.0, 30.0),
     ] {
         if std::env::var("PROBE_VIEW").is_ok_and(|only| only != name) {
             continue;
@@ -610,6 +644,7 @@ fn terrain_views() {
             heading,
             alt,
             tilt,
+            look_up: 0.0,
         }
         .basis_for_model(
             width as f64 / height as f64,
@@ -618,7 +653,29 @@ fn terrain_views() {
         let mut cfg = batch_reference_config(Provider::Satellite);
         cfg.sky = None;
         cfg.atmo = true;
-        cfg.terrain = Some(crate::TerrainCfg::new(1.0));
+        cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+        // PROBE_SUN: a low afternoon sun from the west-south-west, 15° up: the
+        // relief's shadows (roadmap C5).
+        if std::env::var_os("PROBE_SUN").is_some() {
+            let up = globecraft_core::math::ll_to_v3(30.3, 79.8);
+            let east = glam::DVec3::Z.cross(up).normalize();
+            let north = up.cross(east);
+            // PROBE_RISE: the sun's height, degrees.
+            let rise = std::env::var("PROBE_RISE")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(15.0);
+            let (rise, bearing) = (rise.to_radians(), 250f64.to_radians());
+            cfg.sun = Some(
+                (up * rise.sin() + (north * bearing.cos() + east * bearing.sin()) * rise.cos())
+                    .normalize(),
+            );
+        }
+        cfg.lod_scale = scale;
+        // PROBE_SHARP: without smoothing (Settings › Graphics).
+        if std::env::var_os("PROBE_SHARP").is_some() {
+            cfg.terrain = cfg.terrain.map(crate::TerrainCfg::without_smoothing);
+        }
         // Warm the tile map, then time: the fastest of a few runs, as the machine's
         // other work only ever adds time.
         let (mut pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
@@ -701,6 +758,7 @@ fn a_fixed_level_shows_one_tile_tier_across_the_picture() {
                 heading: 0.0,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(width as f64 / height as f64)
         })
@@ -720,7 +778,7 @@ fn a_fixed_level_shows_one_tile_tier_across_the_picture() {
 }
 
 #[test]
-fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
+fn night_lights_glow_on_the_night_side_and_everywhere_without_sun() {
     let (ground, lights) = (solid_tile([90, 110, 70]), solid_tile([250, 220, 120]));
     let lookup = |key: TileKey| {
         if unkey(key).0 == Provider::NightLights {
@@ -736,6 +794,7 @@ fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
         heading: 0.0,
         alt: 400.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     let basis = cam.basis(width as f64 / height as f64);
     let mut cfg = batch_reference_config(Provider::Satellite);
@@ -755,10 +814,186 @@ fn night_lights_glow_on_the_night_side_and_replace_the_day_without_sun() {
     cfg.night_lights = None;
     let (day, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
     assert_eq!(day_lit, day);
-    // Without the sun the lights are the surface.
+    // Without the sun it is night everywhere, ground and air drawn as the night side
+    // is (they differed, user 2026-11-18).
+    cfg.night_lights = Some(0);
+    for atmo in [false, true] {
+        cfg.atmo = atmo;
+        cfg.sun = Some(-ll_to_v3(cam.lat, cam.lon));
+        let (night_side, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        cfg.sun = None;
+        let (everywhere, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        let most = night_side
+            .iter()
+            .zip(&everywhere)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(most <= 2, "atmosphere {atmo}: {most}");
+    }
+}
+
+#[test]
+fn night_lights_cover_the_poles_where_their_tiles_end() {
+    let (ground, lights) = (solid_tile([90, 110, 70]), solid_tile([250, 220, 120]));
+    let lookup = |key: TileKey| {
+        if unkey(key).0 == Provider::NightLights {
+            Lookup::Ready(lights.clone())
+        } else {
+            Lookup::Ready(ground.clone())
+        }
+    };
+    let (width, height) = (64, 48);
+    let mut cfg = batch_reference_config(Provider::Satellite);
+    cfg.atmo = false;
+    cfg.sky = None;
     cfg.sun = None;
     cfg.night_lights = Some(0);
-    let (plain, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+    // Every meridian meets at the pole: the grid would cover it.
+    cfg.grid = false;
     let centre = (height / 2 * width + width / 2) * RGBA_CHANNELS;
-    assert!(plain[centre].abs_diff(250) <= 2 && plain[centre + 2].abs_diff(120) <= 2);
+    // Over each pole the lights add their edge colour, not the day imagery (green).
+    for (lat, edge) in [(89.9, [4, 5, 15]), (-89.9, [43, 51, 85])] {
+        let cam = Cam {
+            lat,
+            lon: 30.0,
+            heading: 0.0,
+            alt: 300.0,
+            tilt: 0.0,
+            look_up: 0.0,
+        };
+        let basis = cam.basis(width as f64 / height as f64);
+        cfg.night_lights = Some(0);
+        let (pixels, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        // The same night without the lights: the ground's own share.
+        cfg.night_lights = None;
+        cfg.sun = Some(-ll_to_v3(lat, 30.0));
+        let (dark, _, _) = render_pixels_tracked(width, height, &basis, &cfg, &lookup);
+        cfg.sun = None;
+        let pole: Vec<u8> = (centre..centre + 3).map(|i| pixels[i] - dark[i]).collect();
+        assert!(
+            pole.iter().zip(edge).all(|(&c, e)| c.abs_diff(e) <= 2),
+            "{lat}: {pole:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "manual: how much the picture changes where relief switches on"]
+fn relief_switch_on_probe() {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    let dir = std::path::PathBuf::from(std::env::var("GLOBECRAFT_PROBE_DIR").unwrap());
+    let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = unkey(key);
+        let mut tiles = tiles.lock().unwrap();
+        let tile = tiles.entry(key).or_insert_with(|| {
+            if provider == Provider::TerrainDem {
+                probe_dem_tile(z, x, y)
+            } else {
+                probe_image_tile(z, x, y)
+            }
+        });
+        Lookup::Ready(tile.clone())
+    };
+    let (width, height) = (960, 600);
+    for tilt in [0.0, 60.0] {
+        let basis = Cam {
+            lat: 30.3,
+            lon: 79.8,
+            heading: 0.0,
+            alt: 199.9,
+            tilt,
+            look_up: 0.0,
+        }
+        .basis_for_model(
+            width as f64 / height as f64,
+            globecraft_core::earth_model::EarthModel::Wgs84,
+        );
+        let mut cfg = batch_reference_config(Provider::Satellite);
+        cfg.sky = None;
+        cfg.atmo = true;
+        let flat = render_pixels_tracked(width, height, &basis, &cfg, &lookup).0;
+        for fade in [
+            0.0,
+            crate::relief_fade(199.9, true),
+            crate::relief_fade(180.0, true),
+            1.0,
+        ] {
+            cfg.terrain = Some(crate::TerrainCfg::new(1.0, fade));
+            let relief = render_pixels_tracked(width, height, &basis, &cfg, &lookup).0;
+            let diff: Vec<u32> = flat
+                .iter()
+                .zip(&relief)
+                .map(|(a, b)| u32::from(a.abs_diff(*b)))
+                .collect();
+            let mean = diff.iter().sum::<u32>() as f64 / diff.len() as f64;
+            let big = diff.iter().filter(|d| **d > 8).count() as f64 / diff.len() as f64;
+            println!(
+                "tilt {tilt} fade {fade:.4}: mean diff {mean:.2}, {:.1} % channels off by >8",
+                big * 100.0
+            );
+            image::RgbaImage::from_raw(width as u32, height as u32, relief)
+                .unwrap()
+                .save(dir.join(format!("switch-{tilt}-{fade:.6}.png")))
+                .unwrap();
+        }
+        image::RgbaImage::from_raw(width as u32, height as u32, flat)
+            .unwrap()
+            .save(dir.join(format!("switch-{tilt}-flat.png")))
+            .unwrap();
+    }
+}
+
+/// Required tiles come coarse first, and at each level the elevation before the
+/// imagery.
+#[test]
+fn required_tiles_put_elevation_first_at_each_level() {
+    use globecraft_data::tiles::{Provider, make_key};
+    let imagery = |z| make_key(Provider::Satellite, z, 1, 1, 0);
+    let elevation = |z| make_key(Provider::TerrainDem, z, 1, 1, 0);
+    let view = RenderedView {
+        pixels: Vec::new(),
+        waiting: vec![imagery(9), elevation(12)],
+        requests: vec![imagery(12), elevation(9), imagery(14)],
+    };
+    assert_eq!(
+        view.required_tiles(),
+        [
+            elevation(9),
+            imagery(9),
+            elevation(12),
+            imagery(12),
+            imagery(14)
+        ]
+    );
+}
+
+/// A frame abandoned before its rows were drawn (`cancel`) leaves them undrawn.
+#[test]
+fn an_abandoned_frame_skips_its_rows() {
+    let cam = Cam {
+        lat: 46.0,
+        lon: 8.0,
+        heading: 0.0,
+        alt: 20.0,
+        tilt: 60.0,
+        look_up: 0.0,
+    };
+    let (w, h) = (64, 48);
+    let cfg = batch_reference_config(globecraft_data::tiles::Provider::Satellite);
+    let basis = cam.basis_for_model(
+        w as f64 / h as f64,
+        globecraft_core::earth_model::EarthModel::Wgs84,
+    );
+    let lookup = |_key| Lookup::Unavailable;
+    let draw = || render_pixels_with(w, h, 0..h, &basis, &cfg, &lookup, Vec::new(), None).pixels;
+    assert!(draw().iter().any(|&channel| channel != 0));
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    assert!(
+        cancel::with_flag(&flag, draw)
+            .iter()
+            .all(|&channel| channel == 0)
+    );
 }

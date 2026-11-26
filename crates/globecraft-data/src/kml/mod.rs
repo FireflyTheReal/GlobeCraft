@@ -8,6 +8,7 @@ use ::kml::{
 use globecraft_core::{
     language::Lang,
     placemark::{PlaceItem, PlaceNode, Placemark, Places},
+    time::{PlaceTime, iso_utc, parse_kml_time},
 };
 use quick_xml::{
     Writer,
@@ -36,7 +37,9 @@ fn encode(node: &PlaceNode) -> Result<Kml<f64>, crate::Error> {
                 name: Some(pm.name.clone()),
                 description: Some(pm.desc.clone()),
                 geometry: Some(Geometry::Point(Point::new(pm.lon, pm.lat, Some(0.0)))),
-                children: vec![visibility],
+                children: std::iter::once(visibility)
+                    .chain(pm.time.map(time_element))
+                    .collect(),
                 ..Default::default()
             })
         }
@@ -106,6 +109,54 @@ pub fn save_kml(path: &str, places: &Places) -> Result<(), crate::Error> {
         false,
     )?)
 }
+/// A placemark's `TimeStamp` (`when`) or `TimeSpan` (`begin`, `end`), when it has a
+/// readable one.
+fn place_time(children: &[Element]) -> Option<PlaceTime> {
+    let part = |element: &Element, name: &str| {
+        element
+            .children
+            .iter()
+            .find(|child| child.name == name)
+            .and_then(|child| child.content.as_deref())
+            .and_then(parse_kml_time)
+    };
+    children
+        .iter()
+        .find_map(|element| match element.name.as_str() {
+            "TimeStamp" => part(element, "when").map(PlaceTime::Stamp),
+            "TimeSpan" => {
+                let (begin, end) = (part(element, "begin"), part(element, "end"));
+                (begin.is_some() || end.is_some()).then_some(PlaceTime::Span { begin, end })
+            }
+            _ => None,
+        })
+}
+
+/// The KML element of a place's time.
+fn time_element(time: PlaceTime) -> Element {
+    let part = |name: &str, unix: f64| Element {
+        name: name.into(),
+        content: Some(iso_utc(unix)),
+        ..Default::default()
+    };
+    match time {
+        PlaceTime::Stamp(unix) => Element {
+            name: "TimeStamp".into(),
+            children: vec![part("when", unix)],
+            ..Default::default()
+        },
+        PlaceTime::Span { begin, end } => Element {
+            name: "TimeSpan".into(),
+            children: begin
+                .map(|unix| part("begin", unix))
+                .into_iter()
+                .chain(end.map(|unix| part("end", unix)))
+                .collect(),
+            ..Default::default()
+        },
+    }
+}
+
 fn metadata(elements: &[Kml<f64>], field: &str) -> Option<String> {
     elements.iter().find_map(|entry| match entry {
         Kml::Element(element) if element.name == field => element.content.clone(),
@@ -181,6 +232,7 @@ fn collect(document: Kml<f64>, lg: Lang, out: &mut Vec<PlaceNode>) -> Result<(),
                     desc: pm.description.unwrap_or_default().trim().to_owned(),
                     lat,
                     lon,
+                    time: place_time(&pm.children),
                 });
                 node.visible = visibility;
                 out.push(node);

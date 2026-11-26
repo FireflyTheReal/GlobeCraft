@@ -12,8 +12,8 @@
 //! distance), so the relief it clears is the relief they would have marched through.
 use super::{Anchor, Local, Lookup, TileKey};
 use super::{
-    BLOCK_EXIT_TEXELS, DemTile, MAX_MARCH_STEPS, MAX_NUDGE, MAX_TERRAIN_M, TerrainCfg, dem_tile,
-    height_above, shell_span, zoom_band,
+    BLOCK_EXIT_TEXELS, DemTile, MAX_MARCH_STEPS, MAX_NUDGE, MAX_TERRAIN_M, TerrainCfg, ZoomTrack,
+    dem_tile, height_above, shell_span,
 };
 use glam::DVec3;
 use globecraft_core::{EARTH_RADIUS_M, earth_model::SurfaceGeometry};
@@ -85,8 +85,9 @@ pub(in crate::terrain) fn clear_distance(
     let q = geometry.inverse_axes_squared();
     let mut t = start;
     let mut anchor = Anchor::at(geometry, origin, axis, t);
-    let (mut zoom, mut zoom_until) = (0, f64::NEG_INFINITY);
     let mut current: Option<DemTile> = None;
+    let mut coarser: Option<Option<DemTile>> = None;
+    let mut levels = ZoomTrack::new();
     let mut looked_up: Option<i32> = None;
     let mut start_level = usize::MAX;
     for _ in 0..MAX_MARCH_STEPS {
@@ -100,9 +101,8 @@ pub(in crate::terrain) fn clear_distance(
         if height - reach <= 0.0 {
             break;
         }
-        if t > zoom_until {
-            (zoom, zoom_until) = zoom_band(t, pixel_angle, anchor.latitude_cosine);
-        }
+        let (zoom, weight) = levels.at(t, pixel_angle, anchor.latitude_cosine);
+        let weight = if terrain.smooth { weight } else { 1.0 };
         let mut uv = anchor.uv(t);
         let reuse = looked_up == Some(zoom)
             && current
@@ -112,7 +112,14 @@ pub(in crate::terrain) fn clear_distance(
             current = dem_tile(loc, zoom, uv, dist);
             looked_up = current.is_some().then_some(zoom);
             start_level = usize::MAX;
+            coarser = None;
         }
+        let blend = if weight < 1.0 && zoom > 0 && current.is_some_and(|tile| tile.level() == zoom)
+        {
+            *coarser.get_or_insert_with(|| dem_tile(loc, zoom - 1, uv, dist))
+        } else {
+            None
+        };
         // No relief loaded here: the pixels go on alone.
         let Some(tile) = current else {
             break;
@@ -185,6 +192,16 @@ pub(in crate::terrain) fn clear_distance(
             for yy in by.0..=by.1 {
                 for xx in bx.0..=bx.1 {
                     top = top.max(block_max(level, xx, yy).unwrap_or(f32::MAX));
+                }
+            }
+            // The pixels' heights blend in the next coarser level's: under its top too.
+            if let Some(coarser) = blend {
+                let held = super::Held::of(loc);
+                for yy in by.0..=by.1 {
+                    for xx in bx.0..=bx.1 {
+                        let coarse = coarser.top_over_finer_m(held, tile.level(), level, (xx, yy));
+                        top = top.max(coarse.unwrap_or(f32::MAX));
+                    }
                 }
             }
             let top = f64::from(top) * to_world;

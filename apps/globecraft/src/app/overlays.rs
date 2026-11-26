@@ -296,8 +296,16 @@ impl App {
             painter.circle_filled(s, 5.0 * ms, Color32::from_rgb(255, 230, 120));
             painter.circle_stroke(s, 5.0 * ms, Stroke::new(1.5_f32, Color32::BLACK));
         }
-        // placemarks
+        // placemarks; one with a time (KML TimeStamp or TimeSpan) on the timeline
+        // then only.
+        let wall = globecraft_core::math::now_unix();
         for pm in self.places.items.markers(true) {
+            if pm
+                .time
+                .is_some_and(|when| !self.time.shows_place(when, wall))
+            {
+                continue;
+            }
             if visibility
                 .as_ref()
                 .is_some_and(|visibility| !visibility.visible(pm.lat, pm.lon))

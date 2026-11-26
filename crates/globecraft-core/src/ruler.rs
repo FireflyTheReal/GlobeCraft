@@ -138,6 +138,14 @@ impl Ruler {
         self.undo.push_back(before);
         self.redo.clear();
     }
+    /// How many edits Undo can still take back (and Redo bring back): the app orders its
+    /// own history against the ruler's with these.
+    pub fn undo_steps(&self) -> usize {
+        self.undo.len()
+    }
+    pub fn redo_steps(&self) -> usize {
+        self.redo.len()
+    }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
             || self

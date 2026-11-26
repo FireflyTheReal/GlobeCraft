@@ -7,7 +7,6 @@ use eframe::egui;
 use globecraft_data::buildings::BuildingSnapshot;
 use globecraft_render::live_layers::{BuildingMesh, LiveView};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 /// Samples per pixel of the blocks' picture: smooth edges.
 const SAMPLES: u32 = 4;
@@ -33,6 +32,8 @@ pub(super) struct BuildingOverlay {
 
 /// The blocks' own picture on the GPU, shown as an egui texture.
 struct Picture {
+    corners: KeptBuffer,
+    triangles: KeptBuffer,
     pipeline: wgpu::RenderPipeline,
     size: [u32; 2],
     samples: wgpu::TextureView,
@@ -114,31 +115,20 @@ fn render(
     }
     let picture = picture.get_or_insert_with(|| Picture::new(gpu, size));
 
-    let mut vertices = Vec::with_capacity(mesh.vertices.len() * VERTEX_BYTES as usize);
-    let (min, span) = (view.rect.min, view.rect.size());
-    for vertex in &mesh.vertices {
-        let clip = [
-            (vertex.at.x - min.x) / span.x * 2.0 - 1.0,
-            1.0 - (vertex.at.y - min.y) / span.y * 2.0,
-            vertex.nearness,
-        ];
-        vertices.extend(clip.iter().flat_map(|value| value.to_ne_bytes()));
-        vertices.extend(premultiplied(vertex.colour).to_array());
-    }
-    let buffer = |label, contents: &[u8], usage| {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents,
-            usage,
-        })
+    // Laid out by the live-layer worker for the view the mesh was projected for, and
+    // written into buffers kept from mesh to mesh: made anew for each, a dense city's
+    // 16 MB of corners were allocated on every frame of a moving view.
+    let vertices = mesh.gpu_vertex_bytes();
+    picture
+        .corners
+        .write(gpu, vertices, wgpu::BufferUsages::VERTEX);
+    picture
+        .triangles
+        .write(gpu, mesh.index_bytes(), wgpu::BufferUsages::INDEX);
+    let (Some(corners), Some(triangles)) = (&picture.corners.buffer, &picture.triangles.buffer)
+    else {
+        return picture.id;
     };
-    let vertices = buffer("building corners", &vertices, wgpu::BufferUsages::VERTEX);
-    let indices: Vec<u8> = mesh
-        .indices
-        .iter()
-        .flat_map(|index| index.to_ne_bytes())
-        .collect();
-    let indices = buffer("building triangles", &indices, wgpu::BufferUsages::INDEX);
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("buildings"),
     });
@@ -166,12 +156,44 @@ fn render(
             ..Default::default()
         });
         pass.set_pipeline(&picture.pipeline);
-        pass.set_vertex_buffer(0, vertices.slice(..));
-        pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_vertex_buffer(0, corners.slice(..vertices.len() as u64));
+        pass.set_index_buffer(
+            triangles.slice(..mesh.index_bytes().len() as u64),
+            wgpu::IndexFormat::Uint32,
+        );
         pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
     }
     gpu.queue.submit([encoder.finish()]);
     picture.id
+}
+
+/// A GPU buffer written again for each mesh, made larger only when a mesh needs it.
+#[derive(Default)]
+struct KeptBuffer {
+    buffer: Option<wgpu::Buffer>,
+}
+
+impl KeptBuffer {
+    fn write(&mut self, gpu: &egui_wgpu::RenderState, bytes: &[u8], usage: wgpu::BufferUsages) {
+        // Writes go in whole multiples of four bytes; the corners and triangles are.
+        let size = (bytes.len() as u64).max(wgpu::COPY_BUFFER_ALIGNMENT);
+        if self
+            .buffer
+            .as_ref()
+            .is_none_or(|buffer| buffer.size() < size)
+        {
+            self.buffer = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("buildings"),
+                // Room to grow, so a mesh a little larger does not make a new one.
+                size: size.next_power_of_two(),
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        if let Some(buffer) = &self.buffer {
+            gpu.queue.write_buffer(buffer, 0, bytes);
+        }
+    }
 }
 
 impl Picture {
@@ -239,6 +261,8 @@ impl Picture {
                 .write()
                 .register_native_texture(device, &shown, wgpu::FilterMode::Linear);
         Self {
+            corners: KeptBuffer::default(),
+            triangles: KeptBuffer::default(),
             pipeline,
             size,
             samples: texture("building samples", COLOUR_FORMAT, SAMPLES),

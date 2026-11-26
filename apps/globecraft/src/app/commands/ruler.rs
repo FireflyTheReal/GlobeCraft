@@ -3,7 +3,7 @@ use super::position;
 use crate::app::App;
 use globecraft_core::commands::RulerCommand;
 use globecraft_core::units::RulerUnit;
-use globecraft_data::settings::workspace::RightPane;
+use globecraft_data::settings::workspace::PaneTab;
 use serde_json::{Value, json};
 
 impl App {
@@ -53,7 +53,7 @@ impl App {
                     self.cam.lon,
                 )));
                 // The editor is a section of the Measure pane.
-                self.settings.workspace.open_right(RightPane::Measure);
+                self.settings.workspace.open_right(PaneTab::Measure);
                 json!({})
             }
             RulerCommand::Undo => {

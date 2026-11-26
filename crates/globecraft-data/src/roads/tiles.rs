@@ -32,6 +32,7 @@ static SPEC: Spec<RoadTile> = Spec {
     // broken into scattered pieces (user report 2026-11-01); zoom 7 takes its place.
     skip_zoom: Some(6),
     tiles_across_view: 3.0,
+    min_radius_km: 0.0,
     max_tiles: 64,
     max_floor_tiles: 64,
     max_cached_tiles: 500,

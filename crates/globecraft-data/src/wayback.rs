@@ -1,5 +1,6 @@
 use std::sync::Mutex;
-const MAX_WAYBACK_RELEASES: usize = 60_000;
+/// As many as a tile key holds (`tiles::MAX_RELEASES`; about 200 exist).
+const MAX_WAYBACK_RELEASES: usize = crate::tiles::MAX_RELEASES;
 const MAX_WAYBACK_CONFIG_BYTES: u64 = 64 << 20;
 
 // ───────────────────────────── Wayback (historical imagery) ─────────────────────────────

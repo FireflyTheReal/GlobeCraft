@@ -7,9 +7,8 @@
 //! is predicted with SGP4 from the elements already loaded: nothing is downloaded.
 use super::App;
 use super::live_layers::{satellite_colour, satellite_symbol};
-use super::ui::surface::Surface;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke};
-use globecraft_core::{camera::Basis, commands::SatelliteCommand, math::now_unix};
+use globecraft_core::{camera::Basis, commands::SatelliteCommand};
 use globecraft_data::satellites::{Satellite, SatellitePosition};
 use serde_json::{Value, json};
 
@@ -124,7 +123,7 @@ impl App {
         }
     }
 
-    fn selected_satellite(&self) -> Option<&Satellite> {
+    pub(super) fn selected_satellite(&self) -> Option<&Satellite> {
         let norad = self.picked.satellite.selected()?;
         self.live
             .satellites
@@ -145,7 +144,8 @@ impl App {
             return;
         };
         let scale = self.settings.map_scale;
-        let now = now_unix();
+        // The app's time: the timeline moves the satellite along its orbit.
+        let now = self.scene_unix();
         let path: Vec<_> = satellite
             .orbit_path(now, ORBIT_SAMPLES)
             .into_iter()
@@ -183,12 +183,13 @@ impl App {
     }
 
     /// The selected satellite's card, at the top left of the globe.
-    pub(super) fn selected_satellite_card(&mut self, ctx: &egui::Context, rect: Rect) {
+    /// The selected satellite's details, in its tab of the side pane.
+    pub(super) fn satellite_details(&mut self, ui: &mut egui::Ui) {
         let Some(satellite) = self.selected_satellite() else {
             return;
         };
         let lang = self.lang;
-        let now = now_unix();
+        let now = self.scene_unix();
         let units = self.distance_units();
         let position = satellite.position(now);
         let mut lines = vec![lang.format(
@@ -235,10 +236,7 @@ impl App {
                 .map(|other| other.name.as_str())
                 .collect();
             if !together.is_empty() {
-                lines.push(lang.format(
-                    "satellites-together",
-                    &[("names", together.join(", ").into())],
-                ));
+                lines.push(crate::app::live_layers::together_with(lang, &together));
             }
         }
         if let Some(minutes) = satellite.orbit.period_minutes() {
@@ -269,19 +267,12 @@ impl App {
                 ("days", format!("{age_days:.1}").into()),
             ],
         );
-        let title = satellite.name.clone();
-        let (open, _) =
-            Surface::card("selected-satellite-card", &title, rect).show(ctx, lang, |ui| {
-                for line in &lines {
-                    ui.label(line);
-                }
-                ui.add_space(4.0);
-                ui.small(source);
-            });
-        if !open {
-            // Clearing cannot fail.
-            let _ = self.run("satellite.clear", json!({}));
+        super::selected_flight::details_heading(ui, &satellite.name, None);
+        for line in &lines {
+            ui.label(line);
         }
+        ui.add_space(4.0);
+        ui.small(source);
     }
 }
 

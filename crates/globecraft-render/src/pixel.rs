@@ -1,14 +1,5 @@
-//! Shared geographic decisions and exact deterministic sky colors.
+//! Shared geographic decisions and the sky's colours.
 use super::*;
-
-fn hash3(a: i64, b: i64, c: i64) -> u64 {
-    let mut h = (a as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ (b as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-        ^ (c as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-    h ^ (h >> 33)
-}
 
 #[derive(Clone, Copy)]
 pub(super) struct Surface {
@@ -19,6 +10,8 @@ pub(super) struct Surface {
     pub(super) dist: f32,
     pub(super) grid: bool,
     pub(super) shade: f32,
+    /// With the sun: the light in its two parts (`Daylight`); `shade` is then unused.
+    pub(super) daylight: Option<Daylight>,
     pub(super) night: f32,
     /// How far into the night the pixel is: 0 by day, 1 past twilight (0 without sun).
     pub(super) darkness: f32,
@@ -30,6 +23,10 @@ pub(super) struct Surface {
     pub(super) lat: f64,
     pub(super) lon: f64,
     pub(super) metres_per_pixel: f64,
+    /// The sun's glint off the water there (0 to 1, `sun::glint`).
+    pub(super) glint: f32,
+    /// The aurora's light between the eye and the pixel (`aurora::glow`).
+    pub(super) aurora: glam::Vec3,
 }
 pub(super) fn surface<const ELLIPSOID: bool>(
     x: usize,
@@ -137,13 +134,25 @@ pub(super) fn surface<const ELLIPSOID: bool>(
     } else {
         false
     };
-    let (shade, night, darkness) = if let Some(sun) = cfg.sun {
-        let k = ((normal.dot(sun) + TWILIGHT_OFFSET) / TWILIGHT_WIDTH).clamp(0.0, 1.0) as f32;
-        let k = k * k * (3.0 - 2.0 * k);
+    // Night everywhere is drawn as the night side is. The eye adapts to twilight
+    // inside the air, as the sky does (`atmosphere::eye_weight`).
+    let daylight = match cfg.sun {
+        Some(sun) => {
+            let camera = ray.point - ray.direction * ray.distance;
+            let height_km =
+                (camera.length() - ray.point.length()) * globecraft_core::EARTH_RADIUS_KM;
+            Some(Daylight::at(
+                normal.dot(sun),
+                atmosphere::eye_weight(height_km as f32),
+            ))
+        }
+        None => cfg.night_everywhere().then(|| Daylight::at(-1.0, 0.0)),
+    };
+    let (shade, night, darkness) = if let Some(daylight) = daylight {
         (
-            NIGHT_BRIGHTNESS + DAY_BRIGHTNESS_RANGE * k,
-            NIGHT_BLUE_TINT * (1.0 - k),
-            1.0 - k,
+            daylight.exposure,
+            NIGHT_BLUE_TINT * daylight.darkness,
+            daylight.darkness,
         )
     } else {
         (1.0, 0.0, 0.0)
@@ -156,14 +165,120 @@ pub(super) fn surface<const ELLIPSOID: bool>(
         dist,
         grid,
         shade,
+        daylight,
         night,
         darkness,
         air: None,
         lat,
         lon,
         metres_per_pixel: mpp,
+        aurora: cfg.aurora.as_ref().map_or(glam::Vec3::ZERO, |aurora| {
+            let camera = ray.point - ray.direction * ray.distance;
+            crate::aurora::glow(aurora, cfg.sun, camera, ray.direction, ray.distance)
+        }),
+        glint: match (cfg.sun, &cfg.glint) {
+            (Some(sun), Some(water)) => {
+                crate::sun::glint(water, lat, lon, ray.direction, ray.normal, sun)
+            }
+            _ => 0.0,
+        },
     }
 }
+/// The daylight on the ground where the sun stands `sun_cosine` (the sine of its
+/// height) above the horizon, in two parts: the sky's, cool, on every surface by the
+/// share of the sky it faces, and the sun's, coloured by the air it crossed
+/// (`atmosphere::Air::sunlight`), by the cosine between a surface and the sun and the
+/// share of the sun not hidden. Both only rise with the sun. At sunrise the sun's
+/// light on a surface facing it (`DIRECT_RISE`) is strong against the sky's
+/// (`SHADE_RISE`): tops and walls facing it take the first light while flat ground,
+/// which it meets at a grazing angle, stays blue; as the sun climbs the sky's light
+/// grows and the sun's eases, so midday contrast is low (`SHADE_DAY`). `eye` (0–1) is how
+/// far the eye is adapted to twilight (`atmosphere::eye_weight`): it keeps the blue
+/// hour readable. The GPU's `overview.wgsl` does the same. High ground sees the sun
+/// before the plain (`raised`): first light reaches the peaks (Julien, 2026-11-22).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Daylight {
+    /// Flat ground's brightness in the open: night's floor to one at noon.
+    pub(crate) exposure: f32,
+    /// 0 by day, 1 past twilight (the night lights' share).
+    pub(crate) darkness: f32,
+    /// The sky's light, coloured.
+    pub(crate) sky: Vec4,
+    /// The sun's light on a surface facing it, before its colour.
+    pub(crate) direct: f32,
+    /// The cosine between flat ground and the sun (none below the horizon).
+    pub(crate) flat_cosine: f32,
+    sun_cosine: f64,
+    eye: f32,
+}
+
+impl Daylight {
+    pub(crate) fn at(sun_cosine: f64, eye: f32) -> Self {
+        Self::below(sun_cosine, 0.0, eye)
+    }
+    /// The daylight on ground whose own horizon lies `dip` (radians) below the level
+    /// one: the sun rises and the sky brightens that much earlier there, as on a peak
+    /// over the plain; its height above the level, and so its light on a surface, are
+    /// the same.
+    pub(crate) fn raised(self, dip: f64) -> Self {
+        if dip > 0.0 {
+            Self::below(self.sun_cosine, dip, self.eye)
+        } else {
+            self
+        }
+    }
+    fn below(sun_cosine: f64, dip: f64, eye: f32) -> Self {
+        // The sine of the sun's height above this ground's own horizon.
+        let over_horizon = sun_cosine + dip;
+        let night_end = TWILIGHT_OFFSET + (EYE_TWILIGHT_COSINE - TWILIGHT_OFFSET) * f64::from(eye);
+        let shade = if over_horizon <= SUN_RISE_START_COSINE {
+            NIGHT_BRIGHTNESS
+                + (SHADE_RISE - NIGHT_BRIGHTNESS)
+                    * smooth((over_horizon + night_end) / (SUN_RISE_START_COSINE + night_end))
+        } else {
+            SHADE_RISE
+                + (SHADE_DAY - SHADE_RISE)
+                    * smooth(
+                        (over_horizon - SUN_RISE_START_COSINE)
+                            / (SKY_DAY_COSINE - SUN_RISE_START_COSINE),
+                    )
+        };
+        let risen = smooth(
+            (over_horizon - SUN_RISE_START_COSINE) / (SUN_RISE_FULL_COSINE - SUN_RISE_START_COSINE),
+        );
+        let day_direct = 1.0 - SHADE_DAY;
+        let direct = risen
+            * (DIRECT_RISE + (day_direct - DIRECT_RISE) * smooth(sun_cosine / SKY_DAY_COSINE));
+        let flat_cosine = sun_cosine.max(0.0) as f32;
+        let colour = glam::Vec3::from(TWILIGHT_SKY).lerp(
+            glam::Vec3::from(DAY_SKY),
+            smooth(sun_cosine / SKY_DAY_COSINE),
+        );
+        // The colour carries no brightness of its own.
+        let colour = colour / colour.dot(glam::Vec3::from(LUMINANCE));
+        Self {
+            exposure: shade + direct * flat_cosine,
+            darkness: 1.0 - smooth((over_horizon + TWILIGHT_OFFSET) / TWILIGHT_WIDTH),
+            sky: Vec4::from((colour * shade, 0.0)),
+            direct,
+            flat_cosine,
+            sun_cosine,
+            eye,
+        }
+    }
+    /// The light on a surface lit by the sun in `sun` colour whose normal meets the sun
+    /// at `cosine`, `seen` the share of the sun not hidden (shadows), facing `sky` of
+    /// the sky.
+    pub(crate) fn light(&self, sun: Vec4, cosine: f32, seen: f32, sky: f32) -> Vec4 {
+        self.sky * sky + sun * (self.direct * cosine.max(0.0) * seen)
+    }
+}
+
+fn smooth(x: f64) -> f32 {
+    let x = x.clamp(0.0, 1.0) as f32;
+    x * x * (3.0 - 2.0 * x)
+}
+
 /// `surface` with the air in front of it, when the frame has an atmosphere.
 pub(super) fn with_air(
     mut surface: Surface,
@@ -185,91 +300,60 @@ pub(super) fn with_air(
     surface
 }
 
-/// The colour of a ray that misses the Earth: the sky behind the air on its way.
-/// `cc` is the camera's distance from the centre squared and `ray.camera_dot` the
-/// ray's reach along it, both in the surface's own measure.
+/// The colour of a ray that misses the Earth: the sky behind the air on its way,
+/// with alpha in `w`. `cc` is the camera's distance from the centre squared and
+/// `ray.camera_dot` the ray's reach along it, both in the surface's own measure.
 pub(super) fn sky(
     ray: &rays::RaySample,
-    cc: f64,
+    rays: &RayCaster,
     air: Option<&atmosphere::Frame>,
     cfg: &RenderCfg,
-    raster_height: usize,
 ) -> Vec4 {
     let d = ray.direction;
-    let mut col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
-    if cfg.stars {
-        let br = if cfg.lod_scale < 1.0 {
-            star_across_pixel(d, raster_height)
-        } else {
-            star(d)
-        };
-        if let Some(br) = br {
-            col = col.max(Vec4::new(br, br, br, 0.0));
-        }
+    let cc = rays.camera_len_squared;
+    let air = air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32));
+    // The sun through the air in front of it, over the sky's glow.
+    let sun = cfg.sun.map_or(glam::Vec3::ZERO, |sun| {
+        let through = air.map_or(glam::Vec3::ONE, |air| air.transmitted.truncate());
+        crate::sun::sun_in_sky(d, sun, through)
+    });
+    // The aurora glows in the air, behind the clouds seen from below.
+    let aurora = cfg.aurora.as_ref().map_or(glam::Vec3::ZERO, |aurora| {
+        crate::aurora::glow(aurora, cfg.sun, rays.camera(), d, f64::INFINITY)
+    });
+    // From below, the clouds are in front of the sky and the sun.
+    let clouds = cfg.clouds.as_ref().and_then(|clouds| {
+        let height_km = (cc.sqrt() - 1.0) * globecraft_core::EARTH_RADIUS_KM;
+        crate::clouds::from_below(clouds, rays.model_geometry(), rays.camera(), height_km, d)
+    });
+    let (cloud, cover) = clouds.unwrap_or((glam::Vec3::ZERO, 0.0));
+    if cfg.sky_behind {
+        let glow = air.map_or(Vec4::ZERO, atmosphere::Air::behind);
+        // Premultiplied: the sun's light hides as much of the sky behind.
+        let open = screen((glow.truncate() + sun).min(glam::Vec3::ONE), aurora);
+        let alpha = glow.w.max(sun.max_element());
+        return (cloud * cover + open * (1.0 - cover)).extend(cover + alpha * (1.0 - cover));
     }
-    match air.and_then(|air| air.sky(d, (ray.camera_dot / cc.sqrt()) as f32)) {
-        Some(air) => air.over_sky(col),
-        None => col,
-    }
+    let col = cfg.sky.as_ref().map_or(SPACE_COLOR, |sky| sky.sample(d));
+    let col = air.map_or(col, |air| air.over_sky(col));
+    let open = screen((col.truncate() + sun).min(glam::Vec3::ONE), aurora);
+    open.lerp(cloud, cover).extend(1.0)
 }
 
-/// The brightest star four rays across the pixel around `d` meet, in a raster
-/// `raster_height` pixels tall. A motion frame's pixel is wider than a star's cell,
-/// so its one ray met a star in one frame and missed it in the next: the stars
-/// flickered while the view moved (user, 2026-11-16).
-fn star_across_pixel(d: DVec3, raster_height: usize) -> Option<f32> {
-    let quarter = 0.5 * VERTICAL_FOV_HALF_TAN / raster_height as f64;
-    let across = d.any_orthonormal_vector();
-    let up = d.cross(across);
-    [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
-        .into_iter()
-        .filter_map(|(x, y)| star(d + (across * x + up * y) * quarter))
-        .reduce(f32::max)
+/// `light` (0 to 1) laid over `colour` as a screen blend: it brightens, never past 1.
+pub(super) fn screen(colour: glam::Vec3, light: glam::Vec3) -> glam::Vec3 {
+    colour + light * (glam::Vec3::ONE - colour)
 }
 
-/// The brightness of the star in direction `d`'s cell of the sky, if it has one.
-fn star(d: DVec3) -> Option<f32> {
-    let hs = hash3(
-        (d.x * STAR_GRID_RESOLUTION).floor() as i64,
-        (d.y * STAR_GRID_RESOLUTION).floor() as i64,
-        (d.z * STAR_GRID_RESOLUTION).floor() as i64,
-    );
-    hs.is_multiple_of(STAR_OCCURRENCE_MODULUS).then(|| {
-        STAR_MIN_BRIGHTNESS
-            + ((hs >> STAR_BRIGHTNESS_SHIFT) & STAR_BRIGHTNESS_MASK) as f32
-                / STAR_BRIGHTNESS_DIVISOR
-    })
+/// Space without the air (0 to 1 as drawn), for a sky drawn behind the frame.
+pub fn space_color() -> [f32; 3] {
+    SPACE_COLOR.truncate().to_array()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use globecraft_core::{camera::Cam, earth_model::EarthModel};
-
-    #[test]
-    fn a_motion_pixel_shows_its_star_wherever_the_star_lies_in_it() {
-        // A star near straight up, where the cells lie square to the view.
-        let cell = 1.0 / STAR_GRID_RESOLUTION;
-        let centre = (0..200)
-            .flat_map(|x| (0..200).map(move |y| (x, y)))
-            .map(|(x, y)| {
-                DVec3::new(x as f64 + 0.5, y as f64 + 0.5, STAR_GRID_RESOLUTION + 0.5) * cell
-            })
-            .find(|&d| star(d).is_some())
-            .expect("a star among 40,000 cells");
-        // A motion raster whose pixels are 1.8 cells wide: the star's cell is in
-        // the pixel whenever the pixel's centre is within 0.8 cells of it.
-        let height = (2.0 * VERTICAL_FOV_HALF_TAN * STAR_GRID_RESOLUTION / 1.8) as usize;
-        let mut missed_by_one_ray = 0;
-        for x in -4..=4 {
-            for y in -4..=4 {
-                let offset = DVec3::new(f64::from(x), f64::from(y), 0.0) * 0.2 * cell;
-                assert!(star_across_pixel(centre + offset, height).is_some());
-                missed_by_one_ray += usize::from(star(centre + offset).is_none());
-            }
-        }
-        assert!(missed_by_one_ray > 0, "one ray would do");
-    }
 
     #[test]
     fn level_of_detail_matches_the_displayed_pixel_density_across_raster_scales() {
@@ -285,6 +369,7 @@ mod tests {
             heading: 25.0,
             alt: 120.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis_for_model(1.0, model);
         let mut bands = Vec::new();
@@ -302,7 +387,11 @@ mod tests {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: None,
-                stars: true,
+                stars: None,
+                sky_behind: false,
+                clouds: None,
+                glint: None,
+                aurora: None,
             };
             let rays = RayCaster::new(w, h, &basis);
             let pixel = surface::<true>(
@@ -341,7 +430,11 @@ mod tests {
             level_blend: true,
             fixed_level: None,
             night_lights: None,
-            stars: true,
+            stars: None,
+            sky_behind: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
         };
         for latitude in [
             -90.0_f64,
@@ -361,6 +454,7 @@ mod tests {
                     heading: 25.0,
                     alt: 0.15,
                     tilt: 0.0,
+                    look_up: 0.0,
                 }
                 .basis_for_model(1.0, model);
                 let rays = RayCaster::new(1, 1, &basis);
@@ -398,7 +492,11 @@ mod tests {
             level_blend: true,
             fixed_level: None,
             night_lights: None,
-            stars: true,
+            stars: None,
+            sky_behind: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
         };
         // Stay midway between parallels so only the prime meridian can mark
         // this pixel. Distances straddle its physical line-width threshold.
@@ -411,6 +509,7 @@ mod tests {
                 heading: 0.0,
                 alt: altitude_km,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis_for_model(1.0, model);
             let rays = RayCaster::new(1, 1, &basis);
@@ -420,6 +519,74 @@ mod tests {
                 pixel.grid, expected,
                 "{fraction} of the line-width threshold"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod daylight_tests {
+    use super::Daylight;
+
+    /// A peak 8 km up takes the sun while the plain is still in twilight; by day it
+    /// is lit as the plain is.
+    #[test]
+    fn high_ground_takes_the_first_light() {
+        let dip = (2.0 * 8_000.0 / globecraft_core::EARTH_RADIUS_M).sqrt();
+        let dawn = Daylight::at((-1.5f64).to_radians().sin(), 1.0);
+        let peak = dawn.raised(dip);
+        assert!(dawn.direct < 1e-3 && peak.direct > 0.2, "{dawn:?} {peak:?}");
+        assert!(peak.sky.x > dawn.sky.x);
+        let noon = Daylight::at(0.9, 1.0);
+        assert!((noon.raised(dip).direct - noon.direct).abs() < 1e-3);
+        assert_eq!(noon.raised(dip).flat_cosine, noon.flat_cosine);
+    }
+
+    /// Flat ground in the open and in shade both only brighten as the sun rises, from
+    /// space and with the eye adapted, so nothing is darker just before sunset than
+    /// just after (the band past the terminator, Julien's screenshot of 2026-11-22).
+    #[test]
+    fn lit_and_shaded_ground_brighten_with_the_sun() {
+        for eye in [0.0, 0.5, 1.0] {
+            let mut last: Option<(f32, f32)> = None;
+            for step in 0..=400 {
+                let sun = (f64::from(step) / 400.0 * 120.0 - 30.0).to_radians().sin();
+                let day = Daylight::at(sun, eye);
+                let shaded = day
+                    .sky
+                    .truncate()
+                    .dot(glam::Vec3::from(crate::tuning::LUMINANCE));
+                // Flat ground in the open: its shade and the sun's light at its angle.
+                let lit = day.exposure;
+                assert!(day.direct >= 0.0, "eye {eye}, sun {sun}");
+                if let Some((last_lit, last_shaded)) = last {
+                    assert!(lit >= last_lit - 1e-5, "lit dips: eye {eye}, sun {sun}");
+                    assert!(
+                        shaded >= last_shaded - 1e-5,
+                        "shade dips: eye {eye}, sun {sun}"
+                    );
+                }
+                last = Some((lit, shaded));
+            }
+            // By day, shade is lit ground's `SHADE_DAY`: midday contrast kept low.
+            let noon = Daylight::at(1.0, eye);
+            assert!((noon.exposure - 1.0).abs() < 1e-5);
+            assert!((noon.direct - (1.0 - crate::tuning::SHADE_DAY)).abs() < 1e-4);
+            // The first light: a top facing the rising sun outshines its shade more
+            // than twice over, and nothing in the open burns out.
+            let rise = Daylight::at(2f64.to_radians().sin(), eye);
+            let shade = rise
+                .sky
+                .truncate()
+                .dot(glam::Vec3::from(crate::tuning::LUMINANCE));
+            assert!(shade + rise.direct > 2.2 * shade, "eye {eye}");
+            for step in 0..=90 {
+                let day = Daylight::at(f64::from(step).to_radians().sin(), eye);
+                let shade = day
+                    .sky
+                    .truncate()
+                    .dot(glam::Vec3::from(crate::tuning::LUMINANCE));
+                assert!(shade + day.direct < 1.2, "facing the sun at {step}°");
+            }
         }
     }
 }

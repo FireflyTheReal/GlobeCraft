@@ -40,7 +40,6 @@ pub(super) struct LiveState {
     /// The vessels and satellites as drawn.
     pub(super) world_shapes: live_layers::WorldShapes,
     pub(super) aurora: globecraft_data::aurora::LiveAurora,
-    pub(super) aurora_shapes: live_layers::AuroraShapes,
     pub(super) airports: globecraft_data::airports::LiveAirports,
     pub(super) time_zones: globecraft_data::timezones::LiveTimeZones,
     pub(super) time_zone_shapes: timezones::TimeZoneShapes,
@@ -121,7 +120,6 @@ impl LiveState {
             satellites: Default::default(),
             world_shapes: Default::default(),
             aurora: Default::default(),
-            aurora_shapes: Default::default(),
             airports: Default::default(),
             time_zones: Default::default(),
             time_zone_shapes: Default::default(),

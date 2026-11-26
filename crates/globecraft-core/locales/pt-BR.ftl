@@ -109,6 +109,7 @@ layers-search-empty-active = Nenhuma camada está ativada.
 wayback-loading-status = Carregando datas disponíveis…
 
 wayback-older-tooltip = Mais antiga
+wayback-date-name = Data das imagens
 
 wayback-newer-tooltip = Mais recente
 
@@ -213,19 +214,19 @@ flight-card-to-go = Faltam { $distance }
 flight-card-track-loading = Carregando a rota voada…
 flight-card-error = Sem rota voada: { $error }
 flight-card-built = fabricado em { $year }
-flight-card-altitude = { $feet } pés
-flight-card-gps-altitude = GPS { $feet } pés
+flight-card-altitude = { $height }
+flight-card-gps-altitude = GPS { $height }
 flight-card-level = nivelado
-flight-card-vertical-rate = { $rate } pés/min
-flight-card-selected-altitude = piloto automático { $feet } pés
-flight-card-ground-speed = { $knots } nós em relação ao solo
-flight-card-indicated-airspeed = IAS { $knots } nós
-flight-card-true-airspeed = TAS { $knots } nós
+flight-card-vertical-rate = { $rate }
+flight-card-selected-altitude = piloto automático { $height }
+flight-card-ground-speed = { $speed } em relação ao solo
+flight-card-indicated-airspeed = IAS { $speed }
+flight-card-true-airspeed = TAS { $speed }
 flight-card-mach = Mach { $mach }
 flight-card-track = rumo { $degrees }°
 flight-card-selected-heading = proa do piloto automático { $degrees }°
-flight-card-wind = vento de { $degrees }° a { $knots } nós
-flight-card-temperature = { $celsius } °C lá fora
+flight-card-wind = vento de { $degrees }° a { $speed }
+flight-card-temperature = { $temperature } lá fora
 flight-card-squawk = squawk { $code }
 flight-card-category = categoria { $category }
 flight-card-position-source = posição por { $source }
@@ -340,9 +341,19 @@ statusbar-cursor-elevation = Elevação: { $distance }
 
 
 settings-uncap-fps-toggle = FPS sem limite (requer reiniciar)
-settings-motion-resolution-auto = Quadros mais leves em movimento (automático)
-settings-motion-resolution = Resolução em movimento
-settings-motion-resolution-help = Enquanto a vista se move ou o relevo carrega, os quadros são renderizados a uma parte da resolução total, para chegarem depressa. O automático usa 40 %, ou 28 % com relevo. 100 % é o mais nítido e o mais lento.
+settings-render-quality = Resolução do globo
+settings-render-quality-screen = Tamanho da tela
+settings-render-quality-hd = HD (1080p)
+settings-render-quality-sd = SD (720p)
+settings-render-quality-help = Quantos pixels o globo desenha. HD e SD desenham menos do que uma tela grande ou Retina tem e carregam blocos mais grossos: quadros mais leves, imagem mais suave. Os quadros em movimento continuam uma parte disso.
+settings-motion-resolution-auto = Quadros mais leves em movimento, vista plana (automático)
+settings-motion-resolution = Resolução em movimento, vista plana
+settings-motion-resolution-help = Enquanto a vista se move, os quadros são renderizados a uma parte da resolução total, para chegarem depressa. O automático usa 40 %. 100 % é o mais nítido e o mais lento.
+settings-motion-resolution-relief-auto = Quadros mais leves em movimento, terreno 3D (automático)
+settings-motion-resolution-relief = Resolução em movimento, terreno 3D
+settings-motion-resolution-relief-help = Com o terreno 3D ligado, enquanto a vista se move ou o terreno carrega, os quadros são renderizados a uma parte da resolução total. O automático usa 28 %. 100 % é o mais nítido e o mais lento.
+settings-smooth-relief-toggle = Transições suaves do terreno 3D
+settings-smooth-relief-help = O detalhe do terreno aparece aos poucos com o zoom, o terreno recém-carregado sobe suavemente e o terreno desaparece entre 100 e 200 km. Desative para mais velocidade: o detalhe muda de uma vez e o terreno termina em 150 km.
 settings-gpu-globe-toggle = Desenhar o globo na GPU (beta, requer reinício)
 settings-gpu-globe-help = Mais rápido na maioria das placas de vídeo. Vistas próximas, a grade, o relevo e qualquer problema da GPU continuam usando o renderizador da CPU. Desative se o globo parecer errado.
 settings-gpu-globe-running = Em uso: { $adapter }.
@@ -369,14 +380,6 @@ explorer-narrated-tour = Passeio narrado (TTS)
 explorer-tour-default = Estamos explorando { $place }. Explore o local no globo e escolha pontos de interesse para continuar seu passeio.
 explorer-read-aloud = ▶ Narrar texto
 explorer-speech-sent = Texto enviado ao sintetizador de voz
-explorer-globe-layers = Camadas no globo
-explorer-layer-info = As camadas georreferenciadas são exibidas diretamente no globo com dados on-line (requer internet).
-explorer-cloud-credit = Imagens de nuvens: Matt Eason / Live Cloud Maps
-explorer-cloud-source = Live Cloud Maps — autor e código-fonte
-explorer-cloud-license = Contém dados modificados da EUMETSAT · CC0 1.0
-explorer-radar-credit = Fonte do radar: RainViewer
-explorer-radar-source = Radar meteorológico RainViewer
-explorer-radar-explanation = Verde/amarelo/vermelho indicam a intensidade aproximada da chuva (refletividade do radar), não a temperatura infravermelha do satélite. A cobertura e atualização variam.
 explorer-bodies = Corpos celestes
 explorer-earth = Terra
 explorer-moon = Lua
@@ -401,12 +404,15 @@ explorer-sky-preview = O céu personalizado é pré-visualizado aqui; não é us
 live-clouds-failed = Falha ao atualizar nuvens
 live-cached-image =  (exibindo imagem em cache)
 live-clouds-ok = Nuvens: Matt Eason (atualização a cada 3 horas)
+live-clouds-none-kept = Nenhuma nuvem guardada para { $time } UTC (guardadas desde 9 de março de 2026, a cada 3 horas)
+live-clouds-archived = Nuvens de { $time } UTC (Matt Eason, guardadas por Joshua Binswanger)
 live-clouds-loading = Nuvens: carregando imagem de satélite…
 live-radar-failed = Falha ao atualizar radar
 live-radar-age = Radar de chuva: observação de aproximadamente { $minutes } min atrás
 live-radar-loading = Radar de chuva: carregando dados do RainViewer…
 sidebar-cloud-source = Dados de nuvens: Matt Eason / EUMETSAT
 sidebar-radar-source = Dados de radar: RainViewer
+glint-credit = Reflexo do sol: Matt Eason · Live Cloud Maps · Contém dados modificados da EUMETSAT
 live-cloud-credit = Matt Eason · Live Cloud Maps · Contém dados modificados da EUMETSAT
 live-radar-credit = Radar de precipitação: RainViewer (rainviewer.com)
 
@@ -631,7 +637,7 @@ vessels-hover-tooltip =
        *[unknown] Tipo de navio não informado
     } • Destino: { $destination }
     Tamanho: { $dimensions }  |  Calado: { $draught }
-    { $latitude }°, { $longitude }° • { $course } • { $speed } kt
+    { $latitude }°, { $longitude }° • { $course } • { $speed }
     Último sinal AIS há { $minutes } min • cobertura depende da fonte
 satellites-hover-tooltip =
     { $name } (NORAD { $norad }) • { $group }
@@ -639,17 +645,6 @@ satellites-hover-tooltip =
     { $model ->
         [sgp4] Prevista com SGP4 a partir dos elementos da CelesTrak
        *[simple] Posição orbital estimada • CelesTrak
-    }
-transport-airport-hover-tooltip =
-    { $name }
-    IATA { $iata } • ICAO { $icao }
-    { $class ->
-        [international] Aeroporto internacional
-        [public] Aeroporto público
-        [regional] Aeroporto regional
-        [military] Aeródromo militar
-        [private] Aeródromo privado
-       *[other] Aeródromo
     }
 
 update-available-label = Atualizar para v{ $version }
@@ -712,6 +707,7 @@ sidebar-sky-title = Céu e iluminação
 
 menu-application-title = GlobeCraft
 menu-view-title = Visualizar
+menu-go-title = Ir
 menu-add-title = Adicionar
 menu-tools-title = Ferramentas
 menu-window-title = Janela
@@ -774,6 +770,14 @@ settings-theme-label = Tema
 settings-theme-system = Sistema
 settings-theme-dark = Escuro
 settings-theme-light = Claro
+settings-reduce-motion-label = Reduzir movimento
+settings-reduce-motion-help = Chegar aos lugares sem voar até eles e impedir que o globo continue girando depois de arrastar. No Mac, Reduzir movimento nos Ajustes do Sistema também faz isso.
+settings-mono-icons-label = Ícones monocromáticos
+settings-mono-icons-help = Desenhar todos os ícones em uma só cor em vez das suas próprias cores: a de destaque, ou uma cor sua, que então substitui a de destaque em toda parte.
+settings-mono-icons-own-color-label = Cor própria em vez da de destaque
+settings-mono-icons-color-label = Cor dos ícones
+settings-utc-times-label = Mostrar horários em UTC
+settings-utc-times-help = A linha do tempo mostra os horários no fuso deste computador, a não ser que esta opção esteja ativada.
 settings-ui-font-label = Fonte da interface
 settings-map-font-label = Fonte dos rótulos do mapa
 settings-font-system = Padrão do sistema
@@ -837,6 +841,7 @@ settings-category-controllers = Controles
 controllers-enabled = Ativar controles
 controllers-help = Navegação Explorar: analógico esquerdo move, eixo X direito gira e gatilhos controlam o zoom. Solte os controles após fechar diálogos ou reconectar.
 controllers-disconnected = Dispositivo selecionado desconectado
+controllers-device-name = Controle
 controllers-action-none = Sem vínculo
 controllers-action-cancel = Cancelar movimento da câmera
 controllers-left-x = Analógico esquerdo X
@@ -867,7 +872,6 @@ sky-help = A Via Láctea é o mapa difuso da NASA, preparado como fundo SDR 4K; 
 sky-loading = Preparando fundo celeste…
 sky-retry = Tentar carregar o fundo novamente
 sky-short-credit = Céu: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
-    { $sky }
 sky-software-credits = Licenças do software de transformação celeste
 
 # Relevo diretamente no motor Rust (sem navegador)
@@ -903,6 +907,8 @@ cmd-camera-zoom-out-help = Afasta a câmera da superfície.
 cmd-camera-reset-north = Norte para cima
 cmd-camera-reset-north-help = Gira a visão para o norte ficar para cima (N).
 cmd-camera-tilt = Inclinar
+cmd-camera-look-around = Olhar em volta
+cmd-camera-look-around-help = Gira a vista em torno da câmera, como quem vira a cabeça: a câmera fica onde está e olha para outro lado (Ctrl+arrastar, ⌘+arrastar no Mac; o botão faz todo arrasto olhar em volta até ser apertado de novo). Passando do horizonte a vista sobe ao céu, até perto do zênite; baixada, volta ao chão.
 cmd-camera-tilt-help = Inclina a vista em direção ao horizonte, ou de volta (Shift+rolagem, Shift+arrastar ou botão direito para cima e para baixo, Shift+Cima/Baixo). Perto do chão a câmera se afasta o quanto a inclinação precisar.
 cmd-camera-top-down = Vista de cima
 cmd-camera-top-down-help = Volta a olhar diretamente para baixo (U).
@@ -945,9 +951,9 @@ cmd-ruler-unit-help = Escolhe a unidade das medições.
 cmd-ruler-edit-points = Editar pontos
 cmd-ruler-edit-points-help = Digita coordenadas exatas para os pontos da régua.
 cmd-edit-undo = Desfazer
-cmd-edit-undo-help = Desfaz a última edição da régua.
+cmd-edit-undo-help = Desfaz a última edição da régua ou o último lugar excluído.
 cmd-edit-redo = Refazer
-cmd-edit-redo-help = Refaz a última edição desfeita da régua.
+cmd-edit-redo-help = Refaz a última edição da régua ou exclusão desfeita.
 cmd-file-screenshot = Captura
 cmd-file-screenshot-help = Salva o globo sem a interface como PNG na pasta de capturas.
 cmd-view-copy-link = Copiar link da vista
@@ -998,6 +1004,9 @@ wayback-compare-tooltip = Deslizar entre duas datas de imagens
 wayback-compare-swap-tooltip = Trocar as duas datas
 cmd-layer-show = Mostrar camada
 cmd-layer-show-help = Mostra, oculta ou alterna uma camada do mapa.
+cmd-layer-cloud-resolution = Detalhe das nuvens
+cmd-layer-cloud-resolution-help = Quão fino é o mapa de nuvens guardado: mais fino mostra mais detalhe de perto, mais grosso carrega e toca mais rápido na linha do tempo.
+cloud-resolution-option = { $pixels } × { $height }
 cmd-layer-opacity = Opacidade da camada
 cmd-layer-opacity-help = Define a opacidade das camadas de nuvens, radar, aurora, fusos horários ou trânsito (0 a 1).
 cmd-layer-solo = Mostrar só esta camada
@@ -1030,7 +1039,16 @@ cmd-assistant-stop-help = Encerra a solicitação atual do assistente; as açõe
 cmd-ui-pane-measure = Painel de medição
 cmd-ui-pane-measure-help = Mostra medições, unidades e histórico da régua.
 cmd-ui-left-pane = Painel lateral
-cmd-ui-left-pane-help = Mostra ou oculta o painel à esquerda do globo.
+cmd-ui-left-pane-help = Mostra ou oculta o painel lateral (as abas continuam).
+cmd-ui-pane-side = Posição do painel lateral
+cmd-ui-pane-side-help = Coloca o painel lateral à esquerda ou à direita do globo.
+cmd-ui-pane-move-tab = Mover aba do painel
+cmd-ui-pane-move-tab-help = Move uma aba do painel lateral para outra posição.
+pane-side-left = Fixar à esquerda
+pane-side-right = Fixar à direita
+pane-side-switch-tooltip = Levar o painel para o outro lado do globo
+pane-flight-title = Voo
+pane-satellite-title = Satélite
 cmd-ui-navigation-controls = Navegador
 cmd-ui-navigation-controls-help = Mostra ou oculta a bússola e o zoom sobre o globo.
 ribbon-group-time = Tempo
@@ -1046,6 +1064,13 @@ cmd-time-pause = Pausar tempo
 cmd-time-pause-help = Mantém a hora do app onde está.
 cmd-time-speed = Velocidade do tempo
 cmd-time-speed-help = Quão rápido o tempo corre quando reproduz, como uma hora por segundo.
+cmd-time-loop = Repetir
+cmd-time-loop-help = Ao tocar, repete entre dois momentos; as nuvens dos momentos nele carregam antes.
+timeline-loop-help = Repetir: tocar em volta entre as duas alças sob a faixa
+timeline-loop-track-help = Arraste as alças para definir onde a repetição começa e termina
+live-clouds-loop-loaded = Nuvens da repetição: { $loaded } de { $total } carregadas (2048 × 1024)
+cmd-time-range = Extensão da linha do tempo
+cmd-time-range-help = Quanto tempo a faixa da linha do tempo abrange: um dia, uma semana, um mês, um ano ou dez anos.
 cmd-time-window = Janela de eventos
 cmd-time-window-help = Mostra pontos com hora (terremotos…) só das horas antes da hora do app.
 timeline-live = Ao vivo
@@ -1061,6 +1086,15 @@ timeline-speed-minute = 1 min/s
 timeline-speed-hour = 1 h/s
 timeline-speed-six-hours = 6 h/s
 timeline-speed-day = 1 dia/s
+timeline-step-back-help = Um passo para trás (uma marca da faixa)
+timeline-step-forward-help = Um passo para a frente (uma marca da faixa)
+timeline-settings-help = Ajustes de tempo: voltar ao agora, velocidade, janela de eventos, extensão
+timeline-range-day = 1 dia
+timeline-range-week = 1 semana
+timeline-range-month = 1 mês
+timeline-range-year = 1 ano
+timeline-range-decade = 10 anos
+timeline-track-help = Arraste a alça redonda para ajustar a hora e a quadrada para a janela de eventos. Marcas: versões do Wayback (com as imagens Wayback) e edições das luzes noturnas; a faixa: nuvens guardadas para horas passadas.
 timeline-window-label = Eventos
 timeline-window-all = Todos
 timeline-window-hour = Última hora
@@ -1078,6 +1112,8 @@ cmd-ui-navigator-style = Estilo dos controles de navegação
 cmd-ui-navigator-style-help = Escolhe os controles com o miniglobo ou os clássicos: anel, controle de movimento e zoom.
 cmd-ui-ribbon = Recolher faixa
 cmd-ui-ribbon-help = Recolhe ou expande a faixa de opções (Ctrl+F1).
+cmd-ui-ribbon-compact = Faixa de opções compacta
+cmd-ui-ribbon-compact-help = Mostrar a faixa de opções como uma linha de botões pequenos, sem títulos de grupo, para deixar mais espaço para o globo.
 cmd-ui-ribbon-pin = Fixar na faixa
 cmd-ui-ribbon-pin-help = Mostra uma ferramenta de um grupo na faixa de opções, ou a deixa só no menu do grupo.
 cmd-ui-quick-tools-pin = Fixar no acesso rápido
@@ -1089,6 +1125,7 @@ cmd-ui-shortcut-set-help = Define as teclas que executam uma ferramenta, remove 
 cmd-ui-ribbon-reset-tools = Restaurar ferramentas da faixa
 cmd-ui-ribbon-reset-tools-help = Devolve as ferramentas da faixa, os botões de acesso rápido e os atalhos de teclado ao estado da instalação.
 ribbon-tool-more = Mais opções desta ferramenta
+ribbon-group-more = Mais em { $group }
 shortcut-dialog-title = Atalho de teclado
 shortcut-dialog-prompt = Pressione as teclas para “{ $tool }”.
 shortcut-dialog-current = Atalho atual: { $keys }
@@ -1263,6 +1300,7 @@ ribbon-layer-peaks = Picos
 ribbon-layer-waters = Rios e águas
 ribbon-layer-parks = Parques
 ribbon-layer-traffic = Trânsito
+present-only-dimmed = Sem dados para este horário, esmaecidos: { $layers }
 statusbar-tiles-ready = Blocos prontos
 assistant-settings-title = Configurações do assistente
 pane-measure-title = Medição
@@ -1367,6 +1405,7 @@ add-data-web-tile-size-label = Tamanho do bloco
 add-data-web-max-zoom-label = Nível mais detalhado
 add-data-web-layer-label = Camada
 add-data-web-no-layers = Carregue antes as camadas do serviço
+add-data-web-layer-name = Camada
 add-data-web-load-layers = Carregar camadas
 add-data-web-default-name = Mapa da web
 add-data-web-test-ok = Chegou um bloco ({ $width } × { $height } pixels).
@@ -1443,6 +1482,8 @@ preset-emodnet = Profundidade dos mares europeus (EMODnet)
 preset-emodnet-help = Profundidade da água dos mares europeus em cores, mais detalhada que o GEBCO ali.
 preset-gibs = Ontem visto do espaço (NASA GIBS)
 preset-gibs-help = A Terra inteira como o satélite MODIS Terra a viu ontem, com as nuvens.
+preset-ozone = Camada de ozônio (NASA OMPS)
+preset-ozone-help = A espessura da camada de ozônio, medida pelo instrumento OMPS do Suomi NPP: o dia mais recente, que chega alguns dias depois. O buraco aparece sobre a Antártida na primavera.
 preset-forest-loss = Perda de cobertura florestal (Global Forest Watch)
 preset-forest-loss-help = Floresta perdida desde 2001, a partir do Landsat (Hansen, Universidade de Maryland).
 preset-earthquakes = Terremotos da última semana (USGS)

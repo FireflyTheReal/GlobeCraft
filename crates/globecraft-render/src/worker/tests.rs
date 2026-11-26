@@ -39,6 +39,7 @@ fn aircraft_geometry_is_prepared_for_the_raster_camera_before_publication() {
         view: expected,
         data: Arc::new(globecraft_data::aircraft::AircraftSnapshot::default()),
         unix_secs: 1000.0,
+        clouds: None,
     });
     worker.submit(view);
     wakes.recv_timeout(TEST_TIMEOUT).unwrap();
@@ -54,6 +55,7 @@ fn request(longitude: f64, presentation: u64) -> RenderRequest {
         heading: 25.0,
         alt: 14_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     };
     RenderRequest {
         width: 64,
@@ -73,7 +75,11 @@ fn request(longitude: f64, presentation: u64) -> RenderRequest {
             level_blend: true,
             fixed_level: None,
             night_lights: None,
-            stars: true,
+            stars: None,
+            sky_behind: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
         },
         presentation,
         compare: None,
@@ -268,4 +274,25 @@ fn frame_preparation_runs_off_ui_and_is_published_with_its_pixels() {
     rx.recv_timeout(TEST_TIMEOUT).unwrap();
     let frame = worker.take_completed(7).unwrap();
     assert_eq!(frame.prepared, (25.0, frame.pixels.clone()));
+}
+
+#[test]
+fn a_preempting_request_abandons_the_frame_being_drawn() {
+    let test = ControlledWorker::new();
+    test.worker.submit(request(1.0, 7));
+    test.start();
+    test.worker.submit_preempting(request(2.0, 7));
+    test.release.send(()).unwrap();
+    assert_eq!(test.start().0, 2.0);
+    assert!(
+        test.worker.take_completed(7).is_none(),
+        "the abandoned frame is never shown"
+    );
+    test.finish();
+    assert_eq!(test.worker.take_completed(7).unwrap().request.cam.lon, 2.0);
+    assert_eq!(test.admitted.recv_timeout(TEST_TIMEOUT).unwrap(), 2);
+    assert!(
+        test.admitted.try_recv().is_err(),
+        "an abandoned frame admits no downloads"
+    );
 }

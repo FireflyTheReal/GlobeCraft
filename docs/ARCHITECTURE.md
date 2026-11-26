@@ -142,7 +142,7 @@ dispatch through `App::run`. `globecraft_core::layers::MapLayer` names every tog
 stores their visibility (`layers`, plus the earlier `sky` and `grid_numbers` fields).
 
 The window is laid out like RustGIS (Apache-2.0, see CREDITS.md): header,
-ribbon, left/right panes, status bar and the globe in the central panel (`app/ui/chrome.rs`,
+ribbon, side pane, status bar and the globe in the central panel (`app/ui/chrome.rs`,
 `ribbon.rs`, `panes.rs`, `widgets.rs`, `theme.rs`, `icons.rs`). The header also serves as the
 title bar (`app/ui/window_chrome.rs`): macOS uses a full-size content view with hidden title
 text and its native traffic lights; Windows and Linux keep the native title bar, buttons and
@@ -531,10 +531,12 @@ construction retain their current frontend scheduling; this PR does not add jobs
 
 ## Panes
 
-`app/ui/panes.rs` draws the left pane (Layers, Places, Globe; Places can be pinned below the
-others) and the right pane (AI Assistant, Measure). Data owns tolerant `SidebarLayout`
-(left) and `WorkspaceLayout` (ribbon tab, collapse, right panes) persistence in the
-existing settings file; name/description editing and tree mutations remain in
+`app/ui/panes.rs` draws the one side pane (left or right of the globe) with its tabs:
+Layers, Places (which can be pinned below the others), AI Assistant, Measure, Legend,
+Explorer and the details of a selected flight, satellite or point. Data owns tolerant
+`WorkspaceLayout` (ribbon tab, collapse, the pane's tabs, side and width) and
+`SidebarLayout` (the pinned Places) persistence in the existing settings file; files
+from before the one pane have their left pane's tabs moved into it on load; name/description editing and tree mutations remain in
 `app/ui/places.rs` and core.
 
 ## Coordinate presentation

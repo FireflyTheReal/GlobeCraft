@@ -6,6 +6,7 @@ use crate::{
 use crate::{MAX_CAMERA_LATITUDE_DEG, METERS_PER_KM, METERS_PER_LATITUDE_DEGREE};
 use emath::{Pos2, Rect};
 use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dcamera::rh};
+mod look;
 // Reject near-zero projection depths and rotation axes; bound pan amplification near poles.
 const PROJECTION_DEPTH_EPSILON: f64 = 1e-9;
 const ROTATION_AXIS_EPSILON: f64 = 1e-13;
@@ -30,6 +31,10 @@ pub struct Cam {
     pub alt: f64,
     /// Degrees the view leans from straight down toward the horizon (0 = top-down).
     pub tilt: f64,
+    /// Degrees the view is raised about the camera above the ground point (0 to
+    /// `MAX_LOOK_UP_DEG`): looking around past the horizon at the sky (roadmap C8).
+    /// The camera stays where the other fields put it.
+    pub look_up: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -67,8 +72,14 @@ impl Cam {
         // at; the top of the screen stays in the heading's vertical plane.
         let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
         let back = n * t.cos() - u * t.sin();
-        let f = -back;
-        let up = u * t.cos() + n * t.sin();
+        let mut f = -back;
+        let mut up = u * t.cos() + n * t.sin();
+        let look_up = self.look_up.clamp(0.0, MAX_LOOK_UP_DEG);
+        if look_up > 0.0 {
+            // About the view's right-hand axis: forward turns toward up.
+            let raise = DQuat::from_axis_angle(f.cross(up).normalize(), look_up.to_radians());
+            (f, up) = (raise * f, raise * up);
+        }
         // Geographic world axes are right-handed. View space is X-right/Y-up/-Z-forward.
         let view_from_world = rh::view::look_to_mat3(f, up);
         let target = if model == EarthModel::PerfectSphere {
@@ -80,7 +91,7 @@ impl Cam {
         Basis {
             c: target + back * (self.alt / EARTH_RADIUS_KM),
             model,
-            tilt_deg: t.to_degrees(),
+            tilt_deg: t.to_degrees() + look_up,
             center: (self.lat, self.lon),
             view_from_world,
             world_from_view: view_from_world.transpose(),
@@ -212,7 +223,15 @@ impl Basis {
 }
 
 /// The steepest tilt, near the ground: the horizon stays in view.
-pub const MAX_TILT_DEG: f64 = 80.0;
+/// 80° until 2026-11-17, then 82°, then 85° (the user's asks the same day).
+pub const MAX_TILT_DEG: f64 = 85.0;
+/// The most the view can be raised about the camera past where it looks at the
+/// ground: from the steepest tilt, near the zenith.
+pub const MAX_LOOK_UP_DEG: f64 = 90.0;
+/// Zooming out past this altitude levels the view: the tilt allowed eases to straight
+/// down at `LEVEL_VIEW_ALTITUDE_KM`, as in Bing Maps (user, 2026-11-17).
+const TILT_EASES_FROM_ALTITUDE_KM: f64 = 6_000.0;
+const LEVEL_VIEW_ALTITUDE_KM: f64 = 15_000.0;
 /// A tilted camera keeps at least this height above the ground point: eye level.
 /// It was 300 m, which pushed the camera away on every tilt close up (user,
 /// 2026-11-16); the app keeps the camera above the relief itself.
@@ -220,10 +239,34 @@ const MIN_TILTED_HEIGHT_KM: f64 = 0.002;
 
 impl Cam {
     /// The steepest tilt at this distance: `MAX_TILT_DEG`, less when the camera would
-    /// otherwise come closer to the ground than `MIN_TILTED_HEIGHT_KM`.
+    /// otherwise come closer to the ground than `MIN_TILTED_HEIGHT_KM`, and less far
+    /// out, down to none at `LEVEL_VIEW_ALTITUDE_KM` (zooming out levels the view).
     pub fn max_tilt(&self) -> f64 {
         let height_ratio = (MIN_TILTED_HEIGHT_KM / self.alt.max(MIN_TILTED_HEIGHT_KM)).min(1.0);
-        height_ratio.acos().to_degrees().min(MAX_TILT_DEG)
+        let far_limit = MAX_TILT_DEG * self.lean_allowed();
+        height_ratio
+            .acos()
+            .to_degrees()
+            .min(MAX_TILT_DEG)
+            .min(far_limit)
+    }
+    /// How much of its lean the view keeps at this distance: all of it up to
+    /// `TILT_EASES_FROM_ALTITUDE_KM`, easing to none at `LEVEL_VIEW_ALTITUDE_KM`.
+    fn lean_allowed(&self) -> f64 {
+        let far = ((self.alt - TILT_EASES_FROM_ALTITUDE_KM)
+            / (LEVEL_VIEW_ALTITUDE_KM - TILT_EASES_FROM_ALTITUDE_KM))
+            .clamp(0.0, 1.0);
+        1.0 - far * far * (3.0 - 2.0 * far)
+    }
+    /// The most the view can be raised into the sky at this distance: it eases out
+    /// with the tilt, so far out the view stays level however it is dragged (the
+    /// lock agreed on 2026-11-17; looking up had slipped past it, user 2026-11-19).
+    pub fn max_look_up(&self) -> f64 {
+        MAX_LOOK_UP_DEG * self.lean_allowed()
+    }
+    /// The steepest the tilt controls lean the view here: tilt and look-up together.
+    pub fn max_view_tilt(&self) -> f64 {
+        MAX_TILT_DEG * self.lean_allowed() + self.max_look_up()
     }
     /// Sets the tilt, kept between straight down and `max_tilt`.
     pub fn set_tilt(&mut self, degrees: f64) {
@@ -247,6 +290,111 @@ impl Cam {
         }
         self.tilt = tilt.min(self.max_tilt());
     }
+    /// The view's lean from straight down, its look up past the ground included: what
+    /// the tilt controls show and change, so that they and looking around (Ctrl+drag)
+    /// move one view (user, 2026-11-19).
+    pub fn view_tilt(&self) -> f64 {
+        self.tilt + self.look_up.clamp(0.0, MAX_LOOK_UP_DEG)
+    }
+    /// Leans the view to `degrees` from straight down (past the steepest tilt up to
+    /// `MAX_TILT_DEG + MAX_LOOK_UP_DEG`): about the point it looks at as far as
+    /// `tilt_zooming_out` leans it, the rest raised about the eye into the sky. Looking
+    /// up already, the view comes down from the sky first.
+    pub fn tilt_view(&mut self, degrees: f64) {
+        if !degrees.is_finite() {
+            return;
+        }
+        let degrees = degrees.clamp(0.0, MAX_TILT_DEG + MAX_LOOK_UP_DEG);
+        if self.look_up > 0.0 && degrees >= self.tilt {
+            self.look_up = (degrees - self.tilt).min(self.max_look_up());
+            return;
+        }
+        self.look_up = 0.0;
+        self.tilt_zooming_out(degrees.min(MAX_TILT_DEG));
+        // What leaning about the ground could not reach.
+        if degrees > self.tilt + 1e-9 {
+            self.look_up = (degrees - self.tilt).min(self.max_look_up());
+        }
+    }
+    /// Moves the looked-at point `rise_km` up along the line of sight, keeping the
+    /// eye where it is: when the ground under the view centre turns out higher or
+    /// lower (finer relief arrived, or a pan moved the centre over a slope), the view
+    /// stays still instead of the camera moving with its target. Easing the target
+    /// up and down moved the whole picture after every stop (user's recording,
+    /// 2026-11-17). Returns the rise made, less when the camera reached its closest
+    /// distance.
+    pub fn slide_target(&mut self, rise_km: f64) -> f64 {
+        let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
+        // Steeper views move the target far along the ground for a little height.
+        let cos_t = t.cos();
+        let rise_km = rise_km.min((self.alt - MIN_CAMERA_ALTITUDE_KM).max(0.0) * cos_t);
+        let along_km = rise_km / cos_t;
+        self.alt -= along_km;
+        // Toward the camera when it rises: back against the heading.
+        let back_km = along_km * t.sin();
+        (self.lat, self.lon) =
+            crate::math::destination(self.lat, self.lon, self.heading + 180.0, back_km);
+        self.lat = self
+            .lat
+            .clamp(-MAX_CAMERA_LATITUDE_DEG, MAX_CAMERA_LATITUDE_DEG);
+        rise_km
+    }
+    /// How far [`Self::slide_target`] must raise the looked-at point (km; negative:
+    /// lower it) for it to lie where the line of sight first meets the ground, now
+    /// that it is `ground_km` high. `ground` gives the ground's height (km) at a place,
+    /// `None` where it is not known. Searched from the eye outward: measuring the
+    /// ground under the point and moving the point there never settled over a steep
+    /// slope, and the point jumped kilometres along the line of sight from frame to
+    /// frame, which jiggled the view and threw the zoom (user's recordings,
+    /// 2026-11-17). `None` when the line meets no known ground, or meets it at once.
+    pub fn sight_hit(
+        &self,
+        ground_km: f64,
+        ground: impl Fn(f64, f64) -> Option<f64>,
+    ) -> Option<f64> {
+        /// Even steps from the eye out, then halvings between the last two.
+        const STEPS: usize = 128;
+        const REFINEMENTS: usize = 20;
+        /// How far past the looked-at point the line is followed, in distances.
+        const BEYOND: f64 = 2.0;
+        let t = self.tilt.clamp(0.0, MAX_TILT_DEG).to_radians();
+        let (cos_t, sin_t) = (t.cos(), t.sin());
+        // Height over the ground `s` km from the point toward the eye (negative:
+        // beyond it). The line is straight; the Earth curves away below it.
+        let above = |s: f64| {
+            let x = s * sin_t;
+            let (lat, lon) = crate::math::destination(self.lat, self.lon, self.heading + 180.0, x);
+            ground(lat, lon)
+                .map(|g| ground_km + s * cos_t + x * x / (2.0 * crate::EARTH_RADIUS_KM) - g)
+        };
+        let near = (self.alt - MIN_CAMERA_ALTITUDE_KM).max(0.0);
+        let far = -BEYOND * self.alt;
+        let mut clear: Option<f64> = None;
+        for step in 0..=STEPS {
+            let s = near + (far - near) * step as f64 / STEPS as f64;
+            let Some(height) = above(s) else {
+                continue;
+            };
+            if height > 0.0 {
+                clear = Some(s);
+                continue;
+            }
+            // Ground right at the eye (it backed away from a slope as it turned): the
+            // point stays. Moved up to the eye, it left the camera 30 m from its
+            // centre, where zooming barely moved (2026-11-17).
+            let mut clear = clear?;
+            let mut under = s;
+            for _ in 0..REFINEMENTS {
+                let middle = 0.5 * (clear + under);
+                match above(middle) {
+                    Some(height) if height > 0.0 => clear = middle,
+                    _ => under = middle,
+                }
+            }
+            return Some(0.5 * (clear + under) * cos_t);
+        }
+        None
+    }
     /// Keeps the tilt within `max_tilt` after the distance changed.
     pub fn clamp_tilt(&mut self) {
         /// Rounding in `max_tilt` at the zoom limit must not nibble at the tilt.
@@ -255,6 +403,7 @@ impl Cam {
         if self.tilt > max + TILT_TOLERANCE_DEG || self.tilt < 0.0 {
             self.tilt = self.tilt.clamp(0.0, max);
         }
+        self.look_up = self.look_up.clamp(0.0, self.max_look_up());
     }
     /// This camera with `clamp_tilt` applied.
     pub fn with_tilt_clamped(mut self) -> Self {
@@ -529,6 +678,116 @@ mod tests {
     use crate::math::haversine_km;
     use emath::Vec2;
 
+    #[test]
+    fn zooming_far_out_levels_the_view() {
+        let mut cam = Cam {
+            lat: 46.5,
+            lon: 10.7,
+            heading: 0.0,
+            alt: 5_000.0,
+            tilt: 60.0,
+            look_up: 0.0,
+        };
+        cam.set_tilt(MAX_TILT_DEG);
+        assert_eq!(cam.tilt, MAX_TILT_DEG);
+        // Halfway between 6,000 and 15,000 km: half the steepest tilt at most.
+        cam.alt = (TILT_EASES_FROM_ALTITUDE_KM + LEVEL_VIEW_ALTITUDE_KM) / 2.0;
+        cam.zoom(1.0);
+        assert!((cam.tilt - MAX_TILT_DEG / 2.0).abs() < 1e-9, "{}", cam.tilt);
+        while cam.alt < LEVEL_VIEW_ALTITUDE_KM {
+            cam.zoom(1.25);
+        }
+        assert_eq!(cam.tilt, 0.0);
+        // Coming back in leaves it level, as Bing Maps does.
+        cam.alt = 5_000.0;
+        cam.zoom(1.0);
+        assert_eq!(cam.tilt, 0.0);
+    }
+
+    #[test]
+    fn the_looked_at_point_lands_where_the_line_of_sight_meets_the_ground_and_stays() {
+        // A ridge running east–west 3 km north of the point, 1.5 km high, over
+        // ground 0.2 km high; the camera looks north at it from the south.
+        let ridge = |lat: f64, _lon: f64| {
+            let north_km = (lat - 46.5) * 111.2;
+            Some(0.2 + 1.3 * (-((north_km - 3.0) / 0.8).powi(2)).exp())
+        };
+        for tilt in [0.0, 50.0, 75.0] {
+            let mut cam = Cam {
+                lat: 46.5,
+                lon: 10.7,
+                heading: 0.0,
+                alt: 8.0,
+                tilt,
+                look_up: 0.0,
+            };
+            let mut ground_km = 0.0;
+            for _ in 0..3 {
+                let rise = cam
+                    .sight_hit(ground_km, ridge)
+                    .expect("the line meets the ground");
+                ground_km += cam.slide_target(rise);
+            }
+            let here = ridge(cam.lat, cam.lon).unwrap();
+            assert!(
+                (ground_km - here).abs() < 0.01,
+                "tilt {tilt}: {ground_km} km over {here} km"
+            );
+            // Settled: asked again, it stays.
+            let again = cam.sight_hit(ground_km, ridge).unwrap();
+            assert!(again.abs() < 0.002, "tilt {tilt}: moves {again} km more");
+        }
+        // Looking past the ridge's crest would be looking through it: the point is
+        // on its near face, not on the flat beyond.
+        let cam = Cam {
+            lat: 46.5 + 4.0 / 111.2,
+            lon: 10.7,
+            heading: 0.0,
+            alt: 8.0,
+            tilt: 75.0,
+            look_up: 0.0,
+        };
+        let rise = cam.sight_hit(0.2, ridge).unwrap();
+        assert!(rise > 0.3, "the ridge in front is found first: {rise}");
+    }
+
+    #[test]
+    fn sliding_the_target_keeps_the_eye_and_the_line_of_sight() {
+        for tilt in [0.0, 45.0, 75.0] {
+            let mut cam = Cam {
+                lat: 46.5,
+                lon: 10.7,
+                heading: 30.0,
+                alt: 5.0,
+                tilt,
+                look_up: 0.0,
+            };
+            let before = cam.basis_over_ground(1.5, EarthModel::Wgs84, 1.2);
+            let rise = cam.slide_target(0.6);
+            assert_eq!(rise, 0.6);
+            let after = cam.basis_over_ground(1.5, EarthModel::Wgs84, 1.2 + rise);
+            let moved_m = (after.c - before.c).length() * EARTH_RADIUS_KM * 1000.0;
+            // The step is taken on the flat: over 2 km along the ground (75°) the
+            // curve leaves a few metres, a thousandth of the distance.
+            assert!(moved_m < 10.0, "tilt {tilt}: the eye moved {moved_m} m");
+            let forward = |basis: &Basis| basis.world_from_view * DVec3::NEG_Z;
+            let turned = forward(&before).angle_between(forward(&after)).to_degrees();
+            assert!(turned < 0.05, "tilt {tilt}: the view turned {turned}°");
+        }
+        // It stops at the closest distance.
+        let mut cam = Cam {
+            lat: 46.5,
+            lon: 10.7,
+            heading: 0.0,
+            alt: 0.5,
+            tilt: 0.0,
+            look_up: 0.0,
+        };
+        let rise = cam.slide_target(2.0);
+        assert!((cam.alt - MIN_CAMERA_ALTITUDE_KM).abs() < 1e-12);
+        assert!((rise - (0.5 - MIN_CAMERA_ALTITUDE_KM)).abs() < 1e-12);
+    }
+
     /// Dragging sideways at 86° moves the globe with the hand: the pole, in view
     /// above the centre, goes along by about the drag. Stepping in longitude left
     /// the pole where it was and spun everything else around it (user, 2026-11-16).
@@ -544,6 +803,7 @@ mod tests {
             heading: 0.0,
             alt: 2_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let mut cam = start;
         let pole = ll_to_v3(90.0, 0.0);
@@ -580,6 +840,7 @@ mod tests {
                 heading: 0.0,
                 alt: 7_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             };
             // Above the screen's middle, past the pole.
             let cursor = Pos2::new(640.0, 160.0);
@@ -616,6 +877,7 @@ mod tests {
                 heading: 0.0,
                 alt: 500.0,
                 tilt: 0.0,
+                look_up: 0.0,
             };
             let mut lowest_step = f64::MAX;
             let mut previous = cam;
@@ -653,6 +915,7 @@ mod tests {
             heading: 0.0,
             alt: 30_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
         let above = |lat: f64, lon: f64, km: f64| {
@@ -678,6 +941,7 @@ mod tests {
             heading: 0.0,
             alt: 50.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis_for_model(1.0, EarthModel::Wgs84);
         assert!(
@@ -708,6 +972,7 @@ mod tests {
                     heading: 30.0,
                     alt: crate::MIN_CAMERA_ALTITUDE_KM,
                     tilt,
+                    look_up: 0.0,
                 };
                 let target = base
                     .basis_for_model(1.6, model)
@@ -755,6 +1020,7 @@ mod tests {
                     heading,
                     alt: 50.0,
                     tilt,
+                    look_up: 0.0,
                 });
                 let basis = cam.basis_for_model(aspect, model);
                 // The screen centre is still the ground point.
@@ -796,6 +1062,7 @@ mod tests {
             heading: 0.0,
             alt: 100.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         cam.set_tilt(200.0);
         assert_eq!(cam.tilt, MAX_TILT_DEG);
@@ -854,6 +1121,7 @@ mod tests {
                         heading: 0.0,
                         alt,
                         tilt: 0.0,
+                        look_up: 0.0,
                     });
                     let cursor = rect.center() + Vec2::new(dx, dy);
                     let Some(before) = cam.basis_for_model(aspect, model).pick(rect, cursor) else {
@@ -886,6 +1154,7 @@ mod tests {
                     heading,
                     alt: 900.0,
                     tilt: 0.0,
+                    look_up: 0.0,
                 });
                 let cursor = rect.center() + Vec2::new(-150.0, 90.0);
                 let before = cam
@@ -922,6 +1191,7 @@ mod tests {
                 heading,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             });
             let model = EarthModel::Wgs84;
             let basis = cam.basis_for_model(aspect, model);
@@ -967,6 +1237,7 @@ mod tests {
                 heading: hd,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             });
             for cursor in [
                 Pos2::new(300.0, 250.0),
@@ -1005,6 +1276,7 @@ mod bounds_tests {
             heading: 30.0,
             alt: 500.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, 600.0));
         cam.zoom_at(1e10, None, rect, 4.0 / 3.0);
@@ -1022,6 +1294,7 @@ mod bounds_tests {
             heading: 0.0,
             alt: 1000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         cam.pan(-10000.0, 10000.0, 600.0);
         // A long drag goes over the pole (a great circle), never into its last tenth.
@@ -1040,6 +1313,7 @@ mod bounds_tests {
             heading: 70.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let point = cam.basis(4.0 / 3.0).pick(rect, rect.center()).unwrap();
         assert!(crate::math::haversine_km(point, (cam.lat, cam.lon)) < 1e-6);
@@ -1070,6 +1344,7 @@ mod projection_tests {
                     heading,
                     alt,
                     tilt: 0.0,
+                    look_up: 0.0,
                 }
                 .basis(aspect);
                 for fraction in [0.48, 0.5, 0.52] {
@@ -1101,6 +1376,7 @@ mod projection_tests {
                 heading,
                 alt: 1000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(4.0 / 3.0);
             let center = basis.project(ll_to_v3(0.0, 0.0), rect).unwrap();
@@ -1126,6 +1402,7 @@ mod projection_tests {
                 heading: 75.0,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(4.0 / 3.0);
             let center = ll_to_v3(40.0, 170.0);
@@ -1170,6 +1447,7 @@ mod body_control_tests {
             alt: 14_000.0,
             heading: 45.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         cam.orbit_body(-100.0, 500.0, 100.0);
         assert_eq!(cam.lon, -10.0);
@@ -1184,6 +1462,7 @@ mod body_control_tests {
             alt: 14_000.0,
             heading: 0.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
             cam.set_zoom_fraction(fraction);
@@ -1203,6 +1482,7 @@ mod body_control_tests {
             heading: 0.0,
             alt: MIN_TILTED_HEIGHT_KM,
             tilt: 0.0,
+            look_up: 0.0,
         };
         // Clamped tilting stays locked at this distance.
         cam.set_tilt(45.0);

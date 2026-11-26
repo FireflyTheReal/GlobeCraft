@@ -33,6 +33,7 @@ fn kml_roundtrip_preserves_names_descriptions_and_coordinate_order() {
         desc: "A & B > C".into(),
         lat: -23.5,
         lon: -46.6,
+        time: None,
     }];
     save_kml(path.to_str().unwrap(), &places(&marks)).unwrap();
     let loaded: Vec<_> = load_kml(path.to_str().unwrap(), Lang::PtBr)
@@ -188,6 +189,7 @@ fn invalid_import_and_export_coordinates_use_shared_validation() {
         desc: String::new(),
         lat: 91.0,
         lon: 0.0,
+        time: None,
     };
     assert!(matches!(
         save_kml(path.to_str().unwrap(), &places(&[pm])),
@@ -310,6 +312,7 @@ fn a_save_replaces_the_file_whole_and_leaves_nothing_beside_it() {
         desc: String::new(),
         lat: 1.0,
         lon: 2.0,
+        time: None,
     };
     save_kml(path.to_str().unwrap(), &places(&[mark("First")])).unwrap();
     save_kml(path.to_str().unwrap(), &places(&[mark("Second")])).unwrap();
@@ -335,4 +338,44 @@ fn a_save_replaces_the_file_whole_and_leaves_nothing_beside_it() {
         "Second"
     );
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn place_times_are_read_and_written_back() {
+    let text = r#"<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+  <Placemark><name>Stamp</name><TimeStamp><when>2026-10-20T12:00:00Z</when></TimeStamp>
+    <Point><coordinates>130,18,0</coordinates></Point></Placemark>
+  <Placemark><name>Span</name><TimeSpan><begin>1997</begin><end>2001-06</end></TimeSpan>
+    <Point><coordinates>7.6,45.9,0</coordinates></Point></Placemark>
+  <Placemark><name>Open</name><TimeSpan><begin>2026-11-04</begin></TimeSpan>
+    <Point><coordinates>0,0,0</coordinates></Point></Placemark>
+  <Placemark><name>None</name><Point><coordinates>1,1,0</coordinates></Point></Placemark>
+</Document></kml>"#;
+    let places = parse_tree(text, Lang::En).unwrap();
+    let times: Vec<_> = places.markers(false).map(|pm| pm.time).collect();
+    let at = |iso: &str| globecraft_core::time::parse_iso(iso).unwrap();
+    assert_eq!(
+        times,
+        [
+            Some(PlaceTime::Stamp(at("2026-10-20T12:00Z"))),
+            Some(PlaceTime::Span {
+                begin: Some(at("1997-01-01")),
+                end: Some(at("2001-06-01")),
+            }),
+            Some(PlaceTime::Span {
+                begin: Some(at("2026-11-04")),
+                end: None,
+            }),
+            None,
+        ]
+    );
+    // Saved and read again: the same times.
+    let path = std::env::temp_dir().join(format!("globecraft-timed-{}.kml", std::process::id()));
+    save_kml(path.to_str().unwrap(), &places).unwrap();
+    let again = load_kml(path.to_str().unwrap(), Lang::En);
+    std::fs::remove_file(&path).unwrap();
+    let again = again.unwrap();
+    let again: Vec<_> = again.markers(false).map(|pm| pm.time).collect();
+    assert_eq!(again, times);
 }

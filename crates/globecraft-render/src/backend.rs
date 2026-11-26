@@ -127,7 +127,188 @@ pub struct FrameRenderer {
     /// See `with_start_marker`.
     #[cfg(feature = "gpu")]
     start_marker: Option<std::path::PathBuf>,
+    #[cfg(feature = "gpu")]
+    relief_timing: ReliefTiming,
+    /// The last relief frame's drawn ground (`take_depth`).
+    #[cfg(feature = "gpu")]
+    depth: Option<std::sync::Arc<crate::overlays::DepthMap>>,
 }
+
+/// Whether the GPU's relief walk (`gpu::relief`) makes relief frames faster here:
+/// it costs the GPU what it saves the CPU, and only the hardware and the view say
+/// which is more. The walk's frames cost about the same whatever the view, the CPU's
+/// change with it: on a PowerVR phone at 270×601 the walk's frames took 35–60 ms
+/// everywhere, the CPU's 11–22 ms over flat land and 73–224 ms over tilted mountains
+/// (2026-11-26; a rule that turned the walk off for good after flat checks left the
+/// mountains at 5–9 frames a second). So the last frame with the walk stands for its
+/// cost at that size, and the CPU marches alone only while it beats that: every
+/// `RELIEF_CHECK_EVERY`th frame tries the CPU (the third relief frame first), and once
+/// it is faster the CPU draws until one of its frames is slower than the walk's, after
+/// which the next walks; every `RELIEF_CHECK_EVERY`th it also tries the walk, unless
+/// that took `RELIEF_DECISIVE_WIN` times the CPU's time (a software adapter, ten
+/// times the CPU's whole frame, 2026-11-23, stays with the CPU). A walk that ran but
+/// did not help counts with the CPU's frame after it: that is what trying it cost. The first walked frame is never timed: it
+/// carries the walk's setup (its pipelines, Metal compiling them after a fresh build,
+/// the self-check, the first tiles; 1238 against 580 ms per megapixel on an M1 once
+/// turned the walk off for a session, 2026-11-24). Frames are only set against frames
+/// of their size (a motion frame and a sharp one): a frame's fixed costs weigh more
+/// per pixel in a small one. Where the walk wins `RELIEF_SETTLED_WINS` checks in a row
+/// clearly (the CPU taking `RELIEF_CLEAR_WIN` times as long or longer), or one by
+/// `RELIEF_DECISIVE_WIN`, the checks stop: on an M1 a check frame took 4–6 times as
+/// long (about 0.6–1 s at 1920×1200 against 0.14–0.18 s), a hitch every 20 relief
+/// frames (2026-11-24).
+#[cfg(feature = "gpu")]
+#[derive(Default)]
+struct ReliefTiming {
+    frames: u32,
+    /// Frames drawn with the walk.
+    walked: u32,
+    /// The last frame with the walk at each recent size: its pixels, and seconds per
+    /// megapixel (at most `TIMED_SIZES`).
+    walk_costs: Vec<(usize, f64)>,
+    wins: u32,
+    /// The walk won clearly often enough: no more frames without it.
+    settled: bool,
+    /// The CPU marches alone for now.
+    cpu_for_now: bool,
+    /// While `cpu_for_now`: its last frame's pixels and seconds per megapixel.
+    last_cpu: Option<(usize, f64)>,
+}
+/// Frame sizes whose walk costs are kept: the motion and the sharp frame's, and a
+/// window's last few sizes.
+#[cfg(feature = "gpu")]
+const TIMED_SIZES: usize = 4;
+#[cfg(feature = "gpu")]
+const RELIEF_CHECK_EVERY: u32 = 20;
+
+/// With `GLOBECRAFT_FRAME_TIMES` set: one log line per relief frame, its size, who
+/// drew it, the walk's time (and the elevation tiles it uploaded first) and the whole
+/// frame's, to find where a slow frame's time goes; for the GPU's, also its colour
+/// passes' time on the device with the readback, and the CPU's repair after them.
+#[cfg(feature = "gpu")]
+fn log_relief_frame(
+    request: &RenderRequest,
+    drawn_by: &str,
+    walk: std::time::Duration,
+    total: std::time::Duration,
+    (uploads, kept_view): (usize, bool),
+    draw: Option<(
+        (usize, std::time::Duration, std::time::Duration, usize),
+        f32,
+    )>,
+) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
+        let ms = |time: std::time::Duration| time.as_secs_f64() * 1000.0;
+        let pixels = (request.width * request.height).max(1);
+        let draw = draw.map_or_else(
+            String::new,
+            |((passes, device, repair, repaired), sun_unknown)| {
+                format!(
+                    " (colour: {passes} pass(es), {:.1} ms on the device with the readback, {:.1} ms CPU repair of {repaired} pixels, {:.1} %; the walk's sun unknown at {:.0} % of its grounds)",
+                    ms(device),
+                    ms(repair),
+                    100.0 * repaired as f64 / pixels as f64,
+                    100.0 * sun_unknown
+                )
+            },
+        );
+        globecraft_data::log_line!(
+            "RELIEF FRAME {}x{} by the {drawn_by}: walk {:.1} ms ({uploads} tiles uploaded{}), whole {:.1} ms{draw}",
+            request.width,
+            request.height,
+            ms(walk),
+            if kept_view {
+                ", the view's walk kept"
+            } else {
+                ""
+            },
+            ms(total)
+        );
+    }
+}
+#[cfg(feature = "gpu")]
+const RELIEF_SETTLED_WINS: u32 = 3;
+#[cfg(feature = "gpu")]
+const RELIEF_CLEAR_WIN: f64 = 1.5;
+/// A win this clear (the frame without the walk taking this many times as long or
+/// longer) settles it at once: each check is a frame drawn without the walk, on an M1
+/// 106–124 ms at 616×386 against 23–46 with it, and its overlays without the drawn
+/// ground 53–68 ms more (2026-11-26).
+#[cfg(feature = "gpu")]
+const RELIEF_DECISIVE_WIN: f64 = 3.0;
+
+#[cfg(feature = "gpu")]
+impl ReliefTiming {
+    fn walk_cost(&self, pixels: usize) -> Option<f64> {
+        self.walk_costs
+            .iter()
+            .find(|(size, _)| *size == pixels)
+            .map(|(_, cost)| *cost)
+    }
+    /// Whether the next relief frame, of `pixels`, takes the walk.
+    fn walks(&self, pixels: usize) -> bool {
+        if self.settled {
+            return true;
+        }
+        if self.cpu_for_now {
+            let Some(walk) = self.walk_cost(pixels) else {
+                return true;
+            };
+            let check = (self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY);
+            return self
+                .last_cpu
+                .filter(|(size, _)| *size == pixels)
+                .is_some_and(|(_, cpu)| cpu > walk || (check && walk < cpu * RELIEF_DECISIVE_WIN));
+        }
+        !(self.frames == 2 || (self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY))
+    }
+    fn note(&mut self, walked: bool, seconds_per_megapixel: f64, pixels: usize) {
+        self.frames += 1;
+        if walked {
+            self.walked += 1;
+            if self.walked > 1 {
+                self.walk_costs.retain(|(size, _)| *size != pixels);
+                self.walk_costs.insert(0, (pixels, seconds_per_megapixel));
+                self.walk_costs.truncate(TIMED_SIZES);
+            }
+            let beats_cpu = self
+                .last_cpu
+                .is_some_and(|(size, cpu)| size == pixels && seconds_per_megapixel < cpu);
+            if self.cpu_for_now && beats_cpu {
+                (self.cpu_for_now, self.last_cpu) = (false, None);
+                globecraft_data::log_line!(
+                    "The GPU's relief walk is faster again here ({:.0} ms per megapixel); it walks",
+                    seconds_per_megapixel * 1000.0
+                );
+            }
+            return;
+        }
+        let Some(walk) = self.walk_cost(pixels) else {
+            return;
+        };
+        if self.cpu_for_now {
+            self.last_cpu = Some((pixels, seconds_per_megapixel));
+            return;
+        }
+        self.wins = if seconds_per_megapixel >= walk * RELIEF_CLEAR_WIN {
+            self.wins + 1
+        } else {
+            0
+        };
+        self.settled =
+            self.wins >= RELIEF_SETTLED_WINS || seconds_per_megapixel >= walk * RELIEF_DECISIVE_WIN;
+        if seconds_per_megapixel < walk {
+            (self.cpu_for_now, self.last_cpu) = (true, Some((pixels, seconds_per_megapixel)));
+            globecraft_data::log_line!(
+                "The CPU alone made relief frames faster here ({:.0} against {:.0} ms per megapixel with the walk); it marches alone while it stays faster",
+                seconds_per_megapixel * 1000.0,
+                walk * 1000.0
+            );
+        }
+    }
+}
+
 impl FrameRenderer {
     pub fn new(preference: BackendPreference) -> Self {
         Self {
@@ -143,6 +324,10 @@ impl FrameRenderer {
             restarts_left: MAX_GPU_RESTARTS,
             #[cfg(feature = "gpu")]
             start_marker: None,
+            #[cfg(feature = "gpu")]
+            relief_timing: ReliefTiming::default(),
+            #[cfg(feature = "gpu")]
+            depth: None,
         }
     }
     /// The renderer the settings ask for (`BackendPreference::from_environment`). When
@@ -250,7 +435,34 @@ impl FrameRenderer {
             status.note = Some(format!("{error}; {outlook}"));
         });
     }
+    /// Draws `request`'s frame, a motion frame sharpened (`sharpen::motion_frame`).
+    /// The drawn ground of the frame `render` just drew, when it was a relief frame
+    /// the GPU's walk went through (see `overlays::DepthMap`).
+    #[cfg(feature = "gpu")]
+    pub fn take_depth(&mut self) -> Option<std::sync::Arc<crate::overlays::DepthMap>> {
+        self.depth.take()
+    }
     pub fn render(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+        buffer: Vec<u8>,
+    ) -> RenderedView {
+        #[cfg(feature = "gpu")]
+        {
+            self.depth = None;
+        }
+        let mut frame = self.draw(request, cache, buffer);
+        crate::sharpen::motion_frame(
+            &mut frame.pixels,
+            request.width,
+            request.height,
+            request.cfg.lod_scale,
+        );
+        frame
+    }
+
+    fn draw(
         &mut self,
         request: &RenderRequest,
         cache: &TileCache,
@@ -267,6 +479,141 @@ impl FrameRenderer {
                 buffer,
             )
         };
+        // Relief: the CPU draws it, from where the GPU's walk through the open air
+        // ended (roadmap D1).
+        #[cfg(feature = "gpu")]
+        if request.cfg.terrain.is_some() && self.preference != BackendPreference::Cpu {
+            self.initialize_with(crate::gpu::GpuRenderer::new);
+            let started = std::time::Instant::now();
+            let walks = self.relief_timing.walks(request.width * request.height);
+            let starts =
+                match self.gpu.as_mut().filter(|_| walks).map(|gpu| {
+                    gpu_call(|| gpu.relief_starts(request, cache)).and_then(|result| result)
+                }) {
+                    Some(Ok(starts)) => starts,
+                    Some(Err(error)) => {
+                        self.device_failed(&error);
+                        None
+                    }
+                    None => None,
+                };
+            let walked = starts.is_some();
+            let walk_took = started.elapsed();
+            // A gesture overtook this frame during its walk: nobody will see it.
+            if crate::cancel::cancelled() {
+                return RenderedView {
+                    pixels: buffer,
+                    waiting: Vec::new(),
+                    requests: Vec::new(),
+                };
+            }
+            // The walk's planes are also the frame's drawn ground, for the overlays.
+            let starts = starts.map(std::sync::Arc::new);
+            let depth = |planes: Option<std::sync::Arc<Vec<f32>>>| {
+                planes
+                    .and_then(|planes| {
+                        crate::overlays::DepthMap::new(request.width, request.height, planes)
+                    })
+                    .map(std::sync::Arc::new)
+            };
+            // The GPU draws the frame from its walk where it can (roadmap D8, G4), the
+            // CPU what it leaves. Also below `MIN_AUTO_GPU_PIXELS`, which is for flat
+            // frames: relief frames while moving are that small (0.28 of the window),
+            // and at 616×360 on an M1 the GPU drew them in 3–8 ms after the walk, the
+            // CPU in 18–23 ms (2026-11-24).
+            let mut buffer = buffer;
+            if let (Some(planes), Some(gpu)) = (starts.as_deref(), self.gpu.as_mut())
+                && crate::gpu::GpuRenderer::supports(request)
+            {
+                match gpu_call(|| gpu.render_relief(request, cache, buffer, planes))
+                    .unwrap_or_else(|error| Err((error, Vec::new(), true)))
+                {
+                    Ok((frame, held)) => {
+                        gpu.relief_frame_held(held);
+                        let pixels = request.width * request.height;
+                        let megapixels = pixels as f64 / 1e6;
+                        // An abandoned frame's time says nothing about the walk.
+                        if !crate::cancel::cancelled() {
+                            self.relief_timing.note(
+                                true,
+                                started.elapsed().as_secs_f64() / megapixels.max(1e-6),
+                                pixels,
+                            );
+                        }
+                        update_status(|status| status.gpu_frames += 1);
+                        log_relief_frame(
+                            request,
+                            "GPU",
+                            walk_took,
+                            started.elapsed(),
+                            (gpu.relief_uploads, gpu.relief_kept_view),
+                            Some((gpu.last_draw, gpu.relief_sun_unknown)),
+                        );
+                        self.depth = depth(starts);
+                        return frame;
+                    }
+                    Err((error, returned, permanent)) => {
+                        buffer = returned;
+                        if permanent {
+                            self.device_failed(&error);
+                        }
+                    }
+                }
+            }
+            update_status(|status| status.cpu_frames += 1);
+            let (frame, held) = crate::render_relief_view_into(
+                request.width,
+                request.height,
+                &request.basis,
+                &request.cfg,
+                cache,
+                buffer,
+                starts.as_deref().map(Vec::as_slice),
+            );
+            self.depth = depth(starts);
+            let gave_up = self
+                .gpu
+                .as_ref()
+                .filter(|gpu| walks && !walked && gpu.relief_ran)
+                .map(|gpu| {
+                    format!(
+                        "CPU after a walk that did not help ({:.0} % of its rays without their tiles)",
+                        100.0 * gpu.relief_untrusted
+                    )
+                });
+            log_relief_frame(
+                request,
+                gave_up
+                    .as_deref()
+                    .unwrap_or(if walked { "CPU from the walk" } else { "CPU" }),
+                walk_took,
+                started.elapsed(),
+                self.gpu.as_ref().map_or((0, false), |gpu| {
+                    (gpu.relief_uploads, walked && gpu.relief_kept_view)
+                }),
+                None,
+            );
+            if let Some(gpu) = &mut self.gpu {
+                gpu.relief_frame_held(held);
+                // A walk that ran but did not help (more than half its rays without
+                // the tiles they needed) is what trying the walk cost here: the CPU
+                // drew the frame after it. On a PowerVR phone over close mountains
+                // with tiles still arriving, that was most frames, 10–60 ms of walk
+                // before 60–110 ms of CPU, and uncounted, the walk was tried every
+                // frame (2026-11-26). Frames before the walk had tiles say nothing.
+                let tried = walked || (walks && gpu.relief_ran);
+                if (tried || !walks) && !crate::cancel::cancelled() {
+                    let pixels = request.width * request.height;
+                    let megapixels = pixels as f64 / 1e6;
+                    self.relief_timing.note(
+                        tried,
+                        started.elapsed().as_secs_f64() / megapixels.max(1e-6),
+                        pixels,
+                    );
+                }
+            }
+            return frame;
+        }
         #[cfg(feature = "gpu")]
         if self.preference == BackendPreference::Cpu
             || (self.preference == BackendPreference::Auto
@@ -309,6 +656,108 @@ impl FrameRenderer {
             }
         }
         cpu(buffer)
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod relief_timing_tests {
+    use super::*;
+
+    const PIXELS: usize = 1920 * 1200;
+
+    /// Draws `frames` relief frames of `pixels` the way `timing` says, each taking
+    /// `with` or `without` seconds per megapixel.
+    fn drive(timing: &mut ReliefTiming, with: f64, without: f64, frames: u32, pixels: usize) {
+        for _ in 0..frames {
+            let walks = timing.walks(pixels);
+            timing.note(walks, if walks { with } else { without }, pixels);
+        }
+    }
+
+    /// The CPU marches alone while it beats the walk's last frame, and the frame after
+    /// one of its frames is slower walks again (a PowerVR phone, 2026-11-26: the walk's
+    /// frames 245 ms per megapixel everywhere, the CPU's 75 over flat land, 450–1000
+    /// over mountains).
+    #[test]
+    fn the_cheaper_way_draws_as_the_view_changes() {
+        let mut timing = ReliefTiming::default();
+        drive(&mut timing, 0.245, 0.075, 3, PIXELS);
+        assert!(timing.cpu_for_now && !timing.settled);
+        let walked = timing.walked;
+        drive(&mut timing, 0.245, 0.075, 10 * RELIEF_CHECK_EVERY, PIXELS);
+        assert_eq!(
+            timing.walked, walked,
+            "no walk three times the CPU's is tried"
+        );
+        // Mountains: one CPU frame, then the walk.
+        drive(&mut timing, 0.245, 0.7, 1, PIXELS);
+        assert!(timing.cpu_for_now && timing.walks(PIXELS));
+        drive(&mut timing, 0.245, 0.7, 1, PIXELS);
+        assert!(!timing.cpu_for_now);
+        // Each check over mountains costs one CPU frame; three clear ones settle it.
+        let walked = timing.walked;
+        drive(&mut timing, 0.245, 0.7, 3 * RELIEF_CHECK_EVERY, PIXELS);
+        assert!(timing.settled && timing.walked - walked >= 3 * RELIEF_CHECK_EVERY - 3);
+        drive(&mut timing, 0.245, 0.075, 10 * RELIEF_CHECK_EVERY, PIXELS);
+        assert!(!timing.cpu_for_now);
+    }
+
+    /// Close mountains with tiles arriving (a PowerVR phone, 2026-11-26): trying the
+    /// walk cost more than the CPU alone, so the CPU draws; every `RELIEF_CHECK_EVERY`th
+    /// frame tries the walk again, and once it got cheaper than the CPU, it walks.
+    #[test]
+    fn a_walk_that_got_cheaper_is_found() {
+        let mut timing = ReliefTiming::default();
+        drive(&mut timing, 0.45, 0.35, 3, PIXELS);
+        assert!(timing.cpu_for_now);
+        let walked = timing.walked;
+        drive(&mut timing, 0.45, 0.35, 5 * RELIEF_CHECK_EVERY, PIXELS);
+        assert!(timing.cpu_for_now);
+        assert_eq!(timing.walked - walked, 5, "one tried walk in each check");
+        drive(&mut timing, 0.2, 0.35, RELIEF_CHECK_EVERY, PIXELS);
+        assert!(!timing.cpu_for_now && timing.walks(PIXELS));
+    }
+
+    /// Where the walk pays everywhere (an M1), one decisive check settles it; a narrow
+    /// win keeps the checks going; a software adapter's walk is tried twice, then the
+    /// CPU keeps the frames.
+    #[test]
+    fn the_relief_walk_stays_where_it_pays() {
+        let mut decisive = ReliefTiming::default();
+        drive(&mut decisive, 0.1, 0.35, 3, PIXELS);
+        assert!(decisive.settled && decisive.walks(PIXELS));
+        let mut narrow = ReliefTiming::default();
+        drive(&mut narrow, 0.1, 0.12, 5 * RELIEF_CHECK_EVERY, PIXELS);
+        assert!(!narrow.settled && !narrow.cpu_for_now && narrow.wins == 0);
+        let mut software = ReliefTiming::default();
+        drive(&mut software, 13.0, 0.3, 10 * RELIEF_CHECK_EVERY, PIXELS);
+        assert!(software.cpu_for_now && software.walked == 2);
+    }
+
+    /// The first walked frame (the walk's setup) is not timed, nor is a frame set
+    /// against the walk at another size; a size without a timed walk walks to learn
+    /// it, without leaving the CPU.
+    #[test]
+    fn the_walks_setup_and_other_sizes_are_not_compared() {
+        // M1, 2026-11-24: the first walked frame 1238 ms per megapixel with the setup,
+        // the frame without the walk 580; the walk itself 4–6 times faster after it.
+        let mut fresh = ReliefTiming::default();
+        fresh.note(true, 1.238, PIXELS);
+        assert!(fresh.walks(PIXELS) && fresh.walk_cost(PIXELS).is_none());
+        fresh.note(true, 0.12, PIXELS);
+        assert!(!fresh.walks(PIXELS));
+        fresh.note(false, 0.58, PIXELS);
+        assert!(!fresh.cpu_for_now && fresh.wins == 1);
+        let small = 616 * 386;
+        let mut sizes = ReliefTiming::default();
+        sizes.note(true, 0.2, PIXELS);
+        sizes.note(true, 0.2, PIXELS);
+        sizes.note(false, 0.05, small);
+        assert!(!sizes.cpu_for_now && sizes.wins == 0);
+        sizes.note(false, 0.05, PIXELS);
+        assert!(sizes.cpu_for_now && sizes.walks(small));
+        sizes.note(true, 0.3, small);
+        assert!(sizes.cpu_for_now && !sizes.walks(PIXELS));
     }
 }
 
@@ -491,6 +940,7 @@ mod native_fallback_tests {
             heading: 25.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let request = RenderRequest {
             width: 65,
@@ -510,7 +960,11 @@ mod native_fallback_tests {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: None,
-                stars: true,
+                stars: None,
+                sky_behind: false,
+                clouds: None,
+                glint: None,
+                aurora: None,
             },
             overlays: None,
             aircraft: None,

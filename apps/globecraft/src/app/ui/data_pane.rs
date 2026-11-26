@@ -62,7 +62,7 @@ fn source_row(
                 "raster_layer"
             },
             t.text_dim,
-            t.accent,
+            t.icon_accent,
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = lang.text(if present {

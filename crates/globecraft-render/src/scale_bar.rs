@@ -187,6 +187,7 @@ mod tests {
                     heading: 75.0,
                     alt: altitude,
                     tilt: 0.0,
+                    look_up: 0.0,
                 }
                 .basis_for_model(4.0 / 3.0, EarthModel::Wgs84);
                 let bar = cache.for_view(&basis, rect, altitude, units).unwrap();
@@ -234,6 +235,7 @@ mod tests {
                 heading: 20.0,
                 alt: altitude,
                 tilt,
+                look_up: 0.0,
             }
             .basis_for_model(4.0 / 3.0, EarthModel::PerfectSphere);
             let mut cache = ScaleBarCache::default();
@@ -276,6 +278,7 @@ mod tests {
             heading: 20.0,
             alt: 900.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis_for_model(4.0 / 3.0, EarthModel::PerfectSphere);
         let bar = ScaleBarCache::default()

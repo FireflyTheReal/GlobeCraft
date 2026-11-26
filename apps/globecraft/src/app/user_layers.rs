@@ -24,6 +24,9 @@ const NAME_SEPARATION_POINTS: f32 = 70.0;
 /// Free room kept around each marker and name, map points. Less than half the gap
 /// between a marker and its name (4 points), so a name never touches its own marker.
 const LABEL_PADDING_POINTS: f32 = 1.5;
+/// Width of the projected web maps (pixels) at rest and while the view moves.
+const RASTER_WIDTH_PX: usize = 1280;
+const RASTER_MOVING_WIDTH_PX: usize = 360;
 
 enum Stream {
     Raster {
@@ -52,6 +55,21 @@ struct FeatureKey {
     time: Option<(i64, Option<u64>)>,
 }
 
+/// The web maps over a view, `width` × `height` pixels of RGBA.
+fn project_rasters(
+    basis: &Basis,
+    rect: Rect,
+    width: usize,
+    height: usize,
+    inputs: &[(Arc<RasterSnapshot>, f32)],
+) -> Vec<u8> {
+    let inputs: Vec<(&RasterSnapshot, f32)> = inputs
+        .iter()
+        .map(|(snapshot, opacity)| (snapshot.as_ref(), *opacity))
+        .collect();
+    globecraft_render::weather::project_user_rasters(basis, rect, width, height, &inputs)
+}
+
 /// What the web-map image was projected for: the view, its size in pixels, and each
 /// layer's id, tile snapshot and opacity.
 type RasterKey = (Basis, usize, usize, Vec<(u64, usize, u32)>);
@@ -63,6 +81,9 @@ pub(super) struct UserLayers {
     pub(super) legends: legend::Legends,
     texture: Option<TextureHandle>,
     texture_for: Option<RasterKey>,
+    /// The sharp projection of a view at rest, made off the interface's path: the
+    /// moving view's small one shows until it comes.
+    sharp: Option<(RasterKey, std::sync::mpsc::Receiver<Vec<u8>>)>,
     /// The visible feature layers' lines and markers for the view.
     features: Option<BuiltFeatures>,
     /// Counts feature rebuilds.
@@ -175,25 +196,37 @@ impl UserLayers {
         rect: Rect,
         layers: &[UserLayer],
     ) {
-        let shown: Vec<(&UserLayer, &Arc<RasterSnapshot>)> = layers
+        let shown: Vec<(&UserLayer, Arc<RasterSnapshot>)> = layers
             .iter()
             .filter(|layer| layer.visible && layer.opacity > 0.0)
             .filter_map(|layer| match &self.loaded.get(&layer.id)?.stream {
                 Stream::Raster {
                     snapshot: Some(snapshot),
                     ..
-                } if !snapshot.is_empty() => Some((layer, snapshot)),
+                } if !snapshot.is_empty() => Some((layer, Arc::clone(snapshot))),
                 _ => None,
             })
             .collect();
         if shown.is_empty() {
             return;
         }
-        // Coarser while the view moves, as the weather maps.
-        let max_width = if painter.ctx().input(|i| i.pointer.any_down()) {
-            640
+        // Coarser while the view moves, as the weather maps: every frame of a moving
+        // view projects the maps again on the interface's path (a glide or the
+        // navigation controls move it with no button down too). The view counts as
+        // moving while it differs from the last projected one; the first frame it
+        // holds still is projected sharp.
+        let moving = self
+            .texture_for
+            .as_ref()
+            .is_some_and(|(projected, ..)| projected != basis);
+        if moving {
+            // A frame more, which draws the maps sharp once the view holds still.
+            painter.ctx().request_repaint();
+        }
+        let max_width = if moving {
+            RASTER_MOVING_WIDTH_PX
         } else {
-            1280
+            RASTER_WIDTH_PX
         };
         let width =
             ((rect.width() * painter.ctx().pixels_per_point()) as usize).clamp(160, max_width);
@@ -210,26 +243,41 @@ impl UserLayers {
             })
             .collect();
         let key = (*basis, width, height, parts);
+        // A sharp projection that came: shown, even if the view or its tiles have
+        // changed since (the next one is asked for below).
+        if let Some((done, rgba)) = self
+            .sharp
+            .as_ref()
+            .and_then(|(done, receiver)| receiver.try_recv().ok().map(|rgba| (done.clone(), rgba)))
+        {
+            self.sharp = None;
+            self.show_rasters(painter.ctx(), done, &rgba);
+        }
         if self.texture_for.as_ref() != Some(&key) {
-            let inputs: Vec<(&RasterSnapshot, f32)> = shown
+            let inputs: Vec<(Arc<RasterSnapshot>, f32)> = shown
                 .iter()
-                .map(|(layer, snapshot)| (snapshot.as_ref(), layer.opacity))
+                .map(|(layer, snapshot)| (Arc::clone(snapshot), layer.opacity))
                 .collect();
-            let rgba = globecraft_render::weather::project_user_rasters(
-                basis, rect, width, height, &inputs,
-            );
-            let image = ColorImage::from_rgba_unmultiplied([width, height], &rgba);
-            match self.texture.as_mut() {
-                Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
-                None => {
-                    self.texture = Some(painter.ctx().load_texture(
-                        "user-web-maps",
-                        image,
-                        egui::TextureOptions::LINEAR,
-                    ));
-                }
+            if moving {
+                // Small: on the interface's path, as the view needs it now.
+                self.sharp = None;
+                let rgba = project_rasters(basis, rect, width, height, &inputs);
+                self.show_rasters(painter.ctx(), key, &rgba);
+            } else if self.sharp.is_none() {
+                // Sharp (up to 1280 pixels wide, tens of milliseconds): on a thread of
+                // its own, so a view coming to rest or a resized window does not wait
+                // for it (2026-11-24: hitches of 100–170 ms while the window grew
+                // with the ozone layer on).
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let (basis, ctx) = (*basis, painter.ctx().clone());
+                std::thread::spawn(move || {
+                    let rgba = project_rasters(&basis, rect, width, height, &inputs);
+                    if sender.send(rgba).is_ok() {
+                        ctx.request_repaint();
+                    }
+                });
+                self.sharp = Some((key, receiver));
             }
-            self.texture_for = Some(key);
         }
         if let Some(texture) = &self.texture {
             painter.image(
@@ -239,6 +287,18 @@ impl UserLayers {
                 Color32::WHITE,
             );
         }
+    }
+
+    fn show_rasters(&mut self, ctx: &egui::Context, key: RasterKey, rgba: &[u8]) {
+        let image = ColorImage::from_rgba_unmultiplied([key.1, key.2], rgba);
+        match self.texture.as_mut() {
+            Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+            None => {
+                self.texture =
+                    Some(ctx.load_texture("user-web-maps", image, egui::TextureOptions::LINEAR));
+            }
+        }
+        self.texture_for = Some(key);
     }
 
     /// The visible feature layers: lines, then points and their names.

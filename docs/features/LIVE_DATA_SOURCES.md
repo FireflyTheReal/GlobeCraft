@@ -3,6 +3,40 @@
 **Satellite clouds:** Matt Eason, Live Cloud Maps (CC0-1.0). Latest source:
 https://clouds.matteason.co.uk/images/8192x4096/clouds-alpha.png
 Repository: https://github.com/matteason/live-cloud-maps
+
+The clouds are drawn as a layer 10 km above the ground (`globecraft_render::clouds`):
+over Everest and under airliners at cruise. They come from the full 8192 × 4096 map
+(with 4096- and 2048-wide levels for views from far out) and are lit like the globe:
+white by day, faint blue-grey at night. From above, the app draws them over the frame
+and they fade out between 22 and 10.5 km; from below (under 10 km), the renderer draws
+them into the sky, where relief hides them. Aircraft on the far side of the layer
+fade behind thick cloud. The aurora glows in the air
+(`globecraft_render::aurora`): in a shell 90 to 170 km up, faint seen straight down,
+bright edge-on above the limb, and in the night sky (behind the clouds) from the ground.
+
+With Sunlight on, the same service's water map
+(https://clouds.matteason.co.uk/images/4096x2048/specular.jpg: the sea bright, land
+and cloud dark) gives the sun's glint on the water, on the CPU and the GPU alike
+(`globecraft_render::sun::glint`).
+
+**Clouds of an earlier time:** with the app's time set back before the current three
+hours, the clouds are those kept for it by Joshua Binswanger's archive of the same
+maps (https://github.com/joshuabinswanger/matteason_live-cloud-maps_downloader, CC0):
+this week's maps as releases `maps-YYYYMMDD_HHMM` (the 8192 × 4096 map), each finished
+week as `archive-YYYY-Www`, whose zip of 2048 × 1024 frames is read in two ranges (its
+directory, then the one frame nearest the time) rather than whole (about 30 MB). The
+maps repeat where the source did not update (several days in November 2026), and a
+missed run is filled by the nearest frame. Back at the present, the live map returns.
+Before 9 March 2026 (the archive's first week) the status says no clouds were kept.
+While the timeline plays, the next two moments in the direction it plays load ahead,
+and the maps loaded last are kept (up to about 96 MB) so stepping through them shows
+them at once. **Cloud Detail** (Live › Weather, `layer.cloudResolution`) keeps maps at
+most 2048, 4096 or 8192 pixels wide (its menu opens from the Clouds button's label):
+coarser loads, uploads and plays faster. With a loop on the timeline (`time.loop`, the
+loop button and the handles under the track), the loop's moments load ahead at 2048 ×
+1024, three at a time from the time shown onward, and up to about 190 MB of them are
+kept (some 70 moments, eight and a half days); the status line counts them in.
+
 **Required source attribution:** Contains modified EUMETSAT data
 
 The provider publishes eight updates per day (one every three hours), depending on upstream satellite data availability.

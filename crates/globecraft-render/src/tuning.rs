@@ -45,17 +45,39 @@ pub(super) const GRID_BLEND: f32 = 0.55;
 pub(super) const TWILIGHT_OFFSET: f64 = 0.12;
 pub(super) const TWILIGHT_WIDTH: f64 = 0.30;
 pub(super) const NIGHT_BRIGHTNESS: f32 = 0.10;
-pub(super) const DAY_BRIGHTNESS_RANGE: f32 = 0.90;
 pub(super) const NIGHT_BLUE_TINT: f32 = 0.015;
+// Daylight in two parts, as Bing Maps shows it (Julien's recordings, 2026-11-21): the
+// sun's direct light, warm where it crossed much air, and the sky's, cool. Ridges and
+// blocks hide the first only, so shadows go blue, and slopes and walls facing a low sun
+// take the first light while the ground below stays in the blue (`pixel::Daylight`).
+// Both only rise with the sun: a fixed split made shade darker just before sunset than
+// just after (Julien, 2026-11-22 09:48); a direct light capped against flat ground's
+// left no first light on the tops (10:59).
+/// The direct sun comes in as its disc rises: the sine of its height where the top of
+/// the disc shows (refraction included) and where the whole of it does.
+pub(crate) const SUN_RISE_START_COSINE: f64 = -0.008_7;
+pub(crate) const SUN_RISE_FULL_COSINE: f64 = 0.026;
+/// The sky's light on the ground: as the sun rises, by day (from `SKY_DAY_COSINE` on).
+/// The night side darkens from the first toward `NIGHT_BRIGHTNESS`.
+pub(crate) const SHADE_RISE: f32 = 0.4;
+pub(crate) const SHADE_DAY: f32 = 0.65;
+/// The sun's light on a surface facing it, as it rises: with the sky's, a peak or wall
+/// in the first light is as bright as by day while the ground below is in the blue.
+/// By day it is what makes flat ground at noon one (`1 - SHADE_DAY`).
+pub(crate) const DIRECT_RISE: f32 = 0.65;
+/// Where twilight ends for the eye in the air (`atmosphere::eye_weight`): the sine of
+/// the sun's depth (12°, nautical) where the night side reaches `NIGHT_BRIGHTNESS`.
+/// From space the shorter `TWILIGHT_OFFSET` (7°) holds: no bright band past the
+/// terminator.
+pub(crate) const EYE_TWILIGHT_COSINE: f64 = 0.208;
+/// The sky's light: blue in twilight, near white by day (from this sine, 20°).
+pub(crate) const TWILIGHT_SKY: [f32; 3] = [0.74, 0.86, 1.26];
+pub(crate) const DAY_SKY: [f32; 3] = [0.95, 1.0, 1.08];
+pub(crate) const SKY_DAY_COSINE: f64 = 0.342;
+/// Rec. 709 luminance weights: the sky's colour is scaled to carry no brightness.
+pub(crate) const LUMINANCE: [f32; 3] = [0.2126, 0.7152, 0.0722];
 // Surface rim and atmospheric shell.
-// Deterministic star field and 8-bit RGBA output.
+// Space and 8-bit RGBA output.
 pub(super) const SPACE_COLOR: Vec4 = Vec4::new(0.0, 0.0, 0.015, 0.0);
-pub(super) const STAR_GRID_RESOLUTION: f64 = 900.0;
-pub(super) const STAR_OCCURRENCE_MODULUS: u64 = 1400;
-pub(super) const STAR_MIN_BRIGHTNESS: f32 = 0.45;
-pub(super) const STAR_BRIGHTNESS_DIVISOR: f32 = 480.0;
-pub(super) const STAR_BRIGHTNESS_SHIFT: u32 = 20;
-pub(super) const STAR_BRIGHTNESS_MASK: u64 = 255;
 pub(super) const RGBA_CHANNELS: usize = 4;
 pub(super) const COLOR_CHANNEL_MAX: f32 = 255.0;
-pub(super) const OPAQUE_ALPHA: u8 = 255;

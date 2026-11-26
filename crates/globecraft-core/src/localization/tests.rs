@@ -136,7 +136,7 @@ fn all_original_labels_keep_exact_wording_and_help_newlines() {
                 // The 0.3 interface draws its own icons beside these labels.
                 ("settings-title", Lang::En) => "Settings",
                 ("settings-title", Lang::PtBr) => "Configurações",
-                ("settings-folders-action", Lang::En) => "Change folders…",
+                ("settings-folders-action", Lang::En) => "Change Folders…",
                 ("settings-folders-action", Lang::PtBr) => "Mudar pastas…",
                 // Borders and municipal lines come from OpenStreetMap tiles (2026-10-25).
                 ("layers-municipal-borders-toggle", Lang::En) => "Municipal borders",
@@ -327,14 +327,6 @@ fn explorer_labels_follow_selected_language_and_keep_variable_interpolation() {
     assert_eq!(Lang::En.text("explorer-bodies"), "Celestial bodies");
     assert_eq!(Lang::PtBr.text("explorer-bodies"), "Corpos celestes");
     assert_eq!(
-        Lang::En.text("explorer-cloud-credit"),
-        "Cloud imagery: Matt Eason / Live Cloud Maps"
-    );
-    assert_eq!(
-        Lang::PtBr.text("explorer-cloud-credit"),
-        "Imagens de nuvens: Matt Eason / Live Cloud Maps"
-    );
-    assert_eq!(
         Lang::En.format(
             "explorer-tour-default",
             &[("place", "Rio de Janeiro".into())]
@@ -347,5 +339,54 @@ fn explorer_labels_follow_selected_language_and_keep_variable_interpolation() {
             &[("place", "Rio de Janeiro".into())]
         ),
         "Estamos explorando Rio de Janeiro. Explore o local no globo e escolha pontos de interesse para continuar seu passeio."
+    );
+}
+
+/// Buttons, menu items and command names use title-style capitalization in English, as
+/// on macOS (HIG: Writing, Menus); checkbox labels, help and tooltips stay sentence-style.
+#[test]
+fn english_command_names_use_title_style() {
+    const SMALL: &[&str] = &[
+        "a", "an", "the", "and", "but", "or", "for", "nor", "at", "by", "in", "of", "on", "to",
+        "as", "per", "via", "up",
+    ];
+    let mut wrong = Vec::new();
+    for line in EN.lines() {
+        let Some((key, value)) = line.split_once(" = ") else {
+            continue;
+        };
+        let named = key.starts_with("cmd-")
+            || key.starts_with("ribbon-")
+            || key.starts_with("menu-")
+            || key.ends_with("-action");
+        let prose = key.ends_with("-help")
+            || key.ends_with("-hint")
+            || key.ends_with("-placeholder")
+            || key.ends_with("-tooltip")
+            || key.ends_with("-toggle")
+            || matches!(
+                key,
+                "ribbon-help-menu"
+                    | "ribbon-tool-more"
+                    | "ribbon-scroll-left"
+                    | "ribbon-scroll-right"
+            );
+        let words: Vec<&str> = value.split(' ').collect();
+        if !named || prose || value.contains('{') || value.ends_with(['.', '?']) || words.len() > 6
+        {
+            continue;
+        }
+        let lower = words.iter().enumerate().skip(1).any(|(i, word)| {
+            word.chars().next().is_some_and(char::is_lowercase)
+                && (i == words.len() - 1 || !SMALL.contains(word))
+        });
+        if lower {
+            wrong.push(format!("{key} = {value}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "sentence-style names:\n{}",
+        wrong.join("\n")
     );
 }

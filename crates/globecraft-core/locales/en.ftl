@@ -8,13 +8,13 @@ screenshot-empty-error = Nothing to save yet.
 
 kml-drop-type-error = Only KML, KMZ, GeoJSON, GPX, CSV, MBTiles or PMTiles files can be dropped here.
 
-globe-placemark-action = Add placemark here
+globe-placemark-action = Add Placemark Here
 
-globe-fly-to-action = Fly here
+globe-fly-to-action = Fly Here
 
-globe-ruler-point-action = Add ruler point
+globe-ruler-point-action = Add Ruler Point
 
-globe-copy-coordinates-action = Copy coordinates
+globe-copy-coordinates-action = Copy Coordinates
 
 globe-context-menu-hint = Click on the globe.
 
@@ -85,10 +85,10 @@ settings-kml-folder-dialog-title = KML/KMZ folder
 
 settings-folder-creation-help = Folders are created automatically when saving.
 
-settings-reset-action = Restore defaults
+settings-reset-action = Restore Defaults
 
 settings-cache-section-title = Map cache
-settings-cache-clear-action = Clear on-disk cache
+settings-cache-clear-action = Clear On-Disk Cache
 settings-cache-clear-help = Removes downloaded map tiles. They download again when needed.
 settings-cache-clearing-label = Clearing cache…
 settings-cache-cleared-status = On-disk tile cache cleared.
@@ -109,6 +109,7 @@ layers-search-empty-active = No layers are on.
 wayback-loading-status = Loading available dates…
 
 wayback-older-tooltip = Older
+wayback-date-name = Imagery date
 
 wayback-newer-tooltip = Newer
 
@@ -187,13 +188,13 @@ poi-group-terrain = Peaks
 poi-group-water = Water
 poi-group-worship = Places of worship
 poi-group-services = Services
-cmd-flight-select = Select a flight
+cmd-flight-select = Select a Flight
 cmd-flight-select-help = Follows one plane: its track so far, where it flies from and to, and its position every few seconds.
-cmd-flight-clear = Close the flight
+cmd-flight-clear = Close the Flight
 cmd-flight-clear-help = Stops following the selected plane.
-cmd-satellite-select = Select a satellite
+cmd-satellite-select = Select a Satellite
 cmd-satellite-select-help = Shows one full revolution of a satellite's orbit at its height, predicted from its orbital elements, and a card with its height and speed.
-cmd-satellite-clear = Close the satellite
+cmd-satellite-clear = Close the Satellite
 cmd-satellite-clear-help = Hides the selected satellite's orbit and card.
 satellite-card-catalogue = NORAD { $norad } • { $group }
 satellite-card-height = Height { $height }
@@ -213,19 +214,19 @@ flight-card-to-go = { $distance } to go
 flight-card-track-loading = Loading the track…
 flight-card-error = No track: { $error }
 flight-card-built = built { $year }
-flight-card-altitude = { $feet } ft
-flight-card-gps-altitude = GPS { $feet } ft
+flight-card-altitude = { $height }
+flight-card-gps-altitude = GPS { $height }
 flight-card-level = level
-flight-card-vertical-rate = { $rate } ft/min
-flight-card-selected-altitude = autopilot { $feet } ft
-flight-card-ground-speed = { $knots } kt over ground
-flight-card-indicated-airspeed = IAS { $knots } kt
-flight-card-true-airspeed = TAS { $knots } kt
+flight-card-vertical-rate = { $rate }
+flight-card-selected-altitude = autopilot { $height }
+flight-card-ground-speed = { $speed } over ground
+flight-card-indicated-airspeed = IAS { $speed }
+flight-card-true-airspeed = TAS { $speed }
 flight-card-mach = Mach { $mach }
 flight-card-track = track { $degrees }°
 flight-card-selected-heading = autopilot heading { $degrees }°
-flight-card-wind = wind from { $degrees }° at { $knots } kt
-flight-card-temperature = { $celsius } °C outside
+flight-card-wind = wind from { $degrees }° at { $speed }
+flight-card-temperature = { $temperature } outside
 flight-card-squawk = squawk { $code }
 flight-card-category = category { $category }
 flight-card-position-source = position by { $source }
@@ -236,9 +237,9 @@ layers-clouds-toggle = Satellite cloud map (Matt Eason)
 layers-live-overlays-help = Aircraft positions come from live tracking (coverage incomplete); global updates ~17 min and nearby updates ~90 s. Cloud imagery ~3 h; rain radar ~10 min. Internet required.
 
 
-navigation-reset-north-action = North up
+navigation-reset-north-action = North Up
 
-navigation-global-view-action = Global view
+navigation-global-view-action = Global View
 
 search-results-label = Search results:
 
@@ -246,7 +247,7 @@ placemarks-section-title = Placemarks
 
 placemarks-name-placeholder = Name
 
-placemarks-add-center-action = At center
+placemarks-add-center-action = At Center
 
 placemarks-fly-to-action = Go
 
@@ -262,12 +263,12 @@ ruler-section-title = Ruler
 
 ruler-enable-toggle = Measure distances (click on the globe)
 
-ruler-clear-action = Clear ruler
+ruler-clear-action = Clear Ruler
 
 
-screenshot-save-action = Save screenshot (PNG)
+screenshot-save-action = Save Screenshot (PNG)
 
-settings-folders-action = Change folders…
+settings-folders-action = Change Folders…
 
 controls-help-toggle = Show controls help
 
@@ -340,9 +341,19 @@ statusbar-cursor-elevation = Elevation: { $distance }
 
 
 settings-uncap-fps-toggle = Uncap FPS (restart required)
-settings-motion-resolution-auto = Lighter frames while moving (automatic)
-settings-motion-resolution = Resolution while moving
-settings-motion-resolution-help = While the view moves or relief loads, frames render at a share of the full resolution, so they come quickly. Automatic uses 40 %, or 28 % with relief. 100 % is sharpest and slowest.
+settings-render-quality = Globe resolution
+settings-render-quality-screen = Screen size
+settings-render-quality-hd = HD (1080p)
+settings-render-quality-sd = SD (720p)
+settings-render-quality-help = How many pixels the globe draws. HD and SD draw fewer than a large or Retina screen has and load coarser tiles: lighter frames, a softer picture. Moving frames stay a share of it.
+settings-motion-resolution-auto = Lighter frames while moving, flat view (automatic)
+settings-motion-resolution = Resolution while moving, flat view
+settings-motion-resolution-help = While the view moves, frames render at a share of the full resolution, so they come quickly. Automatic uses 40 %. 100 % is sharpest and slowest.
+settings-motion-resolution-relief-auto = Lighter frames while moving, 3D terrain (automatic)
+settings-motion-resolution-relief = Resolution while moving, 3D terrain
+settings-motion-resolution-relief-help = With 3D terrain on, while the view moves or terrain loads, frames render at a share of the full resolution. Automatic uses 28 %. 100 % is sharpest and slowest.
+settings-smooth-relief-toggle = Smooth 3D terrain transitions
+settings-smooth-relief-help = Terrain detail blends in as you zoom, newly loaded terrain rises gently, and terrain fades out between 100 and 200 km. Turn off for speed: detail changes at once and terrain stops at 150 km.
 settings-gpu-globe-toggle = Draw the globe on the GPU (beta, restart required)
 settings-gpu-globe-help = Faster on most graphics cards. Close views, the grid, relief and any GPU problem still use the CPU renderer. Turn this off if the globe looks wrong.
 settings-gpu-globe-running = In use: { $adapter }.
@@ -369,14 +380,6 @@ explorer-narrated-tour = Narrated tour (TTS)
 explorer-tour-default = We are exploring { $place }. Explore the location on the globe and choose points of interest to continue your tour.
 explorer-read-aloud = ▶ Read text aloud
 explorer-speech-sent = Text sent to speech synthesizer
-explorer-globe-layers = Globe layers
-explorer-layer-info = These georeferenced layers are drawn on the globe using online data (internet required).
-explorer-cloud-credit = Cloud imagery: Matt Eason / Live Cloud Maps
-explorer-cloud-source = Live Cloud Maps — author and source code
-explorer-cloud-license = Contains modified EUMETSAT data · CC0 1.0
-explorer-radar-credit = Radar source: RainViewer
-explorer-radar-source = RainViewer weather radar
-explorer-radar-explanation = Green/yellow/red indicates approximate rain intensity (radar reflectivity), not infrared satellite temperature. Coverage and freshness vary.
 explorer-bodies = Celestial bodies
 explorer-earth = Earth
 explorer-moon = Moon
@@ -401,12 +404,15 @@ explorer-sky-preview = The custom sky is previewed here; it is not used as the E
 live-clouds-failed = Cloud update failed
 live-cached-image =  (cached image shown)
 live-clouds-ok = Clouds: Matt Eason (3-hour updates)
+live-clouds-none-kept = No clouds were kept for { $time } UTC (kept from 9 March 2026, every 3 hours)
+live-clouds-archived = Clouds of { $time } UTC (Matt Eason, kept by Joshua Binswanger)
 live-clouds-loading = Clouds: loading satellite imagery…
 live-radar-failed = Radar update failed
 live-radar-age = Rain radar: observation approximately { $minutes } min old
 live-radar-loading = Rain radar: loading RainViewer data…
 sidebar-cloud-source = Cloud data: Matt Eason / EUMETSAT
 sidebar-radar-source = Radar data: RainViewer
+glint-credit = Sun glint: Matt Eason · Live Cloud Maps · Contains modified EUMETSAT data
 live-cloud-credit = Matt Eason · Live Cloud Maps · Contains modified EUMETSAT data
 live-radar-credit = Precipitation radar: RainViewer (rainviewer.com)
 
@@ -502,8 +508,8 @@ ruler-point-longitude = Longitude (°)
 ruler-point-new-path-toggle = Start a separate path
 ruler-point-input-help = Decimal degrees. Negative latitude is south; negative longitude is west.
 ruler-point-apply-action = Apply
-ruler-point-add-action = Add point
-ruler-point-new-action = New point
+ruler-point-add-action = Add Point
+ruler-point-new-action = New Point
 ruler-point-close-action = Close
 
 settings-earth-model-label = Earth model
@@ -542,11 +548,11 @@ traffic-credit = Traffic: © TomTom
 aurora-source = NOAA Space Weather Prediction Center (OVATION)
 layers-timezones-toggle = Time zones
 layers-sea-names-toggle = Sea and undersea names
-ribbon-layer-sea-names = Sea names
+ribbon-layer-sea-names = Sea Names
 sea-names-help = Oceans, seas, gulfs and straits, exclusive economic zones and undersea features (seamounts, trenches, ridges…), each at the altitudes where it fits the view.
 sea-names-source = Marine Regions gazetteer (Flanders Marine Institute, CC BY 4.0); IHO-IOC GEBCO Gazetteer of Undersea Feature Names
 sea-names-credit = Names: MarineRegions.org, IHO-IOC GEBCO Gazetteer
-ribbon-layer-timezones = Time zones
+ribbon-layer-timezones = Time Zones
 timezones-loading-status = Loading the time zones…
 timezones-loaded-status = { $count } time zones • the local time under the cursor shows in the status bar
 timezones-source = timezone-boundary-builder (OpenStreetMap, ODbL)
@@ -631,7 +637,7 @@ vessels-hover-tooltip =
        *[unknown] Vessel type not reported
     } • Destination: { $destination }
     Size: { $dimensions }  |  Draught: { $draught }
-    { $latitude }°, { $longitude }° • { $course } • { $speed } kt
+    { $latitude }°, { $longitude }° • { $course } • { $speed }
     Last AIS report { $minutes } min ago • coverage varies
 satellites-hover-tooltip =
     { $name } (NORAD { $norad }) • { $group }
@@ -639,17 +645,6 @@ satellites-hover-tooltip =
     { $model ->
         [sgp4] Predicted with SGP4 from CelesTrak elements
        *[simple] Estimated orbital position • CelesTrak
-    }
-transport-airport-hover-tooltip =
-    { $name }
-    IATA { $iata } • ICAO { $icao }
-    { $class ->
-        [international] International airport
-        [public] Public airport
-        [regional] Regional airport
-        [military] Military airfield
-        [private] Private airfield
-       *[other] Airfield
     }
 
 update-available-label = Update to v{ $version }
@@ -661,7 +656,7 @@ update-installing-tooltip = Verifying and installing update
 update-restart-label = Restart to update
 update-restart-tooltip = Update installed: v{ $version } — click to save your work and restart
 update-retry-label = Retry update
-update-releases-action = Open releases
+update-releases-action = Open Releases
 update-saving-label = Saving before restart
 
 sidebar-data-title = Data
@@ -673,7 +668,7 @@ data-pane-services-title = Library
 data-pane-mine-title = My data
 data-pane-star-help = Add to favorites
 data-pane-unstar-help = Remove from favorites
-data-pane-open-layers-action = Order, opacity and removal in Layers
+data-pane-open-layers-action = Order, Opacity and Removal in Layers
 data-pane-export-help = Export favorites as a file
 data-pane-import-help = Import favorites from a file
 data-pane-export-empty = Star a source first: only favorites are exported.
@@ -712,6 +707,7 @@ sidebar-sky-title = Sky & lighting
 
 menu-application-title = GlobeCraft
 menu-view-title = View
+menu-go-title = Go
 menu-add-title = Add
 menu-tools-title = Tools
 menu-window-title = Window
@@ -719,13 +715,13 @@ menu-help-title = Help
 menu-about-action = About GlobeCraft
 menu-settings-action = Settings…
 menu-sidebar-toggle = Sidebar
-menu-navigation-toggle = Navigation controls
-menu-add-placemark = Placemark at camera center
+menu-navigation-toggle = Navigation Controls
+menu-add-placemark = Placemark at Camera Center
 menu-fullscreen-toggle = Fullscreen
 menu-minimize-action = Minimize
 menu-controls-help = Controls and keyboard shortcuts
 menu-documentation-action = Documentation
-menu-report-issue-action = Report an issue…
+menu-report-issue-action = Report an Issue…
 about-version-label = Version { $version }
 about-description = Explore the globe, live layers and your geographic places.
 about-project-link = Project and source code
@@ -774,6 +770,14 @@ settings-theme-label = Theme
 settings-theme-system = System
 settings-theme-dark = Dark
 settings-theme-light = Light
+settings-reduce-motion-label = Reduce motion
+settings-reduce-motion-help = Arrive at places without flying there, and stop the globe from coasting after a drag. On a Mac, Reduce Motion in System Settings does this too.
+settings-mono-icons-label = Monochrome icons
+settings-mono-icons-help = Draw every icon in one colour instead of its own colours: the accent, or a colour of your own, which then takes the accent’s place everywhere.
+settings-mono-icons-own-color-label = Own colour instead of the accent
+settings-mono-icons-color-label = Icon colour
+settings-utc-times-label = Show times in UTC
+settings-utc-times-help = The timeline shows times in this computer’s time zone unless this is on.
 settings-ui-font-label = Interface font
 settings-map-font-label = Map label font
 settings-font-system = System default
@@ -795,8 +799,8 @@ settings-rotation-sensitivity = Drag rotation sensitivity
 settings-zoom-sensitivity = Wheel zoom sensitivity
 settings-invert-scroll = Reverse wheel zoom
 settings-startup-view-label = Startup view
-settings-startup-current-action = Use current view
-settings-startup-default-action = Use default view
+settings-startup-current-action = Use Current View
+settings-startup-default-action = Use Default View
 settings-startup-help = The saved position, heading and camera altitude are used at the next launch.
 
 settings-network-intro = Hosts GlobeCraft may contact. Built-in services show their request limit and user agent; layers you add and assistant providers come from your settings. Limits describe how GlobeCraft paces requests, not a guarantee from the provider.
@@ -837,6 +841,7 @@ settings-category-controllers = Controllers
 controllers-enabled = Enable controllers
 controllers-help = Explore navigation: left stick pans, right stick X rotates, triggers zoom. Return controls to neutral after closing dialogs or reconnecting.
 controllers-disconnected = No selected device connected
+controllers-device-name = Controller
 controllers-action-none = Unbound
 controllers-action-cancel = Cancel camera movement
 controllers-left-x = Left stick X
@@ -867,7 +872,6 @@ sky-help = The Milky Way is NASA’s diffuse map, prepared as a 4K SDR backgroun
 sky-loading = Preparing celestial background…
 sky-retry = Retry background loading
 sky-short-credit = Sky: NASA SVS · Gaia DR2 (ESA/Gaia/DPAC)
-    { $sky }
 sky-software-credits = Celestial transform software licenses
 
 # Native Rust renderer terrain (no browser)
@@ -879,11 +883,11 @@ layers-terrain-help = Terrain on the globe. Zoom below 150 km altitude; elevatio
 ribbon-tab-explore = Explore
 ribbon-tab-map = Map
 ribbon-group-imagery = Imagery
-ribbon-group-borders-names = Borders & names
+ribbon-group-borders-names = Borders & Names
 ribbon-group-nature = Nature
 ribbon-group-reference = Reference
 ribbon-group-tracking = Tracking
-ribbon-group-sky = Sky & light
+ribbon-group-sky = Sky & Light
 ribbon-help-menu = Help, shortcuts and about
 ribbon-settings-button = Settings (⌘, or Ctrl+,)
 ribbon-tab-live = Live
@@ -903,6 +907,8 @@ cmd-camera-zoom-out-help = Move the camera away from the surface.
 cmd-camera-reset-north = North Up
 cmd-camera-reset-north-help = Turn the view so north points up (N).
 cmd-camera-tilt = Tilt
+cmd-camera-look-around = Look Around
+cmd-camera-look-around-help = Turn the view about the camera, as you turn your head: the camera stays where it is and looks elsewhere (Ctrl+drag, ⌘+drag on a Mac; the button makes every drag look around until pressed again). Past the horizon the view rises to the sky, up to near the zenith; lowered, it comes back down to the ground.
 cmd-camera-tilt-help = Lean the view toward the horizon, or back (Shift+scroll, Shift+drag or right-drag up and down, Shift+Up/Down). Close to the ground the camera backs off as far as the tilt needs.
 cmd-camera-top-down = Top-Down View
 cmd-camera-top-down-help = Look straight down again (U).
@@ -945,9 +951,9 @@ cmd-ruler-unit-help = Choose the unit measurements are shown in.
 cmd-ruler-edit-points = Edit Points
 cmd-ruler-edit-points-help = Type exact coordinates for ruler points.
 cmd-edit-undo = Undo
-cmd-edit-undo-help = Undo the last ruler edit.
+cmd-edit-undo-help = Undo the last ruler edit or deleted place.
 cmd-edit-redo = Redo
-cmd-edit-redo-help = Redo the last undone ruler edit.
+cmd-edit-redo-help = Redo the last undone ruler edit or deletion.
 cmd-file-screenshot = Screenshot
 cmd-file-screenshot-help = Save the globe without the interface as a PNG in the screenshot folder.
 cmd-view-copy-link = Copy View Link
@@ -998,6 +1004,9 @@ wayback-compare-tooltip = Swipe between two imagery dates
 wayback-compare-swap-tooltip = Swap the two dates
 cmd-layer-show = Show Layer
 cmd-layer-show-help = Show, hide or toggle a map layer.
+cmd-layer-cloud-resolution = Cloud Detail
+cmd-layer-cloud-resolution-help = How fine a cloud map is kept: finer shows more detail close in, coarser loads and plays faster on the timeline.
+cloud-resolution-option = { $pixels } × { $height }
 cmd-layer-opacity = Layer Opacity
 cmd-layer-opacity-help = Set how opaque the clouds, radar, aurora, time zones or traffic layer is (0 to 1).
 cmd-layer-solo = Show Layer Alone
@@ -1007,9 +1016,9 @@ layers-solo-note = Only { $layer } is shown.
 layers-solo-show-all = Show all again
 cmd-layer-terrain-exaggeration = Exaggeration
 cmd-layer-terrain-exaggeration-help = Set the vertical exaggeration of 3D terrain.
-cmd-layer-flat-live-objects = Aircraft and satellites on the ground
+cmd-layer-flat-live-objects = Aircraft and Satellites on the Ground
 cmd-layer-flat-live-objects-help = Draw aircraft and satellites flat on the ground below them instead of at their real height.
-cmd-layer-state-altitude = States visible below
+cmd-layer-state-altitude = States Visible Below
 cmd-layer-state-altitude-help = Set the camera altitude below which state and province borders are drawn.
 cmd-world-earth-model = Earth Model
 cmd-world-earth-model-help = Choose the WGS 84 ellipsoid or a perfect sphere for geometry and distances.
@@ -1030,23 +1039,39 @@ cmd-assistant-stop-help = End the assistant's current request; actions it hasn't
 cmd-ui-pane-measure = Measure Pane
 cmd-ui-pane-measure-help = Show the ruler's measurements, units and history.
 cmd-ui-left-pane = Side Pane
-cmd-ui-left-pane-help = Show or hide the pane on the left of the globe.
+cmd-ui-left-pane-help = Show or hide the side pane (its tabs stay).
+cmd-ui-pane-side = Side Pane Position
+cmd-ui-pane-side-help = Put the side pane on the left or the right of the globe.
+cmd-ui-pane-move-tab = Move Pane Tab
+cmd-ui-pane-move-tab-help = Move a tab of the side pane to another position.
+pane-side-left = Dock on the left
+pane-side-right = Dock on the right
+pane-side-switch-tooltip = Move the pane to the other side of the globe
+pane-flight-title = Flight
+pane-satellite-title = Satellite
 cmd-ui-navigation-controls = Navigator
 cmd-ui-navigation-controls-help = Show or hide the on-globe compass and zoom controls.
 ribbon-group-time = Time
 cmd-ui-timeline = Timeline
 cmd-ui-timeline-help = Show the timeline: the app's date and time, steps, play, and the window of past events.
-cmd-time-set = Set time
+cmd-time-set = Set Time
 cmd-time-set-help = Show the globe at a date and time, or back at the real time (now): sunlight, stars, daily imagery, Wayback and timed points follow.
-cmd-time-step = Step time
+cmd-time-step = Step Time
 cmd-time-step-help = Move the app's time by some hours, forward or back.
-cmd-time-play = Play time
+cmd-time-play = Play Time
 cmd-time-play-help = Run the app's time at a speed, such as an hour per second.
-cmd-time-pause = Pause time
+cmd-time-pause = Pause Time
 cmd-time-pause-help = Hold the app's time where it is.
-cmd-time-speed = Time speed
+cmd-time-speed = Time Speed
 cmd-time-speed-help = How fast the time runs when it plays, such as an hour per second.
-cmd-time-window = Event window
+cmd-time-loop = Loop
+cmd-time-loop-help = While playing, go round between two moments; the clouds of the moments in it load ahead.
+timeline-loop-help = Loop: play round between the two handles under the track
+timeline-loop-track-help = Drag the handles to set where the loop begins and ends
+live-clouds-loop-loaded = Clouds for the loop: { $loaded } of { $total } loaded (2048 × 1024)
+cmd-time-range = Timeline Span
+cmd-time-range-help = How much time the timeline's track spans: a day, a week, a month, a year or ten years.
+cmd-time-window = Event Window
 cmd-time-window-help = Show timed points (earthquakes…) only from the hours before the app's time.
 timeline-live = Live
 timeline-now-action = Now
@@ -1061,23 +1086,34 @@ timeline-speed-minute = 1 min/s
 timeline-speed-hour = 1 h/s
 timeline-speed-six-hours = 6 h/s
 timeline-speed-day = 1 day/s
+timeline-step-back-help = One step back (a tick of the track)
+timeline-step-forward-help = One step forward (a tick of the track)
+timeline-settings-help = Time settings: back to now, speed, window of events, span
+timeline-range-day = 1 day
+timeline-range-week = 1 week
+timeline-range-month = 1 month
+timeline-range-year = 1 year
+timeline-range-decade = 10 years
+timeline-track-help = Drag the round handle to set the time and the square one to set the window of events. Ticks: Wayback releases (with Wayback imagery) and night-light editions; the band: clouds kept for past times.
 timeline-window-label = Events
 timeline-window-all = All
 timeline-window-hour = Last hour
 timeline-window-day = Last day
 timeline-window-week = Last 7 days
 timeline-window-month = Last 30 days
-cmd-ui-tile-diagnostics = Tile diagnostics
+cmd-ui-tile-diagnostics = Tile Diagnostics
 cmd-ui-tile-diagnostics-help = Show the imagery tiles in view by state, the download queues per source and the download rates.
 diagnostics-tiles-line = Tiles in view: { $total } (ready { $ready }, loading { $loading }, missing { $missing }, failed { $failed })
 diagnostics-downloads-line = Downloads running: { $count }
 diagnostics-source-line = { $source }: { $queued } queued, { $downloading } downloading
 diagnostics-source-paused-line = { $source }: { $queued } queued, { $downloading } downloading, paused by the server
 diagnostics-rates-line = View { $view } · ahead { $ahead } · borders { $borders }
-cmd-ui-navigator-style = Navigator style
+cmd-ui-navigator-style = Navigator Style
 cmd-ui-navigator-style-help = Choose the navigator with the mini globe or the classic ring, move pad and zoom slider.
 cmd-ui-ribbon = Collapse Ribbon
 cmd-ui-ribbon-help = Collapse or expand the ribbon (Ctrl+F1).
+cmd-ui-ribbon-compact = Compact Ribbon
+cmd-ui-ribbon-compact-help = Show the ribbon as one row of small buttons, without group titles, to leave more room for the globe.
 cmd-ui-ribbon-pin = Pin to Toolbar
 cmd-ui-ribbon-pin-help = Show a tool of a ribbon group on the ribbon, or keep it in the group's menu only.
 cmd-ui-quick-tools-pin = Pin to Quick Access
@@ -1089,6 +1125,7 @@ cmd-ui-shortcut-set-help = Set the keys that run a tool, remove its shortcut or 
 cmd-ui-ribbon-reset-tools = Reset Ribbon Tools
 cmd-ui-ribbon-reset-tools-help = Put the ribbon's tools, the quick-access buttons and the keyboard shortcuts back as they were at installation.
 ribbon-tool-more = More for this tool
+ribbon-group-more = More in { $group }
 shortcut-dialog-title = Keyboard Shortcut
 shortcut-dialog-prompt = Press the keys for “{ $tool }”.
 shortcut-dialog-current = Current shortcut: { $keys }
@@ -1117,7 +1154,7 @@ cmd-ui-settings = Settings
 cmd-ui-settings-help = Open the settings window.
 cmd-settings-units = Units
 cmd-settings-units-help = Show distances and altitudes in metric or imperial units, or follow the system.
-cmd-settings-experience = Experience level
+cmd-settings-experience = Experience Level
 cmd-settings-experience-help = Basic shows the everyday tools; Advanced adds the Earth models, other worlds and the forms for web services and feature URLs.
 settings-experience-label = Experience level
 settings-experience-basic = Basic
@@ -1231,7 +1268,7 @@ ribbon-group-basemap = Basemap
 ribbon-group-worlds = Worlds
 ribbon-group-panes = Panes
 ribbon-group-window = Window
-ribbon-imagery-date = Imagery date
+ribbon-imagery-date = Imagery Date
 ribbon-basemap-satellite = Satellite
 ribbon-basemap-wayback = Wayback
 ribbon-basemap-streets = Streets
@@ -1258,11 +1295,12 @@ ribbon-layer-buildings = Buildings
 ribbon-layer-railways = Railways
 ribbon-layer-ferries = Ferries
 ribbon-layer-airports = Airports
-ribbon-layer-poi = Places of interest
+ribbon-layer-poi = Places of Interest
 ribbon-layer-peaks = Peaks
-ribbon-layer-waters = Rivers & waters
+ribbon-layer-waters = Rivers & Waters
 ribbon-layer-parks = Parks
 ribbon-layer-traffic = Traffic
+present-only-dimmed = No data for this time, shown dimmed: { $layers }
 statusbar-tiles-ready = Tiles ready
 assistant-settings-title = Assistant settings
 pane-measure-title = Measure
@@ -1308,7 +1346,7 @@ settings-map-style-line-time-zone = Time zone lines
 
 settings-map-style-line-help = Municipal borders on a state line use the state style, so the switch to them up close keeps one look.
 
-settings-map-style-color-label = Color
+settings-map-style-color-label = Colour
 
 settings-map-style-width-label = Width
 
@@ -1330,14 +1368,14 @@ settings-map-style-label-city = Cities and towns
 settings-map-style-label-road = Street names
 settings-map-style-label-time-zone = Time zone offsets
 
-settings-map-style-reset-action = Reset map style
+settings-map-style-reset-action = Reset Map Style
 
-cmd-style-line = Map line style
-cmd-style-line-help = Set the color, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines.
-cmd-style-label-size = Name size
+cmd-style-line = Map Line Style
+cmd-style-line-help = Set the colour, width and dash of a kind of map line: borders, roads, railways and other transport, rivers, park outlines or time zone lines.
+cmd-style-label-size = Name Size
 cmd-style-label-size-help = Set the font size of country, state, city or street names, or of the time zones' offsets.
-cmd-style-reset = Reset map style
-cmd-style-reset-help = Restore the default border colors, widths, dashes and name sizes.
+cmd-style-reset = Reset Map Style
+cmd-style-reset-help = Restore the default border colours, widths, dashes and name sizes.
 
 add-data-title = Add Data
 add-data-tab-library = Library
@@ -1367,6 +1405,7 @@ add-data-web-tile-size-label = Tile size
 add-data-web-max-zoom-label = Finest level
 add-data-web-layer-label = Layer
 add-data-web-no-layers = Load the service's layers first
+add-data-web-layer-name = Layer
 add-data-web-load-layers = Load layers
 add-data-web-default-name = Web map
 add-data-web-test-ok = A tile arrived ({ $width } × { $height } pixels).
@@ -1443,6 +1482,8 @@ preset-emodnet = European seafloor depth (EMODnet)
 preset-emodnet-help = Water depth of the European seas in colour, finer than GEBCO there.
 preset-gibs = Yesterday from space (NASA GIBS)
 preset-gibs-help = The whole Earth as the MODIS Terra satellite saw it yesterday, clouds included.
+preset-ozone = Ozone layer (NASA OMPS)
+preset-ozone-help = How thick the ozone layer is, from the OMPS instrument on Suomi NPP: its newest day, which comes in a few days late. The hole shows over Antarctica in spring.
 preset-forest-loss = Tree cover loss (Global Forest Watch)
 preset-forest-loss-help = Forest lost since 2001, from Landsat (Hansen, University of Maryland).
 preset-earthquakes = Earthquakes, past week (USGS)
@@ -1472,6 +1513,6 @@ here-sun-down = { $degrees }° below the horizon
 # Original labels kept for the localization fixtures (no longer shown).
 navigation-section-title = Navigation
 kml-save-action = Save
-kml-save-as-action = Save as…
+kml-save-as-action = Save As…
 export-section-title = Export
 export-folder-label = Folder: { $path }

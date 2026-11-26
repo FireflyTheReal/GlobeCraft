@@ -235,6 +235,7 @@ mod tests {
                 heading,
                 alt,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis_for_model(65.0 / 49.0, EarthModel::Wgs84);
             let caster = RayCaster::new(65, 49, &basis);
@@ -288,6 +289,7 @@ mod tests {
                         heading,
                         alt,
                         tilt: 0.0,
+                        look_up: 0.0,
                     }
                     .basis(width as f64 / height as f64);
                     let caster = RayCaster::new(width, height, &basis);

@@ -429,6 +429,7 @@ mod tests {
             heading: 0.0,
             alt: 2.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(f64::from(viewport.aspect_ratio()));
         let roads = [Road {

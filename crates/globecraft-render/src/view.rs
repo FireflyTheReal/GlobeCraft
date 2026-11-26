@@ -11,10 +11,49 @@ const ACTIVE_RENDER_SCALE: f32 = 0.4;
 const ACTIVE_RELIEF_RENDER_SCALE: f32 = 0.28;
 /// The lowest motion scale a setting may choose.
 pub const MIN_MOTION_SCALE: f32 = 0.2;
+/// Moving relief frames shrink by these steps (of each side of the default motion
+/// size) while they take longer than `MOTION_BUDGET`, one step a frame, and grow back
+/// while well under it: a PowerVR phone took 11–18 ms a 270×601 relief frame over
+/// flat land and 60–190 ms over close mountains, 28–60 ms at 135×301 (2026-11-26).
+pub const MOTION_STEPS: [f32; 5] = [1.0, 0.85, 0.7, 0.6, 0.5];
+/// The moving relief frame's aim: 25 frames a second.
+pub const MOTION_BUDGET: std::time::Duration = std::time::Duration::from_millis(40);
+/// A step smaller above this share of `MOTION_BUDGET`, larger below the second: a
+/// step changes a frame's pixels by at most 1.45 times, so the two never alternate.
+const MOTION_SHRINK_ABOVE: f64 = 1.25;
+const MOTION_GROW_BELOW: f64 = 0.6;
+
+/// The step of `MOTION_STEPS` after a moving relief frame drawn at `step` took `took`.
+pub fn next_motion_step(step: usize, took: std::time::Duration) -> usize {
+    let share = took.as_secs_f64() / MOTION_BUDGET.as_secs_f64();
+    if share > MOTION_SHRINK_ABOVE {
+        (step + 1).min(MOTION_STEPS.len() - 1)
+    } else if share < MOTION_GROW_BELOW {
+        step.saturating_sub(1)
+    } else {
+        step
+    }
+}
+
+/// The default motion scale of relief frames at `step` of `MOTION_STEPS` (a setting
+/// still clamps it to `MIN_MOTION_SCALE`).
+pub fn relief_motion_scale(step: usize) -> f32 {
+    ACTIVE_RELIEF_RENDER_SCALE * MOTION_STEPS[step.min(MOTION_STEPS.len() - 1)]
+}
 const MIN_RENDER_WIDTH_PX: usize = 64;
 const MAX_RENDER_WIDTH_PX: usize = 2000;
 const MIN_RENDER_HEIGHT_PX: usize = 32;
 pub const SCENE_TIME_UPDATE_INTERVAL_SECS: f64 = 60.0;
+/// The moment a frame is drawn for: at rest the scene's time to the minute, so a still
+/// view keeps its frame while the clock runs; while the time plays exactly that time,
+/// or the sun moved in jumps a minute of scene time apart (user, 2026-11-19).
+pub fn frame_time(scene_unix: f64, playing: bool) -> f64 {
+    if playing {
+        scene_unix
+    } else {
+        (scene_unix / SCENE_TIME_UPDATE_INTERVAL_SECS).floor() * SCENE_TIME_UPDATE_INTERVAL_SECS
+    }
+}
 /// The raster for a viewport: full resolution at rest, smaller while moving (smaller
 /// still with `relief`, 3D terrain on screen).
 /// The raster for a view `size_points` large. A moving view (`idle` false) renders
@@ -38,6 +77,17 @@ pub fn raster_size(
     let height =
         ((width as f32 * size_points.y / size_points.x) as usize).max(MIN_RENDER_HEIGHT_PX);
     (width, height)
+}
+/// The pixels per point a raster is drawn at: the screen's, or fewer so a frame of a
+/// view `size_points` large is at most `max_height_px` high (the quality setting).
+pub fn quality_pixels_per_point(
+    size_points: Vec2,
+    pixels_per_point: f32,
+    max_height_px: Option<f32>,
+) -> f32 {
+    max_height_px.map_or(pixels_per_point, |most| {
+        pixels_per_point.min(most / size_points.y.max(1.0))
+    })
 }
 /// Scale between this raster's pixels and the full-quality (idle) raster's, which
 /// sets the level of detail. While interacting, frames render at
@@ -77,21 +127,39 @@ pub struct RasterView {
     pub atmosphere: bool,
     pub terrain: bool,
     pub terrain_exaggeration: f32,
+    /// `TerrainCfg::without_smoothing` when false.
+    pub smooth_relief: bool,
     /// The terrain height the camera looks at (km), part of the camera position.
     pub ground_km: f64,
     pub sunlight: bool,
     pub night_lights: Option<u16>,
     pub stars: bool,
     pub sky: bool,
+    /// The clouds as the frame draws them from below: the layer's opacity (bits)
+    /// and which map (the live maps' generation), when shown.
+    pub clouds: Option<(u32, u64)>,
+    /// The water map for the sun's glint (the live maps' generation), when shown.
+    pub glint: Option<u64>,
+    /// The aurora as the frame draws it: the layer's opacity (bits) and the
+    /// forecast's moment (bits), when shown.
+    pub aurora: Option<(u32, u64)>,
 }
 pub struct ViewKeys {
     pub state: u64,
     pub presentation: u64,
 }
 impl RasterView {
-    pub fn keys(&self, unix_secs: f64) -> ViewKeys {
+    /// The frame's keys at `frame_time` (see [`frame_time`]). The time is in the state
+    /// key only: a frame drawn a moment of scene time ago still shows (as one drawn a
+    /// moment of camera motion ago does); in the presentation key every frame of a
+    /// playing timeline was out of date before it finished, and few were shown. The
+    /// size is in the state key only too: a frame of the size before still shows (at
+    /// that size, centred on the view) while a pane's edge slides or is dragged; in the
+    /// presentation key every frame finished during a resize was thrown away and the
+    /// globe stood still beside black bars until the edge stopped (user, 2026-11-20).
+    pub fn keys(&self, frame_time: f64) -> ViewKeys {
         let sun_key = if self.sunlight || self.sky {
-            (unix_secs / SCENE_TIME_UPDATE_INTERVAL_SECS) as u64
+            frame_time.to_bits()
         } else {
             0
         };
@@ -102,7 +170,7 @@ impl RasterView {
                 self.camera.lon.to_bits(),
                 self.camera.heading.to_bits(),
                 self.camera.alt.to_bits(),
-                self.camera.tilt.to_bits(),
+                (self.camera.tilt.to_bits(), self.camera.look_up.to_bits()),
                 self.width,
                 self.height,
                 self.provider.id(),
@@ -111,7 +179,7 @@ impl RasterView {
             (
                 self.atmosphere,
                 self.terrain,
-                self.terrain_exaggeration.to_bits(),
+                (self.terrain_exaggeration.to_bits(), self.smooth_relief),
                 sun_key,
                 self.release_index,
                 self.sky,
@@ -126,23 +194,25 @@ impl RasterView {
                 // clock (the Milky Way): without it a toggle drew nothing new.
                 self.sunlight,
                 self.stars,
+                (self.clouds, self.glint, self.aurora),
             ),
         )
             .hash(&mut state);
         let mut presentation = std::collections::hash_map::DefaultHasher::new();
         (
-            self.width,
-            self.height,
-            self.aspect.to_bits(),
             self.provider.id(),
             self.release_index,
             self.compare,
             self.grid,
             self.atmosphere,
             self.terrain,
-            self.terrain_exaggeration.to_bits(),
-            sun_key,
-            (self.model.code(), self.sky),
+            (self.terrain_exaggeration.to_bits(), self.smooth_relief),
+            (
+                self.model.code(),
+                self.sky,
+                self.clouds,
+                (self.glint, self.aurora),
+            ),
         )
             .hash(&mut presentation);
         ViewKeys {
@@ -155,6 +225,44 @@ impl RasterView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Moving relief frames shrink a step while slower than the budget and grow back
+    /// while well under it, within `MOTION_STEPS`.
+    #[test]
+    fn moving_relief_frames_follow_their_time() {
+        let ms = std::time::Duration::from_millis;
+        let mut step = 0;
+        for _ in 0..10 {
+            step = next_motion_step(step, ms(150));
+        }
+        assert_eq!(step, MOTION_STEPS.len() - 1);
+        assert_eq!(
+            next_motion_step(step, ms(45)),
+            step,
+            "near the budget it holds"
+        );
+        assert_eq!(next_motion_step(step, ms(15)), step - 1);
+        assert_eq!(next_motion_step(0, ms(5)), 0);
+        assert_eq!(relief_motion_scale(0), ACTIVE_RELIEF_RENDER_SCALE);
+        assert!(relief_motion_scale(99) < relief_motion_scale(1));
+    }
+
+    #[test]
+    fn the_quality_caps_the_frame_height_and_never_raises_it() {
+        let retina = Vec2::new(1440.0, 860.0);
+        let hd = quality_pixels_per_point(retina, 2.0, Some(1080.0));
+        assert!((1078..=1080).contains(&raster_size(retina, hd, true, false, None).1));
+        assert_eq!(quality_pixels_per_point(retina, 2.0, None), 2.0);
+        // A window already smaller than the cap keeps its pixels.
+        assert_eq!(
+            quality_pixels_per_point(Vec2::new(800.0, 500.0), 1.0, Some(720.0)),
+            1.0
+        );
+        // Moving frames stay the same share of the smaller frame at rest.
+        let sd = quality_pixels_per_point(retina, 2.0, Some(720.0));
+        assert_eq!(render_scale(retina, sd, true, true, None), 1.0);
+        assert!(raster_size(retina, sd, false, true, None).1 < 720 / 3);
+    }
     #[test]
     fn sky_changes_invalidate_presentation_even_without_sunlight() {
         let mut view = RasterView {
@@ -164,6 +272,7 @@ mod tests {
                 alt: 14000.0,
                 heading: 0.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
             model: globecraft_core::earth_model::EarthModel::Wgs84,
             width: 64,
@@ -176,9 +285,13 @@ mod tests {
             atmosphere: false,
             terrain: false,
             terrain_exaggeration: 1.0,
+            smooth_relief: true,
             ground_km: 0.0,
             sunlight: false,
             sky: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
             night_lights: None,
             stars: true,
         };
@@ -195,7 +308,12 @@ mod tests {
         assert_ne!(sky_on.keys(120.0).state, starless.keys(120.0).state);
         view.sky = true;
         assert_ne!(off.presentation, view.keys(120.0).presentation);
-        assert_ne!(view.keys(120.0).presentation, view.keys(180.0).presentation);
+        // Another moment draws a new frame; the last one shows until it is done.
+        assert_ne!(view.keys(120.0).state, view.keys(180.0).state);
+        assert_eq!(view.keys(120.0).presentation, view.keys(180.0).presentation);
+        // At rest the frame keeps its minute; playing, every moment is its own.
+        assert_eq!(frame_time(125.0, false), frame_time(170.0, false));
+        assert_eq!(frame_time(125.5, true), 125.5);
     }
     #[test]
     fn motion_changes_state_but_preserves_presentation_compatibility() {
@@ -207,6 +325,7 @@ mod tests {
                 alt: 14_000.0,
                 heading: 0.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
             width: 800,
             height: 600,
@@ -218,9 +337,13 @@ mod tests {
             atmosphere: true,
             terrain: false,
             terrain_exaggeration: 1.0,
+            smooth_relief: true,
             ground_km: 0.0,
             sunlight: true,
             sky: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
             night_lights: None,
             stars: true,
         };
@@ -233,7 +356,8 @@ mod tests {
         let moved = view.keys(120.0);
         assert_ne!(moved.state, original.state);
         assert_eq!(moved.presentation, original.presentation);
-        assert_ne!(view.keys(180.0).presentation, moved.presentation);
+        assert_ne!(view.keys(180.0).state, moved.state);
+        assert_eq!(view.keys(180.0).presentation, moved.presentation);
         view.grid = true;
         assert_ne!(view.keys(120.0).presentation, moved.presentation);
         // A swipe compare's release needs new frames (its split does not).
@@ -248,7 +372,10 @@ mod tests {
         // Raster dimensions can round to the same pixels even as the viewport changes.
         view.aspect += 0.0001;
         assert_ne!(view.keys(120.0).state, before_resize.state);
-        assert_ne!(view.keys(120.0).presentation, before_resize.presentation);
+        // A frame of the size before still shows while the view is resized.
+        view.width = 640;
+        assert_ne!(view.keys(120.0).state, before_resize.state);
+        assert_eq!(view.keys(120.0).presentation, before_resize.presentation);
     }
     #[test]
     fn terrain_toggle_and_exaggeration_invalidate_presentation() {
@@ -259,6 +386,7 @@ mod tests {
                 alt: 10.0,
                 heading: 0.0,
                 tilt: 0.0,
+                look_up: 0.0,
             },
             model: globecraft_core::earth_model::EarthModel::Wgs84,
             width: 80,
@@ -271,8 +399,12 @@ mod tests {
             atmosphere: false,
             sunlight: false,
             sky: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
             terrain: false,
             terrain_exaggeration: 1.0,
+            smooth_relief: true,
             ground_km: 0.0,
             night_lights: None,
             stars: true,

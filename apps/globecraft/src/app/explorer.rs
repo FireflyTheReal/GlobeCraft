@@ -1,5 +1,4 @@
 //! Optional explorer utilities. Does not modify the CPU globe renderer.
-use globecraft_core::layers::MapLayer;
 mod files;
 use super::App;
 use eframe::egui::{self, TextureHandle};
@@ -106,14 +105,12 @@ fn speak(text: &str, _lang: globecraft_core::language::Lang) -> Result<(), Strin
 }
 
 impl App {
-    /// The Explorer's pane: the selected place and its links, a tour, layers and the
-    /// worlds.
+    /// The Explorer's pane: the selected place and its links, a tour and the worlds. Its
+    /// layers are in the Layers pane, once (design review 2026-11-20).
     pub(super) fn explorer_pane(&mut self, ui: &mut egui::Ui) {
         let label = self.explorer_location(ui);
         ui.separator();
         self.explorer_tour(ui, &label);
-        ui.separator();
-        self.explorer_layers(ui);
         ui.separator();
         self.explorer_bodies(ui);
         if !self.explorer.message.is_empty() {
@@ -182,40 +179,6 @@ impl App {
                 Ok(()) => lg.text("explorer-speech-sent").into(),
                 Err(error) => error,
             };
-        }
-    }
-
-    fn explorer_layers(&mut self, ui: &mut egui::Ui) {
-        let lg = self.lang;
-        ui.heading(lg.text("explorer-globe-layers"));
-        ui.small(lg.text("explorer-layer-info"));
-        self.layer_checkbox(ui, MapLayer::Radar, lg.text("layers-weather-toggle"));
-        self.layer_checkbox(ui, MapLayer::Clouds, lg.text("layers-clouds-toggle"));
-        let (clouds, radar) = (self.layer(MapLayer::Clouds), self.layer(MapLayer::Radar));
-        if clouds || radar {
-            ui.small(self.live.maps.status(clouds, radar, lg));
-        }
-        if clouds {
-            ui.label(lg.text("explorer-cloud-credit"));
-            ui.hyperlink_to(
-                lg.text("explorer-cloud-source"),
-                "https://github.com/matteason/live-cloud-maps",
-            );
-            ui.small(lg.text("explorer-cloud-license"));
-        }
-        if radar {
-            ui.label(lg.text("explorer-radar-credit"));
-            ui.hyperlink_to(
-                lg.text("explorer-radar-source"),
-                "https://www.rainviewer.com/",
-            );
-            ui.small(lg.text("explorer-radar-explanation"));
-        }
-        self.layer_checkbox(ui, MapLayer::Flights, lg.text("layers-flights-toggle"));
-        if self.layer(MapLayer::Flights) {
-            super::ui::aircraft::draw_status(ui, &self.live.aircraft.snapshot(), lg);
-            ui.hyperlink_to("OpenSky Network", "https://opensky-network.org/");
-            ui.hyperlink_to("ADSB.lol (ODbL)", "https://www.adsb.lol/");
         }
     }
 

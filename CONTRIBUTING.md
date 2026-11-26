@@ -171,7 +171,7 @@ file dialogs, or packaging. Run the following manual checks for affected areas:
   Close the Measure pane, then click Home › Ruler: the Measure pane must open with
   its controls. Click Ruler again with measurements and undo/redo history: measuring
   must switch off while retaining both; re-enable it and check the same history.
-  Close the left pane and click Home › Placemark: add one marker at the camera
+  Hide the side pane and click Home › Placemark: add one marker at the camera
   center, reopen the Places pane and focus its selected name field for editing. Check generated names in both
   languages, an entered name and insertion into a selected folder. Save/reopen
   KML to verify the marker uses the existing file workflow.
@@ -199,8 +199,10 @@ file dialogs, or packaging. Run the following manual checks for affected areas:
   Select a place with a long HTML description: its text remains editable in a
   three-line scrolling viewport while the tree retains its taller area. Check
   radar/cloud attribution directly beneath its matching layer toggle.
-- Switch Layers/Places/Globe from the left pane's tabs in both languages; at narrow
-  widths they become icons. Close the pane with ✕ and reopen it from View › Panes.
+- Switch the side pane's tabs in both languages; at narrow widths they become icons.
+  Drag a tab along the header to reorder it, move the pane to the other side with the
+  chevron, and drag its edge: the globe follows the edge while it moves. Close a tab
+  with ✕ and reopen it from View › Panes.
   Pin Places, switch tabs and drag the splitter; the outline must stay usable and
   appear only once when Places is selected. Open the Assistant and Measure panes,
   close one tab, resize, and restart: pane, tab, ribbon tab/collapse, pin, splitter,
@@ -511,12 +513,12 @@ The Explorer, live meteorological/aircraft layers, moon and custom planet
 remain integrated in `apps/globecraft`. See [GPU_RENDERER.md](docs/features/GPU_RENDERER.md)
 for hardware limits, performance and CPU-only build instructions.
 
-The self-updater (`updater`), the AI assistant (`assistant`) and the live feeds
-(`live`) are features, on by default; `standard` names the three together, and release
-downloads are built with `--no-default-features --features standard` (everything but
-the experimental GPU renderer). Packagers who update GlobeCraft through a package
-manager can build without the updater: `cargo build -p globecraft --release
---no-default-features --features assistant,live`. No update check runs then, and
+The self-updater (`updater`), the AI assistant (`assistant`), the live feeds
+(`live`) and the GPU renderer (`gpu`) are features, on by default; `standard` names the
+four together, and release downloads are built with `--no-default-features --features
+standard` (the GPU renderer since v0.5.0). Packagers who update GlobeCraft through a
+package manager can build without the updater: `cargo build -p globecraft --release
+--no-default-features --features assistant,live,gpu`. No update check runs then, and
 nothing is downloaded from GitHub. Without `assistant` the assistant pane and its
 commands are left out, and so is the `globecraft-assistant` crate. Without `live` the
 layers for aircraft, vessels, satellites, the aurora forecast, traffic, clouds and
@@ -524,8 +526,8 @@ radar are not offered, and those services are never asked.
 
 ## Panes, commands and native menus
 
-The left pane (Layers, Places, Globe) and right pane (AI Assistant, Measure) open and
-close without resetting layer, placemark, ruler or section state, and restore their
+The side pane's tabs (Layers, Places, AI Assistant, Measure, Legend, Explorer, and the
+details of a selection) open and close without resetting layer, placemark, ruler or section state, and restore their
 widths. Oversized widgets scroll within a pane instead of widening it; the status
 bar's cursor readout shrinks its font, then reduces decimal precision to keep both
 coordinates visible. The globe keeps the previous frame and overlays at their

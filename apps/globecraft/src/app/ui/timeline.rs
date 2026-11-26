@@ -1,35 +1,48 @@
-//! The timeline (roadmap 4.H): a bar along the bottom of the globe with the app's date
-//! and time, steps of an hour and a day, play at a speed, back to now, a time-of-day
-//! slider and the window of past events timed points show. Every control runs a
-//! `time.*` command.
+//! The timeline (roadmap 4.H, C4), laid out as ArcGIS Map Viewer's time slider: a
+//! round play button, previous and next steps, then the track (`timeline_track`) with
+//! the span's start and end dates at its ends, the app's time (and the window of
+//! events) above its middle and dates under its ticks, and a settings menu (back to
+//! now, speed, window of events, span) and a close button at the right. Every control
+//! runs a `time.*` command.
 use super::icons;
-use super::theme::{Tokens, regular, semibold};
+use super::theme::Tokens;
 use crate::app::App;
-use crate::app::time::{SPEEDS, WINDOWS};
+use crate::app::time::{RANGES, SPEEDS, WINDOWS};
 use eframe::egui::{self, Align2, CornerRadius, Pos2, Rect, Sense, Ui, vec2};
-use globecraft_core::time::{DAY_SECS, HOUR_SECS, format_utc};
+use globecraft_core::time::{DAY_SECS, HOUR_SECS};
 use serde_json::{Value, json};
 
 /// Above the scale bar and the credits line.
 const BOTTOM_INSET: f32 = 40.0;
 const ICON: f32 = 24.0;
-/// Narrower globes leave out the time-of-day slider.
-const SLIDER_MIN_GLOBE_WIDTH: f32 = 720.0;
-/// The widest the clock gets.
-const CLOCK_WIDEST: &str = "8888-88-88 88:88 UTC";
+/// The play button, round, as Map Viewer's.
+const PLAY: f32 = 34.0;
+/// The bar spans the globe less this on each side, within these widths.
+const SIDE_MARGIN: f32 = 24.0;
+const MIN_WIDTH: f32 = 480.0;
+const MAX_WIDTH: f32 = 980.0;
+/// Room the buttons left and right of the track take.
+const LEFT_CONTROLS: f32 = PLAY + 3.0 * ICON + 28.0;
+const RIGHT_CONTROLS: f32 = 2.0 * ICON + 16.0;
 
 impl App {
-    pub(in crate::app) fn timeline_bar(&mut self, ctx: &egui::Context, globe: Rect) {
+    /// The timeline over the globe's bottom, when it is open: where it is drawn.
+    pub(in crate::app) fn timeline_bar(
+        &mut self,
+        ctx: &egui::Context,
+        globe: Rect,
+    ) -> Option<Rect> {
         if !self.timeline.open {
-            return;
+            return None;
         }
         let lang = self.lang;
         let mut run: Option<(&'static str, Value)> = None;
         let unix = self.scene_unix();
         let live = self.time.is_live();
         let playing = self.time.speed() != 0.0;
-        let with_slider = globe.width() >= SLIDER_MIN_GLOBE_WIDTH;
-        egui::Area::new(egui::Id::new("timeline_bar"))
+        let width = (globe.width() - 2.0 * SIDE_MARGIN).clamp(MIN_WIDTH, MAX_WIDTH);
+        let mut track_end = self.timeline.track_end;
+        let bar = egui::Area::new(egui::Id::new("timeline_bar"))
             .order(egui::Order::Middle)
             .pivot(Align2::CENTER_BOTTOM)
             .fixed_pos(Pos2::new(globe.center().x, globe.bottom() - BOTTOM_INSET))
@@ -39,163 +52,137 @@ impl App {
                 egui::Frame::popup(ui.style())
                     .fill(t.pane)
                     .corner_radius(10.0)
-                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.set_width(width);
+                        ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-                            // Date and time, or Live, in a fixed width: a bar that
-                            // changed width as the clock ran would move its centre, and
-                            // every button with it.
-                            let font = semibold(13.0);
-                            let clock_w = super::widgets::text_w(ui, CLOCK_WIDEST, font.clone());
-                            let (clock, _) =
-                                ui.allocate_exact_size(vec2(clock_w, ICON), Sense::hover());
-                            ui.painter().text(
-                                clock.left_center(),
-                                Align2::LEFT_CENTER,
-                                format_utc(unix),
-                                font,
-                                t.text,
-                            );
-                            if live {
-                                live_badge(ui, &t, lang.text("timeline-live"));
-                            }
-                            ui.separator();
-                            for (icon, hours, key) in [
-                                ("time_first", -24.0, "timeline-day-back-help"),
-                                ("time_prev", -1.0, "timeline-hour-back-help"),
-                            ] {
-                                if icon_button(ui, &t, icon, lang.text(key), false) {
-                                    run = Some(("time.step", json!({"hours": hours})));
-                                }
-                            }
-                            let (icon, id) = if playing {
-                                ("time_pause", "time.pause")
-                            } else {
-                                ("run", "time.play")
-                            };
                             let help = lang.text(if playing {
                                 "cmd-time-pause"
                             } else {
                                 "cmd-time-play"
                             });
-                            if icon_button(ui, &t, icon, help, playing) {
-                                run = Some((id, Value::Null));
+                            if play_button(ui, &t, playing, help) {
+                                run = Some(if playing {
+                                    ("time.pause", Value::Null)
+                                } else {
+                                    ("time.play", Value::Null)
+                                });
                             }
-                            for (icon, hours, key) in [
-                                ("time_next", 1.0, "timeline-hour-forward-help"),
-                                ("time_last", 24.0, "timeline-day-forward-help"),
+                            // One step back and forward: to the track's next tick.
+                            let span = self.timeline.range_days * DAY_SECS;
+                            for (icon, forward, key) in [
+                                ("time_prev", false, "timeline-step-back-help"),
+                                ("time_next", true, "timeline-step-forward-help"),
                             ] {
                                 if icon_button(ui, &t, icon, lang.text(key), false) {
-                                    run = Some(("time.step", json!({"hours": hours})));
-                                }
-                            }
-                            // Speed.
-                            let speed_key = SPEEDS
-                                .iter()
-                                .find(|(s, _)| *s == self.timeline.speed)
-                                .map_or("timeline-speed-hour", |(_, k)| k);
-                            let speed_w = widest(ui, SPEEDS.iter().map(|(_, k)| lang.text(k)));
-                            let speed_button = egui::Button::new(lang.text(speed_key))
-                                .min_size(vec2(speed_w, 0.0));
-                            egui::containers::menu::MenuButton::from_button(speed_button)
-                                .ui(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(lang.text("timeline-speed-label"))
-                                            .color(t.text_dim),
+                                    let to = super::timeline_track::step_to(
+                                        unix,
+                                        span,
+                                        forward,
+                                        self.time_zone_secs(unix),
                                     );
-                                    for (speed, key) in SPEEDS {
-                                        let on = speed == self.timeline.speed;
-                                        if ui.radio(on, lang.text(key)).clicked() {
-                                            run = Some((
-                                                "time.speed",
-                                                json!({"hours_per_second": speed / HOUR_SECS}),
-                                            ));
-                                            ui.close();
-                                        }
-                                    }
-                                })
-                                .0
-                                .on_hover_text(lang.text("timeline-speed-label"));
-                            if ui
-                                .add_enabled(
-                                    !live,
-                                    egui::Button::new(lang.text("timeline-now-action")),
-                                )
-                                .on_hover_text(lang.text("timeline-now-help"))
-                                .clicked()
-                            {
-                                run = Some(("time.set", json!({"time": "now"})));
-                            }
-                            if with_slider {
-                                ui.separator();
-                                let day = (unix / DAY_SECS).floor() * DAY_SECS;
-                                let mut hours = (unix - day) / HOUR_SECS;
-                                let slider =
-                                    egui::Slider::new(&mut hours, 0.0..=24.0).show_value(false);
-                                if ui
-                                    .add_sized(vec2(160.0, ICON), slider)
-                                    .on_hover_text(lang.text("timeline-time-of-day-help"))
-                                    .changed()
-                                {
-                                    let time = day + (hours * HOUR_SECS).min(DAY_SECS - 60.0);
-                                    run = Some(("time.set", json!({"time": time})));
+                                    run = Some(("time.set", json!({ "time": to })));
                                 }
                             }
-                            ui.separator();
-                            // Event window.
-                            let window_hours =
-                                self.time.window_secs().map_or(0.0, |s| s / HOUR_SECS);
-                            let window_key = WINDOWS
-                                .iter()
-                                .find(|(h, _)| *h == window_hours)
-                                .map_or("timeline-window-all", |(_, k)| k);
-                            let window_label = |key: &str| {
-                                format!(
-                                    "{}: {}",
-                                    lang.text("timeline-window-label"),
-                                    lang.text(key)
-                                )
-                            };
-                            let labels: Vec<String> =
-                                WINDOWS.iter().map(|(_, k)| window_label(k)).collect();
-                            let window_w = widest(ui, labels.iter().map(String::as_str));
-                            let window_button = egui::Button::new(window_label(window_key))
-                                .min_size(vec2(window_w, 0.0));
-                            egui::containers::menu::MenuButton::from_button(window_button)
-                                .ui(ui, |ui| {
-                                    for (hours, key) in WINDOWS {
-                                        if ui.radio(hours == window_hours, lang.text(key)).clicked()
-                                        {
-                                            run = Some(("time.window", json!({"hours": hours})));
-                                            ui.close();
-                                        }
-                                    }
-                                })
-                                .0
-                                .on_hover_text(lang.text("cmd-time-window-help"));
+                            // The loop: on around the time, off again.
+                            let looped = self.time.loop_range().is_some();
+                            if icon_button(ui, &t, "loop", lang.text("timeline-loop-help"), looped)
+                            {
+                                run = Some(if looped {
+                                    ("time.loop", json!({}))
+                                } else {
+                                    let (from, to) = super::timeline_track::loop_around(unix, span);
+                                    ("time.loop", json!({ "from": from, "to": to }))
+                                });
+                            }
+                            ui.add_space(8.0);
+                            let track_w = width - LEFT_CONTROLS - RIGHT_CONTROLS;
+                            track_end = self.timeline_track(ui, track_w, unix, live, &mut run);
+                            ui.add_space(4.0);
+                            self.timeline_settings(ui, &t, live, &mut run);
                             if icon_button(ui, &t, "close", lang.text("cmd-ui-timeline"), false) {
                                 run = Some(("ui.timeline", json!({"on": false})));
                             }
                         });
                     });
-            });
+            })
+            .response
+            .rect;
+        self.timeline.track_end = track_end;
         if let Some((id, params)) = run {
             // A changed time renders like a moving camera until it settles.
             self.touch();
             self.run_reporting(id, params);
             ctx.request_repaint();
         }
+        Some(bar)
     }
-}
 
-/// The widest of some button texts, plus the button's padding.
-fn widest<'a>(ui: &Ui, texts: impl Iterator<Item = &'a str>) -> f32 {
-    let font = egui::TextStyle::Button.resolve(ui.style());
-    texts
-        .map(|text| super::widgets::text_w(ui, text, font.clone()))
-        .fold(0.0, f32::max)
-        + 2.0 * ui.spacing().button_padding.x
+    /// The settings menu at the bar's right: back to now, speed, window of events, span.
+    fn timeline_settings(
+        &self,
+        ui: &mut Ui,
+        t: &Tokens,
+        live: bool,
+        run: &mut Option<(&'static str, Value)>,
+    ) {
+        let lang = self.lang;
+        let (rect, response) = ui.allocate_exact_size(vec2(ICON, ICON), Sense::click());
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(5), t.hover);
+        }
+        icons::paint(
+            ui.painter(),
+            rect.shrink(4.0),
+            "settings",
+            t.icon,
+            t.icon_accent,
+        );
+        let response = response.on_hover_text(lang.text("timeline-settings-help"));
+        egui::Popup::menu(&response).show(|ui| {
+            if ui
+                .add_enabled(!live, egui::Button::new(lang.text("timeline-now-action")))
+                .on_hover_text(lang.text("timeline-now-help"))
+                .clicked()
+            {
+                *run = Some(("time.set", json!({"time": "now"})));
+                ui.close();
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(lang.text("timeline-speed-label")).color(t.text_dim));
+            for (speed, key) in SPEEDS {
+                if ui
+                    .radio(speed == self.timeline.speed, lang.text(key))
+                    .clicked()
+                {
+                    *run = Some(("time.speed", json!({"hours_per_second": speed / HOUR_SECS})));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(lang.text("timeline-window-label")).color(t.text_dim));
+            let window_hours = self.time.window_secs().map_or(0.0, |s| s / HOUR_SECS);
+            for (hours, key) in WINDOWS {
+                if ui.radio(hours == window_hours, lang.text(key)).clicked() {
+                    *run = Some(("time.window", json!({ "hours": hours })));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(lang.text("cmd-time-range")).color(t.text_dim));
+            for (days, key) in RANGES {
+                if ui
+                    .radio(days == self.timeline.range_days, lang.text(key))
+                    .clicked()
+                {
+                    *run = Some(("time.range", json!({ "days": days })));
+                    ui.close();
+                }
+            }
+        });
+    }
 }
 
 fn icon_button(ui: &mut Ui, t: &Tokens, icon: &str, help: &str, checked: bool) -> bool {
@@ -207,26 +194,26 @@ fn icon_button(ui: &mut Ui, t: &Tokens, icon: &str, help: &str, checked: bool) -
     } else if resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
     }
-    icons::paint(ui.painter(), r.shrink(4.0), icon, t.icon, t.accent);
+    icons::paint(ui.painter(), r.shrink(4.0), icon, t.icon, t.icon_accent);
     resp.on_hover_text(help).clicked()
 }
 
-fn live_badge(ui: &mut Ui, t: &Tokens, text: &str) {
-    let font = regular(11.0);
-    let w = super::widgets::text_w(ui, text, font.clone()) + 18.0;
-    let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+/// The round play (or pause) button.
+fn play_button(ui: &mut Ui, t: &Tokens, playing: bool, help: &str) -> bool {
+    let (r, resp) = ui.allocate_exact_size(vec2(PLAY, PLAY), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, help));
+    let centre = r.center();
+    let fill = if resp.hovered() { t.hover } else { t.pane };
+    ui.painter().circle_filled(centre, PLAY / 2.0, fill);
     ui.painter()
-        .rect_filled(r, CornerRadius::same(9), t.accent.gamma_multiply(0.18));
-    ui.painter().circle_filled(
-        Pos2::new(r.left() + 8.0, r.center().y),
-        3.0,
-        egui::Color32::from_rgb(230, 60, 60),
+        .circle_stroke(centre, PLAY / 2.0 - 1.0, egui::Stroke::new(1.5, t.accent));
+    let icon = if playing { "time_pause" } else { "run" };
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(centre, vec2(ICON - 6.0, ICON - 6.0)),
+        icon,
+        t.accent,
+        t.accent,
     );
-    ui.painter().text(
-        Pos2::new(r.left() + 14.0, r.center().y),
-        Align2::LEFT_CENTER,
-        text,
-        font,
-        t.text,
-    );
+    resp.on_hover_text(help).clicked()
 }

@@ -10,7 +10,6 @@ impl App {
         }
         let mut picked: Option<usize> = None;
         let q = self.search.query.trim().to_lowercase();
-        let ui_scale = self.settings.ui_scale;
         let width = field.width().max(320.0);
         let area = egui::Area::new(egui::Id::new("search_suggestions"))
             .order(egui::Order::Foreground)
@@ -23,7 +22,7 @@ impl App {
                         ui.set_width(width);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         for (i, sg) in self.search.suggestions.iter().enumerate() {
-                            let row_h = 28.0 * ui_scale;
+                            let row_h = 28.0;
                             let (rect, resp) =
                                 ui.allocate_exact_size(Vec2::new(width, row_h), Sense::click());
                             if resp.hovered() {
@@ -41,14 +40,14 @@ impl App {
                                 ui.painter(),
                                 Rect::from_center_size(
                                     Pos2::new(rect.left() + 20.0, rect.center().y),
-                                    Vec2::splat(14.0 * ui_scale),
+                                    Vec2::splat(14.0),
                                 ),
                                 "search",
                                 t.text_dim,
-                                t.accent,
+                                t.icon_accent,
                             );
                             // Typed part in normal weight, completion in bold (like Google).
-                            let font = FontId::proportional(14.0 * ui_scale);
+                            let font = FontId::proportional(14.0);
                             let (normal, strong) =
                                 (ui.visuals().text_color(), ui.visuals().strong_text_color());
                             let mut job = egui::text::LayoutJob::default();

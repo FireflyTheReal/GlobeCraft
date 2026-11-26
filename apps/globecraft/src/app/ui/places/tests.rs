@@ -158,12 +158,14 @@ fn nested_tree_fits_default_sidebar_with_compact_rows_and_vector_icons() {
             desc: String::new(),
             lat: 34.0,
             lon: -118.0,
+            time: None,
         }),
         PlaceNode::marker(Placemark {
             name: "Like's Thai and Chinese Food Takeout".into(),
             desc: String::new(),
             lat: 34.0,
             lon: -118.0,
+            time: None,
         }),
     ];
     for name in [
@@ -207,7 +209,8 @@ fn nested_tree_fits_default_sidebar_with_compact_rows_and_vector_icons() {
                 });
                 assert!(
                     bounds.height()
-                        <= 8.0 * (ui.text_style_height(&egui::TextStyle::Body) + 2.0) + 1.0,
+                        <= 8.0 * (ui.text_style_height(&egui::TextStyle::Body) + 2.0).max(20.0)
+                            + 1.0,
                     "{bounds:?}"
                 );
             },
@@ -241,6 +244,7 @@ fn row_selection_accepts_clicks_past_the_name() {
         desc: String::new(),
         lat: 27.0,
         lon: 86.0,
+        time: None,
     });
     let mut selection = None;
     let mut action = None;

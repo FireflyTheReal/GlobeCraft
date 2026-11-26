@@ -49,7 +49,7 @@ fn interface_screenshots() {
 
     let app = h.state_mut();
     app.settings.workspace.ribbon_tab = Tab::Live;
-    app.settings.workspace.open_right(RightPane::Measure);
+    app.settings.workspace.open_right(PaneTab::Measure);
     let _ = app.run("ruler.addPoint", json!({"lat": 38.72, "lon": -9.14}));
     let _ = app.run("ruler.addPoint", json!({"lat": -22.9, "lon": -43.2}));
     settle(&mut h, 2.0);
@@ -57,7 +57,7 @@ fn interface_screenshots() {
 
     let mut h = harness(ThemePreference::Dark);
     let app = h.state_mut();
-    app.settings.workspace.open_right(RightPane::Assistant);
+    app.settings.workspace.open_right(PaneTab::Assistant);
     let _ = app.run("ui.pane.places", Value::Null);
     let _ = app.run(
         "places.add",
@@ -118,6 +118,16 @@ fn navigator_tilt_sweep() {
             settle(&mut h, 0.2);
             save(&mut h, &dir, &format!("nav-{alt}-{tilt}"));
         }
+    }
+    // The arc's sky end, and how far it reaches where the view levels out.
+    for (alt, lean) in [(2.0, 150.0), (10_000.0, 175.0)] {
+        let _ = h.state_mut().run(
+            "camera.set",
+            json!({"lat": 30.0, "lon": 105.0, "altitude_km": alt, "heading_deg": 15.0, "tilt_deg": 0.0}),
+        );
+        h.state_mut().cam.tilt_view(lean);
+        settle(&mut h, 0.2);
+        save(&mut h, &dir, &format!("nav-lean-{alt}-{lean}"));
     }
 }
 
@@ -207,7 +217,8 @@ fn network_settings_screenshots() {
     // The keys section (adapter D), lower on the same page: one field per keyed service.
     settle(&mut h, 0.5);
     assert!(
-        h.query_by_label_contains("TomTom").is_some(),
+        // The key row's label and its field, which is named after it.
+        h.query_all_by_label_contains("TomTom").next().is_some(),
         "no TomTom key row"
     );
     save(&mut h, &dir, "keys-en");
@@ -385,12 +396,12 @@ fn surfaces_screenshots() {
 }
 
 /// The keyboard: F6 reaches the ribbon's tabs, the arrows move between them, Enter
-/// opens one, F6 goes on to the left pane and the globe, and the focused control has a
+/// opens one, F6 goes on to the side pane and the globe, and the focused control has a
 /// ring (layout redesign step 5).
 #[test]
 #[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
 fn keyboard_navigation_screenshot() {
-    use super::super::ui::focus::{left_tab_id, ribbon_tab_id};
+    use super::super::ui::focus::{pane_tab_id, ribbon_tab_id};
     let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
         return;
     };
@@ -422,13 +433,18 @@ fn keyboard_navigation_screenshot() {
     save(&mut h, &dir, "keyboard-ribbon-tab");
     h.key_press(egui::Key::F6);
     settle(&mut h, 0.2);
-    let panel = h.state().settings.sidebar.panel;
+    let pane = h
+        .state()
+        .settings
+        .workspace
+        .right_pane
+        .expect("a tab in view");
     assert_eq!(
         focused(&h),
-        Some(left_tab_id(panel)),
-        "F6 goes on to the left pane"
+        Some(pane_tab_id(pane)),
+        "F6 goes on to the side pane"
     );
-    save(&mut h, &dir, "keyboard-left-pane");
+    save(&mut h, &dir, "keyboard-side-pane");
     h.key_press(egui::Key::F6);
     settle(&mut h, 0.2);
     assert_eq!(
@@ -438,7 +454,7 @@ fn keyboard_navigation_screenshot() {
     );
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
     settle(&mut h, 0.2);
-    assert_eq!(focused(&h), Some(left_tab_id(panel)), "Shift+F6 goes back");
+    assert_eq!(focused(&h), Some(pane_tab_id(pane)), "Shift+F6 goes back");
 }
 
 /// Side menus in the group drop-downs: Nature ▾ › Exaggeration ▸, My data ▾ ›
@@ -460,7 +476,11 @@ fn side_menus_screenshot() {
     ] {
         h.state_mut().settings.workspace.ribbon_tab = tab;
         settle(&mut h, 0.3);
-        h.get_by_label(group).click();
+        let more = h
+            .state()
+            .lang
+            .format("ribbon-group-more", &[("group", group.into())]);
+        h.get_by_label(&more).click();
         settle(&mut h, 0.3);
         h.get_by_label_contains(side).hover();
         settle(&mut h, 0.5);
@@ -488,7 +508,11 @@ fn ribbon_menus_screenshot() {
         let mut h = harness(theme);
         settle(&mut h, 0.5);
         save(&mut h, &dir, &format!("ribbon-{name}"));
-        h.get_by_label("Navigate").click();
+        let more = h
+            .state()
+            .lang
+            .format("ribbon-group-more", &[("group", "Navigate".into())]);
+        h.get_by_label(&more).click();
         settle(&mut h, 0.3);
         assert!(
             h.query_by_label("Auto-Rotate").is_some(),
@@ -672,4 +696,336 @@ fn icon_sheet() {
             .save(dir.join(format!("icons{suffix}-{theme}.png")))
             .expect("save");
     }
+}
+
+/// The legend opens when a coded layer appears and closes when the last one goes;
+/// opened by hand with nothing on the globe, it stays (user, 2026-11-18). No rendering.
+#[test]
+fn the_legend_closes_when_its_last_key_goes() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let app = h.state_mut();
+    let show = |app: &mut App, visible: bool| {
+        app.run("layer.show", json!({"layer": "aurora", "visible": visible}))
+            .expect("aurora");
+        app.legend_watch();
+    };
+    show(app, true);
+    assert!(app.legend_open());
+    show(app, false);
+    assert!(!app.legend_open());
+    app.run("ui.legend", json!({"on": true})).expect("legend");
+    app.legend_watch();
+    assert!(app.legend_open());
+}
+
+/// `camera.lookAround` turns the view about the eye; raised past the ground it looks
+/// up at the sky (roadmap C8), and lowered it comes back. No rendering.
+#[test]
+fn looking_around_turns_the_view_about_the_eye() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": 40.0, "lon": -74.0, "altitude_km": 2.0, "heading_deg": 0.0, "tilt_deg": 60.0}),
+    )
+    .expect("camera");
+    let eye = |app: &App| app.view_basis(1.0).c;
+    let before = eye(app);
+    let turned = app
+        .run("camera.lookAround", json!({"turn_deg": 30.0}))
+        .expect("look");
+    let heading = turned["heading_deg"].as_f64().unwrap();
+    assert!((heading - 30.0).abs() < 1.0, "{heading}");
+    let moved = eye(app).distance(before) * globecraft_core::EARTH_RADIUS_KM;
+    assert!(moved < 1e-6, "{moved} km");
+    let raised = app
+        .run("camera.lookAround", json!({"raise_deg": 60.0}))
+        .expect("look up");
+    assert!(raised["look_up_deg"].as_f64().unwrap() > 0.0, "{raised}");
+    let lowered = app
+        .run("camera.lookAround", json!({"raise_deg": -60.0}))
+        .expect("look down");
+    assert_eq!(lowered["look_up_deg"].as_f64(), Some(0.0));
+    let moved = eye(app).distance(before) * globecraft_core::EARTH_RADIUS_KM;
+    assert!(moved < 1e-6, "{moved} km");
+    // Without angles it switches look-around dragging on, and off again.
+    let mode = app.run("camera.lookAround", json!({})).expect("mode");
+    assert_eq!(mode["look_mode"], true);
+    let mode = app.run("camera.lookAround", json!({})).expect("mode");
+    assert_eq!(mode["look_mode"], false);
+}
+
+/// The status bar's camera altitude is the camera's height above sea level, and
+/// entering one puts the camera there along its line of sight. No rendering.
+#[test]
+fn the_camera_altitude_is_its_height() {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 760.0))
+        .build_eframe(|cc| App::new(cc, Settings::default(), Arc::new(RestartRequest::default())));
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": 40.0, "lon": -74.0, "altitude_km": 10.0, "heading_deg": 0.0, "tilt_deg": 60.0}),
+    )
+    .expect("camera");
+    // Ten km from the point it looks at, leaning 60°: about 5 km up.
+    let height = app.eye_height_km();
+    assert!((height - 5.0).abs() < 0.1, "{height}");
+    let alt = app.alt_for_eye_height(3.0);
+    app.cam.alt = alt;
+    assert!(
+        (app.eye_height_km() - 3.0).abs() < 1e-3,
+        "{}",
+        app.eye_height_km()
+    );
+    assert!((alt - 6.0).abs() < 0.1, "{alt}");
+}
+
+/// The side pane (one since 2026-11-19): its tabs, What's here as a tab, docked on
+/// the left, and its content at the narrowest and a wide width.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn side_pane_screenshots() {
+    use globecraft_data::settings::workspace::{
+        MAX_RIGHT_PANE_WIDTH_POINTS, MIN_RIGHT_PANE_WIDTH_POINTS, PaneSide,
+    };
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    settle(&mut h, 1.0);
+    save(&mut h, &dir, "pane-default");
+    let _ = h
+        .state_mut()
+        .run("ui.here", json!({"lat": 46.3, "lon": 8.3}));
+    settle(&mut h, 1.0);
+    assert_eq!(
+        h.state().settings.workspace.right_pane,
+        Some(PaneTab::Here),
+        "What's here opens as a tab"
+    );
+    save(&mut h, &dir, "pane-here");
+    let _ = h
+        .state_mut()
+        .run("ui.pane.moveTab", json!({"tab": "here", "to": 0}));
+    let _ = h.state_mut().run("ui.pane.side", Value::Null);
+    settle(&mut h, 1.0);
+    assert_eq!(h.state().settings.workspace.pane_side, PaneSide::Left);
+    assert_eq!(h.state().settings.workspace.right_open[0], PaneTab::Here);
+    save(&mut h, &dir, "pane-left");
+    for (width, name) in [
+        (MIN_RIGHT_PANE_WIDTH_POINTS, "pane-narrow"),
+        (MAX_RIGHT_PANE_WIDTH_POINTS, "pane-wide"),
+    ] {
+        let mut settings = Settings::default();
+        settings.appearance.theme = ThemePreference::Dark;
+        settings.workspace.right_width_points = width;
+        settings.workspace.open_right(PaneTab::Measure);
+        settings.workspace.open_right(PaneTab::Legend);
+        settings.workspace.open_right(PaneTab::Layers);
+        let mut h = harness_with(settings);
+        settle(&mut h, 1.0);
+        save(&mut h, &dir, name);
+    }
+    // Closing the tab clears what it showed.
+    let mut h = harness(ThemePreference::Dark);
+    let _ = h
+        .state_mut()
+        .run("ui.here", json!({"lat": 46.3, "lon": 8.3}));
+    settle(&mut h, 0.5);
+    h.state_mut().pointer.here_card = None;
+    settle(&mut h, 0.5);
+    assert!(
+        !h.state().settings.workspace.right_is_open(PaneTab::Here),
+        "the tab goes with its selection"
+    );
+}
+
+/// The View tab's Worlds group (its lone button in the group's middle) and the
+/// Settings window's page clear of its sidebar line (user, 2026-11-20).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn view_ribbon_and_settings_screenshots() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.settings.workspace.ribbon_tab = globecraft_core::commands::Tab::View;
+    app.settings.experience = globecraft_data::settings::experience::ExperienceLevel::Advanced;
+    settle(&mut h, 0.5);
+    // Twice: the group centres its tools from their width the frame before.
+    settle(&mut h, 0.2);
+    save(&mut h, &dir, "ribbon-view");
+    let _ = h.state_mut().run("ui.settings", json!({}));
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "settings-general");
+}
+
+/// The side pane mid-slide, closing and opening (user, 2026-11-20): the globe and
+/// its overlays follow the pane's edge, the pane's text keeps its wrap.
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn side_pane_slide_screenshots() {
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    // PROBE_CITY: over a city, where black bars beside a frame would show (user's
+    // recording, 2026-11-21 08:39).
+    let city = std::env::var_os("PROBE_CITY").is_some();
+    if city {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": 53.0758, "lon": 8.8071, "altitude_km": 2.0}),
+            )
+            .expect("camera");
+    }
+    settle(&mut h, if city { 30.0 } else { 3.0 });
+    save(&mut h, &dir, "pane-open");
+    // A slow slide, so a quarter-second step lands mid-way.
+    h.ctx.global_style_mut(|style| style.animation_time = 1.0);
+    for name in ["pane-closing", "pane-closed", "pane-opening", "pane-opened"] {
+        if matches!(name, "pane-closing" | "pane-opening") {
+            let _ = h.state_mut().run("ui.leftPane", json!({}));
+            // Mid-way, with time for a frame to finish.
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(600));
+        }
+        h.step();
+        if matches!(name, "pane-closed" | "pane-opened") {
+            settle(&mut h, 1.0);
+        }
+        save(&mut h, &dir, name);
+    }
+    // Shut at once (Reduce Motion): until the wider frame comes, the gap beside the
+    // frame is filled, not black.
+    h.ctx.global_style_mut(|style| style.animation_time = 0.0);
+    let _ = h.state_mut().run("ui.leftPane", json!({}));
+    h.step();
+    save(&mut h, &dir, "pane-shut-at-once");
+    settle(&mut h, 1.0);
+    // The window made larger and wider (user's recording, 2026-11-21 08:44): the
+    // frame before grows with it, the sides filled, and no frame is rendered until
+    // the size holds still.
+    let size = h.ctx.content_rect().size();
+    let before = h.state().frame.last_render;
+    for step in 1..=6 {
+        h.set_size(size + egui::vec2(60.0, 20.0) * step as f32);
+        h.step();
+    }
+    let rendered_while_resizing = h.state().frame.last_render != before;
+    save(&mut h, &dir, "window-grown-first");
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "window-grown");
+    println!("rendered while resizing: {rendered_while_resizing}");
+}
+
+/// Interface size is egui's zoom, so everything scales together; egui's own zoom keys
+/// change the setting too (design review 2026-11-20).
+#[test]
+fn interface_size_is_the_zoom() {
+    let mut h = harness_with(Settings {
+        ui_scale: 2.0,
+        ..Settings::default()
+    });
+    h.step();
+    assert_eq!(h.ctx.zoom_factor(), 2.0);
+    h.ctx.set_zoom_factor(1.5);
+    h.step();
+    assert_eq!(h.state().settings.ui_scale, 1.5);
+}
+
+/// With Reduce motion on, a flight arrives at once (HIG: Accessibility).
+#[test]
+fn reduce_motion_arrives_without_flying() {
+    let mut settings = Settings::default();
+    settings.appearance.reduce_motion = true;
+    let mut h = harness_with(settings);
+    let _ = h.state_mut().run(
+        "camera.flyTo",
+        json!({"lat": 48.85, "lon": 2.35, "altitude_km": 50.0}),
+    );
+    let app = h.state();
+    assert!(app.motion.fly.is_none());
+    assert!((app.cam.lat - 48.85).abs() < 1e-6 && (app.cam.lon - 2.35).abs() < 1e-6);
+}
+
+/// Undo brings back a deleted folder with what was in it, in turn with the ruler's
+/// edits; Redo deletes it again (design review 2026-11-20).
+#[test]
+fn undo_brings_back_deleted_places_in_turn_with_ruler_edits() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    let run = |app: &mut App, id: &str, params: Value| app.run(id, params).expect(id);
+    run(app, "places.addFolder", json!({"name": "Trip"}));
+    run(
+        app,
+        "places.add",
+        json!({"lat": 1.0, "lon": 2.0, "name": "Inside", "folder": "Trip"}),
+    );
+    run(app, "ruler.addPoint", json!({"lat": 10.0, "lon": 10.0}));
+    run(app, "places.remove", json!({"name": "Trip"}));
+    // Not a step of its own: Undo leaves it alone.
+    run(
+        app,
+        "places.add",
+        json!({"lat": 3.0, "lon": 4.0, "name": "Later"}),
+    );
+    run(app, "ruler.addPoint", json!({"lat": 11.0, "lon": 11.0}));
+    let found = |app: &App, name: &str| app.places.items.find_by_name(name).is_some();
+    let points = |app: &App| app.measure.paths.paths().map(<[_]>::len).sum::<usize>();
+    assert!(!found(app, "Trip") && points(app) == 2);
+    // The newest step first: the ruler point, then the folder, then the first point.
+    run(app, "edit.undo", Value::Null);
+    assert!(!found(app, "Trip") && points(app) == 1);
+    run(app, "edit.undo", Value::Null);
+    assert!(found(app, "Trip") && found(app, "Inside") && points(app) == 1);
+    run(app, "edit.undo", Value::Null);
+    assert!(found(app, "Trip") && points(app) == 0);
+    // Redo in the same order back.
+    run(app, "edit.redo", Value::Null);
+    assert!(found(app, "Trip") && points(app) == 1);
+    run(app, "edit.redo", Value::Null);
+    assert!(!found(app, "Trip") && points(app) == 1);
+    run(app, "edit.redo", Value::Null);
+    assert!(points(app) == 2 && found(app, "Later"));
+}
+
+#[test]
+fn an_own_monochrome_colour_is_the_accent_everywhere() {
+    let green = globecraft_data::settings::map_style::Rgba([0x1F, 0xA0, 0x3C, 0xFF]);
+    let mut h = harness_with(Settings {
+        appearance: globecraft_data::settings::appearance::AppearancePreferences {
+            mono_icons: true,
+            mono_icon_color: Some(green),
+            ..Default::default()
+        },
+        ..Settings::default()
+    });
+    h.step();
+    let own = egui::Color32::from_rgb(0x1F, 0xA0, 0x3C);
+    assert_eq!(crate::app::ui::icons::mono(&h.ctx), Some(own));
+    // Controls take it too, darkened only as far as white labels need.
+    let accent = crate::app::ui::theme::Tokens::get(&h.ctx).accent;
+    assert!(
+        accent.g() > accent.r() && accent.g() > accent.b(),
+        "{accent:?}"
+    );
+    h.state_mut().settings.appearance.mono_icons = false;
+    h.step();
+    assert_eq!(crate::app::ui::icons::mono(&h.ctx), None);
+    let accent = crate::app::ui::theme::Tokens::get(&h.ctx).accent;
+    assert!(
+        accent.b() > accent.g(),
+        "back to the system's blue: {accent:?}"
+    );
 }

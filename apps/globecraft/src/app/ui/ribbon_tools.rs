@@ -210,7 +210,7 @@ impl App {
             ic,
             &row.icon,
             if row.enabled { t.icon } else { text },
-            t.accent,
+            t.icon_accent,
         );
         ui.painter().text(
             pos2(rect.min.x + 32.0, rect.center().y),

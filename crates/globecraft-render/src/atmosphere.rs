@@ -9,12 +9,15 @@
 //! Atmospheric Scattering" (2008), in Bruneton's 2017 form: distances to the ground
 //! and to the top of the air instead of angles, which keeps the horizon sharp.
 //!
-//! shortcut: light scattered more than once is left out (twilight and shadowed air
-//! come out a little darker and bluer than real), add a multiple-scattering term if
-//! the dusk sky looks too dark.
+//! Light scattered more than once is added as Hillaire's "A Scalable and Production
+//! Ready Sky and Atmosphere Rendering Technique" (2020) does: a small table of the
+//! light that reaches a point after any number of bounces, isotropic, by height and
+//! sun angle (`multiple`). It keeps the twilight sky deep blue, lights the air in the
+//! Earth's shadow, and is folded into the scattering table, so the GPU reads it too.
+pub(crate) mod aerial;
+
 use glam::Vec4;
 use globecraft_core::EARTH_RADIUS_KM;
-use rayon::prelude::*;
 use std::sync::LazyLock;
 
 /// The ground and the top of the air, from the Earth's centre. The air is taken as a
@@ -48,15 +51,36 @@ const MIN_SUN_COSINE: f32 = -0.5;
 /// Table sizes. Transmittance: by height and by view angle. Scattering: by height,
 /// view angle (half for rays that reach the ground, half for rays that leave), sun
 /// angle and the angle between view and sun.
-const TRANSMITTANCE_HEIGHTS: usize = 64;
+pub(crate) const TRANSMITTANCE_HEIGHTS: usize = 64;
 pub(crate) const TRANSMITTANCE_ANGLES: usize = 256;
-const SCATTERING_HEIGHTS: usize = 16;
+pub(crate) const SCATTERING_HEIGHTS: usize = 16;
 pub(crate) const SCATTERING_VIEWS: usize = 64;
 pub(crate) const SCATTERING_SUNS: usize = 32;
 pub(crate) const SCATTERING_PHASES: usize = 8;
 /// Steps along a ray when the tables are computed.
 const TRANSMITTANCE_STEPS: usize = 200;
 const SCATTERING_STEPS: usize = 50;
+/// The multiple-scattering table: by height and sun cosine (-1 to 1); directions
+/// around each point, and steps along each, when it is computed.
+const MULTIPLE_HEIGHTS: usize = 32;
+const MULTIPLE_SUNS: usize = 64;
+const MULTIPLE_DIRECTIONS: usize = 64;
+const MULTIPLE_STEPS: usize = 24;
+/// The share of light the ground sends back (a mean over land and sea).
+const GROUND_ALBEDO: f32 = 0.3;
+/// The eye adapts to twilight (Bing Maps' blue hour, Julien's recordings of
+/// 2026-11-21): from inside the air, the air's light is drawn up to this many times
+/// brighter and bluer as the sun goes from this sine (6° up) to this one (8° down);
+/// from the camera's height in the air on, less, and not at all from space.
+const MAX_ADAPTATION: f32 = 24.0;
+const ADAPT_FROM_SUN_COSINE: f32 = 0.105;
+const ADAPT_TO_SUN_COSINE: f32 = -0.139;
+const BLUE_HOUR: [f32; 3] = [0.6, 0.8, 1.5];
+const ADAPT_FADE_KM: [f32; 2] = [20.0, 80.0];
+/// The air between the camera and the ground is integrated along the ray
+/// (`aerial`) with the camera below the first height (km), the tables' way above the
+/// second, a mix between.
+pub(crate) const AERIAL_FADE_KM: [f32; 2] = [15.0, 30.0];
 
 /// How bright scattered sunlight is drawn: radiance for a sun of irradiance one, times
 /// this, then compressed to the screen's range (`tone`).
@@ -69,6 +93,9 @@ pub(crate) const NADIR_HAZE_SHARE: f32 = 0.3;
 /// Without a sun (the globe lit everywhere) the air is lit as by a sun this high
 /// (cosine of its zenith angle), at right angles to the view.
 pub(crate) const UNLIT_SUN_COSINE: f32 = 0.8;
+/// With the night lights and no sun the whole globe is night: the air is lit as by
+/// a sun straight below, that is not at all.
+pub(crate) const NIGHT_SUN_COSINE: f32 = -1.0;
 
 fn horizon_km() -> f32 {
     (TOP_KM * TOP_KM - GROUND_KM * GROUND_KM).sqrt()
@@ -95,6 +122,18 @@ impl Air {
         let dark = dark * dark;
         let linear = colour * colour * self.transmitted * (dark * dark) + glow;
         linear.sqrt()
+    }
+    /// [`Self::over_sky`] for a sky drawn behind the frame: the glow as premultiplied
+    /// colour and, as alpha, how much of the sky it hides. The two add up as drawn,
+    /// not in linear light, and the air's tint of the stars is left out: close
+    /// enough where it shows, at the limb's thin glow.
+    pub(crate) fn behind(self) -> Vec4 {
+        let glow = tone(self.scattered * EXPOSURE);
+        let dark = 1.0 - glow.max_element();
+        let through = self.transmitted.truncate().element_sum() / 3.0;
+        glow.truncate()
+            .powf(0.5)
+            .extend(1.0 - through.sqrt() * dark * dark)
     }
     /// `colour` (as drawn, 0 to 1) seen through this air, with `share` of the air
     /// counted. Light adds up in linear terms: the screen's colours are squared,
@@ -123,6 +162,41 @@ pub(crate) fn ground_share(view_cosine: f32) -> f32 {
 /// The tables, computed on first use (a fraction of a second).
 pub(crate) static TABLES: LazyLock<Tables> = LazyLock::new(Tables::compute);
 
+/// `f` over `0..count`, in order, on plain threads. Not on rayon's: the tables are
+/// made inside `TABLES`' lock, and a rayon thread waiting there on its own parallel
+/// work picks up other jobs, such as a pixel row that waits on the same lock: the
+/// frame never came (black probe frames, 2026-11-22).
+fn spread<T: Send>(count: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let chunk = count.div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let parts: Vec<_> = (0..count)
+            .step_by(chunk)
+            .map(|start| {
+                let f = &f;
+                scope.spawn(move || {
+                    (start..(start + chunk).min(count))
+                        .map(f)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|part| {
+                part.join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
+/// The colour of the sunlight on the ground where the sun's cosine is `sun_cosine`
+/// (as `Air::sunlight`), for what is lit outside the raster (buildings).
+pub(crate) fn ground_sunlight(sun_cosine: f32) -> Vec4 {
+    TABLES.sunlight(TABLES.to_top(GROUND_KM, sun_cosine.max(0.0)))
+}
+
 pub(crate) struct Tables {
     /// The distance from the top of the air to its horizon: √(top² − ground²).
     pub(crate) horizon: f32,
@@ -136,6 +210,9 @@ pub(crate) struct Tables {
     /// Sunlight scattered toward the eye along a ray, before the phase functions:
     /// air in the first three channels, haze (its red) in the fourth.
     scattering: Vec<Vec4>,
+    /// Light reaching a point after two or more bounces, per unit of scattering, by
+    /// height (rows) and sun cosine (columns); only while the tables are computed.
+    multiple: Vec<Vec4>,
 }
 
 /// Air and haze density (relative to sea level) and ozone (relative to its layer's
@@ -239,31 +316,34 @@ impl Tables {
             noon: [1.0; 2],
             transmittance: Vec::new(),
             scattering: Vec::new(),
+            multiple: Vec::new(),
         };
-        tables.transmittance = (0..TRANSMITTANCE_HEIGHTS * TRANSMITTANCE_ANGLES)
-            .into_par_iter()
-            .map(|index| {
-                let rho = horizon * (index / TRANSMITTANCE_ANGLES) as f32
-                    / (TRANSMITTANCE_HEIGHTS - 1) as f32;
-                let r = (rho * rho + GROUND_KM * GROUND_KM).sqrt();
-                let (d_min, d_max) = (TOP_KM - r, rho + horizon);
-                let d = d_min
-                    + (d_max - d_min) * (index % TRANSMITTANCE_ANGLES) as f32
-                        / (TRANSMITTANCE_ANGLES - 1) as f32;
-                let mu = if d == 0.0 {
-                    1.0
-                } else {
-                    ((horizon * horizon - rho * rho - d * d) / (2.0 * r * d)).clamp(-1.0, 1.0)
-                };
-                optical_depth_to_top(r, mu)
-            })
-            .collect();
+        tables.transmittance = spread(TRANSMITTANCE_HEIGHTS * TRANSMITTANCE_ANGLES, |index| {
+            let rho = horizon * (index / TRANSMITTANCE_ANGLES) as f32
+                / (TRANSMITTANCE_HEIGHTS - 1) as f32;
+            let r = (rho * rho + GROUND_KM * GROUND_KM).sqrt();
+            let (d_min, d_max) = (TOP_KM - r, rho + horizon);
+            let d = d_min
+                + (d_max - d_min) * (index % TRANSMITTANCE_ANGLES) as f32
+                    / (TRANSMITTANCE_ANGLES - 1) as f32;
+            let mu = if d == 0.0 {
+                1.0
+            } else {
+                ((horizon * horizon - rho * rho - d * d) / (2.0 * r * d)).clamp(-1.0, 1.0)
+            };
+            optical_depth_to_top(r, mu)
+        });
         let noon = tables.transmittance[0];
         tables.noon = [noon.x / noon.y, noon.x / noon.z];
+        tables.multiple = spread(MULTIPLE_HEIGHTS * MULTIPLE_SUNS, |index| {
+            let height = HEIGHT_KM * (index / MULTIPLE_SUNS) as f32 / (MULTIPLE_HEIGHTS - 1) as f32;
+            let mu_s = 2.0 * (index % MULTIPLE_SUNS) as f32 / (MULTIPLE_SUNS - 1) as f32 - 1.0;
+            tables.multiple_at(GROUND_KM + height, mu_s)
+        });
         let views = SCATTERING_VIEWS / 2;
-        tables.scattering = (0..SCATTERING_HEIGHTS * SCATTERING_VIEWS * SCATTERING_SUNS)
-            .into_par_iter()
-            .flat_map_iter(|index| {
+        tables.scattering = spread(
+            SCATTERING_HEIGHTS * SCATTERING_VIEWS * SCATTERING_SUNS,
+            |index| {
                 let rho = horizon * (index / (SCATTERING_VIEWS * SCATTERING_SUNS)) as f32
                     / (SCATTERING_HEIGHTS - 1) as f32;
                 let r = (rho * rho + GROUND_KM * GROUND_KM).sqrt();
@@ -294,16 +374,21 @@ impl Tables {
                 let tables = &tables;
                 let mu_s = tables
                     .sun_cosine((index % SCATTERING_SUNS) as f32 / (SCATTERING_SUNS - 1) as f32);
-                (0..SCATTERING_PHASES).map(move |phase| {
-                    // Only some angles between view and sun exist for a view and a sun
-                    // direction; the others take the nearest that does.
-                    let reach = ((1.0 - mu * mu) * (1.0 - mu_s * mu_s)).max(0.0).sqrt();
-                    let nu = (2.0 * phase as f32 / (SCATTERING_PHASES - 1) as f32 - 1.0)
-                        .clamp(mu * mu_s - reach, mu * mu_s + reach);
-                    tables.scattered_along(r, mu, mu_s, nu, to_ground)
-                })
-            })
-            .collect();
+                (0..SCATTERING_PHASES)
+                    .map(move |phase| {
+                        // Only some angles between view and sun exist for a view and a sun
+                        // direction; the others take the nearest that does.
+                        let reach = ((1.0 - mu * mu) * (1.0 - mu_s * mu_s)).max(0.0).sqrt();
+                        let nu = (2.0 * phase as f32 / (SCATTERING_PHASES - 1) as f32 - 1.0)
+                            .clamp(mu * mu_s - reach, mu * mu_s + reach);
+                        tables.scattered_along(r, mu, mu_s, nu, to_ground)
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .into_iter()
+        .flatten()
+        .collect();
         tables
     }
 
@@ -335,11 +420,13 @@ impl Tables {
             distance_to_top(r, mu)
         };
         let step = length / SCATTERING_STEPS as f32;
-        let (mut air, mut haze) = (Vec4::ZERO, 0.0);
+        let (mut air, mut haze, mut multiple) = (Vec4::ZERO, 0.0, Vec4::ZERO);
+        let rayleigh = Vec4::from((glam::Vec3::from(RAYLEIGH_SCATTERING_PER_KM), 0.0));
         for index in 0..=SCATTERING_STEPS {
             let d = step * index as f32;
             let (r_d, _, mu_s_d) = along(r, mu, mu_s, nu, d);
-            let light = self.between(r, mu, d, to_ground) * self.to_sun(r_d, mu_s_d);
+            let crossed = self.between(r, mu, d, to_ground);
+            let light = crossed * self.to_sun(r_d, mu_s_d);
             let (air_density, haze_density, _) = densities(r_d - GROUND_KM);
             let weight = if index == 0 || index == SCATTERING_STEPS {
                 0.5
@@ -348,13 +435,107 @@ impl Tables {
             };
             air += light * (air_density * weight);
             haze += light.x * haze_density * weight;
+            if !self.multiple.is_empty() {
+                let scattering =
+                    rayleigh * air_density + Vec4::splat(MIE_SCATTERING_PER_KM * haze_density);
+                multiple += crossed * scattering * self.multiple(r_d, mu_s_d) * weight;
+            }
         }
         let [red, green, blue] = RAYLEIGH_SCATTERING_PER_KM;
+        // Light from many bounces comes from all around: the table's entries are
+        // drawn with the air's phase function (`radiance`), which this undoes.
+        let (air_phase, _) = phases(nu);
+        let multiple = multiple * (step / air_phase);
         Vec4::new(
-            air.x * red * step,
-            air.y * green * step,
-            air.z * blue * step,
+            air.x * red * step + multiple.x,
+            air.y * green * step + multiple.y,
+            air.z * blue * step + multiple.z,
             haze * MIE_SCATTERING_PER_KM * step,
+        )
+    }
+
+    /// The light reaching radius `r` (sun cosine `mu_s`) after two or more bounces,
+    /// per unit of scattering there (Hillaire 2020, his Ψ_ms): the light of second
+    /// order from all around, through an isotropic phase, divided by 1 − f_ms, the
+    /// share each further order keeps.
+    fn multiple_at(&self, r: f32, mu_s: f32) -> Vec4 {
+        let isotropic = 1.0 / (4.0 * std::f32::consts::PI);
+        let sun = glam::Vec3::new((1.0 - mu_s * mu_s).max(0.0).sqrt(), 0.0, mu_s);
+        let (mut second, mut kept) = (Vec4::ZERO, Vec4::ZERO);
+        for direction in 0..MULTIPLE_DIRECTIONS {
+            // Spread evenly over the sphere (a Fibonacci lattice).
+            let mu = 1.0 - 2.0 * (direction as f32 + 0.5) / MULTIPLE_DIRECTIONS as f32;
+            let turn = direction as f32 * 2.399_963;
+            let across = (1.0 - mu * mu).max(0.0).sqrt();
+            let view = glam::Vec3::new(across * turn.cos(), across * turn.sin(), mu);
+            let nu = view.dot(sun);
+            let to_ground = meets_ground(r, mu);
+            let length = if to_ground {
+                distance_to_ground(r, mu)
+            } else {
+                distance_to_top(r, mu)
+            };
+            let step = length / MULTIPLE_STEPS as f32;
+            let mut depth = Vec4::ZERO;
+            for index in 0..MULTIPLE_STEPS {
+                let d = step * (index as f32 + 0.5);
+                let (r_d, _, mu_s_d) = along(r, mu, mu_s, nu, d);
+                let (air, haze, ozone) = densities(r_d - GROUND_KM);
+                let scattering = Vec4::new(
+                    RAYLEIGH_SCATTERING_PER_KM[0] * air + MIE_SCATTERING_PER_KM * haze,
+                    RAYLEIGH_SCATTERING_PER_KM[1] * air + MIE_SCATTERING_PER_KM * haze,
+                    RAYLEIGH_SCATTERING_PER_KM[2] * air + MIE_SCATTERING_PER_KM * haze,
+                    0.0,
+                );
+                let extinction = Vec4::new(
+                    RAYLEIGH_SCATTERING_PER_KM[0] * air
+                        + MIE_EXTINCTION_PER_KM * haze
+                        + OZONE_ABSORPTION_PER_KM[0] * ozone,
+                    RAYLEIGH_SCATTERING_PER_KM[1] * air
+                        + MIE_EXTINCTION_PER_KM * haze
+                        + OZONE_ABSORPTION_PER_KM[1] * ozone,
+                    RAYLEIGH_SCATTERING_PER_KM[2] * air
+                        + MIE_EXTINCTION_PER_KM * haze
+                        + OZONE_ABSORPTION_PER_KM[2] * ozone,
+                    0.0,
+                );
+                let middle = depth + extinction * (0.5 * step);
+                let crossed =
+                    Vec4::new((-middle.x).exp(), (-middle.y).exp(), (-middle.z).exp(), 0.0);
+                second += crossed * scattering * self.to_sun(r_d, mu_s_d) * (isotropic * step);
+                kept += crossed * scattering * step;
+                depth += extinction * step;
+            }
+            if to_ground {
+                let crossed = Vec4::new((-depth.x).exp(), (-depth.y).exp(), (-depth.z).exp(), 0.0);
+                let (_, _, mu_s_g) = along(r, mu, mu_s, nu, length);
+                second += crossed
+                    * self.to_sun(GROUND_KM, mu_s_g)
+                    * (mu_s_g.max(0.0) * GROUND_ALBEDO / std::f32::consts::PI);
+            }
+        }
+        // The means over the sphere, each direction weighed by the isotropic phase.
+        let directions = MULTIPLE_DIRECTIONS as f32;
+        let (second, kept) = (second / directions, kept / directions);
+        let most = Vec4::splat(0.99);
+        second / (Vec4::ONE - kept.min(most))
+    }
+
+    /// The multiple-scattering table's entry at radius `r` and sun cosine `mu_s`.
+    fn multiple(&self, r: f32, mu_s: f32) -> Vec4 {
+        let (height, height_step) = cell(
+            (r - GROUND_KM) / HEIGHT_KM * (MULTIPLE_HEIGHTS - 1) as f32,
+            MULTIPLE_HEIGHTS,
+        );
+        let (sun, sun_step) = cell(
+            (mu_s + 1.0) * 0.5 * (MULTIPLE_SUNS - 1) as f32,
+            MULTIPLE_SUNS,
+        );
+        let at = |height: usize, sun: usize| self.multiple[height * MULTIPLE_SUNS + sun];
+        lerp(
+            lerp(at(height, sun), at(height, sun + 1), sun_step),
+            lerp(at(height + 1, sun), at(height + 1, sun + 1), sun_step),
+            height_step,
         )
     }
 
@@ -487,7 +668,13 @@ impl Tables {
     /// cosines between the view and the vertical (`view_cosine`), the sun and the
     /// vertical, and the view direction and the sun. The GPU shader does the same
     /// sums on the same numbers (`ground_transmittance`, `top_scattering`).
-    pub(crate) fn ground_from_space(&self, view_cosine: f32, sun: Option<(f32, f32)>) -> Air {
+    /// Without a sun the air is lit as by one whose cosine is `unlit` everywhere.
+    pub(crate) fn ground_from_space(
+        &self,
+        view_cosine: f32,
+        sun: Option<(f32, f32)>,
+        unlit: f32,
+    ) -> Air {
         let horizon = self.horizon;
         // From the ground up the view ray to the top of the air.
         let d = horizon * horizon
@@ -507,7 +694,7 @@ impl Tables {
         let (mu_s, nu) = match sun {
             // The sun's cosine where the ray enters the air.
             Some((mu_s, nu)) => (((GROUND_KM * mu_s - d * nu) / TOP_KM).clamp(-1.0, 1.0), nu),
-            None => (UNLIT_SUN_COSINE, -view_cosine * UNLIT_SUN_COSINE),
+            None => (unlit, -view_cosine * unlit),
         };
         let views = SCATTERING_VIEWS / 2;
         let (view, view_step) = cell((views - 1) as f32 * (1.0 - way), views);
@@ -557,10 +744,17 @@ impl Tables {
         }
     }
 
-    /// The transmittance table's ground row: from the ground to space by view angle.
+    /// The transmittance table (`TRANSMITTANCE_HEIGHTS` rows of `TRANSMITTANCE_ANGLES`),
+    /// its first row from the ground to space by view angle.
     #[cfg(feature = "gpu")]
-    pub(crate) fn ground_transmittance(&self) -> &[Vec4] {
-        &self.transmittance[..TRANSMITTANCE_ANGLES]
+    pub(crate) fn transmittance_table(&self) -> &[Vec4] {
+        &self.transmittance
+    }
+    /// The whole scattering table (height, view, sun, phase), its last height layer
+    /// `top_scattering`.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn scattering_table(&self) -> &[Vec4] {
+        &self.scattering
     }
 
     /// The scattering table's top layer: rays entering the air from space.
@@ -606,10 +800,42 @@ pub(crate) struct Frame {
     radius_km: f32,
     up: glam::DVec3,
     /// Where the sun is and its cosine at the camera; without it the air is lit
-    /// evenly (`UNLIT_SUN_COSINE`).
+    /// evenly (`UNLIT_SUN_COSINE`), or not at all at night (`NIGHT_SUN_COSINE`).
     sun: Option<glam::DVec3>,
     sun_cosine: f32,
     inside: Option<Inside>,
+    /// The eye's adaptation to twilight, on the air's light (`adaptation`).
+    adapt: Vec4,
+    /// The air between the camera and the ground, with the camera inside it and a sun.
+    aerial: Option<std::sync::Arc<aerial::Aerial>>,
+}
+
+/// How far the eye has adapted to twilight (0: day, 1: fully) for a camera `height_km`
+/// up where the sun's cosine is `sun_cosine`.
+fn adaptation_share(height_km: f32, sun_cosine: f32) -> f32 {
+    let low = smoothstep(
+        (ADAPT_FROM_SUN_COSINE - sun_cosine) / (ADAPT_FROM_SUN_COSINE - ADAPT_TO_SUN_COSINE),
+    );
+    low * eye_weight(height_km)
+}
+
+/// How far the eye adapts to twilight with the camera `height_km` up: fully in the
+/// lower air, not at all from space (`ADAPT_FADE_KM`). The air's light and the
+/// ground's (`pixel::Daylight`) both follow it.
+pub(crate) fn eye_weight(height_km: f32) -> f32 {
+    let [from, to] = ADAPT_FADE_KM;
+    1.0 - smoothstep((height_km - from) / (to - from))
+}
+
+fn smoothstep(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// The factor on the air's light for an adaptation `share`: brighter and bluer.
+fn adaptation(share: f32) -> Vec4 {
+    let tint = Vec4::ONE.lerp(Vec4::from((glam::Vec3::from(BLUE_HOUR), 1.0)), share);
+    tint * MAX_ADAPTATION.powf(share)
 }
 
 /// The tables at a camera inside the air.
@@ -624,16 +850,27 @@ struct Inside {
 
 /// Relief this close to sea level counts as the sea-level ground, where a ray that
 /// has arrived scatters nothing further.
-const SEA_LEVEL_SLACK_KM: f32 = 0.01;
+pub(crate) const SEA_LEVEL_SLACK_KM: f32 = 0.01;
 
 impl Frame {
     /// `radius` is the camera's distance from the centre in Earth radii, in the
     /// surface's own measure (so that it is right over an ellipsoid's poles too).
-    pub(crate) fn new(camera: glam::DVec3, radius: f64, sun: Option<glam::DVec3>) -> Self {
+    /// Without a `sun`, `night` leaves the air unlit instead of evenly lit.
+    pub(crate) fn new(
+        camera: glam::DVec3,
+        radius: f64,
+        sun: Option<glam::DVec3>,
+        night: bool,
+    ) -> Self {
         let tables: &'static Tables = &TABLES;
         let radius_km = (radius as f32 * GROUND_KM).max(GROUND_KM);
         let up = camera.normalize_or_zero();
-        let sun_cosine = sun.map_or(UNLIT_SUN_COSINE, |sun| up.dot(sun) as f32);
+        let unlit = if night {
+            NIGHT_SUN_COSINE
+        } else {
+            UNLIT_SUN_COSINE
+        };
+        let sun_cosine = sun.map_or(unlit, |sun| up.dot(sun) as f32);
         let inside = (radius_km < TOP_KM).then(|| {
             let rho = (radius_km * radius_km - GROUND_KM * GROUND_KM)
                 .max(0.0)
@@ -683,6 +920,13 @@ impl Frame {
                 transmittance,
             }
         });
+        let adapt = match (&inside, sun) {
+            (Some(_), Some(_)) => adaptation(adaptation_share(radius_km - GROUND_KM, sun_cosine)),
+            _ => Vec4::ONE,
+        };
+        let aerial =
+            (inside.is_some() && sun.is_some() && radius_km - GROUND_KM < AERIAL_FADE_KM[1])
+                .then(|| aerial::Aerial::at(tables, radius_km, sun_cosine));
         Self {
             tables,
             radius_km,
@@ -690,9 +934,17 @@ impl Frame {
             sun,
             sun_cosine,
             inside,
+            adapt,
+            aerial,
         }
     }
 
+    /// The camera's distance from the centre (km) and the sun's cosine there, as the
+    /// sky takes them (`sky`; the GPU's `sky_colour`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn camera_and_sun(&self) -> (f32, f32) {
+        (self.radius_km, self.sun_cosine)
+    }
     /// The cosine between a view direction and the sun; without a sun, as for one at
     /// right angles to the view.
     fn phase(&self, direction: glam::DVec3, mu: f32) -> f32 {
@@ -708,7 +960,7 @@ impl Frame {
             let nu = self.phase(direction, mu);
             let way = inside.way_out(self.tables, r, mu);
             return Some(Air {
-                scattered: radiance(inside.scattered(way, false, nu), nu),
+                scattered: radiance(inside.scattered(way, false, nu), nu) * self.adapt,
                 transmitted: inside.crossed(way),
                 sunlight: Vec4::ONE,
             });
@@ -728,7 +980,7 @@ impl Frame {
                     nu,
                 )
             }
-            None => (UNLIT_SUN_COSINE, mu_top * UNLIT_SUN_COSINE),
+            None => (self.sun_cosine, mu_top * self.sun_cosine),
         };
         Some(Air {
             scattered: radiance(self.tables.scattering(TOP_KM, mu_top, mu_s, nu, false), nu),
@@ -750,11 +1002,31 @@ impl Frame {
             let sun = self
                 .sun
                 .map(|sun| (normal.dot(sun) as f32, direction.dot(sun) as f32));
-            return self.tables.ground_from_space(view_cosine, sun);
+            return self
+                .tables
+                .ground_from_space(view_cosine, sun, self.sun_cosine);
         };
         let (tables, r) = (self.tables, self.radius_km);
         let mu = direction.dot(self.up) as f32;
         let nu = self.phase(direction, mu);
+        // Low down, the air integrated along the ray (`aerial`), faded into the
+        // tables' way higher up, where rays rarely skim the horizon.
+        let aerial = self.aerial.as_ref().map(|aerial| {
+            let height = r - GROUND_KM;
+            let [from, to] = AERIAL_FADE_KM;
+            let share = 1.0 - smoothstep((height - from) / (to - from));
+            (aerial.sample(mu, nu, distance_km), share)
+        });
+        if let Some(((light, crossed), share)) = aerial
+            && share >= 1.0
+        {
+            let (r_d, _, mu_s_d) = along(r, mu, self.sun_cosine, nu, distance_km);
+            return Air {
+                scattered: light * self.adapt,
+                transmitted: crossed,
+                sunlight: tables.sunlight(tables.to_top(r_d, mu_s_d.max(0.0))),
+            };
+        }
         let to_ground = meets_ground(r, mu);
         let (r_d, mu_d, mu_s_d) = along(r, mu, self.sun_cosine, nu, distance_km);
         // Light passes the same either way: a ray going down is measured upward.
@@ -783,14 +1055,53 @@ impl Frame {
             let reached = Vec4::new(transmitted.x, transmitted.y, transmitted.z, transmitted.x);
             near = (near - beyond * reached).max(Vec4::ZERO);
         }
+        let (scattered, transmitted) = match aerial {
+            Some(((light, crossed), share)) => (
+                radiance(near, nu).lerp(light, share),
+                transmitted.lerp(crossed, share),
+            ),
+            None => (radiance(near, nu), transmitted),
+        };
         Air {
-            scattered: radiance(near, nu),
+            scattered: scattered * self.adapt,
             transmitted,
             sunlight: match self.sun {
                 Some(_) => tables.sunlight(tables.to_top(r_d, mu_s_d.max(0.0))),
                 None => Vec4::ONE,
             },
         }
+    }
+}
+
+/// What the GPU needs of a frame's air with the camera inside it (`Frame::inside_air`).
+#[cfg(feature = "gpu")]
+pub(crate) struct InsideAir<'a> {
+    pub(crate) radius_km: f32,
+    pub(crate) up: glam::DVec3,
+    pub(crate) sun_cosine: f32,
+    pub(crate) rho: f32,
+    /// `Inside::scattering` then `Inside::transmittance`.
+    pub(crate) scattering: &'a [Vec4],
+    pub(crate) transmittance: &'a [Vec4],
+    pub(crate) adapt: Vec4,
+    pub(crate) aerial: Option<&'a std::sync::Arc<aerial::Aerial>>,
+}
+
+#[cfg(feature = "gpu")]
+impl Frame {
+    /// The frame's air for the GPU, when the camera is inside it.
+    pub(crate) fn inside_air(&self) -> Option<InsideAir<'_>> {
+        let inside = self.inside.as_ref()?;
+        Some(InsideAir {
+            radius_km: self.radius_km,
+            up: self.up,
+            sun_cosine: self.sun_cosine,
+            rho: inside.rho,
+            scattering: &inside.scattering,
+            transmittance: &inside.transmittance,
+            adapt: self.adapt,
+            aerial: self.aerial.as_ref(),
+        })
     }
 }
 
@@ -860,7 +1171,7 @@ mod tests {
     fn frame(height_km: f32, sun_cosine: f64) -> Frame {
         let radius = f64::from(1.0 + height_km / GROUND_KM);
         let sun = DVec3::new((1.0 - sun_cosine * sun_cosine).sqrt(), 0.0, sun_cosine);
-        Frame::new(DVec3::new(0.0, 0.0, radius), radius, Some(sun))
+        Frame::new(DVec3::new(0.0, 0.0, radius), radius, Some(sun), false)
     }
     /// A direction `mu` from the vertical, turned toward the sun's side.
     fn toward_sun(mu: f64) -> DVec3 {
@@ -881,6 +1192,29 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual: prints twilight sky colours"]
+    fn twilight_sky_probe() {
+        for deg in [5.0f64, 0.0, -2.0, -4.0, -6.0, -9.0] {
+            let sun = deg.to_radians().sin();
+            for (name, side, up) in [
+                ("toward", 1.0, 0.03),
+                ("toward", 1.0, 0.3),
+                ("away", -1.0, 0.03),
+                ("away", -1.0, 0.3),
+                ("zenith", 1.0, 0.99),
+            ] {
+                let up: f64 = up;
+                let direction = DVec3::new(side * (1.0 - up * up).sqrt(), 0.0, up);
+                let air = frame(0.1, sun).sky(direction, up as f32).unwrap();
+                let c = tone(air.scattered * EXPOSURE);
+                let c = c.max(Vec4::ZERO);
+                let c = c.truncate().to_array().map(|v| (v.sqrt() * 255.0) as u8);
+                println!("sun {deg:>4}° {name:>6} up {up:.2}: {c:?}");
+            }
+        }
+    }
+
+    #[test]
     fn the_sky_is_blue_by_day_red_at_sunset_and_dark_at_night() {
         let day = frame(0.1, 0.8).sky(toward_sun(0.2), 0.2).unwrap().scattered;
         assert!(day.z > 1.5 * day.x && day.z > 0.005, "day {day:?}");
@@ -897,6 +1231,71 @@ mod tests {
         assert!(night.max_element() < 1e-6, "night {night:?}");
         // From space, a ray that passes above the air meets none.
         assert!(frame(400.0, 0.5).sky(toward_sun(-0.2), -0.2).is_none());
+    }
+
+    /// Low down the air toward the ground is integrated along the ray (`aerial`): it
+    /// agrees with the tables' way where that is sound (looking down), and toward a
+    /// far mountain just under the horizon it grows steadily with distance instead of
+    /// peaking in a band (Julien's screenshots of 2026-11-22).
+    #[test]
+    fn the_air_to_the_ground_grows_with_distance_and_agrees_with_the_tables() {
+        let height_km = 2.0;
+        let sun_cosine = 0.05;
+        let low = frame(height_km, sun_cosine);
+        let camera = DVec3::new(0.0, 0.0, f64::from(1.0 + height_km / GROUND_KM));
+        let normal = DVec3::Z;
+        // Looking down at 45° toward the sun: both ways agree within a fifth.
+        let down = toward_sun(-0.7);
+        let reach = -camera.dot(down);
+        let distance =
+            (reach - (reach * reach - camera.length_squared() + 1.0).sqrt()) as f32 * GROUND_KM;
+        let integrated = low.ground(down, distance, normal, 0.7);
+        let mut tables = frame(height_km, sun_cosine);
+        tables.aerial = None;
+        let classic = tables.ground(down, distance, normal, 0.7);
+        let close = |a: Vec4, b: Vec4| (a - b).abs().max_element() <= 0.2 * b.max_element();
+        assert!(
+            close(integrated.scattered, classic.scattered),
+            "{integrated:?} {classic:?}"
+        );
+        assert!(
+            close(integrated.transmitted, classic.transmitted),
+            "{integrated:?} {classic:?}"
+        );
+        // Just under the horizon, toward the sun: the light grows with distance.
+        let horizon = -f64::from(1.0 - (GROUND_KM / (GROUND_KM + height_km)).powi(2)).sqrt();
+        let skim = toward_sun(horizon - 0.002);
+        let mut last = Vec4::ZERO;
+        for distance in [5.0, 20.0, 50.0, 90.0, 130.0, 160.0] {
+            let air = low.ground(skim, distance, normal, 0.05);
+            assert!(air.scattered.x >= last.x - 1e-6, "{distance} km: {air:?}");
+            last = air.scattered;
+        }
+    }
+
+    /// Around the sun the integrated air follows the tables' way (sound well below the
+    /// horizon) at every azimuth: no seam where one column of the table took over
+    /// (a bright wedge 30° either side of the sun, Julien's recording of 2026-11-22).
+    #[test]
+    fn the_integrated_air_follows_the_tables_round_the_sun() {
+        let (height_km, sun_cosine, mu) = (5.0, 0.05, -0.2f64);
+        let integrated = frame(height_km, sun_cosine);
+        let mut tables = frame(height_km, sun_cosine);
+        tables.aerial = None;
+        for step in 0..=36 {
+            let azimuth = (f64::from(step) * 5.0).to_radians();
+            let across = (1.0 - mu * mu).sqrt();
+            let direction = DVec3::new(across * azimuth.cos(), across * azimuth.sin(), mu);
+            let (a, b) = (
+                integrated.ground(direction, 20.0, DVec3::Z, 0.2),
+                tables.ground(direction, 20.0, DVec3::Z, 0.2),
+            );
+            assert!(
+                (a.scattered - b.scattered).abs().max_element() <= 0.15 * b.scattered.max_element(),
+                "{}°: {a:?} {b:?}",
+                step * 5
+            );
+        }
     }
 
     #[test]
@@ -973,6 +1372,7 @@ mod tests {
             heading,
             alt,
             tilt,
+            look_up: 0.0,
         };
         // The view (latitude, longitude, altitude km, tilt, heading) and where the sun
         // is overhead (latitude, longitude).
@@ -1058,7 +1458,11 @@ mod tests {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: sun.map(|_| 0),
-                stars: true,
+                stars: None,
+                sky_behind: false,
+                clouds: None,
+                glint: None,
+                aurora: None,
             };
             let basis = cam.basis_for_model(w as f64 / h as f64, Default::default());
             let (pixels, _, _) =

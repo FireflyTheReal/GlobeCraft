@@ -1,7 +1,12 @@
 //! Service-specific downloads and radar palette decoding.
-use super::RadarFrame;
-use image::{RgbaImage, imageops::FilterType};
+use super::{CloudMap, RADAR_STEP_SECS, RadarFrame};
+use image::{GrayImage, RgbaImage, imageops::FilterType};
 const CLOUD_SOURCE: &str = "https://clouds.matteason.co.uk/images/8192x4096/clouds-alpha.png";
+/// The same service's map of how much the sea shines: water bright, land and cloud
+/// dark (it follows the clouds). Its 4096-wide edition: a texel is 10 km.
+const WATER_SOURCE: &str = "https://clouds.matteason.co.uk/images/4096x2048/specular.jpg";
+/// The 4096 × 2048 JPEG is about 1.1 MB.
+const WATER_IMAGE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const RADAR_API: &str = "https://api.rainviewer.com/public/weather-maps.json";
 const TILE_ZOOM: usize = 2;
 const TILE_SIZE: u32 = 512;
@@ -11,34 +16,95 @@ const CLOUD_IMAGE_MAX_BYTES: u64 = 32 * 1024 * 1024;
 const RADAR_METADATA_MAX_BYTES: u64 = 1024 * 1024;
 /// One 512 px radar tile, with ample room for its PNG encoding.
 const RADAR_TILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
-pub(super) async fn download_clouds() -> Result<RgbaImage, crate::Error> {
+/// The cloud map is kept at its full width and at these smaller ones (each half the
+/// last), so a view far out samples a level near its own pixel size.
+const CLOUD_LEVELS: usize = 3;
+pub(super) async fn download_clouds() -> Result<CloudMap, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Cloud)?;
     // Cache bust by 3-hour slots; URL remains the requested source image.
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / (3 * 60 * 60);
-    let url = format!("{CLOUD_SOURCE}?slot={epoch}");
+    let url = format!("{CLOUD_SOURCE}?slot={}", three_hour_slot());
     let bytes = crate::http::body(client.get(url), CLOUD_IMAGE_MAX_BYTES).await?;
-    // Decode off the UI thread and keep only the working resolution in memory.
+    // Decode off the UI thread. The clouds are their opacity (the image's alpha; its
+    // grey is near white throughout): one channel at full size, 32 MB, and the
+    // smaller levels from it. Shrunk to 2048 × 1024 they blurred (user, 2026-11-18).
     tokio::task::spawn_blocking(move || {
         let image = crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?;
-        Ok(image
-            .resize_exact(2048, 1024, FilterType::Triangle)
-            .to_rgba8())
+        let (width, height) = (image.width(), image.height());
+        let alpha: Vec<u8> = image
+            .into_luma_alpha8()
+            .pixels()
+            .map(|pixel| pixel[1])
+            .collect();
+        let full = GrayImage::from_raw(width, height, alpha)
+            .ok_or_else(|| crate::Error::msg("cloud image has an unexpected size"))?;
+        Ok(cloud_map(full))
     })
     .await?
 }
 
-pub(super) async fn download_radar() -> Result<RadarFrame, crate::Error> {
+/// The cloud map of the clouds' opacity `full`, with its smaller levels.
+pub(super) fn cloud_map(full: GrayImage) -> CloudMap {
+    let mut levels = vec![full];
+    while levels.len() < CLOUD_LEVELS {
+        let last = levels.last().expect("one level at least");
+        let (width, height) = ((last.width() / 2).max(1), (last.height() / 2).max(1));
+        levels.push(image::imageops::resize(
+            last,
+            width,
+            height,
+            FilterType::Triangle,
+        ));
+    }
+    CloudMap { levels }
+}
+
+/// The water's shine (see `WATER_SOURCE`), one channel.
+pub(super) async fn download_water() -> Result<GrayImage, crate::Error> {
+    let client = crate::http::client(crate::http::Policy::Cloud)?;
+    let url = format!("{WATER_SOURCE}?slot={}", three_hour_slot());
+    let bytes = crate::http::body(client.get(url), WATER_IMAGE_MAX_BYTES).await?;
+    tokio::task::spawn_blocking(move || {
+        Ok(crate::bounded::image(&bytes, crate::bounded::ImageLimit::WORLD)?.into_luma8())
+    })
+    .await?
+}
+
+/// The current 3-hour slot since 1970, to bust caches with the source's refresh.
+fn three_hour_slot() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / (3 * 60 * 60)
+}
+
+/// Which of the radar frames (their times, oldest first) to show for the ten-minute
+/// step `wanted`: the last one measured by its end, the oldest when it is earlier
+/// than all of them, the newest for `None`.
+pub(super) fn radar_frame_index(times: &[i64], wanted: Option<i64>) -> Option<usize> {
+    let last = times.len().checked_sub(1)?;
+    let Some(wanted) = wanted else {
+        return Some(last);
+    };
+    let by = wanted + RADAR_STEP_SECS as i64;
+    Some(times.iter().rposition(|&time| time < by).unwrap_or(0))
+}
+
+/// The radar frame for the ten-minute step `wanted` (`None`: the newest).
+pub(super) async fn download_radar(wanted: Option<i64>) -> Result<RadarFrame, crate::Error> {
     let client = crate::http::client(crate::http::Policy::Radar)?;
     let metadata = crate::http::body(client.get(RADAR_API), RADAR_METADATA_MAX_BYTES).await?;
     let json = crate::http::parse_json(metadata).await?;
-    let frame = json
+    let frames = json
         .pointer("/radar/past")
         .and_then(|v| v.as_array())
-        .and_then(|v| v.last())
+        .ok_or_else(|| crate::Error::msg("No radar frames available"))?;
+    let times: Vec<i64> = frames
+        .iter()
+        .map(|f| f.get("time").and_then(|v| v.as_i64()).unwrap_or(i64::MIN))
+        .collect();
+    let frame = radar_frame_index(&times, wanted)
+        .and_then(|index| frames.get(index))
         .ok_or_else(|| crate::Error::msg("No radar frames available"))?;
     let path = frame
         .get("path")
@@ -145,4 +211,37 @@ fn recolor_radar(src: [u8; 4]) -> [u8; 4] {
         .find(|(lowest, _)| dbz >= *lowest)
         .map_or(super::RADAR_BANDS[0].1, |(_, rgb)| *rgb);
     [r, g, b, src[3].min(200)]
+}
+
+#[cfg(test)]
+mod radar_frame_tests {
+    use super::radar_frame_index;
+
+    /// Two hours of frames, on the ten minutes as RainViewer's are.
+    fn times() -> Vec<i64> {
+        (0..13).map(|k| 1_795_099_800 + k * 600).collect()
+    }
+
+    /// The step the app asks for at a time (`super::super::radar_step`).
+    fn step(unix: i64) -> Option<i64> {
+        Some(unix.div_euclid(600) * 600)
+    }
+
+    #[test]
+    fn the_newest_frame_while_live() {
+        assert_eq!(radar_frame_index(&times(), None), Some(12));
+        assert_eq!(radar_frame_index(&[], None), None);
+    }
+
+    #[test]
+    fn the_frame_measured_in_the_wanted_ten_minutes() {
+        let times = times();
+        // A time in a frame's ten minutes, at its start or later: that frame.
+        assert_eq!(radar_frame_index(&times, step(times[4])), Some(4));
+        assert_eq!(radar_frame_index(&times, step(times[4] + 599)), Some(4));
+        assert_eq!(radar_frame_index(&times, step(times[4] + 600)), Some(5));
+        // After the newest: the newest; before the oldest: the oldest.
+        assert_eq!(radar_frame_index(&times, step(times[12] + 7_200)), Some(12));
+        assert_eq!(radar_frame_index(&times, step(times[0] - 7_200)), Some(0));
+    }
 }

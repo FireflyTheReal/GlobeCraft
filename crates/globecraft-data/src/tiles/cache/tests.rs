@@ -46,6 +46,7 @@ fn tiny_tile(value: u8) -> Tile {
         px: vec![value, value, value, 255],
         elevation: None,
         arrived: None,
+        means: Vec::new(),
     }
 }
 
@@ -103,6 +104,7 @@ fn failed_requests_and_oversized_tiles_keep_their_retry_delay_without_pixel_weig
             px: vec![0; 8],
             elevation: None,
             arrived: None,
+            means: Vec::new(),
         }),
     );
     cache.ready.run_pending_tasks();
@@ -674,4 +676,105 @@ fn loaded_colour_takes_the_finest_ready_tile_and_never_requests() {
     cache.complete(at(10), Ok(tiny_tile(0)));
     assert!(colour(&cache, 16).is_none());
     assert_eq!(cache.inflight(), 0);
+}
+
+#[test]
+fn only_fine_imagery_colours_the_buildings_again() {
+    let (cache, _rx) = test_cache(1 << 20);
+    let fine = make_key(Provider::Satellite, FINE_IMAGERY_ZOOM, 1, 1, 0);
+    cache.complete(
+        make_key(Provider::Satellite, FINE_IMAGERY_ZOOM - 1, 1, 1, 0),
+        Ok(tiny_tile(1)),
+    );
+    cache.complete(make_key(Provider::Streets, 16, 1, 1, 0), Ok(tiny_tile(1)));
+    cache.complete(
+        make_key(Provider::TerrainDem, 14, 1, 1, 0),
+        Ok(tiny_tile(1)),
+    );
+    cache.complete(
+        make_key(Provider::Satellite, 16, 2, 2, 0),
+        Err(TileFailure::Error),
+    );
+    assert_eq!(cache.imagery_generation(), 0);
+    cache.complete(fine, Ok(tiny_tile(1)));
+    assert_eq!(cache.imagery_generation(), 1);
+    assert_eq!(cache.generation(), 5);
+}
+
+#[test]
+fn a_panicking_download_becomes_an_error_and_its_worker_goes_on() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let panicked = CatchPanic(Box::pin(async {
+            tokio::task::yield_now().await;
+            panic!("no certificate verifier");
+        }))
+        .await;
+        assert_eq!(panicked, Err::<(), _>("no certificate verifier".to_owned()));
+        let finished = CatchPanic(Box::pin(async {
+            tokio::task::yield_now().await;
+            7
+        }))
+        .await;
+        assert_eq!(finished, Ok(7));
+    });
+}
+
+/// The memoised lookup reads the same heights as `loaded_elevation_m`, from the finest
+/// loaded level under each point, and none where no elevation is loaded.
+#[test]
+fn loaded_elevation_matches_the_cache_lookup() {
+    let (cache, _rx) = test_cache(64 << 20);
+    let dem = |seed: f32| {
+        let size = 8;
+        let heights = (0..size * size)
+            .map(|i| seed + (i % size) as f32 * 7.0 + (i / size) as f32 * 3.0)
+            .collect();
+        Tile {
+            w: 1,
+            h: 1,
+            px: vec![0, 0, 0, 255],
+            elevation: Some(crate::tiles::Elevation::from_heights(size, heights)),
+            arrived: None,
+            means: Vec::new(),
+        }
+    };
+    // Level 2 over the whole north-east quarter, level 5 in part of it, and an
+    // imagery-like tile without heights at level 4 elsewhere.
+    for x in 0..4 {
+        for y in 0..4 {
+            cache.complete(
+                make_key(Provider::TerrainDem, 2, x, y, 0),
+                Ok(dem((x * 4 + y) as f32)),
+            );
+        }
+    }
+    cache.complete(make_key(Provider::TerrainDem, 5, 17, 10, 0), Ok(dem(500.0)));
+    cache.complete(make_key(Provider::TerrainDem, 4, 3, 3, 0), Ok(tiny_tile(1)));
+    cache.ready.run_pending_tasks();
+    for zoom in [3u8, 7, 12] {
+        let loaded = LoadedElevation::new(&cache, zoom);
+        for i in 0..4000 {
+            let lat = -80.0 + 160.0 * ((i * 37) % 1000) as f64 / 1000.0;
+            let lon = -179.0 + 358.0 * ((i * 61) % 997) as f64 / 997.0;
+            assert_eq!(
+                loaded.height_m(lat, lon),
+                cache.loaded_elevation_m(lat, lon, zoom),
+                "{lat} {lon} at {zoom}"
+            );
+        }
+        // Around the finer tile (latitudes 48.9–55.8, longitudes 11.25–22.5) too.
+        let mut finer = 0;
+        for i in 0..2000 {
+            let lat = 47.0 + 10.0 * (i % 50) as f64 / 50.0;
+            let lon = 10.0 + 14.0 * (i / 50) as f64 / 40.0;
+            let height = loaded.height_m(lat, lon);
+            assert_eq!(height, cache.loaded_elevation_m(lat, lon, zoom));
+            finer += usize::from(height.is_some_and(|height| height >= 500.0));
+        }
+        assert_eq!(finer > 0, zoom >= 5, "the finer tile read at {zoom}");
+    }
 }

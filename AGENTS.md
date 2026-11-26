@@ -198,8 +198,8 @@ User instructions and the requested scope take precedence over these defaults.
 - GPU globe rendering is a beta. Refer to it that way in user-facing documentation
   and enablement diagnostics. GPU acceleration is optional: the CPU renderer remains
   available. Builds with the `gpu` feature use `auto` on every platform unless
-  Settings → Graphics turns it off (`gpu_globe`); release downloads leave the feature
-  out until native Windows and Linux runs are reported. Each device passes the
+  Settings → Graphics turns it off (`gpu_globe`); release downloads include it
+  since v0.5.0 (`standard`). Each device passes the
   self-check against the CPU picture before its first frame, and the `gpu-start`
   marker keeps a start that crashed from repeating. `GLOBECRAFT_RENDERER=auto|gpu|cpu`
   overrides both. Keep adapter initialization,

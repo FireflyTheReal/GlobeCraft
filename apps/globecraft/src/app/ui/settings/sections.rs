@@ -3,6 +3,7 @@ use crate::app::App;
 use eframe::egui;
 use globecraft_core::language::{Lang, LanguagePreference};
 use globecraft_data::settings::experience::ExperienceLevel;
+use globecraft_data::settings::map_style::Rgba;
 use globecraft_data::settings::{MAX_MAP_SCALE, MIN_MAP_SCALE, MIN_UI_SCALE, UnitPreference};
 
 impl App {
@@ -13,10 +14,10 @@ impl App {
     ) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-language-label"));
+            let label = ui.label(lg.text("settings-language-label"));
             let choices = LanguagePreference::ALL
                 .map(|choice| (choice, choice.label(lg, &self.locale.system)));
-            egui::ComboBox::from_id_salt("settings_language")
+            let combo = egui::ComboBox::from_id_salt("settings_language")
                 .selected_text((*language_preference).label(lg, &self.locale.system))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -32,11 +33,13 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-experience-label"));
+            let label = ui.label(lg.text("settings-experience-label"));
             let levels = ExperienceLevel::ALL;
-            egui::ComboBox::from_id_salt("settings_experience")
+            let combo = egui::ComboBox::from_id_salt("settings_experience")
                 .selected_text(lg.text(self.settings.experience.label_id()))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -52,13 +55,15 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
         ui.weak(lg.text("cmd-settings-experience-help"));
     }
     pub(super) fn settings_appearance(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-theme-label"));
+            let label = ui.label(lg.text("settings-theme-label"));
             let choices = globecraft_data::settings::appearance::ThemePreference::ALL;
             let name = |theme| {
                 lg.text(match theme {
@@ -73,7 +78,7 @@ impl App {
                     }
                 })
             };
-            egui::ComboBox::from_id_salt("theme")
+            let combo = egui::ComboBox::from_id_salt("theme")
                 .selected_text(name(self.settings.appearance.theme))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(ui, choices.map(name));
@@ -86,7 +91,22 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
+        ui.checkbox(
+            &mut self.settings.appearance.reduce_motion,
+            lg.text("settings-reduce-motion-label"),
+        );
+        ui.weak(lg.text("settings-reduce-motion-help"));
+        ui.checkbox(
+            &mut self.settings.appearance.mono_icons,
+            lg.text("settings-mono-icons-label"),
+        );
+        ui.weak(lg.text("settings-mono-icons-help"));
+        if self.settings.appearance.mono_icons {
+            mono_icon_color(ui, lg, &mut self.settings.appearance.mono_icon_color);
+        }
         for (id, label, selected) in [
             (
                 "ui-font",
@@ -100,8 +120,8 @@ impl App {
             ),
         ] {
             ui.horizontal(|ui| {
-                ui.label(lg.text(label));
-                egui::ComboBox::from_id_salt(id)
+                let label = ui.label(lg.text(label));
+                let combo = egui::ComboBox::from_id_salt(id)
                     .selected_text(if selected.is_empty() {
                         lg.text("settings-font-system")
                     } else {
@@ -117,6 +137,8 @@ impl App {
                             ui.selectable_value(selected, family.clone(), family);
                         }
                     });
+                // Read out with its label, which egui does not tie to it by itself.
+                combo.response.labelled_by(label.id);
             });
         }
         if self.fonts.discovering {
@@ -159,7 +181,7 @@ impl App {
     pub(super) fn settings_units(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-distance-units-label"));
+            let caption = ui.label(lg.text("settings-distance-units-label"));
             let label = |units| match units {
                 UnitPreference::System => lg.format(
                     "settings-units-system",
@@ -181,7 +203,7 @@ impl App {
                 UnitPreference::Imperial,
             ]
             .map(|units| (units, label(units)));
-            egui::ComboBox::from_id_salt("distance_units")
+            let combo = egui::ComboBox::from_id_salt("distance_units")
                 .selected_text(label(self.settings.distance_units))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -197,15 +219,22 @@ impl App {
                         );
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(caption.id);
         });
         super::super::coordinate_display::controls(ui, &mut self.settings.coordinate_display, lg);
+        ui.checkbox(
+            &mut self.settings.utc_times,
+            lg.text("settings-utc-times-label"),
+        );
+        ui.weak(lg.text("settings-utc-times-help"));
     }
     pub(super) fn settings_earth_model(&mut self, ui: &mut egui::Ui) {
         let lg = self.lang;
         ui.horizontal(|ui| {
-            ui.label(lg.text("settings-earth-model-label"));
+            let label = ui.label(lg.text("settings-earth-model-label"));
             let models = globecraft_core::earth_model::EarthModel::ALL;
-            egui::ComboBox::from_id_salt("earth_model")
+            let combo = egui::ComboBox::from_id_salt("earth_model")
                 .selected_text(lg.text(self.settings.earth_model.name_id()))
                 .show_ui(ui, |ui| {
                     super::super::selection::size_menu(
@@ -222,6 +251,8 @@ impl App {
                         .on_hover_text(lg.text(model.help_id()));
                     }
                 });
+            // Read out with its label, which egui does not tie to it by itself.
+            combo.response.labelled_by(label.id);
         });
     }
     pub(super) fn settings_graphics(&mut self, ui: &mut egui::Ui) {
@@ -232,22 +263,24 @@ impl App {
         );
         ui.weak(lg.text("settings-frame-sync-help"));
         ui.add_space(8.0);
-        let mut automatic = self.settings.motion_resolution.is_none();
-        if ui
-            .checkbox(&mut automatic, lg.text("settings-motion-resolution-auto"))
-            .on_hover_text(lg.text("settings-motion-resolution-help"))
-            .changed()
-        {
-            self.settings.motion_resolution = (!automatic).then_some(1.0);
-        }
-        if let Some(scale) = &mut self.settings.motion_resolution {
-            ui.add(
-                egui::Slider::new(scale, globecraft_render::view::MIN_MOTION_SCALE..=1.0)
-                    .text(lg.text("settings-motion-resolution"))
-                    .custom_formatter(|value, _| format!("{:.0} %", value * 100.0)),
-            )
-            .on_hover_text(lg.text("settings-motion-resolution-help"));
-        }
+        render_quality(ui, lg, &mut self.settings.render_quality);
+        motion_resolution(
+            ui,
+            lg,
+            &mut self.settings.motion_resolution,
+            "settings-motion-resolution",
+        );
+        motion_resolution(
+            ui,
+            lg,
+            &mut self.settings.motion_resolution_relief,
+            "settings-motion-resolution-relief",
+        );
+        ui.checkbox(
+            &mut self.settings.smooth_relief,
+            lg.text("settings-smooth-relief-toggle"),
+        )
+        .on_hover_text(lg.text("settings-smooth-relief-help"));
         if globecraft_render::backend::GPU_BY_DEFAULT {
             let toggle = ui
                 .checkbox(
@@ -535,4 +568,85 @@ impl App {
         });
         ui.weak(lg.text("settings-startup-help"));
     }
+}
+
+/// How sharp the globe renders: the screen's pixels, HD or SD.
+fn render_quality(
+    ui: &mut egui::Ui,
+    lg: Lang,
+    setting: &mut globecraft_data::settings::render_quality::RenderQuality,
+) {
+    ui.horizontal(|ui| {
+        let label = ui.label(lg.text("settings-render-quality"));
+        let combo = egui::ComboBox::from_id_salt("settings-render-quality")
+            .selected_text(lg.text(&format!("settings-render-quality-{}", setting.code())))
+            .show_ui(ui, |ui| {
+                for quality in globecraft_data::settings::render_quality::RenderQuality::ALL {
+                    ui.selectable_value(
+                        setting,
+                        quality,
+                        lg.text(&format!("settings-render-quality-{}", quality.code())),
+                    );
+                }
+            });
+        combo
+            .response
+            .on_hover_text(lg.text("settings-render-quality-help"))
+            .labelled_by(label.id);
+    });
+}
+
+/// A share of the full resolution for moving frames: automatic (`None`) or set.
+/// `key` names its strings (`…-auto`, `…-help`).
+fn motion_resolution(ui: &mut egui::Ui, lg: Lang, setting: &mut Option<f32>, key: &str) {
+    let (auto_key, help_key) = (format!("{key}-auto"), format!("{key}-help"));
+    let mut automatic = setting.is_none();
+    if ui
+        .checkbox(&mut automatic, lg.text(&auto_key))
+        .on_hover_text(lg.text(&help_key))
+        .changed()
+    {
+        *setting = (!automatic).then_some(1.0);
+    }
+    if let Some(scale) = setting {
+        ui.add(
+            egui::Slider::new(scale, globecraft_render::view::MIN_MOTION_SCALE..=1.0)
+                .text(lg.text(key))
+                .custom_formatter(|value, _| format!("{:.0} %", value * 100.0)),
+        )
+        .on_hover_text(lg.text(&help_key));
+    }
+}
+
+/// The monochrome icons' colour: the system accent, or one of the user's own.
+fn mono_icon_color(ui: &mut egui::Ui, lg: Lang, color: &mut Option<Rgba>) {
+    ui.horizontal(|ui| {
+        let mut own = color.is_some();
+        if ui
+            .checkbox(&mut own, lg.text("settings-mono-icons-own-color-label"))
+            .changed()
+        {
+            let accent = crate::app::ui::theme::Tokens::get(ui.ctx()).accent;
+            *color = own.then(|| Rgba(accent.to_srgba_unmultiplied()));
+        }
+        if let Some(rgba) = color {
+            let [r, g, b, _] = rgba.0;
+            let mut picked = egui::Color32::from_rgb(r, g, b);
+            let button = egui::color_picker::color_edit_button_srgba(
+                ui,
+                &mut picked,
+                egui::color_picker::Alpha::Opaque,
+            );
+            button.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::ColorButton,
+                    true,
+                    lg.text("settings-mono-icons-color-label"),
+                )
+            });
+            if button.changed() {
+                *rgba = Rgba(picked.to_srgba_unmultiplied());
+            }
+        }
+    });
 }

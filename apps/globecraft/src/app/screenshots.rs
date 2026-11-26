@@ -9,7 +9,7 @@ use super::{App, RestartRequest};
 use eframe::egui;
 use egui_kittest::{Harness, wgpu::WgpuTestRenderer};
 use globecraft_core::commands::Tab;
-use globecraft_data::settings::{Settings, appearance::ThemePreference, workspace::RightPane};
+use globecraft_data::settings::{Settings, appearance::ThemePreference, workspace::PaneTab};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -20,6 +20,7 @@ mod live;
 mod map_layers;
 mod performance;
 mod tools;
+mod tour;
 mod user_data;
 
 const SIZE: egui::Vec2 = egui::vec2(1480.0, 900.0);
@@ -27,6 +28,12 @@ const SIZE: egui::Vec2 = egui::vec2(1480.0, 900.0);
 fn harness(theme: ThemePreference) -> Harness<'static, App> {
     let mut settings = Settings::default();
     settings.appearance.theme = theme;
+    harness_with(settings)
+}
+
+/// The harness with `settings` from its first frame (a pane's width, say, which egui
+/// keeps once it has drawn the pane).
+fn harness_with(settings: Settings) -> Harness<'static, App> {
     // GLOBECRAFT_SHOT_SIZE ("1190x775") and _PPP reproduce a user's window.
     let size = std::env::var("GLOBECRAFT_SHOT_SIZE")
         .ok()
@@ -81,14 +88,11 @@ fn save(h: &mut Harness<'static, App>, dir: &std::path::Path, name: &str) {
     println!("wrote {}", path.display());
 }
 
-/// Drags the navigator's tilt thumb from straight down to about 60° and checks the
-/// camera followed (the default window and controls scale place the ring here).
+/// Drags the navigator's tilt thumb from straight down toward 60° and checks the camera
+/// followed as far as it may, aiming where the arc was last drawn.
 fn drag_the_tilt_thumb(h: &mut Harness<'static, App>) {
-    let ring = egui::pos2(1423.3, 202.0);
-    let at = |degrees: f32| {
-        let angle = (32.0 + degrees).to_radians();
-        ring + egui::vec2(-angle.sin(), -angle.cos()) * 50.0
-    };
+    let (centre, radius) = h.state().nav.tilt_arc.expect("the navigator's tilt arc");
+    let at = |degrees: f32| crate::app::ui::tilt_arc_point(centre, radius, degrees);
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
         button: egui::PointerButton::Primary,
@@ -105,8 +109,14 @@ fn drag_the_tilt_thumb(h: &mut Harness<'static, App>) {
     }
     h.event(button(at(60.0), false));
     settle(h, 2.0);
-    let tilt = h.state().cam.tilt;
-    assert!((tilt - 60.0).abs() < 3.0, "tilt after the drag: {tilt}");
+    // Far out the view is held nearly level, so the thumb stops at the arc's reach.
+    let cam = h.state().cam;
+    let wanted = 60.0_f64.min(cam.max_view_tilt());
+    let tilt = cam.view_tilt();
+    assert!(
+        (tilt - wanted).abs() < 3.0,
+        "tilt after the drag: {tilt}, wanted {wanted}"
+    );
 }
 
 /// The Settings window's outer rectangle: the widest node labelled with its title,

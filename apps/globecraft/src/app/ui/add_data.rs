@@ -588,7 +588,7 @@ impl AddDataDialog {
                                     let selected = layers
                                         .get(self.wms_choice)
                                         .map_or("", |layer| layer.title.as_str());
-                                    egui::ComboBox::from_id_salt("add_data_wms_layer")
+                                    let combo = egui::ComboBox::from_id_salt("add_data_wms_layer")
                                         .selected_text(selected)
                                         .width(300.0)
                                         .show_ui(ui, |ui| {
@@ -600,6 +600,10 @@ impl AddDataDialog {
                                                 );
                                             }
                                         });
+                                    super::widgets::name_widget(
+                                        &combo.response,
+                                        lang.text("add-data-web-layer-name"),
+                                    );
                                 }
                                 _ => {
                                     ui.weak(lang.text("add-data-web-no-layers"));
@@ -714,7 +718,7 @@ impl AddDataDialog {
             .num_columns(2)
             .spacing([10.0, 8.0])
             .show(ui, |ui| {
-                ui.label(lang.text("add-data-location-label"));
+                let label = ui.label(lang.text("add-data-location-label"));
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -722,6 +726,7 @@ impl AddDataDialog {
                                 .hint_text(lang.text("add-data-location-hint"))
                                 .desired_width(300.0),
                         )
+                        .labelled_by(label.id)
                         .changed()
                     {
                         self.feature_test.clear();
@@ -739,8 +744,8 @@ impl AddDataDialog {
                     }
                 });
                 ui.end_row();
-                ui.label(lang.text("add-data-format-label"));
-                egui::ComboBox::from_id_salt("add_data_format")
+                let label = ui.label(lang.text("add-data-format-label"));
+                let combo = egui::ComboBox::from_id_salt("add_data_format")
                     .selected_text(lang.text(format_name(self.format)))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.format, None, lang.text(format_name(None)));
@@ -752,40 +757,47 @@ impl AddDataDialog {
                             );
                         }
                     });
+                // Read out with its label, which egui does not tie to it by itself.
+                combo.response.labelled_by(label.id);
                 ui.end_row();
                 if is_url(self.location.trim()) {
-                    ui.label(lang.text("add-data-refresh-label"));
+                    let label = ui.label(lang.text("add-data-refresh-label"));
                     ui.add(
                         egui::DragValue::new(&mut self.refresh_minutes)
                             .range(0..=1440)
                             .suffix(" min"),
                     )
-                    .on_hover_text(lang.text("add-data-refresh-help"));
+                    .on_hover_text(lang.text("add-data-refresh-help"))
+                    .labelled_by(label.id);
                     ui.end_row();
                 }
-                ui.label(lang.text("add-data-size-by-label"));
+                let label = ui.label(lang.text("add-data-size-by-label"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.size_by)
                         .hint_text(lang.text("add-data-size-by-hint"))
                         .desired_width(300.0),
-                );
+                )
+                .labelled_by(label.id);
                 ui.end_row();
-                ui.label(lang.text("add-data-name-label"));
-                ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(300.0));
+                let label = ui.label(lang.text("add-data-name-label"));
+                ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(300.0))
+                    .labelled_by(label.id);
                 ui.end_row();
-                ui.label(lang.text("add-data-color-label"));
+                let label = ui.label(lang.text("add-data-color-label"));
                 egui::color_picker::color_edit_button_srgba(
                     ui,
                     &mut self.color,
                     egui::color_picker::Alpha::Opaque,
-                );
+                )
+                .labelled_by(label.id);
                 ui.end_row();
-                ui.label(lang.text("add-data-attribution-label"));
+                let label = ui.label(lang.text("add-data-attribution-label"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.attribution)
                         .hint_text(lang.text("add-data-attribution-hint"))
                         .desired_width(300.0),
-                );
+                )
+                .labelled_by(label.id);
                 ui.end_row();
             });
         if !self.location.trim().is_empty() && self.feature_format().is_none() {
@@ -866,9 +878,9 @@ impl App {
                 {
                     self.windows.add_data = None;
                 }
-                self.settings.sidebar.open = true;
-                self.settings.sidebar.panel =
-                    globecraft_data::settings::sidebar::SidebarPanel::Layers;
+                self.settings
+                    .workspace
+                    .open_right(globecraft_data::settings::workspace::PaneTab::Layers);
             }
             Action::OpenKml => {
                 self.windows.add_data = None;

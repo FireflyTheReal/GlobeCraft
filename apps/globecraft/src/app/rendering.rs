@@ -9,6 +9,7 @@ use globecraft_core::{
 use globecraft_render::RenderCfg;
 use globecraft_render::worker::{RenderRequest, RenderWorker};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Raster scale of the swipe compare's frame while the camera moves.
 const COMPARE_MOTION_SCALE: f32 = 0.5;
@@ -22,27 +23,43 @@ struct PreparedFrame {
     fading_out: Option<super::overlays::PreparedOverlay>,
     aircraft: Option<Arc<globecraft_render::aircraft::AircraftGeometry>>,
     live_layers: Option<Arc<globecraft_render::live_layers::LiveGeometry>>,
+    /// The frame's drawn ground (relief frames the GPU's walk went through).
+    depth: Option<Arc<globecraft_render::overlays::DepthMap>>,
 }
 
 /// The compare release's raster, handed from the render step to the prepare step of
 /// the same job.
 type CompareRaster = Arc<std::sync::Mutex<Option<(usize, usize, u16, Vec<u8>)>>>;
+/// The last relief frame's drawn ground (`FrameRenderer::take_depth`).
+type DepthSlot = Arc<std::sync::Mutex<Option<Arc<globecraft_render::overlays::DepthMap>>>>;
 
 pub(super) struct Renderer {
     worker: RenderWorker<PreparedFrame>,
     displayed: Option<(Cam, Basis)>,
     displayed_rect: Option<egui::Rect>,
     displayed_grid_step: Option<f64>,
+    /// The displayed frame's drawn ground (`overlays::DepthMap`): layers projected for
+    /// its view hide what lies behind the relief by it.
+    pub(super) displayed_depth: Option<Arc<globecraft_render::overlays::DepthMap>>,
     /// The relief setting the displayed frame's overlays were projected with (`None`
     /// before the first frame). Drawing must use it: the live one carries the tile
     /// cache's generation, which moves with every arriving tile, so overlays prepared
     /// with a frame never matched it while tiles streamed in and lines flickered.
     displayed_ground: Option<Option<globecraft_render::overlays::OverlayGround>>,
     pub(super) displayed_sky: bool,
+    /// The space the displayed frame leaves to the sky layer, if it leaves it.
+    pub(super) displayed_sky_behind: Option<super::sky_layer::SkyBehind>,
     pub(super) displayed_credits: String,
     waiting: Vec<globecraft_data::tiles::TileKey>,
     required: Vec<globecraft_data::tiles::TileKey>,
     retry_at: Option<std::time::Instant>,
+    /// Microseconds the last frame took the renderer (`backend.render`).
+    render_us: Arc<AtomicU64>,
+    /// The last request was a still frame: the next moving one abandons it
+    /// (`RenderWorker::submit_preempting`).
+    submitted_still: bool,
+    /// Which of `view::MOTION_STEPS` moving relief frames are drawn at.
+    pub(super) motion_step: usize,
 }
 
 impl Renderer {
@@ -74,6 +91,13 @@ impl Renderer {
         // the cache as one list, and a tile of either release wakes the next frame.
         let compare_raster = CompareRaster::default();
         let compare_out = compare_raster.clone();
+        // The relief frame's drawn ground, from the render step to the prepare step
+        // (both on the frame worker, one after the other): the overlays hide what lies
+        // behind the relief by it.
+        let depth_slot: DepthSlot = Arc::default();
+        let depth_out = depth_slot.clone();
+        let render_us = Arc::new(AtomicU64::new(0));
+        let render_timing = render_us.clone();
         Self {
             worker: RenderWorker::with_prepare(
                 move |request, buffer| {
@@ -88,7 +112,16 @@ impl Renderer {
                         profile.values.altitude_m = (request.cam.alt * 1000.0) as usize;
                         profile.values.tilt_decideg = (request.cam.tilt * 10.0) as usize;
                     }
+                    let render_started = std::time::Instant::now();
                     let mut frame = backend.render(request, &cache, buffer);
+                    render_timing.store(
+                        render_started.elapsed().as_micros() as u64,
+                        Ordering::Relaxed,
+                    );
+                    #[cfg(feature = "gpu")]
+                    if let Ok(mut slot) = depth_slot.lock() {
+                        *slot = backend.take_depth();
+                    }
                     if let Some(compare) = request.compare {
                         let size = |n: usize| ((n as f32 * compare.scale).round() as usize).max(1);
                         let compare_request = RenderRequest {
@@ -126,22 +159,25 @@ impl Renderer {
                     admission_cache.prioritize_view(&frame.required_tiles());
                 },
                 move |request, pixels| {
+                    let prepare_started = std::time::Instant::now();
                     #[cfg(feature = "profiling")]
                     let _prepare = globecraft_data::profiling::Span::new("frame.prepare");
                     #[cfg(feature = "profiling")]
                     let conversion = globecraft_data::profiling::Span::new("frame.convert");
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                    let image = egui::ColorImage::from_rgba_premultiplied(
                         [request.width, request.height],
                         pixels,
                     );
                     #[cfg(feature = "profiling")]
                     drop(conversion);
+                    let depth = depth_out.lock().ok().and_then(|mut slot| slot.take());
                     let geometry = request.overlays.as_ref().map(|input| {
                         let geometry =
                             overlay_preparer.prepare(globecraft_render::overlays::OverlayInput {
                                 view: input.view,
                                 data: input.data.clone(),
                                 fading_out: None,
+                                depth: depth.clone(),
                             });
                         super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_overlay,
@@ -149,6 +185,7 @@ impl Renderer {
                             &overlay_ctx,
                         )
                     });
+                    let overlays_took = prepare_started.elapsed();
                     let fading_out = request.overlays.as_ref().and_then(|input| {
                         let data = input.fading_out.clone()?;
                         let geometry =
@@ -156,6 +193,7 @@ impl Renderer {
                                 view: input.view,
                                 data,
                                 fading_out: None,
+                                depth: depth.clone(),
                             });
                         Some(super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_fading,
@@ -168,35 +206,44 @@ impl Renderer {
                         .and_then(|_| compare_out.lock().ok()?.take())
                         .map(|(width, height, rel, pixels)| {
                             let image =
-                                egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels);
+                                egui::ColorImage::from_rgba_premultiplied([width, height], &pixels);
                             (image, rel)
                         });
-                    PreparedFrame {
+                    let prepared = PreparedFrame {
                         image,
                         compare,
                         overlays: geometry,
                         fading_out,
                         live_layers: request.live_layers.clone().map(|mut input| {
                             input.unix_secs = now_unix();
+                            input.depth = depth.clone();
                             live_preparer.prepare(input)
                         }),
                         aircraft: request.aircraft.clone().map(|mut input| {
                             input.unix_secs = now_unix();
                             aircraft_preparer.prepare(input)
                         }),
-                    }
+                        depth,
+                    };
+                    log_prepare(request, overlays_took, prepare_started.elapsed());
+                    prepared
                 },
             )
             .expect("start frame renderer"),
             displayed: None,
+            displayed_depth: None,
             displayed_rect: None,
             displayed_grid_step: None,
             displayed_ground: None,
             displayed_sky: false,
+            displayed_sky_behind: None,
             displayed_credits: String::new(),
             waiting: Vec::new(),
             required: Vec::new(),
             retry_at: None,
+            render_us,
+            submitted_still: false,
+            motion_step: 0,
         }
     }
     pub(super) fn tiles_changed(&self, cache: &globecraft_data::tiles::TileCache) -> bool {
@@ -266,16 +313,16 @@ impl App {
         lod_scale: f32,
     ) -> RenderCfg {
         let grid_step = globecraft_render::grid_step(self.cam.alt, width, height);
+        // The frame's moment, as its key holds it.
+        let time = self.frame_time();
         let sun = if self.layer(MapLayer::Sunlight) {
-            let (la, lo) = subsolar(self.scene_unix());
+            let (la, lo) = subsolar(time);
             Some(ll_to_v3(la, lo))
         } else {
             None
         };
         let (prov, rel) = self.imagery_source();
         let sky = if let Some(image) = self.sky.image.clone().filter(|_| self.sky_ready()) {
-            let interval = globecraft_render::view::SCENE_TIME_UPDATE_INTERVAL_SECS;
-            let time = (self.scene_unix() / interval).floor() * interval;
             let (latitude, longitude) = subsolar(time);
             match globecraft_render::celestial::SkyBackdrop::new(
                 image,
@@ -298,7 +345,16 @@ impl App {
             sky,
             provider: prov,
             terrain: self.terrain_active().then(|| {
-                globecraft_render::TerrainCfg::new(self.settings.layers.terrain_exaggeration)
+                let smooth = self.settings.smooth_relief;
+                let relief = globecraft_render::TerrainCfg::new(
+                    self.settings.layers.terrain_exaggeration,
+                    globecraft_render::relief_fade(self.cam.alt, smooth),
+                );
+                if smooth {
+                    relief
+                } else {
+                    relief.without_smoothing()
+                }
             }),
             rel,
             grid: self.layer(MapLayer::Grid),
@@ -310,7 +366,15 @@ impl App {
             fixed_level: None,
             night_lights: (self.layer(MapLayer::NightLights) && self.explorer.on_earth())
                 .then(|| self.night_lights_edition()),
-            stars: self.layer(MapLayer::Stars),
+            stars: self
+                .layer(MapLayer::Stars)
+                .then(|| globecraft_core::celestial::CelestialFrame::at_unix(time).ok())
+                .flatten(),
+            // The sky layer draws space at full resolution behind the frame.
+            sky_behind: true,
+            clouds: self.frame_clouds(),
+            glint: sun.and_then(|_| self.live.maps.water_map()),
+            aurora: self.frame_aurora(),
         }
     }
 
@@ -340,44 +404,72 @@ impl App {
         if compare.is_none() {
             self.wayback.compare_texture = None;
         }
-        self.frame.renderer.worker.submit(RenderRequest {
-            width: size.width,
-            height: size.height,
-            cam: self.cam,
-            basis,
-            cfg,
-            compare,
-            presentation,
-            aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
-                .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
-            live_layers: (self.layer(MapLayer::Roads)
-                || self.layer(MapLayer::Buildings)
-                || self.layer(MapLayer::Traffic)
-                || self.layer(MapLayer::Vessels)
-                || self.layer(MapLayer::Satellites)
-                || self.map_data_shown())
-            .then(|| self.live_layer_input(basis, rect, self.cam, pixels_per_point)),
-            overlays: Some(globecraft_render::overlays::OverlayInput {
-                view: globecraft_render::overlays::OverlayView {
-                    basis,
-                    rect,
-                    altitude_km: self.cam.alt,
-                    state_visible_max_km: self.settings.state_max_altitude_km,
-                    grid_step_deg: self.layer(MapLayer::GridLabels).then_some(grid_step),
-                    layers: self.overlay_layers(),
-                    dashes: globecraft_render::overlays::BorderDashes::of(&self.settings.map_style),
-                    ground: self.overlay_ground(),
-                },
-                data: self.borders.shown.clone(),
-                fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
-            }),
-        });
+        // The first moving frame after a still one does not wait for it: a still frame
+        // of a tilted relief view takes a few hundred milliseconds, and a gesture that
+        // began meanwhile caught up only after it (Julien, 2026-11-26).
+        let still = size.lod_scale >= 1.0;
+        let preempt = !still && self.frame.renderer.submitted_still;
+        self.frame.renderer.submitted_still = still;
+        let submit = |worker: &RenderWorker<PreparedFrame>, request| {
+            if preempt {
+                worker.submit_preempting(request);
+            } else {
+                worker.submit(request);
+            }
+        };
+        submit(
+            &self.frame.renderer.worker,
+            RenderRequest {
+                width: size.width,
+                height: size.height,
+                cam: self.cam,
+                basis,
+                cfg,
+                compare,
+                presentation,
+                aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
+                    .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
+                live_layers: (self.layer(MapLayer::Roads)
+                    || self.layer(MapLayer::Buildings)
+                    || self.layer(MapLayer::Traffic)
+                    || self.layer(MapLayer::Vessels)
+                    || self.layer(MapLayer::Satellites)
+                    || self.map_data_shown())
+                .then(|| self.live_layer_input(basis, rect, self.cam, pixels_per_point)),
+                overlays: Some(globecraft_render::overlays::OverlayInput {
+                    view: globecraft_render::overlays::OverlayView {
+                        basis,
+                        rect,
+                        altitude_km: self.cam.alt,
+                        state_visible_max_km: self.settings.state_max_altitude_km,
+                        grid_step_deg: self.layer(MapLayer::GridLabels).then_some(grid_step),
+                        layers: self.overlay_layers(),
+                        dashes: globecraft_render::overlays::BorderDashes::of(
+                            &self.settings.map_style,
+                        ),
+                        ground: self.overlay_ground(),
+                    },
+                    data: self.borders.shown.clone(),
+                    fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
+                    // The frame worker adds the frame's drawn ground.
+                    depth: None,
+                }),
+            },
+        );
     }
 
     pub(super) fn poll_render(&mut self, presentation: u64, ctx: &egui::Context) {
         let Some(frame) = self.frame.renderer.worker.take_completed(presentation) else {
             return;
         };
+        // Moving relief frames follow their time (`view::next_motion_step`).
+        if frame.request.cfg.terrain.is_some() && frame.request.cfg.lod_scale < 1.0 {
+            let took = std::time::Duration::from_micros(
+                self.frame.renderer.render_us.load(Ordering::Relaxed),
+            );
+            self.frame.renderer.motion_step =
+                globecraft_render::view::next_motion_step(self.frame.renderer.motion_step, took);
+        }
         #[cfg(feature = "profiling")]
         globecraft_data::profiling::Span::elapsed(
             "frame.delivery",
@@ -399,7 +491,9 @@ impl App {
             fading_out,
             aircraft,
             live_layers,
+            depth,
         } = frame.prepared;
+        self.frame.renderer.displayed_depth = depth;
         if let Some(geometry) = live_layers {
             self.live.geometry.accept(geometry);
         }
@@ -440,19 +534,51 @@ impl App {
         // A new frame of the view on screen (tiles arrived, or the view came to
         // rest) fades in over the picture it replaces instead of popping in (roadmap
         // 1.6). The two textures swap roles, so the old picture costs no upload.
-        let same_view = same_view(
+        // A playing time replaces its frames as a moving camera does: faded, each one
+        // trailed the last and the sun moved in jumps (user, 2026-11-19).
+        let playing = self.time.speed() != 0.0;
+        let same_place = same_view(
             self.frame.texture.is_some(),
             self.frame.renderer.displayed,
             self.frame.renderer.displayed_rect,
             frame.request.cam,
             frame.request.overlays.as_ref().map(|input| input.view.rect),
         );
+        // A dragged timeline moves the sun between frames of the same view: faded in
+        // over 250 ms, each frame trailed the last and the sun showed twice (Julien,
+        // 2026-11-26 19:17: "chopped/double"), so it replaces the last one at once.
+        let shown_sun = std::mem::replace(&mut self.frame.shown_sun, frame.request.cfg.sun);
+        let sun_moved = shown_sun
+            .zip(frame.request.cfg.sun)
+            .is_some_and(|(shown, now)| shown.angle_between(now) > SUN_STEP_UNFADED.to_radians());
+        let same_view = !playing && same_place && !sun_moved;
         let fading = self.frame.fade_from.is_some()
             && self
                 .frame
                 .fade_started
-                .is_some_and(|started| started.elapsed() < super::globe::FRAME_FADE);
-        if same_view && fading {
+                .is_some_and(|started| started.elapsed() < self.frame.fade_length);
+        if !playing {
+            self.frame.playback_frames = None;
+        }
+        if playing && same_place {
+            // While the time plays, each frame fades in over about the time until the
+            // next one comes: the light and the sun move on between frames instead
+            // of jumping a step each frame (user, 2026-11-24: "the sun's disc jumping
+            // in the sky, day and night shading moving in steps"). Faded over 250 ms,
+            // as at rest, each one trailed the last (user, 2026-11-19).
+            let now = std::time::Instant::now();
+            let interval = self.frame.playback_frames.map_or(
+                PLAYBACK_FADE_FIRST.as_secs_f32(),
+                |(last, mean)| {
+                    mean + PLAYBACK_INTERVAL_WEIGHT
+                        * (now.duration_since(last).as_secs_f32() - mean)
+                },
+            );
+            self.frame.playback_frames = Some((now, interval));
+            std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
+            self.frame.fade_started = Some(now);
+            self.frame.fade_length = playback_fade(interval);
+        } else if same_view && fading {
             // A fade under way goes on from the same picture toward this newer
             // one. Starting over from the half-shown picture showed the rest of it
             // at once: while relief and imagery loaded, a frame every tenth of a
@@ -460,6 +586,7 @@ impl App {
         } else if same_view {
             std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
             self.frame.fade_started = Some(std::time::Instant::now());
+            self.frame.fade_length = super::globe::FRAME_FADE;
         } else {
             self.frame.fade_started = None;
         }
@@ -500,6 +627,13 @@ impl App {
             .grid
             .then_some(frame.request.cfg.grid_step);
         self.frame.renderer.displayed_sky = frame.request.cfg.sky.is_some();
+        let cfg = &frame.request.cfg;
+        self.frame.renderer.displayed_sky_behind =
+            cfg.sky_behind.then(|| super::sky_layer::SkyBehind {
+                basis: frame.request.basis,
+                backdrop: cfg.sky.clone(),
+                stars: cfg.stars,
+            });
         self.frame.renderer.displayed_credits = frame
             .request
             .cfg
@@ -531,7 +665,26 @@ impl App {
     }
 }
 
+/// The least the sun moves between two frames of a view for the newer one to replace
+/// the older unfaded (degrees): a dragged timeline lands on whole minutes (0.25°); the
+/// live time moves it this far in about 5 s, so tiles arriving still fade in.
+const SUN_STEP_UNFADED: f64 = 0.02;
+
 /// Two frames show the same view when their cameras and viewport rectangles match exactly.
+/// While the time plays: the fade before the time between frames is known…
+const PLAYBACK_FADE_FIRST: std::time::Duration = std::time::Duration::from_millis(30);
+/// …how fast the running mean of that time follows it…
+const PLAYBACK_INTERVAL_WEIGHT: f32 = 0.3;
+/// …and the longest fade: with frames further apart than this (3D terrain, tilted),
+/// a longer fade drags the light behind the time.
+const PLAYBACK_FADE_MAX: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// How long a frame of a playing time fades in: the time between frames (seconds),
+/// up to `PLAYBACK_FADE_MAX`.
+fn playback_fade(interval_secs: f32) -> std::time::Duration {
+    std::time::Duration::from_secs_f32(interval_secs.clamp(0.0, PLAYBACK_FADE_MAX.as_secs_f32()))
+}
+
 fn same_view(
     has_texture: bool,
     displayed: Option<(Cam, Basis)>,
@@ -544,17 +697,37 @@ fn same_view(
         && displayed_rect.is_some_and(|displayed| Some(displayed) == rect)
 }
 
-/// Two frames show the same camera when every camera value matches exactly.
+/// Two frames show the same camera when every camera value matches exactly. The
+/// look up counts too: without it, tilting past the horizon cross-faded each frame
+/// over the last as if tiles had arrived, and the ground and the sun showed twice
+/// (user, 2026-11-24).
 fn same_camera(a: Cam, b: Cam) -> bool {
-    [a.lat, a.lon, a.alt, a.heading, a.tilt]
+    [a.lat, a.lon, a.alt, a.heading, a.tilt, a.look_up]
         .iter()
-        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt])
+        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt, b.look_up])
         .all(|(x, y)| x.to_bits() == y.to_bits())
 }
 
 // Input must describe the same globe as the frame being presented.
 fn displayed_basis(displayed: Option<(Cam, Basis)>, fallback: Basis) -> Basis {
     displayed.map_or(fallback, |(_, basis)| basis)
+}
+
+/// With `GLOBECRAFT_FRAME_TIMES` set: one log line per frame prepared after the globe
+/// was drawn (its overlays first, then the rest), as the renderer logs relief frames.
+fn log_prepare(request: &RenderRequest, overlays: std::time::Duration, whole: std::time::Duration) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
+        let [by_depth, by_line, off_frame, not_sure, heights] =
+            globecraft_render::overlays::take_counts();
+        globecraft_data::log_line!(
+            "FRAME PREPARE {}x{}: overlays {:.1} ms, whole {:.1} ms; hidden-point tests by the drawn ground {by_depth}, by the line {by_line} ({off_frame} off the frame, {not_sure} not sure); {heights} height lookups",
+            request.width,
+            request.height,
+            overlays.as_secs_f64() * 1000.0,
+            whole.as_secs_f64() * 1000.0
+        );
+    }
 }
 
 #[cfg(test)]
@@ -568,6 +741,7 @@ mod tests {
             heading: 0.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let requested = Cam { lon: 90.0, ..shown };
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -587,6 +761,14 @@ mod tests {
     }
 
     #[test]
+    fn a_playing_time_fades_each_frame_over_the_time_between_frames() {
+        let ms = |secs: f32| playback_fade(secs).as_secs_f64() * 1e3;
+        assert!((ms(0.022) - 22.0).abs() < 0.01);
+        assert!((ms(0.4) - PLAYBACK_FADE_MAX.as_secs_f64() * 1e3).abs() < 0.01);
+        assert_eq!(ms(-1.0), 0.0);
+    }
+
+    #[test]
     fn crossfade_requires_the_same_camera_and_viewport_rect() {
         let shown = Cam {
             lat: 20.0,
@@ -594,6 +776,7 @@ mod tests {
             heading: 0.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let basis = shown.basis(4.0 / 3.0);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -615,6 +798,19 @@ mod tests {
         assert!(!same_view(
             true,
             Some((Cam { lon: 31.0, ..shown }, basis)),
+            Some(rect),
+            shown,
+            Some(rect)
+        ));
+        assert!(!same_view(
+            true,
+            Some((
+                Cam {
+                    look_up: 12.0,
+                    ..shown
+                },
+                basis
+            )),
             Some(rect),
             shown,
             Some(rect)

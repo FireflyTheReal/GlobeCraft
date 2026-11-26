@@ -5,6 +5,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub const MIN_TERRAIN_EXAGGERATION: f32 = 0.5;
 pub const MAX_TERRAIN_EXAGGERATION: f32 = 3.0;
+/// The cloud map's widths to choose from (`layer.cloudResolution`), pixels: finer
+/// shows more detail close in, coarser loads and plays faster on the timeline (an
+/// 8192 map holds about 42 MB with its smaller levels, a 2048 one under 3 MB).
+pub const CLOUD_RESOLUTIONS_PX: [u32; 3] = [2048, 4096, 8192];
+pub const DEFAULT_CLOUD_RESOLUTION_PX: u32 = 8192;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -24,6 +29,8 @@ pub struct LayerPreferences {
     pub terrain_exaggeration: f32,
     /// Aircraft and satellites drawn on the ground below them, not at their height.
     pub flat_live_objects: bool,
+    /// The widest cloud map kept, one of `CLOUD_RESOLUTIONS_PX`.
+    pub cloud_resolution_px: u32,
     /// The opacity of the layers that have one (`MapLayer::WITH_OPACITY`).
     #[serde(
         serialize_with = "serialize_opacity",
@@ -91,6 +98,7 @@ impl Default for LayerPreferences {
             basemap: Provider::Satellite,
             terrain_exaggeration: 1.0,
             flat_live_objects: false,
+            cloud_resolution_px: DEFAULT_CLOUD_RESOLUTION_PX,
             opacity: LayerOpacity::default(),
         }
     }
@@ -125,6 +133,9 @@ impl LayerPreferences {
         self.terrain_exaggeration = self
             .terrain_exaggeration
             .clamp(MIN_TERRAIN_EXAGGERATION, MAX_TERRAIN_EXAGGERATION);
+        if !CLOUD_RESOLUTIONS_PX.contains(&self.cloud_resolution_px) {
+            self.cloud_resolution_px = DEFAULT_CLOUD_RESOLUTION_PX;
+        }
         // Unknown layer names are passed over, and the live layers start hidden.
         if let Some(codes) = value.get("visible").and_then(|v| v.as_array()) {
             self.visible = LayerSet::from_codes(codes.iter().filter_map(|c| c.as_str()))

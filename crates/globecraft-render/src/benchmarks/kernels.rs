@@ -24,6 +24,7 @@ fn views(model: EarthModel) -> Vec<RayCaster> {
                 alt,
                 heading: 25.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis_for_model(WIDTH_PX as f64 / HEIGHT_PX as f64, model),
         )
@@ -47,7 +48,11 @@ fn earth_model_kernel_time() {
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
+        sky_behind: false,
+        clouds: None,
+        glint: None,
+        aurora: None,
     };
     for model in EarthModel::ALL {
         let views = views(model);
@@ -143,6 +148,7 @@ fn earth_model_raster_capture() {
                 alt,
                 heading: 25.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis_for_model(127.0 / 95.0, model);
             for (provider, cfg_provider) in Provider::basemaps().enumerate() {
@@ -159,7 +165,11 @@ fn earth_model_raster_capture() {
                     level_blend: true,
                     fixed_level: None,
                     night_lights: None,
-                    stars: true,
+                    stars: None,
+                    sky_behind: false,
+                    clouds: None,
+                    glint: None,
+                    aurora: None,
                 };
                 let (pixels, _) =
                     render_pixels(127, 95, &basis, &cfg, &|_| Lookup::Ready(tile.clone()));

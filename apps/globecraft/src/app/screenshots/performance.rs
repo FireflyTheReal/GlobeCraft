@@ -49,8 +49,8 @@ fn interface_frame_time() {
     if std::env::var("GLOBECRAFT_UI_PARTS").is_ok() {
         h.state_mut().settings.workspace.ribbon_minimized = true;
         measure(&mut h, "ribbon collapsed");
-        h.state_mut().settings.sidebar.open = false;
-        measure(&mut h, "ribbon collapsed, no left pane");
+        h.state_mut().settings.workspace.right_pane = None;
+        measure(&mut h, "ribbon collapsed, no side pane");
     }
 }
 

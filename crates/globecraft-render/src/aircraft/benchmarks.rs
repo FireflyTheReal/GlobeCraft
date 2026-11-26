@@ -16,6 +16,7 @@ fn aircraft_projection_cost() {
         heading: 25.0,
         alt: 14_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis(4.0 / 3.0);
     let rect = Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0));
@@ -46,6 +47,7 @@ fn aircraft_geometry_reuse_cost() {
             heading: 25.0,
             alt: 14_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(4.0 / 3.0),
         rect: Rect::from_min_size(Pos2::ZERO, emath::vec2(800.0, 600.0)),
@@ -61,6 +63,7 @@ fn aircraft_geometry_reuse_cost() {
             ..Default::default()
         }),
         unix_secs: 1010.0,
+        clouds: None,
     };
     let geometry = preparer.prepare(request.clone());
     let mut samples = Vec::new();

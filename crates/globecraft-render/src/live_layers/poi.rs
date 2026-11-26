@@ -146,7 +146,8 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
         return ProjectedPoi::default();
     }
     let view = input.view;
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     let clip = view
         .rect
         .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
@@ -212,7 +213,8 @@ fn labels(
     ground: Option<&dyn Ground>,
 ) -> Vec<ProjectedPoiLabel> {
     let view = input.view;
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     let shown = input.poi_shown.as_deref();
     // Each name once: the index in `found`, and whether its tile is being retired.
     let mut seen: HashMap<PoiKey, (usize, bool)> = HashMap::new();

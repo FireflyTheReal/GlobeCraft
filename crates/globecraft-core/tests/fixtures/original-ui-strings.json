@@ -16,19 +16,19 @@
     "pt-BR": "Só é possível soltar arquivos .kml aqui."
   },
   "globe-placemark-action": {
-    "en": "📍 Add placemark here",
+    "en": "📍 Add Placemark Here",
     "pt-BR": "📍 Adicionar local aqui"
   },
   "globe-fly-to-action": {
-    "en": "✈ Fly here",
+    "en": "✈ Fly Here",
     "pt-BR": "✈ Voar até aqui"
   },
   "globe-ruler-point-action": {
-    "en": "📏 Add ruler point",
+    "en": "📏 Add Ruler Point",
     "pt-BR": "📏 Adicionar ponto na régua"
   },
   "globe-copy-coordinates-action": {
-    "en": "📋 Copy coordinates",
+    "en": "📋 Copy Coordinates",
     "pt-BR": "📋 Copiar coordenadas"
   },
   "globe-context-menu-hint": {
@@ -152,7 +152,7 @@
     "pt-BR": "As pastas são criadas automaticamente ao salvar."
   },
   "settings-reset-action": {
-    "en": "Restore defaults",
+    "en": "Restore Defaults",
     "pt-BR": "Restaurar padrões"
   },
   "layers-section-title": {
@@ -216,11 +216,11 @@
     "pt-BR": "Navegação"
   },
   "navigation-reset-north-action": {
-    "en": "🧭 North up",
+    "en": "🧭 North Up",
     "pt-BR": "🧭 Norte para cima"
   },
   "navigation-global-view-action": {
-    "en": "🌐 Global view",
+    "en": "🌐 Global View",
     "pt-BR": "🌐 Visão global"
   },
   "search-results-label": {
@@ -236,7 +236,7 @@
     "pt-BR": "Nome"
   },
   "placemarks-add-center-action": {
-    "en": "➕ At center",
+    "en": "➕ At Center",
     "pt-BR": "➕ No centro"
   },
   "placemarks-fly-to-action": {
@@ -256,7 +256,7 @@
     "pt-BR": "Salva na pasta de KML (veja Configurações)"
   },
   "kml-save-as-action": {
-    "en": "💾 Save as…",
+    "en": "💾 Save As…",
     "pt-BR": "💾 Salvar como…"
   },
   "kml-open-action": {
@@ -272,7 +272,7 @@
     "pt-BR": "Medir distâncias (clique no globo)"
   },
   "ruler-clear-action": {
-    "en": "Clear ruler",
+    "en": "Clear Ruler",
     "pt-BR": "Limpar régua"
   },
   "export-section-title": {
@@ -280,11 +280,11 @@
     "pt-BR": "Exportar"
   },
   "screenshot-save-action": {
-    "en": "📷 Save screenshot (PNG)",
+    "en": "📷 Save Screenshot (PNG)",
     "pt-BR": "📷 Salvar captura (PNG)"
   },
   "settings-folders-action": {
-    "en": "⚙ Change folders…",
+    "en": "⚙ Change Folders…",
     "pt-BR": "⚙ Mudar pastas…"
   },
   "controls-help-toggle": {

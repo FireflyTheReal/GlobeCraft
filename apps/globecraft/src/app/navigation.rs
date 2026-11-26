@@ -3,6 +3,7 @@ use eframe::egui::{Pos2, Rect};
 use globecraft_core::flight::Flight;
 use globecraft_core::language::LanguagePreference;
 use globecraft_core::layers::MapLayer;
+use globecraft_core::{MAX_CAMERA_ALTITUDE_KM, MIN_CAMERA_ALTITUDE_KM};
 use std::time::Instant;
 
 /// The navigator's drags and eased turns (roadmap 10.2: one of the feature states
@@ -13,9 +14,15 @@ pub(super) struct NavState {
     pub(super) ring_drag: bool,
     /// The navigator's tilt thumb is being dragged.
     pub(super) tilt_drag: bool,
+    /// The tilt arc's centre and radius as last drawn, for tests to aim at.
+    #[cfg(test)]
+    pub(super) tilt_arc: Option<(eframe::egui::Pos2, f32)>,
     /// A navigator cardinal button turns the view to this heading, easing in.
     pub(super) snap_heading: Option<f64>,
 }
+
+/// Times the camera distance is corrected toward a wanted height.
+const EYE_HEIGHT_REFINEMENTS: usize = 4;
 
 impl App {
     pub(super) fn active_earth_model(&self) -> globecraft_core::earth_model::EarthModel {
@@ -51,10 +58,22 @@ impl App {
         heading_deg: Option<f64>,
         tilt_deg: Option<f64>,
     ) {
-        self.motion.fly = Some(
-            Flight::new_for_model(self.cam, lat, lon, alt, self.active_earth_model())
-                .with_orientation(heading_deg, tilt_deg),
-        );
+        let mut flight = Flight::new_for_model(self.cam, lat, lon, alt, self.active_earth_model())
+            .with_orientation(heading_deg, tilt_deg);
+        if self.reduce_motion() {
+            // Arrive at once instead of flying (HIG: Accessibility, Reduce Motion).
+            self.cam = flight.advance(f64::INFINITY);
+            self.motion.fly = None;
+            self.touch();
+        } else {
+            self.motion.fly = Some(flight);
+        }
+    }
+
+    /// Whether to leave out motion people did not drive themselves: the setting, or the
+    /// system's Reduce Motion.
+    pub(super) fn reduce_motion(&self) -> bool {
+        self.settings.appearance.reduce_motion || self.chrome.access.reduce_motion
     }
 
     pub(super) fn step_fly(&mut self, dt: f64) {
@@ -85,17 +104,105 @@ impl App {
         );
     }
 
+    /// Turns the view about the eye (`Cam::look_around`) over the relief as drawn. A
+    /// raise that would miss the ground still turns. Whether the view moved.
+    pub(super) fn look_around(&mut self, turn_deg: f64, raise_deg: f64) -> bool {
+        let (model, ground_km) = (self.active_earth_model(), self.motion.ground_km);
+        self.motion.glide = None;
+        self.cam.look_around(turn_deg, raise_deg, model, ground_km)
+            || (raise_deg != 0.0
+                && turn_deg != 0.0
+                && self.cam.look_around(turn_deg, 0.0, model, ground_km))
+    }
+
+    /// Looks around so that what was under `from` on the screen is under `to`.
+    pub(super) fn look_drag(&mut self, from: Pos2, to: Pos2, rect: Rect) -> bool {
+        let basis = self.view_basis((rect.width() / rect.height()) as f64);
+        let (model, ground_km) = (self.active_earth_model(), self.motion.ground_km);
+        self.motion.glide = None;
+        self.cam
+            .look_drag(basis.ray(rect, from), basis.ray(rect, to), model, ground_km)
+    }
+
+    /// The clouds for the frame to draw from below, while the layer is shown.
+    pub(super) fn frame_clouds(&self) -> Option<globecraft_render::clouds::CloudsCfg> {
+        if !self.layer(MapLayer::Clouds) || !self.explorer.on_earth() {
+            return None;
+        }
+        Some(globecraft_render::clouds::CloudsCfg {
+            map: self.live.maps.cloud_map()?,
+            opacity: self.settings.layers.opacity.get(MapLayer::Clouds),
+            light: self.cloud_light(),
+        })
+    }
+
+    /// The moment frames are drawn for (`globecraft_render::view::frame_time`); exact
+    /// in a scripted tour that sets the time itself (its time-lapses step by less than
+    /// a minute a frame), to the minute while the clock runs live.
+    pub(super) fn frame_time(&self) -> f64 {
+        globecraft_render::view::frame_time(
+            self.scene_unix(),
+            self.time.speed() != 0.0 || (self.motion.scripted && !self.time.is_live()),
+        )
+    }
+
+    /// How the cloud layer is lit: as the globe is (`RenderCfg::sun`, night everywhere
+    /// with the night lights and no sun).
+    pub(super) fn cloud_light(&self) -> globecraft_render::clouds::CloudLight {
+        use globecraft_render::clouds::CloudLight;
+        if self.layer(MapLayer::Sunlight) {
+            // The sun of the frame's moment, so that a still view keeps its cloud
+            // mesh (`LiveMaps::draw_clouds`).
+            let (lat, lon) = globecraft_core::math::subsolar(self.frame_time());
+            CloudLight::Sun(globecraft_core::math::ll_to_v3(lat, lon))
+        } else if self.layer(MapLayer::NightLights) {
+            CloudLight::Night
+        } else {
+            CloudLight::Even
+        }
+    }
+
     /// The view as drawn: the camera around the ground point raised to the terrain.
     pub(super) fn view_basis(&self, aspect: f64) -> globecraft_core::camera::Basis {
         self.cam
             .basis_over_ground(aspect, self.active_earth_model(), self.motion.ground_km)
     }
 
+    /// How high the camera is above sea level (km): what the status bar shows. The
+    /// camera's `alt` is its distance from the point it looks at, which changes as
+    /// it tilts and looks around while the camera stays (user, 2026-11-19).
+    pub(super) fn eye_height_km(&self) -> f64 {
+        globecraft_render::clouds::eye_height_km(&self.view_basis(1.0))
+    }
+
+    /// The camera distance that puts the camera `height_km` above sea level, along
+    /// its line of sight to the point it looks at.
+    pub(super) fn alt_for_eye_height(&self, height_km: f64) -> f64 {
+        let ground = self.motion.ground_km;
+        let mut cam = self.cam;
+        // Near the ground the height grows with the distance; the Earth's curve
+        // bends that a little far up, so the rule of three is applied a few times.
+        for _ in 0..EYE_HEIGHT_REFINEMENTS {
+            let height = globecraft_render::clouds::eye_height_km(&cam.basis_over_ground(
+                1.0,
+                self.active_earth_model(),
+                ground,
+            ));
+            let above = height - ground;
+            if above <= 0.0 || (height - height_km).abs() < 1e-6 {
+                break;
+            }
+            cam.alt = (cam.alt * (height_km - ground).max(0.0) / above)
+                .clamp(MIN_CAMERA_ALTITUDE_KM, MAX_CAMERA_ALTITUDE_KM);
+        }
+        cam.alt
+    }
+
     /// Relief under the overlays, when terrain is drawn.
     pub(super) fn overlay_ground(&self) -> Option<globecraft_render::overlays::OverlayGround> {
         self.terrain_active()
             .then(|| globecraft_render::overlays::OverlayGround {
-                exaggeration: self.settings.layers.terrain_exaggeration,
+                exaggeration: self.relief_exaggeration(),
                 generation: self.tiles.cache.elevation_generation(),
             })
     }
@@ -111,21 +218,31 @@ impl App {
         }
     }
 
+    /// The vertical exaggeration relief is drawn with: the setting's, flattened as
+    /// the camera rises toward `TERRAIN_MAX_ALTITUDE_KM`.
+    pub(super) fn relief_exaggeration(&self) -> f32 {
+        self.settings.layers.terrain_exaggeration.clamp(
+            globecraft_render::MIN_EXAGGERATION,
+            globecraft_render::MAX_EXAGGERATION,
+        ) * globecraft_render::relief_fade(self.cam.alt, self.settings.smooth_relief)
+    }
+
     /// Whether relief is drawn for the current view.
     pub(super) fn terrain_active(&self) -> bool {
         self.layer(MapLayer::Terrain)
-            && self.cam.alt <= globecraft_render::TERRAIN_MAX_ALTITUDE_KM
+            && self.cam.alt
+                <= globecraft_render::relief_max_altitude_km(self.settings.smooth_relief)
             && self.explorer.on_earth()
             && !self.flat_earth.open
     }
 
-    /// Eases the looked-at ground height toward the terrain under the view centre, and
-    /// keeps a tilted camera above the terrain beneath it.
+    /// Moves the looked-at point onto the terrain under the view centre, and keeps a
+    /// tilted camera above the terrain beneath it.
     pub(super) fn follow_ground(&mut self, ctx: &eframe::egui::Context) {
-        let exaggeration = f64::from(self.settings.layers.terrain_exaggeration.clamp(
-            globecraft_render::MIN_EXAGGERATION,
-            globecraft_render::MAX_EXAGGERATION,
-        ));
+        if self.motion.scripted {
+            return;
+        }
+        let exaggeration = f64::from(self.relief_exaggeration());
         let ground_km = |app: &Self, lat: f64, lon: f64, zoom: u8| {
             app.tiles
                 .cache
@@ -137,19 +254,58 @@ impl App {
         let zoom = (EARTH_CIRCUMFERENCE_KM / self.cam.alt.max(0.05))
             .log2()
             .clamp(0.0, 15.0) as u8;
-        let wanted = if self.terrain_active() {
-            ground_km(self, self.cam.lat, self.cam.lon, zoom).unwrap_or(self.motion.ground_km)
+        // The looked-at point moves along the line of sight onto the first ground
+        // the line meets, so the picture stays still; off relief, back to sea level.
+        let rise = if self.terrain_active() {
+            // Asks for the elevation tile under the point; the search only reads
+            // what is loaded, so it does not request tiles all along the line.
+            let under_point = ground_km(self, self.cam.lat, self.cam.lon, zoom);
+            let cache = &self.tiles.cache;
+            let hit = self.cam.sight_hit(self.motion.ground_km, |lat, lon| {
+                cache
+                    .loaded_elevation_m(lat, lon, zoom)
+                    .map(|metres| f64::from(metres) / METERS_PER_KM * exaggeration)
+            });
+            // The point inside the ground where it stands, by more than a finer tile
+            // changes it: a jump to a mountain (search, a flight, a link) leaves it
+            // at sea level and the camera inside the rock, where the view stayed
+            // black; finer tiles arriving there raise the ground under it again. It
+            // goes straight up onto the ground, the camera with it.
+            let buried = under_point.filter(|ground| {
+                *ground > self.motion.ground_km + BURIED_KM + self.cam.alt * BURIED_PER_KM
+            });
+            match (buried, hit) {
+                (Some(ground), _) => {
+                    self.motion.ground_km = ground;
+                    ctx.request_repaint();
+                    0.0
+                }
+                (None, Some(rise)) => rise,
+                (None, None) => 0.0,
+            }
         } else {
-            0.0
+            -self.motion.ground_km
         };
-        let dt = super::frame_timing::animation_delta_secs(ctx);
-        let ease = 1.0 - (-dt / GROUND_EASE_SECS).exp();
-        let gap = wanted - self.motion.ground_km;
-        if gap.abs() > GROUND_SETTLED_KM {
-            self.motion.ground_km += gap * ease;
+        // While the heading or tilt changes the view turns about the looked-at point:
+        // moving it onto a ridge that came between swung the camera about (user's
+        // recording, 2026-11-17). It is placed again once they hold.
+        let orbit = (self.cam.heading, self.cam.tilt);
+        if orbit != self.motion.orbit_seen {
+            self.motion.orbit_seen = orbit;
+            self.motion.orbit_changed = Some(Instant::now());
+        }
+        let orbiting = self
+            .motion
+            .orbit_changed
+            .is_some_and(|changed| changed.elapsed() < ORBIT_HOLD)
+            && self.terrain_active();
+        if orbiting {
+            ctx.request_repaint_after(ORBIT_HOLD);
+        } else if rise.abs() > GROUND_SETTLED_KM {
+            self.motion.ground_km += self.cam.slide_target(rise);
             ctx.request_repaint();
-        } else {
-            self.motion.ground_km = wanted;
+        } else if !self.terrain_active() {
+            self.motion.ground_km = 0.0;
         }
         if !self.terrain_active() || self.cam.tilt <= 0.0 {
             return;
@@ -175,16 +331,23 @@ impl App {
 
 const METERS_PER_KM: f64 = 1000.0;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
-/// The looked-at height follows a new elevation value over about this time.
-const GROUND_EASE_SECS: f64 = 0.25;
-/// Below this the eased height snaps to the target and stops asking for frames.
+/// The looked-at point lies this far inside the ground (km, plus `BURIED_PER_KM`
+/// of the camera's distance) before it is lifted straight out rather than slid
+/// along the line of sight: more than a finer elevation tile changes it.
+const BURIED_KM: f64 = 0.02;
+const BURIED_PER_KM: f64 = 0.02;
+/// After the heading or tilt last changed, the looked-at point stays put this long: a
+/// turning drag that pauses for a frame is still turning.
+const ORBIT_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+/// The looked-at point moves only when it is off the ground by more than this.
 const GROUND_SETTLED_KM: f64 = 0.0005;
 /// A tilted camera stays at least this high above the terrain beneath it: enough
 /// not to look through a slope (150 m until 2026-11-16, which kept the camera out
 /// of valleys).
 const MIN_GROUND_CLEARANCE_KM: f64 = 0.01;
-/// Steepest tilt considered when backing away (cos 80°), so the step stays finite.
-const MIN_RISE_PER_KM: f64 = 0.17;
+/// Steepest tilt considered when backing away (cos 85°, `MAX_TILT_DEG`), so the step
+/// stays finite.
+const MIN_RISE_PER_KM: f64 = 0.087;
 
 /// See [`App::ground_source`].
 pub(super) struct GroundSource {

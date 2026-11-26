@@ -66,8 +66,16 @@ impl App {
                 let drag = ui.interact(full, egui::Id::new("header_drag"), Sense::click_and_drag());
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                    self.file_button(ui);
-                    ui.add_space(6.0);
+                    // On a Mac the menu bar's File menu holds all of it; a second File in
+                    // the window is a Windows habit (HIG: Branding, familiar components).
+                    #[cfg(target_os = "macos")]
+                    let menu_bar = self.chrome.native_menu.is_some();
+                    #[cfg(not(target_os = "macos"))]
+                    let menu_bar = false;
+                    if !menu_bar {
+                        self.file_button(ui);
+                        ui.add_space(6.0);
+                    }
                     // Right side, measured from the window edge: collapse button, command
                     // search, place search and the Quick Access Toolbar.
                     let right = full.max.x;
@@ -93,7 +101,7 @@ impl App {
                         + qat_width
                         + 8.0;
                     let room = right - left - fixed - tabs_min;
-                    let wanted_search = PLACE_SEARCH_WIDTH * self.settings.ui_scale.max(1.0);
+                    let wanted_search = PLACE_SEARCH_WIDTH;
                     let cmd_w = if room >= full_cmd_w + wanted_search {
                         full_cmd_w
                     } else {
@@ -153,7 +161,7 @@ impl App {
                         Rect::from_center_size(pos2(icon_x, cr.center().y), vec2(14.0, 14.0)),
                         "command",
                         t.text_dim,
-                        t.accent,
+                        t.icon_accent,
                     );
                     if !compact {
                         ui.painter().text(
@@ -365,7 +373,7 @@ impl App {
                         "statusbar-camera-altitude",
                         &[(
                             "distance",
-                            self.distance_units().altitude(self.cam.alt).into(),
+                            self.distance_units().altitude(self.eye_height_km()).into(),
                         )],
                     );
                     let altitude_response = ui
@@ -386,7 +394,7 @@ impl App {
                     self.units_menu(&altitude_response);
                     if altitude_response.clicked() {
                         self.windows.altitude_editor = Some(super::altitude::AltitudeEditor::new(
-                            self.cam.alt,
+                            self.eye_height_km(),
                             self.distance_units(),
                             altitude_response.rect.left_top(),
                         ));
@@ -411,7 +419,7 @@ impl App {
                                     "statusbar-tiles-loading",
                                     &[("count", n.to_string().into())],
                                 ),
-                                t.amber,
+                                t.amber_text,
                             )
                         } else {
                             (lang.text("statusbar-tiles-ready").to_string(), t.text_dim)
@@ -429,7 +437,7 @@ impl App {
                                     egui::Label::new(
                                         egui::RichText::new(lang.text("statusbar-offline"))
                                             .size(11.0)
-                                            .color(t.amber),
+                                            .color(t.amber_text),
                                     )
                                     .sense(Sense::click()),
                                 )
@@ -485,6 +493,6 @@ fn header_icon(ui: &mut Ui, t: &Tokens, r: Rect, icon: &str, tip: &str, id: egui
     {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
     }
-    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text_dim, t.accent);
+    icons::paint(ui.painter(), r.shrink(5.0), icon, t.text_dim, t.icon_accent);
     resp.on_hover_text(tip)
 }

@@ -227,6 +227,25 @@ fn aurora_screenshot() {
         .expect("sunlight");
     settle(&mut h, 2.0);
     save(&mut h, &dir, "24-aurora-without-sunlight");
+    // Close up in the oval, the glow fills the view (it stopped in a rectangle
+    // smaller than the view, user 2026-11-18), and from the ground it is in the sky.
+    h.state_mut()
+        .run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    for (camera, name) in [
+        (
+            json!({"lat": 60.0, "lon": -72.0, "altitude_km": 110.0, "tilt_deg": 0.0}),
+            "25-aurora-close",
+        ),
+        (
+            json!({"lat": 56.0, "lon": -72.0, "altitude_km": 1.0, "tilt_deg": 85.0, "heading_deg": 0.0}),
+            "26-aurora-from-below",
+        ),
+    ] {
+        h.state_mut().run("camera.set", camera).expect("camera");
+        settle(&mut h, 3.0);
+        save(&mut h, &dir, name);
+    }
 }
 
 /// An airport code in the search box (roadmap 5, `TRK-02`), with a sample airport
@@ -378,13 +397,22 @@ fn time_zones_screenshot() {
     )
     .expect("camera");
     settle(&mut h, 3.0);
-    // The pointer near the middle of the globe's view (10° E: the Berlin zone).
+    // The pointer on 10° E (the Berlin zone), found by moving it along the view's
+    // middle row: the globe's place in the window changes with the panes and timeline.
     let size = h.ctx.content_rect().size();
-    let centre = egui::pos2(160.0 + size.x / 2.0, 95.0 + size.y / 2.0);
-    for _ in 0..3 {
-        h.event(egui::Event::PointerMoved(centre));
-        h.step();
+    let lon_at = |h: &mut Harness<'static, App>, x: f32| {
+        for _ in 0..3 {
+            h.event(egui::Event::PointerMoved(egui::pos2(x, size.y / 2.0)));
+            h.step();
+        }
+        h.state().pointer.cursor.expect("pointer over the globe").1
+    };
+    let mut x = size.x / 2.0;
+    for _ in 0..4 {
+        let (a, b) = (lon_at(&mut h, x), lon_at(&mut h, x + 40.0));
+        x += ((10.0 - a) * 40.0 / (b - a)) as f32;
     }
+    lon_at(&mut h, x);
     settle(&mut h, 1.0);
     save(
         &mut h,
@@ -613,5 +641,1253 @@ fn relief_loading_probe() {
                 .elevation_fade_step(std::time::Duration::from_millis(40)),
         );
         before = Some(sample);
+    }
+}
+
+/// Space behind the globe (the sky layer): the stars and the limb's glow at rest,
+/// then mid-flight, where the frame renders at a fraction of the size but the stars
+/// must stay sharp and in place. Manual.
+#[test]
+#[ignore = "manual: renders the stars at rest and while the camera flies"]
+fn sky_layer_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "stars", "visible": true}))
+        .expect("stars");
+    app.run(
+        "camera.set",
+        json!({"lat": 30.0, "lon": 10.0, "altitude_km": 9000.0, "tilt_deg": 45.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 4.0);
+    save(&mut h, &dir, "30-sky-at-rest");
+    h.state_mut()
+        .run(
+            "camera.flyTo",
+            json!({"lat": 30.0, "lon": 40.0, "altitude_km": 9000.0}),
+        )
+        .expect("fly");
+    for _ in 0..3 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    save(&mut h, &dir, "31-sky-in-flight");
+    // Night lights without the sun: the night side everywhere, as with the sun on.
+    let app = h.state_mut();
+    for (layer, visible) in [("night_lights", true), ("sunlight", false)] {
+        app.run("layer.show", json!({"layer": layer, "visible": visible}))
+            .expect(layer);
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": 40.0, "lon": 0.0, "altitude_km": 9000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "32-night-lights-without-sun");
+    h.state_mut()
+        .run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "33-night-lights-with-sun");
+    // The sun beside the Earth: the camera 12° off the point opposite it.
+    let (lat, lon) = globecraft_core::math::subsolar(h.state_mut().scene_unix());
+    let app = h.state_mut();
+    app.run(
+        "camera.set",
+        json!({"lat": -lat + 12.0, "lon": (lon + 360.0).rem_euclid(360.0) - 180.0, "altitude_km": 40000.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "34-sun-beside-the-earth");
+    // The sun's glint on the water, over the point under the sun and from aside.
+    for (offset, name) in [(0.0, "34b-glint-under-the-sun"), (35.0, "34c-glint-aside")] {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": lat, "lon": lon + offset, "altitude_km": 12000.0, "tilt_deg": 0.0}),
+            )
+            .expect("camera");
+        settle(&mut h, 30.0);
+        save(&mut h, &dir, name);
+    }
+    // The cloud layer 8 km up: by day and night from afar, then close and tilted.
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "clouds", "visible": true}))
+        .expect("clouds");
+    app.run(
+        "camera.set",
+        json!({"lat": -lat + 60.0, "lon": lon + 120.0, "altitude_km": 12000.0, "tilt_deg": 0.0}),
+    )
+    .expect("camera");
+    // The 8192-wide map is some 20 MB.
+    settle(&mut h, 60.0);
+    save(&mut h, &dir, "35-clouds-day-and-night");
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": lat, "lon": lon + 30.0, "altitude_km": 300.0, "tilt_deg": 70.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 8.0);
+    save(&mut h, &dir, "36-clouds-close-and-tilted");
+    // From below, 1 km up, looking at the horizon.
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": lat + 10.0, "lon": lon + 20.0, "altitude_km": 1.0, "tilt_deg": 85.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 8.0);
+    save(&mut h, &dir, "39-clouds-from-below");
+    // From afar again, the map surely loaded by now: day and night.
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": -lat + 60.0, "lon": lon + 120.0, "altitude_km": 12000.0, "tilt_deg": 0.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 6.0);
+    save(&mut h, &dir, "40-clouds-day-and-night-loaded");
+    // Sunsets from 2 km up: the sun 6° and half a degree over the horizon, west of
+    // the point under it, looking east... toward it.
+    h.state_mut()
+        .run("layer.show", json!({"layer": "clouds", "visible": false}))
+        .expect("clouds");
+    for (elevation, name) in [(6.0, "37-sun-low"), (0.5, "38-sun-setting")] {
+        let arc_km = (90.0 - elevation) * globecraft_core::EARTH_RADIUS_KM.to_radians();
+        let (camera_lat, camera_lon) = globecraft_core::math::destination(lat, lon, 270.0, arc_km);
+        // From there, the way back to the point under the sun.
+        let heading = globecraft_core::earth_model::EarthModel::PerfectSphere
+            .initial_bearing((camera_lat, camera_lon), (lat, lon))
+            .expect("bearing");
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"lat": camera_lat, "lon": camera_lon, "altitude_km": 2.0,
+                    "tilt_deg": 85.0, "heading_deg": heading}),
+            )
+            .expect("camera");
+        settle(&mut h, 8.0);
+        save(&mut h, &dir, name);
+    }
+}
+
+/// Zooms in by mouse wheel from 230 km to under 90 km and prints how long each UI
+/// step takes and how many frames arrive per altitude band. Manual (network).
+#[test]
+#[ignore = "manual: times zooming through 230–90 km"]
+fn zoom_lag_probe() {
+    let mut h = harness(ThemePreference::Dark);
+    if std::env::var_os("PROBE_TERRAIN").is_some() {
+        h.state_mut()
+            .run("layer.show", json!({"layer": "terrain", "visible": true}))
+            .expect("terrain");
+    }
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": 46.6, "lon": 6.5, "altitude_km": 230.0, "tilt_deg": 0.0}),
+        )
+        .expect("camera");
+    settle(&mut h, 8.0);
+    let centre = egui::pos2(900.0, 550.0);
+    h.event(egui::Event::PointerMoved(centre));
+    let mut bands: std::collections::BTreeMap<i64, (u32, f64, f64, u32)> = Default::default();
+    let mut last_frame = h
+        .state()
+        .frame
+        .image
+        .as_ref()
+        .map(|f| Arc::as_ptr(&f.pixels));
+    let started = std::time::Instant::now();
+    while h.state().cam.alt > 90.0 && started.elapsed().as_secs() < 120 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 4.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        let t = std::time::Instant::now();
+        h.step();
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+        let app = h.state();
+        let frame = app.frame.image.as_ref().map(|f| Arc::as_ptr(&f.pixels));
+        let band = (app.cam.alt / 10.0).floor() as i64 * 10;
+        let entry = bands.entry(band).or_default();
+        entry.0 += 1;
+        entry.1 += ms;
+        entry.2 = entry.2.max(ms);
+        entry.3 += u32::from(frame != last_frame);
+        last_frame = frame;
+    }
+    for (band, (steps, total, max, frames)) in bands.iter().rev() {
+        println!(
+            "{band:4} km: {steps:3} steps, {:6.1} ms mean, {max:6.1} ms max, {frames} frames",
+            total / f64::from(*steps)
+        );
+    }
+    let app = h.state();
+    println!(
+        "end: lat {:.4} lon {:.4} alt {:.1} ground {:.3}",
+        app.cam.lat, app.cam.lon, app.cam.alt, app.motion.ground_km
+    );
+}
+
+/// Over steep relief, close and tilted (the user's recordings of 2026-11-17): the
+/// looked-at point must settle and stay, and wheel zooming must bring the camera
+/// steadily closer. Prints the camera each step. Manual (network).
+#[test]
+#[ignore = "manual: the looked-at point over mountains, at rest and while zooming"]
+fn pivot_over_mountains_probe() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "terrain", "visible": true}))
+        .expect("terrain");
+    app.run(
+        "camera.set",
+        json!({"lat": 30.18, "lon": 80.17, "altitude_km": 3.0, "tilt_deg": 70.0, "heading_deg": 354.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 15.0);
+    let print = |h: &Harness<'static, App>, what: &str| {
+        let app = h.state();
+        println!(
+            "{what:8} lat {:.5} lon {:.5} alt {:7.3} km, point {:6.3} km high",
+            app.cam.lat, app.cam.lon, app.cam.alt, app.motion.ground_km
+        );
+    };
+    for _ in 0..10 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        print(&h, "rest");
+    }
+    h.event(egui::Event::PointerMoved(egui::pos2(900.0, 550.0)));
+    for _ in 0..20 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 4.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        print(&h, "zoom in");
+    }
+    // Turning (as the ring does): the turn's centre must stay where it is.
+    h.state_mut().cam.tilt = 75.0;
+    for _ in 0..30 {
+        h.state_mut().cam.heading += 4.0;
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        print(&h, "turn");
+    }
+    settle(&mut h, 2.0);
+    print(&h, "after");
+}
+
+/// A jump onto Everest's flank, 500 m from the face: every elevation level arrives
+/// at once and grows in, and the looked-at point starts at sea level inside the
+/// mountain. The first frame must come within seconds and the camera stay where it
+/// was put (it took half a minute and ended inside the rock, 2026-11-17). Prints
+/// the camera each second (`PROBE_SECONDS`, 25). Manual (network).
+#[test]
+#[ignore = "manual: a jump onto Everest, its first frame and its camera"]
+fn mountain_jump_probe() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "terrain", "visible": true}))
+        .expect("terrain");
+    app.run(
+        "camera.set",
+        json!({"lat": 28.0025, "lon": 86.9389, "altitude_km": 0.5, "tilt_deg": 75.0, "heading_deg": 210.0}),
+    )
+    .expect("camera");
+    let seconds: u32 = std::env::var("PROBE_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(25);
+    for second in 0..seconds {
+        settle(&mut h, 1.0);
+        let app = h.state();
+        println!(
+            "{second:2} s: lat {:.5} lon {:.5} alt {:.3} km tilt {:.1} point {:.3} km, frame {}, idle {}",
+            app.cam.lat,
+            app.cam.lon,
+            app.cam.alt,
+            app.cam.tilt,
+            app.motion.ground_km,
+            app.frame.image.is_some(),
+            app.frame.renderer.is_idle()
+        );
+    }
+    save(&mut h, &dir, "40-mountain-jump");
+}
+
+/// A close tilted view from cold (roadmap B5): when the far third of the frame, the
+/// middle and the near third stop changing as imagery lands, and how many tiles are
+/// still loading. Saves the view at 5, 15 and 40 s. Manual (network).
+#[test]
+#[ignore = "manual: needs network; how a tilted view fills in, near to far"]
+fn tilted_far_field_probe() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let env_f64 = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+    h.state_mut()
+        .run(
+            "camera.set",
+            json!({"lat": env_f64("GLOBECRAFT_SHOT_LAT").unwrap_or(40.74),
+                "lon": env_f64("GLOBECRAFT_SHOT_LON").unwrap_or(-73.99),
+                "altitude_km": env_f64("GLOBECRAFT_SHOT_ALT").unwrap_or(3.0),
+                "tilt_deg": env_f64("GLOBECRAFT_SHOT_TILT").unwrap_or(80.0),
+                "heading_deg": 30.0}),
+        )
+        .expect("camera");
+    let started = std::time::Instant::now();
+    let mut before: Option<[Vec<u8>; 3]> = None;
+    let mut settled = [0u128; 3];
+    for step in 0..400 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let elapsed = started.elapsed().as_millis();
+        for (at, name) in [(50, "tilted-5s"), (150, "tilted-15s"), (399, "tilted-40s")] {
+            if step == at {
+                save(&mut h, &dir, name);
+            }
+        }
+        let app = h.state();
+        let Some(frame) = &app.frame.image else {
+            continue;
+        };
+        // Bands of rows: the far third (top, below the sky), the middle, the near third.
+        let band = |band: usize| -> Vec<u8> {
+            let rows = frame.height / 3;
+            let row_bytes = frame.width * 4;
+            frame.pixels[band * rows * row_bytes..(band + 1) * rows * row_bytes]
+                .iter()
+                .step_by(4 * 29)
+                .copied()
+                .collect()
+        };
+        let now = [band(0), band(1), band(2)];
+        if let Some(old) = &before
+            && old[0].len() == now[0].len()
+        {
+            let mut line = format!("{elapsed:6} ms  loading {:3}", app.tiles.cache.inflight());
+            for index in 0..3 {
+                let change = old[index]
+                    .iter()
+                    .zip(&now[index])
+                    .map(|(a, b)| f64::from(a.abs_diff(*b)))
+                    .sum::<f64>()
+                    / now[index].len() as f64;
+                if change > 0.3 {
+                    settled[index] = elapsed;
+                }
+                line += &format!("  {}: {change:5.2}", ["far", "mid", "near"][index]);
+            }
+            if step % 10 == 0 {
+                println!("{line}");
+            }
+        }
+        before = Some(now);
+    }
+    println!(
+        "last change: far {} ms, middle {} ms, near {} ms",
+        settled[0], settled[1], settled[2]
+    );
+}
+
+/// Looking around past the horizon (roadmap C8): from 2 km over the Alps, the view
+/// raised 30° into the afternoon sky, then 30° more, then by night. Manual (network).
+#[test]
+#[ignore = "manual: needs network; the view raised into the sky"]
+fn look_up_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "clouds", "visible": true}))
+        .expect("clouds");
+    // 2026-11-18 14:00 UTC: afternoon over the Alps.
+    app.run("time.set", json!({"time": 1_795_010_400.0}))
+        .expect("time");
+    app.run(
+        "camera.set",
+        json!({"lat": 46.5, "lon": 8.0, "altitude_km": 2.0, "tilt_deg": 80.0, "heading_deg": 200.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 20.0);
+    save(&mut h, &dir, "look-up-0");
+    for (name, raise) in [("look-up-30", 30.0), ("look-up-60", 30.0)] {
+        let reply = h
+            .state_mut()
+            .run("camera.lookAround", json!({"raise_deg": raise}))
+            .expect("look up");
+        println!("{reply}");
+        settle(&mut h, 15.0);
+        save(&mut h, &dir, name);
+    }
+    h.state_mut()
+        .run("time.set", json!({"time": 1_795_042_800.0}))
+        .expect("night");
+    settle(&mut h, 15.0);
+    save(&mut h, &dir, "look-up-night");
+}
+
+/// The timeline with its track (roadmap C4), set three days back with a day's window
+/// of events and the clouds and night lights on; then a tilted view across the change
+/// of Esri's imagery sources between levels 11 and 12 (roadmap C6). Manual (network).
+#[test]
+#[ignore = "manual: needs network; the timeline's track and imagery levels' colours"]
+fn timeline_and_levels_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    for (id, params) in [
+        ("layer.show", json!({"layer": "clouds", "visible": true})),
+        (
+            "layer.show",
+            json!({"layer": "night_lights", "visible": true}),
+        ),
+        ("ui.timeline", json!({"on": true})),
+        ("time.step", json!({"hours": -72.0})),
+        ("time.window", json!({"hours": 24.0})),
+        (
+            "camera.set",
+            json!({"lat": 46.3, "lon": 8.3, "altitude_km": 40.0, "tilt_deg": 75.0, "heading_deg": 20.0}),
+        ),
+    ] {
+        app.run(id, params)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+    settle(&mut h, 40.0);
+    save(&mut h, &dir, "timeline-track");
+    h.state_mut()
+        .run("time.range", json!({"days": 365.0}))
+        .expect("range");
+    settle(&mut h, 5.0);
+    save(&mut h, &dir, "timeline-track-year");
+    // By day, without the clouds: the near ground at levels 12 and finer, the far at 11
+    // and coarser (2026-11-15 11:00 UTC).
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "clouds", "visible": false}))
+        .expect("clouds");
+    app.run("time.set", json!({"time": 1_794_740_400.0}))
+        .expect("time");
+    settle(&mut h, 40.0);
+    save(&mut h, &dir, "levels-day");
+}
+
+/// Relief while the view turns, as Julien moves it (2026-11-24: "I still don't quite
+/// see the improvements"): over the Alps with 3D terrain and the sun, after the tiles
+/// have loaded, 120 interface steps of about 16 ms turning 0.5° each, then the wait
+/// for the sharp frame once the turn stops. Prints the globe frames shown, their sizes,
+/// how many each renderer drew, and the GPU's status. Manual (network; on the Mac it
+/// times Metal). `PROBE_LAT`, `PROBE_LON`, `PROBE_ALT_KM`, `PROBE_TILT`.
+#[test]
+#[ignore = "manual: needs network; relief frames while turning"]
+fn relief_turn_frames() {
+    let mut h = harness(ThemePreference::Dark);
+    let env = |name: &str, default: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default)
+    };
+    let app = h.state_mut();
+    for layer in ["terrain", "sunlight"] {
+        app.run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect(layer);
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": env("PROBE_LAT", 46.55), "lon": env("PROBE_LON", 8.0),
+            "altitude_km": env("PROBE_ALT_KM", 16.0), "tilt_deg": env("PROBE_TILT", 70.0),
+            "heading_deg": 0.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 90.0);
+    let shown = |h: &Harness<'static, App>| {
+        h.state()
+            .frame
+            .image
+            .as_ref()
+            .map(|f| (Arc::as_ptr(&f.pixels), f.width, f.height))
+    };
+    let before = globecraft_render::backend::status();
+    let mut last = shown(&h);
+    let mut sizes: std::collections::BTreeMap<(usize, usize), usize> = Default::default();
+    let mut arrivals = Vec::new();
+    let turning = std::time::Instant::now();
+    for step in 0..120 {
+        h.state_mut()
+            .run(
+                "camera.set",
+                json!({"heading_deg": 0.5 * f64::from(step + 1)}),
+            )
+            .expect("turn");
+        h.step();
+        let now = shown(&h);
+        if now.map(|f| f.0) != last.map(|f| f.0) {
+            if let Some((_, w, h)) = now {
+                *sizes.entry((w, h)).or_default() += 1;
+            }
+            arrivals.push(turning.elapsed().as_secs_f64() * 1e3);
+        }
+        last = now;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    let turned = turning.elapsed().as_secs_f64() * 1e3;
+    let during = globecraft_render::backend::status();
+    // After the turn: until a frame of the full size is shown.
+    let stopped = std::time::Instant::now();
+    let full = loop {
+        h.step();
+        let now = shown(&h);
+        if now.map(|f| f.0) != last.map(|f| f.0)
+            && now.is_some_and(|(_, w, _)| sizes.keys().all(|&(seen, _)| w > seen))
+        {
+            break Some(stopped.elapsed().as_secs_f64() * 1e3);
+        }
+        last = now;
+        if stopped.elapsed().as_secs() > 10 {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    };
+    let gaps: Vec<f64> = arrivals.windows(2).map(|w| w[1] - w[0]).collect();
+    let mut sorted = gaps.clone();
+    sorted.sort_by(f64::total_cmp);
+    let at = |share: f64| {
+        sorted
+            .get(((sorted.len() as f64 * share) as usize).min(sorted.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(f64::NAN)
+    };
+    println!(
+        "RELIEF TURN: {} globe frames in {turned:.0} ms ({:.1} a second); between frames median {:.0} ms, 90th {:.0} ms, longest {:.0} ms; sizes {sizes:?}",
+        arrivals.len(),
+        arrivals.len() as f64 / turned * 1e3,
+        at(0.5),
+        at(0.9),
+        sorted.last().copied().unwrap_or(f64::NAN),
+    );
+    println!(
+        "RELIEF TURN: drawn by the GPU {} and by the CPU {} while turning; sharp frame {full:?} ms after the turn stopped; GPU {:?}, note {:?}",
+        during.gpu_frames - before.gpu_frames,
+        during.cpu_frames - before.cpu_frames,
+        during.adapter,
+        during.note,
+    );
+}
+
+/// The interface thread's time per frame while the view turns slowly over New York
+/// at 1.2 km with the buildings on (roadmap B1, B7): after the tiles have loaded,
+/// 120 steps of 0.25° each, the mean and the slowest step, and how many new globe
+/// frames arrived. Manual (network).
+#[test]
+#[ignore = "manual: needs network; interface time per frame over a dense city"]
+fn city_turn_frame_times() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    // PROBE_NO_BUILDINGS: the same turn without them.
+    let buildings = std::env::var_os("PROBE_NO_BUILDINGS").is_none();
+    app.run(
+        "layer.show",
+        json!({"layer": "buildings", "visible": buildings}),
+    )
+    .expect("buildings");
+    // PROBE_CLOUDS: with the clouds on; PROBE_ALT_KM: from higher up.
+    if std::env::var_os("PROBE_CLOUDS").is_some() {
+        app.run("layer.show", json!({"layer": "clouds", "visible": true}))
+            .expect("clouds");
+    }
+    let altitude_km = std::env::var("PROBE_ALT_KM")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.2);
+    app.run(
+        "camera.set",
+        json!({"lat": 40.752, "lon": -73.985, "altitude_km": altitude_km, "tilt_deg": 65.0, "heading_deg": 30.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 60.0);
+    let mut times = Vec::new();
+    let mut frames = 0;
+    let mut last = h
+        .state()
+        .frame
+        .image
+        .as_ref()
+        .map(|f| Arc::as_ptr(&f.pixels));
+    // PROBE_RESIZE: the window grows a few points a step instead (user, 2026-11-21:
+    // "why is making the screen bigger so laggy?").
+    let resize = std::env::var_os("PROBE_RESIZE").is_some();
+    let size = h.ctx.content_rect().size();
+    for step in 0..120 {
+        if resize {
+            h.set_size(size + egui::vec2(4.0, 3.0) * step as f32);
+        } else {
+            let heading = 30.0 + 0.25 * f64::from(step);
+            h.state_mut()
+                .run("camera.set", json!({"heading_deg": heading}))
+                .expect("turn");
+        }
+        let started = std::time::Instant::now();
+        h.step();
+        times.push(started.elapsed().as_secs_f64() * 1e3);
+        let shown = h
+            .state()
+            .frame
+            .image
+            .as_ref()
+            .map(|f| Arc::as_ptr(&f.pixels));
+        frames += usize::from(shown != last);
+        last = shown;
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+    times.sort_by(f64::total_cmp);
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    println!(
+        "interface step: {mean:.1} ms mean, {:.1} ms median, {:.1} ms 95th, {:.1} ms slowest; {frames} globe frames in 120 steps",
+        times[times.len() / 2],
+        times[times.len() * 95 / 100],
+        times[times.len() - 1]
+    );
+}
+
+/// A playing timeline with the sun on: how many of the frames finished reach the
+/// screen (user 2026-11-19: playback very choppy, mostly the sunlight). Prints the
+/// globe frames shown in 120 interface steps of ~16 ms and the scene time covered.
+#[test]
+#[ignore = "manual probe: plays the timeline and counts the frames shown"]
+fn timeline_playback_frames() {
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.run("layer.show", json!({"layer": "sunlight", "visible": true}))
+        .expect("sunlight");
+    // PROBE_ALT_KM, PROBE_TILT, PROBE_LAT, PROBE_LON: the view (default the whole
+    // globe from 14,000 km); PROBE_RELIEF=1 turns 3D terrain on.
+    let env = |name: &str, default: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default)
+    };
+    if std::env::var("PROBE_RELIEF").is_ok_and(|v| v == "1") {
+        app.run("layer.show", json!({"layer": "terrain", "visible": true}))
+            .expect("terrain");
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": env("PROBE_LAT", 20.0), "lon": env("PROBE_LON", 10.0),
+               "altitude_km": env("PROBE_ALT_KM", 14_000.0), "tilt_deg": env("PROBE_TILT", 0.0)}),
+    )
+    .expect("camera");
+    settle(&mut h, 10.0);
+    // PROBE_SPEED: hours of scene time a second.
+    let speed = std::env::var("PROBE_SPEED")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    // PROBE_SCRUB=1: the time moved step by step as the timeline's handle is dragged
+    // (each interface step `time.step` by the speed's share), not played.
+    let scrub = std::env::var("PROBE_SCRUB").is_ok_and(|v| v == "1");
+    if !scrub {
+        h.state_mut()
+            .run("time.play", json!({"hours_per_second": speed}))
+            .expect("play");
+    }
+    let started_at = h.state().scene_unix();
+    let shown_ptr = |h: &Harness<'static, App>| {
+        h.state()
+            .frame
+            .image
+            .as_ref()
+            .map(|f| Arc::as_ptr(&f.pixels))
+    };
+    let mut last = shown_ptr(&h);
+    let mut frames = 0;
+    let started = std::time::Instant::now();
+    let (mut last_at, mut gaps, mut sizes) = (0.0, Vec::new(), std::collections::BTreeMap::new());
+    for _ in 0..120 {
+        if scrub {
+            h.state_mut()
+                .run("time.step", json!({"hours": speed * 0.016}))
+                .expect("step");
+        }
+        h.step();
+        let shown = shown_ptr(&h);
+        if shown != last {
+            frames += 1;
+            let at = started.elapsed().as_secs_f64() * 1e3;
+            gaps.push(at - last_at);
+            last_at = at;
+            if let Some(frame) = &h.state().frame.image {
+                *sizes.entry((frame.width, frame.height)).or_insert(0) += 1;
+            }
+        }
+        last = shown;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    gaps.sort_by(f64::total_cmp);
+    let at = |share: f64| {
+        gaps.get(((gaps.len() as f64 * share) as usize).min(gaps.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0.0)
+    };
+    println!(
+        "PLAYBACK: {frames} globe frames shown in 120 steps ({:.1} a second); scene time moved {:.0} min; between frames median {:.0} ms, 90th {:.0}, longest {:.0}; sizes {sizes:?}",
+        frames as f64 / elapsed,
+        (h.state().scene_unix() - started_at) / 60.0,
+        at(0.5),
+        at(0.9),
+        at(1.0),
+    );
+}
+
+/// The timeline with a loop (its row of handles under the dates), and the Clouds
+/// button's drop-down of the cloud map's detail (user, 2026-11-19).
+#[test]
+#[ignore = "writes screenshots; run with GLOBECRAFT_SHOTS=<dir>"]
+fn loop_and_cloud_detail_screenshots() {
+    use egui_kittest::kittest::Queryable;
+    let Some(dir) = std::env::var_os("GLOBECRAFT_SHOTS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.settings.workspace.ribbon_tab = globecraft_core::commands::Tab::Live;
+    for (id, params) in [
+        ("ui.timeline", json!({"on": true})),
+        ("time.step", json!({"hours": -72.0})),
+    ] {
+        app.run(id, params)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+    let unix = app.scene_unix();
+    app.run(
+        "time.loop",
+        json!({"from": unix - 86_400.0, "to": unix + 43_200.0}),
+    )
+    .expect("loop");
+    settle(&mut h, 2.0);
+    save(&mut h, &dir, "timeline-loop");
+    // The Clouds button's label opens its menu.
+    let clouds = h.get_by_label("Clouds").rect();
+    let at = egui::pos2(clouds.center().x, clouds.max.y - 6.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.event(egui::Event::PointerMoved(at));
+    h.step();
+    h.event(button(true));
+    h.step();
+    h.event(button(false));
+    settle(&mut h, 0.5);
+    save(&mut h, &dir, "clouds-detail-menu");
+    assert!(
+        !h.state().layer(globecraft_core::layers::MapLayer::Clouds),
+        "opening the menu does not switch the layer"
+    );
+}
+
+/// Terrain shadows at sunrise over the Adamello (user's recording, 2026-11-20 22:48:
+/// "buggy and weird shadow during sunrise/set"): settled at 06:29 UTC, then the
+/// frames while the time plays a few minutes on. Writes `sunrise-*.png`.
+#[test]
+#[ignore = "manual: needs network; terrain shadows at sunrise while the time plays"]
+fn sunrise_shadow_screenshots() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    let env_f64 = |name: &str, or: f64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(or)
+    };
+    for (id, params) in [
+        ("layer.show", json!({"layer": "terrain", "visible": true})),
+        (
+            "layer.show",
+            json!({"layer": "sunlight", "visible": std::env::var_os("PROBE_NO_SUN").is_none()}),
+        ),
+        (
+            "camera.set",
+            json!({"lat": 46.0934, "lon": 10.5336, "altitude_km": env_f64("PROBE_ALT_KM", 9.0),
+                "tilt_deg": env_f64("PROBE_TILT", 72.0), "heading_deg": 30.0}),
+        ),
+        (
+            "time.set",
+            json!({"time": env_f64("PROBE_TIME", 1_795_156_140.0)}),
+        ),
+    ] {
+        app.run(id, params)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    }
+    settle(&mut h, 60.0);
+    save(&mut h, &dir, "sunrise-rest");
+    // PROBE_SIZES: the same moment drawn at the full size and a motion frame's.
+    if std::env::var_os("PROBE_SIZES").is_some() {
+        let app = h.state_mut();
+        let (fw, fh) = app
+            .frame
+            .image
+            .as_ref()
+            .map(|f| (f.width, f.height))
+            .expect("a frame");
+        for (name, w, hh) in [("full", fw, fh), ("small", fw * 28 / 100, fh * 28 / 100)] {
+            let basis = app.view_basis(fw as f64 / fh as f64);
+            let cfg = app.frame_config(w, hh, w as f32 / fw as f32);
+            let view = globecraft_render::render_view(w, hh, &basis, &cfg, &app.tiles.cache);
+            image::RgbaImage::from_raw(w as u32, hh as u32, view.pixels)
+                .expect("pixels")
+                .save(dir.join(format!("sizes-{name}.png")))
+                .expect("save");
+            println!("{name}: {w}x{hh}, {} tiles missing", view.requests.len());
+        }
+        return;
+    }
+    // PROBE_MOTION_SCALE: the playing frames' size (1 = as at rest).
+    if let Ok(scale) = std::env::var("PROBE_MOTION_SCALE") {
+        h.state_mut().settings.motion_resolution_relief = scale.parse().ok();
+    }
+    // The recording's pace: about a minute of scene time a second.
+    h.state_mut()
+        .run(
+            "time.play",
+            json!({"hours_per_second": env_f64("PROBE_SPEED", 0.02)}),
+        )
+        .expect("play");
+    for shot in 0..4 {
+        for _ in 0..30 {
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        let app = h.state();
+        println!(
+            "shot {shot}: loading {}, relief generation {}, frame {:?}",
+            app.tiles.cache.inflight(),
+            app.tiles.cache.elevation_generation(),
+            app.frame.image.as_ref().map(|f| (f.width, f.height)),
+        );
+        save(&mut h, &dir, &format!("sunrise-play-{shot}"));
+    }
+    // The globe's own raster of the last playing frame, at its size.
+    if let Some(frame) = &h.state().frame.image {
+        let raw = image::RgbaImage::from_raw(
+            frame.width as u32,
+            frame.height as u32,
+            frame.pixels.to_vec(),
+        )
+        .expect("frame pixels");
+        raw.save(dir.join("sunrise-play-raster.png"))
+            .expect("save raster");
+    }
+    // The last moment at rest, at full size.
+    h.state_mut().run("time.pause", json!({})).expect("pause");
+    settle(&mut h, 30.0);
+    save(&mut h, &dir, "sunrise-after");
+    if let Some(frame) = &h.state().frame.image {
+        image::RgbaImage::from_raw(
+            frame.width as u32,
+            frame.height as u32,
+            frame.pixels.to_vec(),
+        )
+        .expect("frame pixels")
+        .save(dir.join("sunrise-after-raster.png"))
+        .expect("save raster");
+    }
+}
+
+/// GlobeCraft at the places and moments of Julien's Bing Maps sun recordings
+/// (2026-11-21): the standard to reach. Writes `bing-<view>.png`; `PROBE_ONLY`
+/// keeps the views whose name starts with it.
+#[test]
+#[ignore = "manual: needs network; compare with the Bing recordings"]
+fn bing_sun_comparison() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot directory");
+    let only = std::env::var("PROBE_ONLY").unwrap_or_default();
+    // name, centre, altitude km, tilt, heading, Unix time
+    // Julien's recording of 2026-11-22 09:21 (Manhattan from 139 m, looking south-west)
+    // and his screenshot from 12,695 km come first.
+    let views: [(&str, f64, f64, f64, f64, f64, f64); 36] = [
+        // Julien's recording over Antarctica (2026-11-22 22:50): past Web Mercator's
+        // limit the relief stood on its tiles' edge row.
+        (
+            "julien-pole-2150",
+            -85.38,
+            165.51,
+            21.0,
+            80.0,
+            41.0,
+            1_795_384_200.0,
+        ),
+        (
+            "julien-fuji-0727",
+            35.38737,
+            138.63678,
+            5.0,
+            82.0,
+            231.0,
+            1_795_246_020.0,
+        ),
+        (
+            "julien-midtown-1157",
+            40.766722,
+            -73.989692,
+            0.292,
+            78.0,
+            306.0,
+            1_795_348_620.0,
+        ),
+        (
+            "julien-midtown-1210",
+            40.766722,
+            -73.989692,
+            0.292,
+            78.0,
+            306.0,
+            1_795_349_400.0,
+        ),
+        (
+            "julien-midtown-1230",
+            40.766722,
+            -73.989692,
+            0.292,
+            78.0,
+            306.0,
+            1_795_350_600.0,
+        ),
+        (
+            "julien-nyc-1215",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_608_900.0,
+        ),
+        (
+            "julien-nyc-1230",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_609_800.0,
+        ),
+        (
+            "julien-alps-1558",
+            45.48456,
+            7.67664,
+            4.0,
+            78.0,
+            247.0,
+            1_795_276_680.0,
+        ),
+        (
+            "julien-alps-0620",
+            45.48456,
+            7.67664,
+            4.0,
+            78.0,
+            247.0,
+            1_795_242_000.0,
+        ),
+        (
+            "julien-alps-0650",
+            45.48456,
+            7.67664,
+            4.0,
+            78.0,
+            247.0,
+            1_795_243_800.0,
+        ),
+        (
+            "julien-alps-0730",
+            45.48456,
+            7.67664,
+            4.0,
+            78.0,
+            247.0,
+            1_795_246_200.0,
+        ),
+        (
+            "julien-odake-0735",
+            35.70573,
+            138.97513,
+            2.0,
+            80.0,
+            242.0,
+            1_795_332_900.0,
+        ),
+        (
+            "julien-nyc-1144",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_607_040.0,
+        ),
+        (
+            "julien-nyc-1208",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_608_480.0,
+        ),
+        (
+            "julien-nyc-1302",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_611_720.0,
+        ),
+        (
+            "julien-nyc-1623",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_623_780.0,
+        ),
+        (
+            "julien-nyc-1902",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_633_320.0,
+        ),
+        (
+            "julien-nyc-2052",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_639_920.0,
+        ),
+        (
+            "julien-nyc-2130",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_642_200.0,
+        ),
+        (
+            "julien-nyc-2156",
+            40.722_97,
+            -73.983_22,
+            0.139,
+            80.0,
+            241.0,
+            1_795_643_760.0,
+        ),
+        (
+            "julien-space-1100",
+            32.237,
+            91.485,
+            12_695.0,
+            0.0,
+            206.0,
+            1_795_345_200.0,
+        ),
+        (
+            "nyc-skyline-0628",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_260_480.0,
+        ),
+        (
+            "nyc-skyline-0642",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_261_320.0,
+        ),
+        (
+            "nyc-skyline-0651",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_261_860.0,
+        ),
+        (
+            "nyc-skyline-1355",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_287_300.0,
+        ),
+        (
+            "nyc-skyline-1619",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_295_940.0,
+        ),
+        (
+            "nyc-skyline-1631",
+            40.774,
+            -74.012,
+            0.35,
+            87.0,
+            110.0,
+            1_795_296_660.0,
+        ),
+        (
+            "nyc-midtown-0642",
+            40.752,
+            -73.985,
+            1.2,
+            70.0,
+            330.0,
+            1_795_261_320.0,
+        ),
+        (
+            "nyc-midtown-0651",
+            40.752,
+            -73.985,
+            1.2,
+            70.0,
+            330.0,
+            1_795_261_860.0,
+        ),
+        (
+            "nyc-midtown-0658",
+            40.752,
+            -73.985,
+            1.2,
+            70.0,
+            330.0,
+            1_795_262_280.0,
+        ),
+        (
+            "berlin-0719",
+            52.5208,
+            13.4094,
+            1.5,
+            72.0,
+            20.0,
+            1_795_241_940.0,
+        ),
+        (
+            "berlin-0742",
+            52.5208,
+            13.4094,
+            1.5,
+            72.0,
+            20.0,
+            1_795_243_320.0,
+        ),
+        (
+            "annapurna-0620",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_221_300.0,
+        ),
+        (
+            "annapurna-0635",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_222_200.0,
+        ),
+        (
+            "annapurna-0645",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_222_800.0,
+        ),
+        (
+            "annapurna-0700",
+            28.55,
+            83.85,
+            25.0,
+            70.0,
+            20.0,
+            1_795_223_700.0,
+        ),
+    ];
+    let mut h = harness(ThemePreference::Dark);
+    for layer in ["terrain", "buildings", "sunlight"] {
+        h.state_mut()
+            .run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect(layer);
+    }
+    for (name, lat, lon, alt, tilt, heading, time) in views {
+        if !name.starts_with(&only) {
+            continue;
+        }
+        let app = h.state_mut();
+        app.run(
+            "camera.set",
+            json!({"lat": lat, "lon": lon, "altitude_km": alt, "tilt_deg": tilt,
+                "heading_deg": heading}),
+        )
+        .expect("camera");
+        app.run("time.set", json!({"time": time})).expect("time");
+        settle(&mut h, 45.0);
+        save(&mut h, &dir, &format!("bing-{name}"));
     }
 }

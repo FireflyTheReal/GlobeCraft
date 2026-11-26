@@ -15,6 +15,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
                 heading: 0.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(4.0 / 3.0),
             rect,
@@ -42,6 +43,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
             ..Default::default()
         }),
         unix_secs: 1010.0,
+        clouds: None,
     };
     let mut overlay = AircraftOverlay::new(ctx.clone());
     let original = AircraftPreparer::default().prepare(input.clone());
@@ -84,6 +86,7 @@ fn repeated_ui_passes_share_icon_meshes_and_never_draw_geometry_for_another_view
         heading: 0.0,
         alt: 14_000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis(4.0 / 3.0);
     let output = crate::app::test_ui::run(&ctx, raw, |ui| {
@@ -129,6 +132,7 @@ fn aircraft_mesh_repaint_cost() {
                 heading: 25.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis(4.0 / 3.0),
             rect,
@@ -142,6 +146,7 @@ fn aircraft_mesh_repaint_cost() {
             ..Default::default()
         }),
         unix_secs: 1010.0,
+        clouds: None,
     };
     let geometry = AircraftPreparer::default().prepare(request.clone());
     let visible = geometry.flights.len();
@@ -194,6 +199,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                     heading: 0.0,
                     alt: 300.0,
                     tilt: 0.0,
+                    look_up: 0.0,
                 }
                 .basis(4.0 / 3.0),
                 rect,
@@ -221,6 +227,7 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
                 ..Default::default()
             }),
             unix_secs: 1010.0,
+            clouds: None,
         };
         let geometry = AircraftPreparer::default().prepare(input.clone());
         assert_eq!(geometry.labels, [0], "the flight is labelled at 300 km");
@@ -248,8 +255,11 @@ fn labelled_flights_below_650_km_draw_without_freezing() {
 
 #[test]
 fn vertical_rate_reads_level_climb_and_descent() {
-    assert_eq!(vertical_rate_text(None), "—");
-    assert_eq!(vertical_rate_text(Some(10.0)), "0 ft/min");
-    assert_eq!(vertical_rate_text(Some(1200.4)), "+1200 ft/min");
-    assert_eq!(vertical_rate_text(Some(-640.0)), "-640 ft/min");
+    use globecraft_core::units::DistanceUnits::{Imperial, Metric};
+    assert_eq!(vertical_rate_text(None, Imperial), "—");
+    assert_eq!(vertical_rate_text(Some(10.0), Imperial), "0 ft/min");
+    assert_eq!(vertical_rate_text(Some(1200.4), Imperial), "+1200 ft/min");
+    assert_eq!(vertical_rate_text(Some(-640.0), Imperial), "-640 ft/min");
+    assert_eq!(vertical_rate_text(Some(10.0), Metric), "0 m/s");
+    assert_eq!(vertical_rate_text(Some(-640.0), Metric), "-3.3 m/s");
 }

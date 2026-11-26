@@ -2,56 +2,50 @@
 use emath::{Pos2, Rect};
 use globecraft_core::camera::Basis;
 use image::RgbaImage;
-const CLOUD_OPACITY: f32 = 0.78;
 const RADAR_OPACITY: f32 = 0.88;
 const RADAR_LATITUDE_LIMIT_DEG: f64 = 85.0;
-pub fn project_live_maps(
+/// The rain radar seen from `basis`, at its `opacity`, as a `width` × `height`
+/// straight-alpha RGBA image of `rect`. (The clouds are a layer above the ground of
+/// their own: `clouds`.)
+pub fn project_radar(
     basis: &Basis,
     rect: Rect,
     width: usize,
     height: usize,
-    cloud: Option<(&RgbaImage, f32)>,
-    radar: Option<(&RgbaImage, f32)>,
+    radar: (&RgbaImage, f32),
 ) -> Vec<u8> {
+    use rayon::prelude::*;
     let mut rgba = vec![0u8; width * height * 4];
     let rsize = rect.size();
-    for y in 0..height {
-        let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
-        for x in 0..width {
-            let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
-            let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
-                continue;
-            };
-            let i = (y * width + x) * 4;
-            // Each at the user's opacity (roadmap 6.1), times its own.
-            if let Some((img, opacity)) = cloud {
-                let c = equirect_pixel(img, lat, lon);
-                over(
-                    &mut rgba[i..i + 4],
-                    [
-                        c[0],
-                        c[1],
-                        c[2],
-                        (c[3] as f32 * CLOUD_OPACITY * opacity) as u8,
-                    ],
-                );
-            }
-            if lat.abs() < RADAR_LATITUDE_LIMIT_DEG
-                && let Some((img, opacity)) = radar
-            {
-                let r = mercator_pixel(img, lat, lon);
-                over(
-                    &mut rgba[i..i + 4],
-                    [
-                        r[0],
-                        r[1],
-                        r[2],
-                        (r[3] as f32 * RADAR_OPACITY * opacity) as u8,
-                    ],
-                );
-            }
-        }
-    }
+    // On the interface's own pool: it waits for this, for every frame of a moving
+    // view (zooming with the radar on lagged, user 2026-11-19).
+    crate::on_interface_pool(|| {
+        rgba.par_chunks_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
+                    let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
+                        continue;
+                    };
+                    // At the user's opacity (roadmap 6.1), times its own.
+                    if lat.abs() < RADAR_LATITUDE_LIMIT_DEG {
+                        let (img, opacity) = radar;
+                        let r = mercator_pixel(img, lat, lon);
+                        over(
+                            pixel,
+                            [
+                                r[0],
+                                r[1],
+                                r[2],
+                                (r[3] as f32 * RADAR_OPACITY * opacity) as u8,
+                            ],
+                        );
+                    }
+                }
+            });
+    });
     rgba
 }
 /// The user's web map layers (Add Data) seen from `basis`, bottom to top, each at its
@@ -66,31 +60,29 @@ pub fn project_user_rasters(
     use rayon::prelude::*;
     let mut rgba = vec![0u8; width * height * 4];
     let rsize = rect.size();
-    rgba.par_chunks_mut(width * 4)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
-            for x in 0..width {
-                let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
-                let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
-                    continue;
-                };
-                let pixel = &mut row[x * 4..x * 4 + 4];
-                for (layer, opacity) in layers {
-                    if let Some(c) = layer.sample(lat, lon) {
-                        over(pixel, [c[0], c[1], c[2], (f32::from(c[3]) * opacity) as u8]);
+    // On the interface's own pool: it waits for this.
+    crate::on_interface_pool(|| {
+        rgba.par_chunks_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let sy = rect.top() + (y as f32 + 0.5) / height as f32 * rsize.y;
+                for x in 0..width {
+                    let sx = rect.left() + (x as f32 + 0.5) / width as f32 * rsize.x;
+                    let Some((lat, lon)) = basis.pick(rect, Pos2::new(sx, sy)) else {
+                        continue;
+                    };
+                    let pixel = &mut row[x * 4..x * 4 + 4];
+                    for (layer, opacity) in layers {
+                        if let Some(c) = layer.sample(lat, lon) {
+                            over(pixel, [c[0], c[1], c[2], (f32::from(c[3]) * opacity) as u8]);
+                        }
                     }
                 }
-            }
-        });
+            });
+    });
     rgba
 }
 
-fn equirect_pixel(img: &RgbaImage, lat: f64, lon: f64) -> [u8; 4] {
-    let x = (((lon + 180.0) / 360.0 * img.width() as f64) as u32).min(img.width() - 1);
-    let y = (((90.0 - lat) / 180.0 * img.height() as f64) as u32).min(img.height() - 1);
-    img.get_pixel(x, y).0
-}
 fn mercator_pixel(img: &RgbaImage, lat: f64, lon: f64) -> [u8; 4] {
     let x = (((lon + 180.0) / 360.0 * img.width() as f64) as u32).min(img.width() - 1);
     let radians = lat.to_radians();
@@ -118,12 +110,6 @@ pub(crate) fn over(dst: &mut [u8], src: [u8; 4]) {
 mod tests {
     use super::*;
     #[test]
-    fn global_coords() {
-        let mut img = RgbaImage::new(360, 180);
-        img.put_pixel(180, 90, image::Rgba([123, 45, 67, 255]));
-        assert_eq!(equirect_pixel(&img, 0.0, 0.0), [123, 45, 67, 255]);
-    }
-    #[test]
     fn alpha_blend() {
         let mut pixel = [0u8; 4];
         over(&mut pixel, [0, 200, 0, 128]);
@@ -137,7 +123,7 @@ mod projection_tests {
     use emath::Vec2;
     use globecraft_core::camera::Cam;
     #[test]
-    fn cloud_raster_preserves_opacity_and_leaves_space_clear() {
+    fn radar_raster_keeps_its_opacity_and_leaves_space_clear() {
         let rect = Rect::from_min_size(Pos2::new(30.0, 50.0), Vec2::splat(800.0));
         let basis = Cam {
             lat: 0.0,
@@ -145,13 +131,14 @@ mod projection_tests {
             alt: 14_000.0,
             heading: 0.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(1.0);
-        let cloud = RgbaImage::from_pixel(4, 2, image::Rgba([123, 45, 67, 255]));
-        let pixels = project_live_maps(&basis, rect, 9, 9, Some((&cloud, 1.0)), None);
+        let radar = RgbaImage::from_pixel(4, 4, image::Rgba([123, 45, 67, 255]));
+        let pixels = project_radar(&basis, rect, 9, 9, (&radar, 1.0));
         assert_eq!(
             &pixels[(4 * 9 + 4) * 4..(4 * 9 + 5) * 4],
-            &[123, 45, 67, 198]
+            &[123, 45, 67, 224]
         );
         assert_eq!(&pixels[..4], &[0, 0, 0, 0]);
     }

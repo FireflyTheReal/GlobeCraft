@@ -345,3 +345,180 @@ fn live_symbols_screenshot() {
         save(&mut h, &dir, name);
     }
 }
+
+/// Away from now, the layers that have only the present are dimmed and named above
+/// the scale bar; the ones that follow the time are not (user, 2026-11-20).
+#[test]
+fn layers_without_the_time_shown_are_dimmed() {
+    use globecraft_core::layers::MapLayer;
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    for layer in [
+        "flights",
+        "vessels",
+        "aurora",
+        "satellites",
+        "clouds",
+        "radar",
+    ] {
+        app.run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect(layer);
+    }
+    // Live: nothing dimmed.
+    for layer in MapLayer::ALL {
+        assert_eq!(app.time_dim(layer), 1.0, "{layer:?} live");
+    }
+    // Ten minutes back: still the present.
+    let now = globecraft_core::math::now_unix();
+    app.run("time.set", json!({"time": now - 600.0}))
+        .expect("time");
+    assert_eq!(app.time_dim(MapLayer::Flights), 1.0);
+    // A day back: aircraft, ships, aurora and traffic dimmed, and the radar, whose
+    // frames end two hours back; satellites and clouds follow the time.
+    app.run("time.set", json!({"time": now - 86_400.0}))
+        .expect("time");
+    for layer in [
+        MapLayer::Flights,
+        MapLayer::Vessels,
+        MapLayer::Aurora,
+        MapLayer::Traffic,
+        MapLayer::Radar,
+    ] {
+        assert!(app.time_dim(layer) < 1.0, "{layer:?} a day back");
+    }
+    for layer in [MapLayer::Satellites, MapLayer::Clouds, MapLayer::Sunlight] {
+        assert_eq!(app.time_dim(layer), 1.0, "{layer:?} a day back");
+    }
+    // A month back: no orbits for then; satellites named and dimmed too.
+    app.run("time.set", json!({"time": now - 30.0 * 86_400.0}))
+        .expect("time");
+    assert!(app.time_dim(MapLayer::Satellites) < 1.0);
+    app.run("time.set", json!({"time": "now"})).expect("live");
+    assert_eq!(app.time_dim(MapLayer::Flights), 1.0);
+}
+
+/// The note above the scale bar while the time is set back (manual: look at it).
+#[test]
+#[ignore = "manual: needs network"]
+fn present_only_note_screenshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("GLOBECRAFT_SHOTS").unwrap_or_else(|_| "target/screenshots".into()),
+    );
+    std::fs::create_dir_all(&dir).expect("screenshot folder");
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    for layer in ["flights", "vessels", "radar"] {
+        app.run("layer.show", json!({"layer": layer, "visible": true}))
+            .expect(layer);
+    }
+    app.run(
+        "camera.set",
+        json!({"lat": 50.0, "lon": 5.0, "altitude_km": 2_500.0}),
+    )
+    .expect("camera");
+    settle(&mut h, 20.0);
+    save(&mut h, &dir, "34-live-now");
+    let back = globecraft_core::math::now_unix() - 86_400.0;
+    h.state_mut()
+        .run("time.set", json!({"time": back}))
+        .expect("time");
+    settle(&mut h, 20.0);
+    save(&mut h, &dir, "34-live-dimmed-a-day-back");
+    // An hour back: the radar of an hour ago (its frames reach two hours back), not
+    // dimmed; the aircraft and ships still are.
+    let hour_back = globecraft_core::math::now_unix() - 3_600.0;
+    h.state_mut()
+        .run("time.set", json!({"time": hour_back}))
+        .expect("time");
+    for _ in 0..60 {
+        settle(&mut h, 1.0);
+        let shown = h.state().live.maps.radar_time();
+        if shown.is_some_and(|t| (t as f64 - hour_back).abs() < 900.0) {
+            break;
+        }
+    }
+    let shown = h.state().live.maps.radar_time().expect("a radar frame");
+    println!(
+        "radar frame {:.0} min from the time shown",
+        (shown as f64 - hour_back) / 60.0
+    );
+    assert!((shown as f64 - hour_back).abs() < 900.0);
+    assert_eq!(
+        h.state().time_dim(globecraft_core::layers::MapLayer::Radar),
+        1.0
+    );
+    save(&mut h, &dir, "34-live-radar-an-hour-back");
+}
+
+/// The planes seen are replayed when the time is set back a little, not dimmed;
+/// before the session saw them they are dimmed. From a local server standing in for
+/// ADSB.lol (slow: ~40 s, waits for its reports).
+#[test]
+#[ignore = "slow: waits for the aircraft feed's reports"]
+fn aircraft_are_replayed_from_the_session() {
+    use globecraft_core::layers::MapLayer;
+    use globecraft_data::aircraft::LiveAircraft;
+    let planes: Vec<serde_json::Value> = (0..5)
+        .map(|index| {
+            json!({
+                "hex": format!("40{index:04x}"), "flight": format!("TST{index}"),
+                "category": "A3", "lat": 50.0 + 0.1 * f64::from(index), "lon": 8.5,
+                "track": 90.0, "gs": 400.0, "alt_baro": 30_000, "seen_pos": 0.5
+            })
+        })
+        .collect();
+    let port = fake_aircraft_server(json!({"states": []}), json!({"ac": planes}));
+    let mut h = harness(ThemePreference::Dark);
+    let app = h.state_mut();
+    app.live.aircraft = LiveAircraft::with_sources(
+        app.runtime.handle(),
+        || {},
+        format!("http://127.0.0.1:{port}/api/states/all?extended=1"),
+        format!("http://127.0.0.1:{port}/v2"),
+    );
+    app.run("layer.show", json!({"layer": "flights", "visible": true}))
+        .expect("flights");
+    app.run(
+        "camera.set",
+        json!({"lat": 50.0, "lon": 8.5, "altitude_km": 600.0}),
+    )
+    .expect("camera");
+    // Two of the local feed's reports (every ten seconds) or more.
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_secs(35) {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let live = h.state().live.aircraft.snapshot();
+    assert!(
+        !live.aircraft.is_empty(),
+        "no planes from the feeds: {:?} / {:?} / {:?}",
+        live.error,
+        live.local.error,
+        live.global.error
+    );
+    let back = globecraft_core::math::now_unix() - 20.0;
+    h.state_mut()
+        .run("time.set", json!({"time": back}))
+        .expect("time");
+    let app = h.state();
+    assert_eq!(
+        app.aircraft_replay_time().map(f64::floor),
+        Some(back.floor())
+    );
+    let replayed = app.aircraft_snapshot();
+    assert!(!Arc::ptr_eq(&replayed, &live));
+    println!(
+        "{} planes live, {} replayed 20 s back",
+        live.aircraft.len(),
+        replayed.aircraft.len()
+    );
+    assert_eq!(replayed.aircraft.len(), live.aircraft.len());
+    assert_eq!(app.time_dim(MapLayer::Flights), 1.0);
+    // Before the session began: dimmed.
+    h.state_mut()
+        .run("time.set", json!({"time": back - 3_600.0}))
+        .expect("time");
+    assert!(h.state().aircraft_replay_time().is_none());
+    assert!(h.state().time_dim(MapLayer::Flights) < 1.0);
+}

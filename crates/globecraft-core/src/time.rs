@@ -19,6 +19,9 @@ pub struct AppTime {
     /// Timed points show when they happened within this many seconds before the
     /// scene time; `None` shows all.
     window_secs: Option<f64>,
+    /// While playing, the time goes round between these two moments (Unix seconds,
+    /// the first earlier).
+    loop_range: Option<(f64, f64)>,
 }
 
 impl AppTime {
@@ -33,11 +36,35 @@ impl AppTime {
     pub fn window_secs(&self) -> Option<f64> {
         self.window_secs
     }
-    /// The scene time (seconds since 1970) at real time `wall`.
+    /// The scene time (seconds since 1970) at real time `wall`. Playing with a loop,
+    /// it goes round within the loop (starting into it from wherever it was).
     pub fn now(&self, wall: f64) -> f64 {
         match self.fixed {
             None => wall,
-            Some(fixed) => fixed + (wall - self.anchor_wall) * self.speed,
+            Some(fixed) => {
+                let time = fixed + (wall - self.anchor_wall) * self.speed;
+                match self.loop_range {
+                    Some((from, to)) if self.speed != 0.0 => {
+                        from + (time - from).rem_euclid(to - from)
+                    }
+                    _ => time,
+                }
+            }
+        }
+    }
+    /// The loop the time plays round, if any.
+    pub fn loop_range(&self) -> Option<(f64, f64)> {
+        self.loop_range
+    }
+    /// Plays round between `from` and `to` (either order; `None`, or two equal
+    /// moments, ends the loop). The time shown stays where it is.
+    pub fn set_loop(&mut self, range: Option<(f64, f64)>, wall: f64) {
+        let now = self.now(wall);
+        self.loop_range = range
+            .filter(|(a, b)| a.is_finite() && b.is_finite() && a != b)
+            .map(|(a, b)| (a.min(b), a.max(b)));
+        if self.fixed.is_some() {
+            self.set(now, wall);
         }
     }
     /// Shows the moment `unix`, keeping the speed.
@@ -71,6 +98,22 @@ impl AppTime {
             return false;
         }
         self.window_secs.is_none_or(|window| unix >= now - window)
+    }
+    /// Whether a place of `when` shows at real time `wall`: a moment as a point does
+    /// (`shows`), a span when it has begun by the scene time (any while live) and has
+    /// not ended before the window.
+    pub fn shows_place(&self, when: PlaceTime, wall: f64) -> bool {
+        match when {
+            PlaceTime::Stamp(unix) => self.shows(unix, wall),
+            PlaceTime::Span { begin, end } => {
+                let now = self.now(wall);
+                let begun = self.is_live() || begin.is_none_or(|begin| begin <= now);
+                let not_over = self
+                    .window_secs
+                    .is_none_or(|window| end.is_none_or(|end| end >= now - window));
+                begun && not_over
+            }
+        }
     }
 }
 
@@ -108,6 +151,44 @@ pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
 pub fn date_utc(unix: f64) -> String {
     let (year, month, day) = civil_from_days((unix / DAY_SECS).floor() as i64);
     format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// `2026-11-04T09:38:12Z` for a moment (KML `when`, `begin`, `end`).
+pub fn iso_utc(unix: f64) -> String {
+    let secs = unix.rem_euclid(DAY_SECS).floor() as i64;
+    format!(
+        "{}T{:02}:{:02}:{:02}Z",
+        date_utc(unix),
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
+/// Seconds since 1970 of a KML time (XML Schema `dateTime`, `date`, `gYearMonth` or
+/// `gYear`: `2026-11-04T09:38Z`, `2026-11-04`, `2026-11`, `2026`): a month or year
+/// counts from its start.
+pub fn parse_kml_time(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let all_digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    match text.len() {
+        4 if all_digits(text) => parse_iso(&format!("{text}-01-01")),
+        7 if all_digits(&text[..4]) && text.as_bytes()[4] == b'-' && all_digits(&text[5..]) => {
+            parse_iso(&format!("{text}-01"))
+        }
+        _ => parse_iso(text),
+    }
+}
+
+/// When a place is, as KML says: a moment (`TimeStamp`) or a span (`TimeSpan`, either
+/// end open).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlaceTime {
+    Stamp(f64),
+    Span {
+        begin: Option<f64>,
+        end: Option<f64>,
+    },
 }
 
 /// `2026-11-04 09:38 UTC` for a moment.
@@ -186,6 +267,47 @@ mod tests {
     const WALL: f64 = 1_793_785_080.0; // 2026-11-04 09:38 UTC
 
     #[test]
+    fn kml_times_of_a_year_or_month_count_from_its_start() {
+        assert_eq!(parse_kml_time("2026"), parse_iso("2026-01-01"));
+        assert_eq!(parse_kml_time("2026-11"), parse_iso("2026-11-01"));
+        assert_eq!(parse_kml_time(" 2026-11-04 "), parse_iso("2026-11-04"));
+        assert_eq!(parse_kml_time("2026-11-04T09:38:00Z"), Some(WALL));
+        assert_eq!(parse_kml_time("26"), None);
+        assert_eq!(parse_kml_time("2026-1x"), None);
+        assert_eq!(parse_iso(&iso_utc(WALL + 12.0)), Some(WALL + 12.0));
+    }
+
+    #[test]
+    fn places_show_on_the_timeline_by_their_time() {
+        let day = DAY_SECS;
+        let mut time = AppTime::default();
+        let span = |begin: f64, end: f64| PlaceTime::Span {
+            begin: Some(begin),
+            end: Some(end),
+        };
+        // Live: a span not yet begun still shows, as a coming point does.
+        assert!(time.shows_place(span(WALL + day, WALL + 2.0 * day), WALL));
+        // Set back a year: a span of then shows, one begun after does not, nor a
+        // moment after it; one long over shows while no window is set.
+        time.set(WALL - 365.0 * day, WALL);
+        let then = WALL - 365.0 * day;
+        assert!(time.shows_place(span(then - day, then + day), WALL));
+        assert!(!time.shows_place(span(then + day, then + 2.0 * day), WALL));
+        assert!(!time.shows_place(PlaceTime::Stamp(then + day), WALL));
+        assert!(time.shows_place(span(then - 10.0 * day, then - 9.0 * day), WALL));
+        // With a window of a week, it is over: hidden.
+        time.set_window(Some(7.0 * day));
+        assert!(!time.shows_place(span(then - 10.0 * day, then - 9.0 * day), WALL));
+        assert!(time.shows_place(
+            PlaceTime::Span {
+                begin: None,
+                end: None
+            },
+            WALL
+        ));
+    }
+
+    #[test]
     fn live_follows_the_real_time_and_a_fixed_time_holds_or_plays() {
         let mut time = AppTime::default();
         assert!(time.is_live());
@@ -201,6 +323,30 @@ mod tests {
         assert_eq!(time.now(WALL + 1_000.0), WALL - DAY_SECS + 10.0 * HOUR_SECS);
         time.go_live();
         assert_eq!((time.now(WALL), time.speed()), (WALL, 0.0));
+    }
+
+    #[test]
+    fn a_loop_plays_round_and_holds_still_when_paused() {
+        let wall = 1_000.0;
+        let mut time = AppTime::default();
+        time.set(500.0, wall);
+        time.set_loop(Some((600.0, 400.0)), wall);
+        assert_eq!(time.loop_range(), Some((400.0, 600.0)));
+        // Held, the time stays where it was set.
+        assert_eq!(time.now(wall + 50.0), 500.0);
+        time.play(10.0, wall);
+        assert_eq!(time.now(wall + 5.0), 550.0);
+        // Past the end it goes on from the start.
+        assert_eq!(time.now(wall + 15.0), 450.0);
+        // Backwards past the start it comes in at the end.
+        time.play(-10.0, wall + 15.0);
+        assert_eq!(time.now(wall + 21.0), 590.0);
+        // Ended, the time runs on.
+        time.set_loop(None, wall + 21.0);
+        time.play(10.0, wall + 21.0);
+        assert_eq!(time.now(wall + 31.0), 690.0);
+        time.set_loop(Some((5.0, 5.0)), wall);
+        assert_eq!(time.loop_range(), None);
     }
 
     #[test]

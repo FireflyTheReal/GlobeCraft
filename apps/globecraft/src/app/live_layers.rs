@@ -1,7 +1,7 @@
 //! Aircraft geometry is prepared in render; styled shapes and hover stay in egui.
 use globecraft_core::layers::MapLayer;
+use globecraft_core::units::{DistanceUnits, KMH_PER_KNOT, MS_PER_FOOT_PER_MINUTE};
 mod aurora;
-pub(super) use aurora::AuroraShapes;
 pub(super) use aurora::legend_colour as aurora_colour;
 mod fade;
 pub(super) use fade::{TiledShapes, fresh_text, stroke_runs, styled_line};
@@ -19,6 +19,7 @@ pub(super) use poi::river_scene;
 pub(super) use transport::TransportShapes;
 mod world;
 pub(super) use world::WorldShapes;
+pub(in crate::app) use world::together_with;
 #[cfg(test)]
 mod tests;
 use super::App;
@@ -46,6 +47,8 @@ const HOVER_CORNER_POINTS: f32 = 5.0;
 const HOVER_FILL_RGBA: [u8; 4] = [13, 24, 35, 235];
 /// Climbs and descents below this read as level flight.
 const LEVEL_VERTICAL_RATE_FPM: f64 = 50.0;
+/// Aircraft report heights in feet.
+const FEET_TO_METRES: f64 = 0.3048;
 
 pub(super) struct AircraftOverlay {
     geometry: Option<Arc<AircraftGeometry>>,
@@ -142,9 +145,9 @@ impl AircraftOverlay {
     }
 
     /// The hover card of the plane under the pointer, above everything else.
-    fn hover(&self, painter: &egui::Painter, lang: Lang) {
+    fn hover(&self, painter: &egui::Painter, lang: Lang, units: DistanceUnits) {
         if let Some(geometry) = &self.drawn {
-            draw_hover(painter, geometry, lang);
+            draw_hover(painter, geometry, lang, units);
         }
     }
 
@@ -191,7 +194,9 @@ impl App {
                 heights: !self.settings.layers.flat_live_objects,
             },
             data: self.aircraft_snapshot(),
-            unix_secs: now_unix(),
+            // Replayed planes are drawn as at the time shown, live ones flown on to now.
+            unix_secs: self.aircraft_replay_time().unwrap_or_else(now_unix),
+            clouds: self.frame_clouds(),
         }
     }
     pub(super) fn draw_live_layers(
@@ -209,12 +214,18 @@ impl App {
             // A selected flight's track, route and plane go above the other planes,
             // which are dimmed so they stand out; the hover card goes above all.
             let selected = self.picked.flight.selected().is_some();
-            let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 };
+            // Aircraft away from now: replayed from the last hour seen, dimmed before it.
+            let dim = self.time_dim(MapLayer::Flights);
+            let opacity = if selected { OTHER_PLANES_OPACITY } else { 1.0 } * dim;
             self.live
                 .aircraft_overlay
                 .draw(painter, input, self.lang, opacity);
-            self.paint_selected_flight(painter, basis, rect);
-            self.live.aircraft_overlay.hover(painter, self.lang);
+            let mut dimmed = painter.clone();
+            dimmed.multiply_opacity(dim);
+            self.paint_selected_flight(&dimmed, basis, rect);
+            self.live
+                .aircraft_overlay
+                .hover(painter, self.lang, self.distance_units());
             // The selected flight's card counts on.
             let step = if selected {
                 step.min(motion::SELECTED_MAX_STEP_SECS)
@@ -228,7 +239,10 @@ impl App {
         if self.layer(MapLayer::Vessels)
             && let Some(geometry) = geometry
         {
-            self.draw_vessel_overlay(painter, geometry);
+            // Ships have only the present: dimmed while another time is shown.
+            let mut dimmed = painter.clone();
+            dimmed.multiply_opacity(self.time_dim(MapLayer::Vessels));
+            self.draw_vessel_overlay(&dimmed, geometry);
             painter
                 .ctx()
                 .request_repaint_after(motion::repaint_after(geometry.input.view.vessel_step()));
@@ -249,20 +263,30 @@ impl App {
     }
 }
 
-fn vertical_rate_text(rate: Option<f64>) -> String {
-    rate.map_or_else(
+/// A reported climb (ft/min) in the user's units; level below `LEVEL_VERTICAL_RATE_FPM`.
+fn vertical_rate_text(rate_fpm: Option<f64>, units: DistanceUnits) -> String {
+    rate_fpm.map_or_else(
         || "—".to_owned(),
         |rate| {
-            if rate.abs() < LEVEL_VERTICAL_RATE_FPM {
-                "0 ft/min".to_owned()
+            let rate = if rate.abs() < LEVEL_VERTICAL_RATE_FPM {
+                0.0
             } else {
-                format!("{rate:+.0} ft/min")
-            }
+                rate
+            };
+            units
+                .vertical_rate(rate * MS_PER_FOOT_PER_MINUTE)
+                .replace("+0 ", "0 ")
+                .replace("+0.0 ", "0 ")
         },
     )
 }
 
-fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) {
+fn draw_hover(
+    painter: &egui::Painter,
+    geometry: &AircraftGeometry,
+    lang: Lang,
+    units: DistanceUnits,
+) {
     let view = geometry.view;
     let ms = view.map_scale;
     let Some(hover) = painter
@@ -299,14 +323,14 @@ fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) 
                 "altitude",
                 sample
                     .altitude_feet
-                    .map_or("—".into(), |alt| format!("{alt:.0} ft"))
+                    .map_or("—".into(), |feet| units.length(feet * FEET_TO_METRES, 0))
                     .into(),
             ),
             (
                 "speed",
                 sample
                     .speed_knots
-                    .map_or("—".into(), |speed| format!("{speed:.0} kt"))
+                    .map_or("—".into(), |knots| units.speed(knots * KMH_PER_KNOT))
                     .into(),
             ),
             (
@@ -315,11 +339,16 @@ fn draw_hover(painter: &egui::Painter, geometry: &AircraftGeometry, lang: Lang) 
             ),
             (
                 "vertical_rate",
-                vertical_rate_text(sample.vertical_rate_fpm).into(),
+                vertical_rate_text(sample.vertical_rate_fpm, units).into(),
             ),
             (
                 "age",
-                format!("{:.0}", (now_unix() - sample.observed_unix).max(0.0)).into(),
+                // From the time drawn: a replayed plane's report is of then.
+                format!(
+                    "{:.0}",
+                    (geometry.unix_secs - sample.observed_unix).max(0.0)
+                )
+                .into(),
             ),
         ],
     );
@@ -396,7 +425,7 @@ impl App {
             }
         }
         if let Some((ship, at)) = nearest {
-            let text = world::vessel_tooltip(self.lang, ship);
+            let text = world::vessel_tooltip(self.lang, ship, self.distance_units());
             hover_label(painter, rect, at, &text, ms);
         }
     }
@@ -461,7 +490,13 @@ impl App {
                 .iter()
                 .map(|index| satellites[*index].name.as_str())
                 .collect();
-            let text = world::satellite_tooltip(self.lang, sat, Some(altitude_km), &together);
+            let text = world::satellite_tooltip(
+                self.lang,
+                sat,
+                Some(altitude_km),
+                &together,
+                self.distance_units(),
+            );
             hover_label(painter, rect, at, &text, ms);
         }
     }
@@ -495,23 +530,22 @@ pub(super) fn hover_label(
 }
 
 impl App {
-    /// The aurora glow, under every line and name, while the app's time is near the
-    /// forecast's moment.
-    pub(super) fn paint_aurora(&mut self, painter: &egui::Painter, basis: &Basis, rect: Rect) {
-        if !self.layer(MapLayer::Aurora) {
-            return;
+    /// The aurora for the frame to draw in the air: while its layer shows and the
+    /// app's time is near the forecast's moment.
+    pub(super) fn frame_aurora(&self) -> Option<globecraft_render::aurora::AuroraCfg> {
+        if !self.layer(MapLayer::Aurora) || !self.explorer.on_earth() {
+            return None;
         }
-        let Some(grid) = self.live.aurora.grid() else {
-            return;
-        };
-        let scene = self.scene_unix();
-        if !self.time.is_live() && (scene - grid.forecast).abs() > aurora::SHOWN_WITHIN_SECS {
-            return;
+        let grid = self.live.aurora.grid()?;
+        let live = self.time.is_live();
+        if !live && (self.scene_unix() - grid.forecast).abs() > aurora::SHOWN_WITHIN_SECS {
+            return None;
         }
-        let sunlight = self.layer(MapLayer::Sunlight);
-        self.live
-            .aurora_shapes
-            .paint(painter, basis, rect, &grid, scene, sunlight);
+        Some(globecraft_render::aurora::AuroraCfg {
+            grid,
+            opacity: self.settings.layers.opacity.get(MapLayer::Aurora)
+                * self.time_dim(MapLayer::Aurora),
+        })
     }
 }
 

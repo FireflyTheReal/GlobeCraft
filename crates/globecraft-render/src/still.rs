@@ -96,9 +96,12 @@ pub fn render_still<E>(
             },
         );
         cache.release_reserved();
-        let Some((pixels, missing)) = strip else {
+        let Some((mut pixels, missing)) = strip else {
             return Ok(StillEnd::Cancelled);
         };
+        if cfg.sky_behind {
+            crate::stars::paint_behind(&mut pixels, width, height, rows.clone(), basis, cfg);
+        }
         sink(&pixels)?;
         missing_total += missing;
         first_row = rows.end;
@@ -214,6 +217,7 @@ mod tests {
             heading: 0.0,
             alt: 5_000.0,
             tilt: 0.0,
+            look_up: 0.0,
         }
         .basis(4.0 / 3.0);
         let cfg = RenderCfg {
@@ -229,7 +233,11 @@ mod tests {
             level_blend: false,
             fixed_level: None,
             night_lights: None,
-            stars: true,
+            stars: None,
+            sky_behind: false,
+            clouds: None,
+            glint: None,
+            aurora: None,
         };
         (basis, cfg)
     }

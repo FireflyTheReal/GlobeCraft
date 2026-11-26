@@ -189,6 +189,12 @@ params! {
         pub step: Option<f64>,
     }
 
+    /// `camera.lookAround`
+    pub struct LookAround {
+        pub turn_deg: Option<f64>,
+        pub raise_deg: Option<f64>,
+    }
+
     /// `search.place`
     pub struct SearchPlace {
         /// Without one (the ribbon's button), the search box takes the focus.
@@ -323,6 +329,11 @@ params! {
         pub visible: Option<bool>,
     }
 
+    /// `layer.cloudResolution`
+    pub struct CloudResolution {
+        pub pixels: u64,
+    }
+
     /// `layer.opacity`
     pub struct LayerOpacity {
         pub layer: String,
@@ -375,9 +386,20 @@ params! {
         pub time: TimeValue,
     }
 
+    /// `time.loop`
+    pub struct TimeLoop {
+        pub from: Option<TimeValue>,
+        pub to: Option<TimeValue>,
+    }
+
     /// `time.step` and `time.window`
     pub struct Hours {
         pub hours: f64,
+    }
+
+    /// `time.range`
+    pub struct Days {
+        pub days: f64,
     }
 
     /// `time.play`
@@ -388,6 +410,17 @@ params! {
     /// `time.speed`
     pub struct SetSpeed {
         pub hours_per_second: f64,
+    }
+
+    /// `ui.pane.side`
+    pub struct SetPaneSide {
+        pub side: Option<String>,
+    }
+
+    /// `ui.pane.moveTab`
+    pub struct MovePaneTab {
+        pub tab: String,
+        pub to: u64,
     }
 
     /// `ui.navigatorStyle`

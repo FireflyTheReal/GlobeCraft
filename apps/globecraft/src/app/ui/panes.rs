@@ -1,45 +1,77 @@
-//! Panes beside the globe: Layers and Places on the left, the AI Assistant and Measure on
-//! the right, each with a tab header like RustGIS's panes (`crates/ui-egui/src/panes.rs`,
-//! Apache-2.0).
+//! The side pane beside the globe (one since 2026-11-19, on the right by default or on
+//! the left, `ui.pane.side`): its tabs are Layers, Places, the AI Assistant, Measure,
+//! the Legend, the Explorer and the details of a selected flight, satellite or point,
+//! in an order the user drags them into (`ui.pane.moveTab`). The tab header follows
+//! RustGIS's panes (`crates/ui-egui/src/panes.rs`, Apache-2.0).
 use super::icons;
 use super::theme::{Tokens, regular, semibold};
 use super::widgets::text_w;
 use crate::app::App;
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use globecraft_core::layers::MapLayer;
 use globecraft_data::settings::{
-    sidebar::{
-        MAX_SIDEBAR_WIDTH_POINTS, MIN_PINNED_PLACES_HEIGHT_POINTS, MIN_SIDEBAR_WIDTH_POINTS,
-        SidebarPanel,
-    },
-    workspace::{MAX_RIGHT_PANE_WIDTH_POINTS, MIN_RIGHT_PANE_WIDTH_POINTS, RightPane},
+    sidebar::MIN_PINNED_PLACES_HEIGHT_POINTS,
+    workspace::{MAX_RIGHT_PANE_WIDTH_POINTS, MIN_RIGHT_PANE_WIDTH_POINTS, PaneSide, PaneTab},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const HEADER_H: f32 = 32.0;
 const PINNED_PLACES_MAX_HEIGHT_FRACTION: f32 = 0.65;
+/// Room around a tab's name, its ✕, and a tab shown as its icon.
+const TAB_PAD: f32 = 9.0;
+/// The close cross's target, above Apple's 20 pt minimum.
+const CLOSE_W: f32 = 24.0;
+const ICON_TAB_W: f32 = 30.0;
+/// The button that moves the pane to the other side, and the Places pin.
+const HEADER_BUTTON_W: f32 = 28.0;
 
-/// The left panes in tab order, with their command and icon.
-const LEFT: [(SidebarPanel, &str, &str, &str); 2] = [
-    (
-        SidebarPanel::Layers,
-        "layers-section-title",
-        "ui.pane.layers",
-        "contents",
-    ),
-    (
-        SidebarPanel::Places,
-        "sidebar-places-title",
-        "ui.pane.places",
-        "places",
-    ),
-];
+fn tab_title(tab: PaneTab) -> &'static str {
+    match tab {
+        PaneTab::Assistant => "cmd-ui-pane-assistant",
+        PaneTab::Measure => "pane-measure-title",
+        PaneTab::Legend => "legend-title",
+        PaneTab::Explorer => "explorer-pane-title",
+        PaneTab::Layers => "layers-section-title",
+        PaneTab::Places => "sidebar-places-title",
+        PaneTab::Flight => "pane-flight-title",
+        PaneTab::Satellite => "pane-satellite-title",
+        PaneTab::Here => "here-title",
+    }
+}
 
-fn right_title(pane: RightPane) -> &'static str {
-    match pane {
-        RightPane::Assistant => "cmd-ui-pane-assistant",
-        RightPane::Measure => "pane-measure-title",
-        RightPane::Legend => "legend-title",
-        RightPane::Explorer => "explorer-pane-title",
+fn tab_icon(tab: PaneTab) -> &'static str {
+    match tab {
+        PaneTab::Assistant => "assistant",
+        PaneTab::Measure => "measure",
+        PaneTab::Legend => "symbology",
+        PaneTab::Explorer => "explore",
+        PaneTab::Layers => "contents",
+        PaneTab::Places => "places",
+        PaneTab::Flight => "plane",
+        PaneTab::Satellite => "satellite",
+        PaneTab::Here => "identify",
+    }
+}
+
+/// Where a tab dropped at `x` goes among the other tabs, whose middles are `centres`.
+fn drop_index(centres: &[f32], x: f32) -> usize {
+    centres.iter().filter(|centre| **centre < x).count()
+}
+
+/// A tab's place in the header: its name (or icon) and the ✕ after it.
+#[derive(Clone, Copy)]
+struct TabPlace {
+    tab: PaneTab,
+    label: Rect,
+    close_w: f32,
+}
+
+impl TabPlace {
+    fn centre_x(&self) -> f32 {
+        self.label.center().x + self.close_w / 2.0
+    }
+    fn right(&self) -> f32 {
+        self.label.max.x + self.close_w
     }
 }
 
@@ -54,7 +86,8 @@ fn header_strip(ui: &mut Ui, t: &Tokens) -> Rect {
     r
 }
 
-/// A tab in a pane header: hover fill, label (or icon when narrow) and the accent underline.
+/// A tab in a pane header: hover fill and its name (or icon when narrow). It can be
+/// clicked or dragged.
 fn header_tab(
     ui: &mut Ui,
     t: &Tokens,
@@ -64,8 +97,9 @@ fn header_tab(
     icon: Option<&str>,
     on: bool,
 ) -> egui::Response {
-    let resp = ui.interact(r, id, Sense::click());
+    let resp = ui.interact(r, id, Sense::click_and_drag());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
+    super::widgets::tab_role(&resp, on);
     let p = ui.painter();
     if resp.hovered() && !on {
         p.rect_filled(r.shrink2(vec2(1.0, 5.0)), CornerRadius::same(4), t.hover);
@@ -77,7 +111,7 @@ fn header_tab(
             Rect::from_center_size(r.center(), vec2(18.0, 18.0)),
             icon,
             ink,
-            t.accent,
+            t.icon_accent,
         ),
         None => {
             p.with_clip_rect(r).text(
@@ -89,15 +123,6 @@ fn header_tab(
             );
         }
     }
-    if on {
-        p.line_segment(
-            [
-                pos2(r.min.x + 4.0, r.max.y - 1.5),
-                pos2(r.max.x - 4.0, r.max.y - 1.5),
-            ],
-            Stroke::new(2.0, t.accent),
-        );
-    }
     if icon.is_some() {
         resp.on_hover_text(name)
     } else {
@@ -107,105 +132,208 @@ fn header_tab(
 
 /// A small ✕ at `center`; returns whether it was clicked.
 fn close_cross(ui: &mut Ui, t: &Tokens, center: egui::Pos2, id: egui::Id, tip: &str) -> bool {
-    let cr = Rect::from_center_size(center, vec2(18.0, 18.0));
+    let cr = Rect::from_center_size(center, vec2(CLOSE_W, CLOSE_W));
     let resp = ui.interact(cr, id, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
     if resp.hovered() {
         ui.painter().rect_filled(cr, CornerRadius::same(3), t.hover);
     }
-    icons::paint(ui.painter(), cr.shrink(4.0), "close", t.text_dim, t.accent);
+    icons::paint(
+        ui.painter(),
+        cr.shrink(7.0),
+        "close",
+        t.text_dim,
+        t.icon_accent,
+    );
     resp.on_hover_text(tip).clicked()
 }
 
 impl App {
-    pub(in crate::app) fn left_pane(&mut self, ui: &mut Ui) {
+    /// Opens or closes the details tabs with their selections (a new selection also
+    /// brings its tab forward: `close_other_cards`).
+    fn sync_details_tabs(&mut self) {
+        let selected = [
+            (PaneTab::Flight, self.picked.flight.selected().is_some()),
+            (
+                PaneTab::Satellite,
+                self.layer(MapLayer::Satellites) && self.selected_satellite().is_some(),
+            ),
+            (PaneTab::Here, self.pointer.here_card.is_some()),
+        ];
+        let workspace = &mut self.settings.workspace;
+        for (tab, on) in selected {
+            match (on, workspace.right_is_open(tab)) {
+                (true, false) => workspace.add_right(tab),
+                (false, true) => workspace.close_right(tab),
+                _ => {}
+            }
+        }
+    }
+
+    /// Closes `tab`; a details tab clears its selection with it.
+    fn close_tab(&mut self, tab: PaneTab) {
+        // Clearing cannot fail.
+        match tab {
+            PaneTab::Flight => drop(self.run("flight.clear", json!({}))),
+            PaneTab::Satellite => drop(self.run("satellite.clear", json!({}))),
+            PaneTab::Here => self.pointer.here_card = None,
+            _ => {}
+        }
+        self.settings.workspace.close_right(tab);
+    }
+
+    pub(in crate::app) fn side_pane(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
-        // A placemark or ruler revealed from elsewhere brings its pane forward.
+        self.frame.pane_moving = false;
+        // A placemark or ruler revealed from elsewhere brings its tab forward.
         if self.measure.reveal_requested {
-            self.settings.workspace.open_right(RightPane::Measure);
+            self.settings.workspace.open_right(PaneTab::Measure);
             self.measure.reveal_requested = false;
         }
         if self.places.reveal_requested {
-            self.settings.sidebar.open = true;
             if !self.settings.sidebar.places_pinned {
-                self.settings.sidebar.panel = SidebarPanel::Places;
+                self.settings.workspace.open_right(PaneTab::Places);
+            } else if self.settings.workspace.right_pane.is_none() {
+                self.settings.workspace.toggle_pane();
             }
+            self.places.reveal_requested = false;
         }
-        if !self.settings.sidebar.open {
+        self.sync_details_tabs();
+        // The pane slides in and out (user, 2026-11-20); while it closes it still shows
+        // the tab it was on, and the globe beside it follows its edge.
+        let shown_id = egui::Id::new("side_pane_shown_tab");
+        let open = self.settings.workspace.right_pane;
+        if let Some(pane) = open {
+            ui.ctx().data_mut(|d| d.insert_temp(shown_id, pane));
+        }
+        let Some(pane) = open.or_else(|| ui.ctx().data(|d| d.get_temp::<PaneTab>(shown_id))) else {
             return;
-        }
-        let frame = egui::Frame::NONE.fill(t.pane);
-        let response = egui::Panel::left("left_pane")
+        };
+        let panel = match self.settings.workspace.pane_side {
+            PaneSide::Left => egui::Panel::left("side_pane"),
+            PaneSide::Right => egui::Panel::right("side_pane"),
+        };
+        let mut expanded = open.is_some();
+        let response = panel
             .resizable(true)
-            .default_size(self.settings.sidebar.width_points)
-            .size_range(MIN_SIDEBAR_WIDTH_POINTS..=MAX_SIDEBAR_WIDTH_POINTS)
-            .frame(frame)
-            .show(ui, |ui| {
-                self.left_header(ui, &t);
-                let panel = self.settings.sidebar.panel;
+            .drag_to_open(false)
+            .default_size(self.settings.workspace.right_width_points)
+            .size_range(MIN_RIGHT_PANE_WIDTH_POINTS..=MAX_RIGHT_PANE_WIDTH_POINTS)
+            .frame(egui::Frame::NONE.fill(t.pane))
+            .show_collapsible(ui, &mut expanded, |ui| {
+                self.pane_header(ui, pane, &t);
                 let rect = ui.available_rect_before_wrap();
                 let mut body =
                     ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(*ui.layout()));
-                let ui = &mut body;
-                if self.settings.sidebar.places_pinned && panel != SidebarPanel::Places {
-                    let max_height = (ui.available_height() * PINNED_PLACES_MAX_HEIGHT_FRACTION)
-                        .max(MIN_PINNED_PLACES_HEIGHT_POINTS);
-                    let pinned = egui::Panel::bottom("pinned-places")
-                        .default_size(self.settings.sidebar.pinned_places_height_points)
-                        .size_range(MIN_PINNED_PLACES_HEIGHT_POINTS..=max_height)
-                        .resizable(true)
-                        .frame(
-                            egui::Frame::NONE
-                                .fill(t.pane)
-                                .inner_margin(egui::Margin::symmetric(10, 6)),
-                        )
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(self.lang.text("sidebar-places-title"))
-                                        .font(semibold(12.5)),
-                                );
-                                self.pin_toggle(ui);
-                            });
-                            self.places_pane(ui);
-                        });
-                    if !ui.input(|i| i.pointer.any_down()) {
-                        self.settings.sidebar.pinned_places_height_points =
-                            pinned.response.rect.height();
-                    }
-                }
-                let margin = egui::Margin::symmetric(10, 8);
-                match panel {
-                    SidebarPanel::Places => {
-                        egui::Frame::NONE
-                            .inner_margin(margin)
-                            .show(ui, |ui| self.places_pane(ui));
-                    }
-                    SidebarPanel::Layers => {
-                        // The search stays above the scroll area, so it remains
-                        // reachable while a long layer list scrolls.
-                        egui::Frame::NONE
-                            .inner_margin(egui::Margin {
-                                left: 10,
-                                right: 10,
-                                top: 8,
-                                bottom: 0,
-                            })
-                            .show(ui, |ui| self.layers_search(ui));
-                        egui::ScrollArea::vertical()
-                            .id_salt("layers-scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                egui::Frame::NONE
-                                    .inner_margin(margin)
-                                    .show(ui, |ui| self.layers_pane(ui));
-                            });
-                    }
-                }
+                // The content follows the pane's width while its edge is dragged.
+                body.set_max_width(rect.width());
+                self.pinned_places(&mut body, pane, &t);
+                self.pane_body(&mut body, pane, &t);
+                ui.advance_cursor_after_rect(rect);
             });
-        self.places.reveal_requested = false;
+        // Dragged shut past its narrowest: the pane closes as its button would.
+        if open.is_some() && !expanded {
+            self.run_reporting("ui.leftPane", Value::Null);
+        }
+        let settled = ui
+            .ctx()
+            .animate_bool_responsive(egui::Id::new("side_pane").with("animation"), open.is_some());
+        // Sliding, or its edge dragged (egui's id for a panel's resize handle).
+        let dragged = ui
+            .ctx()
+            .is_being_dragged(egui::Id::new("side_pane").with("__resize"));
+        self.frame.pane_moving = (settled > 0.0 && settled < 1.0) || dragged;
+        if let Some(response) = response
+            && open.is_some()
+            && settled == 1.0
+            && !ui.input(|i| i.pointer.any_down())
+        {
+            self.settings.workspace.right_width_points = response.response.rect.width();
+        }
+    }
+
+    /// Places pinned under the other tabs.
+    fn pinned_places(&mut self, ui: &mut Ui, pane: PaneTab, t: &Tokens) {
+        if !self.settings.sidebar.places_pinned || pane == PaneTab::Places {
+            return;
+        }
+        let max_height = (ui.available_height() * PINNED_PLACES_MAX_HEIGHT_FRACTION)
+            .max(MIN_PINNED_PLACES_HEIGHT_POINTS);
+        let pinned = egui::Panel::bottom("pinned-places")
+            .default_size(self.settings.sidebar.pinned_places_height_points)
+            .size_range(MIN_PINNED_PLACES_HEIGHT_POINTS..=max_height)
+            .resizable(true)
+            .frame(
+                egui::Frame::NONE
+                    .fill(t.pane)
+                    .inner_margin(egui::Margin::symmetric(10, 6)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(self.lang.text("sidebar-places-title"))
+                            .font(semibold(12.5)),
+                    );
+                    self.pin_toggle(ui);
+                });
+                self.places_pane(ui);
+            });
         if !ui.input(|i| i.pointer.any_down()) {
-            self.settings.sidebar.width_points = response.response.rect.width();
+            self.settings.sidebar.pinned_places_height_points = pinned.response.rect.height();
+        }
+    }
+
+    fn pane_body(&mut self, body: &mut Ui, pane: PaneTab, t: &Tokens) {
+        let scrolled = |body: &mut Ui, id: &str, app: &mut App, content: fn(&mut App, &mut Ui)| {
+            egui::ScrollArea::vertical()
+                .id_salt(id)
+                .auto_shrink([false, false])
+                .show(body, |ui| {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .show(ui, |ui| content(app, ui));
+                });
+        };
+        match pane {
+            #[cfg(feature = "assistant")]
+            PaneTab::Assistant => self.assistant_pane(body, t),
+            #[cfg(not(feature = "assistant"))]
+            PaneTab::Assistant => {
+                let _ = t;
+                body.weak("This build of GlobeCraft has no assistant.");
+            }
+            PaneTab::Layers => {
+                // The search stays above the scroll area, so it remains reachable
+                // while a long layer list scrolls.
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: 10,
+                        right: 10,
+                        top: 8,
+                        bottom: 0,
+                    })
+                    .show(body, |ui| self.layers_search(ui));
+                scrolled(body, "layers-scroll", self, |app, ui| app.layers_pane(ui));
+            }
+            PaneTab::Places => {
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(body, |ui| self.places_pane(ui));
+            }
+            PaneTab::Legend => scrolled(body, "legend-scroll", self, |app, ui| app.legend_pane(ui)),
+            PaneTab::Explorer => scrolled(body, "explorer-scroll", self, |app, ui| {
+                app.explorer_pane(ui)
+            }),
+            PaneTab::Measure => {
+                scrolled(body, "measure-scroll", self, |app, ui| app.measure_pane(ui))
+            }
+            PaneTab::Flight => scrolled(body, "flight-scroll", self, |app, ui| {
+                app.flight_details(ui)
+            }),
+            PaneTab::Satellite => scrolled(body, "satellite-scroll", self, |app, ui| {
+                app.satellite_details(ui)
+            }),
+            PaneTab::Here => scrolled(body, "here-scroll", self, |app, ui| app.here_details(ui)),
         }
     }
 
@@ -235,172 +363,199 @@ impl App {
                     if pinned { t.checked } else { t.hover },
                 );
             }
-            icons::paint(ui.painter(), r.shrink(4.0), "pin", t.icon, t.accent);
+            icons::paint(ui.painter(), r.shrink(4.0), "pin", t.icon, t.icon_accent);
             if resp.on_hover_text(tip).clicked() {
                 self.settings.sidebar.places_pinned = !pinned;
             }
         });
     }
 
-    fn left_header(&mut self, ui: &mut Ui, t: &Tokens) {
+    /// Where each tab goes in a header `r` wide: named, or as icons when the names do
+    /// not fit (then only the tab in view keeps its ✕, and the icons narrow if need be).
+    fn tab_places(&self, ui: &Ui, r: Rect, current: PaneTab, room: f32) -> (Vec<TabPlace>, bool) {
+        let tabs = &self.settings.workspace.right_open;
+        let named: Vec<f32> = tabs
+            .iter()
+            .map(|tab| text_w(ui, self.lang.text(tab_title(*tab)), semibold(12.5)) + 2.0 * TAB_PAD)
+            .collect();
+        let icons_only = named.iter().sum::<f32>() + CLOSE_W * tabs.len() as f32 > room;
+        let icon_w = ICON_TAB_W.min((room - CLOSE_W) / tabs.len().max(1) as f32 - 2.0);
+        let mut x = r.min.x + 6.0;
+        let places = tabs
+            .iter()
+            .zip(named)
+            .map(|(&tab, name_w)| {
+                let (label_w, close_w) = match (icons_only, tab == current) {
+                    (false, _) => (name_w, CLOSE_W),
+                    (true, true) => (icon_w, CLOSE_W),
+                    (true, false) => (icon_w, 0.0),
+                };
+                let place = TabPlace {
+                    tab,
+                    label: Rect::from_min_size(pos2(x, r.min.y), vec2(label_w, r.height())),
+                    close_w,
+                };
+                x = place.right() + 2.0;
+                place
+            })
+            .collect();
+        (places, icons_only)
+    }
+
+    /// The tabs, each with its ✕; dragged along the header they change places. At the
+    /// end: the Places pin and the button that moves the pane to the other side.
+    fn pane_header(&mut self, ui: &mut Ui, current: PaneTab, t: &Tokens) {
         let r = header_strip(ui, t);
         let lang = self.lang;
-        let pad = 9.0;
-        let names: Vec<&str> = LEFT.iter().map(|p| lang.text(p.1)).collect();
-        let widths: Vec<f32> = names
-            .iter()
-            .map(|n| text_w(ui, n, semibold(12.5)) + 2.0 * pad)
-            .collect();
-        let pin_w = if self.settings.sidebar.panel == SidebarPanel::Places {
-            28.0
+        let pin_w = if current == PaneTab::Places {
+            HEADER_BUTTON_W
         } else {
             0.0
         };
-        let room = r.width() - 6.0 - 32.0 - pin_w;
-        let icons_only = widths.iter().sum::<f32>() + 4.0 > room;
-        let mut x = r.min.x + 6.0;
-        for (i, ((panel, _, command, icon), name)) in LEFT.iter().zip(&names).enumerate() {
-            let w = if icons_only { 32.0 } else { widths[i] };
-            let tr = Rect::from_min_size(pos2(x, r.min.y), vec2(w, r.height()));
-            let on = *panel == self.settings.sidebar.panel;
+        let room = r.width() - 6.0 - HEADER_BUTTON_W - pin_w;
+        let (places, icons_only) = self.tab_places(ui, r, current, room);
+        let mut dragging: Option<(PaneTab, f32)> = None;
+        let mut dropped: Option<(PaneTab, f32)> = None;
+        for place in &places {
+            let tab = place.tab;
+            let name = lang.text(tab_title(tab));
+            let on = tab == current;
             let resp = header_tab(
                 ui,
                 t,
-                tr,
-                super::focus::left_tab_id(*panel),
+                place.label,
+                super::focus::pane_tab_id(tab),
                 name,
-                icons_only.then_some(*icon),
-                on,
-            );
-            if resp.clicked() && !on {
-                self.run_reporting(command, Value::Null);
-            }
-            x += w + 2.0;
-        }
-        if self.settings.sidebar.panel == SidebarPanel::Places {
-            let mut pin = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_max(
-                        pos2(r.max.x - 30.0 - pin_w, r.min.y),
-                        pos2(r.max.x - 30.0, r.max.y),
-                    ))
-                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
-            );
-            self.pin_toggle(&mut pin);
-        }
-        let tip = lang.text("pane-close-tooltip");
-        if close_cross(
-            ui,
-            t,
-            pos2(r.max.x - 16.0, r.center().y),
-            egui::Id::new("left_pane_close"),
-            tip,
-        ) {
-            self.settings.sidebar.open = false;
-        }
-    }
-
-    pub(in crate::app) fn right_pane(&mut self, ui: &mut Ui) {
-        let Some(pane) = self.settings.workspace.right_pane else {
-            return;
-        };
-        let t = Tokens::get(ui.ctx());
-        let response = egui::Panel::right("right_pane")
-            .resizable(true)
-            .default_size(self.settings.workspace.right_width_points)
-            .size_range(MIN_RIGHT_PANE_WIDTH_POINTS..=MAX_RIGHT_PANE_WIDTH_POINTS)
-            .frame(egui::Frame::NONE.fill(t.pane))
-            .show(ui, |ui| {
-                self.right_header(ui, pane, &t);
-                let rect = ui.available_rect_before_wrap();
-                let mut body =
-                    ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(*ui.layout()));
-                match pane {
-                    #[cfg(feature = "assistant")]
-                    RightPane::Assistant => self.assistant_pane(&mut body, &t),
-                    #[cfg(not(feature = "assistant"))]
-                    RightPane::Assistant => {
-                        body.weak("This build of GlobeCraft has no assistant.");
-                    }
-                    RightPane::Legend => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("legend-scroll")
-                            .auto_shrink([false, false])
-                            .show(&mut body, |ui| {
-                                egui::Frame::NONE
-                                    .inner_margin(egui::Margin::symmetric(12, 8))
-                                    .show(ui, |ui| self.legend_pane(ui));
-                            });
-                    }
-                    RightPane::Explorer => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("explorer-scroll")
-                            .auto_shrink([false, false])
-                            .show(&mut body, |ui| {
-                                egui::Frame::NONE
-                                    .inner_margin(egui::Margin::symmetric(12, 8))
-                                    .show(ui, |ui| self.explorer_pane(ui));
-                            });
-                    }
-                    RightPane::Measure => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("measure-scroll")
-                            .auto_shrink([false, false])
-                            .show(&mut body, |ui| {
-                                egui::Frame::NONE
-                                    .inner_margin(egui::Margin::symmetric(12, 8))
-                                    .show(ui, |ui| self.measure_pane(ui));
-                            });
-                    }
-                }
-                ui.advance_cursor_after_rect(rect);
-            });
-        if !ui.input(|i| i.pointer.any_down()) {
-            self.settings.workspace.right_width_points = response.response.rect.width();
-        }
-    }
-
-    fn right_header(&mut self, ui: &mut Ui, current: RightPane, t: &Tokens) {
-        let r = header_strip(ui, t);
-        let lang = self.lang;
-        let mut x = r.min.x + 6.0;
-        for pane in self.settings.workspace.right_open.clone() {
-            let name = lang.text(right_title(pane));
-            let on = pane == current;
-            let w = text_w(ui, name, if on { semibold(12.5) } else { regular(12.5) }) + 18.0 + 22.0;
-            let tr = Rect::from_min_size(pos2(x, r.min.y), vec2(w, r.height()));
-            let label_rect = Rect::from_min_max(tr.min, pos2(tr.max.x - 22.0, tr.max.y));
-            let resp = header_tab(
-                ui,
-                t,
-                label_rect,
-                super::focus::right_tab_id(pane),
-                name,
-                None,
+                icons_only.then_some(tab_icon(tab)),
                 on,
             );
             if on {
                 ui.painter().line_segment(
                     [
-                        pos2(label_rect.max.x - 4.0, r.max.y - 1.5),
-                        pos2(tr.max.x - 4.0, r.max.y - 1.5),
+                        pos2(place.label.min.x + 4.0, r.max.y - 1.5),
+                        pos2(place.right() - 4.0, r.max.y - 1.5),
                     ],
                     Stroke::new(2.0, t.accent),
                 );
             }
-            let tip = lang.format("pane-close-named-tooltip", &[("name", name.into())]);
-            if close_cross(
-                ui,
-                t,
-                pos2(tr.max.x - 12.0, tr.center().y),
-                egui::Id::new(("right_pane_close", pane as u8)),
-                &tip,
-            ) {
-                self.settings.workspace.close_right(pane);
-            } else if resp.clicked() && !on {
-                self.settings.workspace.open_right(pane);
+            // egui reports a drag only past its click distance: a click stays a click.
+            let pointer_x = ui.input(|i| i.pointer.latest_pos()).map(|p| p.x);
+            if resp.dragged()
+                && let Some(x) = pointer_x
+            {
+                dragging = Some((tab, x));
             }
-            x += w + 2.0;
+            if resp.drag_stopped()
+                && let Some(x) = pointer_x
+            {
+                dropped = Some((tab, x));
+            }
+            if place.close_w > 0.0 {
+                let tip = lang.format("pane-close-named-tooltip", &[("name", name.into())]);
+                if close_cross(
+                    ui,
+                    t,
+                    pos2(place.right() - CLOSE_W / 2.0, r.center().y),
+                    egui::Id::new(("side_pane_close", tab.code())),
+                    &tip,
+                ) {
+                    self.close_tab(tab);
+                    continue;
+                }
+            }
+            if resp.clicked() && !on {
+                self.settings.workspace.open_right(tab);
+            }
         }
+        let others = |tab: PaneTab| -> Vec<TabPlace> {
+            places.iter().copied().filter(|p| p.tab != tab).collect()
+        };
+        let centres =
+            |others: &[TabPlace]| -> Vec<f32> { others.iter().map(TabPlace::centre_x).collect() };
+        // Where a dragged tab would land: a line between the tabs.
+        if let Some((tab, x)) = dragging {
+            let others = others(tab);
+            let index = drop_index(&centres(&others), x);
+            let line_x = match others.get(index) {
+                Some(place) => place.label.min.x - 1.0,
+                None => others.last().map_or(r.min.x + 6.0, |p| p.right() + 1.0),
+            };
+            ui.painter().line_segment(
+                [pos2(line_x, r.min.y + 5.0), pos2(line_x, r.max.y - 5.0)],
+                Stroke::new(2.0, t.accent),
+            );
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        if let Some((tab, x)) = dropped {
+            let to = drop_index(&centres(&others(tab)), x);
+            self.run_reporting("ui.pane.moveTab", json!({"tab": tab.code(), "to": to}));
+        }
+        if current == PaneTab::Places {
+            let mut pin = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_max(
+                        pos2(r.max.x - HEADER_BUTTON_W - pin_w, r.min.y),
+                        pos2(r.max.x - HEADER_BUTTON_W, r.max.y),
+                    ))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            self.pin_toggle(&mut pin);
+        }
+        self.side_button(ui, t, r);
+    }
+
+    /// Moves the pane to the other side of the globe; its menu docks it on either.
+    fn side_button(&mut self, ui: &mut Ui, t: &Tokens, header: Rect) {
+        let lang = self.lang;
+        let side = self.settings.workspace.pane_side;
+        let br = Rect::from_center_size(
+            pos2(header.max.x - HEADER_BUTTON_W / 2.0, header.center().y),
+            vec2(22.0, 22.0),
+        );
+        let resp = ui.interact(br, egui::Id::new("side_pane_side"), Sense::click());
+        let tip = lang.text("pane-side-switch-tooltip");
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+        if resp.hovered() {
+            ui.painter().rect_filled(br, CornerRadius::same(4), t.hover);
+        }
+        let icon = match side {
+            PaneSide::Right => "chevron_left",
+            PaneSide::Left => "chevron_right",
+        };
+        icons::paint(
+            ui.painter(),
+            br.shrink(4.0),
+            icon,
+            t.text_dim,
+            t.icon_accent,
+        );
+        let resp = resp.on_hover_text(tip);
+        if resp.clicked() {
+            self.run_reporting("ui.pane.side", Value::Null);
+        }
+        resp.context_menu(|ui| {
+            for (option, key) in [
+                (PaneSide::Left, "pane-side-left"),
+                (PaneSide::Right, "pane-side-right"),
+            ] {
+                if ui.radio(side == option, lang.text(key)).clicked() {
+                    self.run_reporting("ui.pane.side", json!({"side": option.code()}));
+                    ui.close();
+                }
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_tab_lands_between_the_tabs_it_passed() {
+        let centres = [50.0, 150.0, 250.0];
+        assert_eq!(drop_index(&centres, 10.0), 0);
+        assert_eq!(drop_index(&centres, 120.0), 1);
+        assert_eq!(drop_index(&centres, 900.0), 3);
     }
 }

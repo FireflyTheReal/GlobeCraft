@@ -52,6 +52,7 @@ impl App {
                     desc: p.description.unwrap_or_default(),
                     lat,
                     lon,
+                    time: None,
                 });
                 self.places.selection = Some(node.id());
                 self.places.items.insert(parent, node);
@@ -87,10 +88,8 @@ impl App {
                     .find_by_name(&name)
                     .map(PlaceNode::id)
                     .ok_or_else(|| format!("no place named '{name}'"))?;
-                self.places.items.remove(id);
-                if self.places.selection == Some(id) {
-                    self.places.selection = None;
-                }
+                self.places
+                    .delete(id, self.measure.paths.undo_steps(), false);
                 json!({"removed": name})
             }
             PlacesCommand::Open => {

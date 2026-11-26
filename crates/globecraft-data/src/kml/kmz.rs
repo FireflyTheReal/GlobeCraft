@@ -17,7 +17,7 @@ pub(super) fn decode_from(source: impl Read + std::io::Seek) -> Result<String, c
     let mut archive = ZipArchive::new(source)?;
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        if !entry.name().to_ascii_lowercase().ends_with(".kml") {
+        if !entry.name()?.to_ascii_lowercase().ends_with(".kml") {
             continue;
         }
         let mut xml = Vec::new();

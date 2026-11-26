@@ -163,6 +163,7 @@ pub(in crate::app) const EXTRAS: &[(&str, &str)] = &[
     ("explore.navigate", "camera.zoomIn"),
     ("explore.navigate", "camera.zoomOut"),
     ("explore.navigate", "camera.autoRotate"),
+    ("explore.navigate", "camera.lookAround"),
     ("explore.navigate", "ui.explorer"),
     ("explore.places", "places.save"),
     ("explore.places", "places.saveAs"),
@@ -181,7 +182,6 @@ pub(in crate::app) const EXTRAS: &[(&str, &str)] = &[
     ("view.panes", "ui.pane.places"),
     ("view.panes", "ui.tileDiagnostics"),
     ("view.window", "ui.ribbon"),
-    ("view.window", "ui.minimize"),
 ];
 
 /// Whether a tool is on the ribbon by default.

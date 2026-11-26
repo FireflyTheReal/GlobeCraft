@@ -157,12 +157,13 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         heading: 25.0,
         alt: 14000.0,
         tilt: 0.0,
+        look_up: 0.0,
     }
     .basis_for_model(FRAME_WIDTH_PX as f64 / FRAME_HEIGHT_PX as f64, model);
     let config = RenderCfg {
         sky: None,
         provider: Provider::Satellite,
-        terrain: terrain.then(|| TerrainCfg::new(1.5)),
+        terrain: terrain.then(|| TerrainCfg::new(1.5, 1.0)),
         rel: 0,
         grid: true,
         grid_step: 10.0,
@@ -172,7 +173,11 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
         level_blend: true,
         fixed_level: None,
         night_lights: None,
-        stars: true,
+        stars: None,
+        sky_behind: false,
+        clouds: None,
+        glint: None,
+        aurora: None,
     };
     // Global overview warming must also cover parts of the globe that were
     // behind the camera at startup, including the dateline and poles.
@@ -184,6 +189,7 @@ fn warm_cpu_frame_for_model(model: globecraft_core::earth_model::EarthModel, ter
                 heading: 25.0,
                 alt: 14_000.0,
                 tilt: 0.0,
+                look_up: 0.0,
             }
             .basis_for_model(FRAME_WIDTH_PX as f64 / FRAME_HEIGHT_PX as f64, model);
             black_box(render_frame(
@@ -268,6 +274,7 @@ fn warm_gpu_frame_time() {
             heading: 25.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let request = crate::worker::RenderRequest {
             width: w,
@@ -288,7 +295,11 @@ fn warm_gpu_frame_time() {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: None,
-                stars: true,
+                stars: None,
+                sky_behind: false,
+                clouds: None,
+                glint: None,
+                aurora: None,
             },
             overlays: None,
             aircraft: None,
@@ -482,6 +493,7 @@ fn warm_gpu_frame_time() {
             heading: 25.0,
             alt: 14000.0,
             tilt: 0.0,
+            look_up: 0.0,
         };
         let request = crate::worker::RenderRequest {
             width: 2000,
@@ -501,7 +513,11 @@ fn warm_gpu_frame_time() {
                 level_blend: true,
                 fixed_level: None,
                 night_lights: None,
-                stars: true,
+                stars: None,
+                sky_behind: false,
+                clouds: None,
+                glint: None,
+                aurora: None,
             },
             overlays: None,
             aircraft: None,

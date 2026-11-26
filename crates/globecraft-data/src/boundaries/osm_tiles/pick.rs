@@ -8,7 +8,7 @@ use super::content::{MAX_MERCATOR_LAT, TileKey};
 pub(super) const MAX_ZOOM: u8 = 12;
 const EARTH_CIRCUMFERENCE_KM: f64 = 40_075.0;
 const EARTH_RADIUS_KM: f64 = 6_371.0;
-const KM_PER_DEGREE: f64 = 111.32;
+pub(crate) const KM_PER_DEGREE: f64 = 111.32;
 /// Ground width shown per kilometre of camera altitude, for the default field of view
 /// (as in `municipal::topology`).
 const VIEW_WIDTH_PER_ALTITUDE: f64 = 1.5;
@@ -26,8 +26,15 @@ const DETAIL_TILES_ACROSS_VIEW: f64 = 4.0;
 /// a tilted camera sees farther than straight down.
 const RADIUS_PER_ALTITUDE: f64 = 1.0;
 /// Rays steeper than this from straight down reach far toward the horizon; the
-/// tilted area stops there (the horizon limit applies as well).
-const TILTED_REACH_MAX_RAD: f64 = 1.45;
+/// tilted area stops there (the horizon limit applies as well). About 86°: a degree
+/// past the steepest tilt (`MAX_TILT_DEG`, 85°), or the point looked at would lie
+/// beyond the area (1.45, 83°, until the tilt went past it on 2026-11-17).
+const TILTED_REACH_MAX_RAD: f64 = 1.5;
+/// The widest window [`seen_disc`] covers the bottom corners of (width over height).
+const WIDEST_ASPECT: f64 = 2.2;
+/// [`seen_disc`] reaches this much farther than the screen's edges, so tiles at the
+/// edge do not fade in and out with every small move.
+const DISC_MARGIN: f64 = 0.1;
 /// More tiles than this go one level up instead.
 const MAX_TILES: usize = 96;
 /// OpenMapTiles draws its zoom 0–4 borders from Natural Earth, whose state lines at
@@ -110,12 +117,14 @@ pub(crate) fn view_radius_deg(altitude_km: f64, tilt_deg: f64) -> f64 {
 
 /// The disc of ground a view sees: its centre and radius (degrees). Straight down
 /// that is [`view_radius_deg`] around the view's centre. A tilted view sees far
-/// ahead and little behind, so its disc lies ahead, between the ground at the
-/// bottom and at the top edge of the screen: a disc around the centre spent most
-/// of its tiles behind the camera, and the cap on tiles left the far ground empty
-/// (reported 2026-11-16).
-/// shortcut: the far corners of a wide, steeply tilted view lie outside the disc;
-/// take the view's ground outline if empty corners show.
+/// ahead and little behind, so its disc lies ahead: a disc around the centre spent
+/// most of its tiles behind the camera, and the cap on tiles left the far ground
+/// empty (reported 2026-11-16). It is the smallest disc that holds the ground at the
+/// top of the screen and at both bottom corners: one between the top and the bottom
+/// edge left the bottom corners out, and their tiles faded away as the view tilted
+/// (user, 2026-11-17).
+/// The far corners of a wide, steeply tilted view lie outside it: see
+/// [`far_corners_disc`].
 pub(crate) fn seen_disc(view: crate::ViewQuery) -> ((f64, f64), f64) {
     let centre = (view.latitude, view.longitude);
     let whole = view_radius_deg(view.altitude_km, view.tilt_deg);
@@ -124,20 +133,64 @@ pub(crate) fn seen_disc(view: crate::ViewQuery) -> ((f64, f64), f64) {
     }
     let altitude_km = view.altitude_km.max(0.05);
     let tilt = view.tilt_deg.to_radians();
-    let half_view = globecraft_core::VERTICAL_FOV_HALF_TAN.atan();
+    let tan_v = globecraft_core::VERTICAL_FOV_HALF_TAN;
+    let half_view = tan_v.atan();
     // Along the ground from under the camera, whose height is `altitude · cos tilt`.
     let height_km = altitude_km * tilt.cos();
     let looked_at = height_km * tilt.tan();
     let far = height_km * (tilt + half_view).min(TILTED_REACH_MAX_RAD).tan();
+    // The bottom corners: as far ahead as the bottom edge, and out to the side.
     let near = height_km * (tilt - half_view).tan();
-    let radius_km = ((far - near) / 2.0).max(altitude_km * RADIUS_PER_ALTITUDE);
-    let ahead_km = ((far + near) / 2.0 - looked_at).max(0.0);
-    let radius = (radius_km / KM_PER_DEGREE).min(whole);
-    let ahead_km = ahead_km.min(whole * KM_PER_DEGREE);
+    let side = height_km * WIDEST_ASPECT * tan_v / (tilt.cos() + tan_v * tilt.sin());
+    // The disc's centre on the line ahead, as far from the top point as from the
+    // corners.
+    let middle = (far * far - near * near - side * side) / (2.0 * (far - near));
+    let radius_km = ((far - middle) * (1.0 + DISC_MARGIN)).max(altitude_km * RADIUS_PER_ALTITUDE);
+    let horizon_deg = (EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude_km))
+        .acos()
+        .to_degrees();
+    let radius = (radius_km / KM_PER_DEGREE).min(horizon_deg.max(whole));
+    let ahead_km = (middle - looked_at).clamp(-radius * KM_PER_DEGREE, whole * KM_PER_DEGREE);
     (
         globecraft_core::math::destination(centre.0, centre.1, view.heading_deg, ahead_km),
         radius,
     )
+}
+
+/// A view tilted at least this far (degrees) has top corners outside [`seen_disc`].
+const FAR_CORNERS_MIN_TILT_DEG: f64 = 45.0;
+
+/// The ground toward the top corners of a wide tilted view (roadmap B6): a disc around
+/// the middle of the screen's top edge, out to the corners (they lie out to the side
+/// by up to some 18 times the camera's height at 85°). Covering them with
+/// [`seen_disc`] would double its size and coarsen the tiles near the camera; layers
+/// fill it with tiles a level coarser instead. `None` for a view little tilted.
+pub(crate) fn far_corners_disc(view: crate::ViewQuery) -> Option<((f64, f64), f64)> {
+    if view.tilt_deg < FAR_CORNERS_MIN_TILT_DEG {
+        return None;
+    }
+    let altitude_km = view.altitude_km.max(0.05);
+    let tilt = view.tilt_deg.to_radians();
+    let tan_v = globecraft_core::VERTICAL_FOV_HALF_TAN;
+    let height_km = altitude_km * tilt.cos();
+    let top = (tilt + tan_v.atan()).min(TILTED_REACH_MAX_RAD);
+    let far = height_km * top.tan();
+    // A ray to a top corner leans out to the side by the window's width over its depth.
+    let side = height_km * WIDEST_ASPECT * tan_v * (top - tilt).cos() / top.cos();
+    let horizon_deg = (EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude_km))
+        .acos()
+        .to_degrees();
+    let radius = (side * (1.0 + DISC_MARGIN) / KM_PER_DEGREE).min(horizon_deg);
+    let ahead_km = far - height_km * tilt.tan();
+    Some((
+        globecraft_core::math::destination(
+            view.latitude,
+            view.longitude,
+            view.heading_deg,
+            ahead_km,
+        ),
+        radius,
+    ))
 }
 
 /// The highest camera altitude at `lat` whose tiles hold municipal lines (the
@@ -212,6 +265,23 @@ mod tests {
         assert!(radius < 0.6 * around_centre, "{radius} {around_centre}");
         assert!(latitude + radius > 48.0 + 0.9 * around_centre * 0.8);
         assert!(latitude - radius < 48.0, "the looked-at point stays inside");
+        assert!(
+            TILTED_REACH_MAX_RAD > globecraft_core::camera::MAX_TILT_DEG.to_radians(),
+            "the steepest view's looked-at point is inside its area"
+        );
+        // The bottom corners of a wide window are inside too (2 km away at 65°, the
+        // camera is 0.85 km up; the bottom edge 0.77 km ahead of the point below it,
+        // the corners about 0.96 km to each side).
+        let below =
+            globecraft_core::math::destination(48.0, 11.0, 180.0, 2.0 * 65f64.to_radians().sin());
+        let corner = globecraft_core::math::destination(below.0, below.1, 0.0, 0.77);
+        let corner = globecraft_core::math::destination(corner.0, corner.1, 90.0, 0.96);
+        let off_deg =
+            globecraft_core::math::haversine_km(corner, (latitude, longitude)) / KM_PER_DEGREE;
+        assert!(
+            off_deg < radius,
+            "bottom corner {off_deg}° from the centre, radius {radius}°"
+        );
         // Looking east it lies east.
         view.heading_deg = 90.0;
         let ((latitude, longitude), _) = seen_disc(view);

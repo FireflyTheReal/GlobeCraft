@@ -20,7 +20,8 @@ fn tree_scroll_area(height_points: f32) -> egui::ScrollArea {
 }
 
 fn compact_tree_style(ui: &mut egui::Ui) {
-    let row_height = ui.text_style_height(&egui::TextStyle::Body) + 2.0;
+    // Rows stay at least Apple's 20 pt minimum target (HIG: Accessibility, Mobility).
+    let row_height = (ui.text_style_height(&egui::TextStyle::Body) + 2.0).max(20.0);
     let spacing = ui.spacing_mut();
     spacing.indent = TREE_INDENT_POINTS;
     spacing.item_spacing = egui::vec2(TREE_ITEM_GAP_POINTS, 0.0);
@@ -82,12 +83,14 @@ fn description_editor(
         .min_scrolled_height(height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add(
+            let field = ui.add(
                 egui::TextEdit::multiline(description)
                     .hint_text(lang.text("places-description-placeholder"))
                     .desired_rows(DESCRIPTION_ROWS)
                     .desired_width(f32::INFINITY),
-            )
+            );
+            super::widgets::name_widget(&field, lang.text("places-description-placeholder"));
+            field
         })
 }
 
@@ -230,11 +233,13 @@ impl App {
         let mut goto = None;
         let mut action = None;
         ui.horizontal_wrapped(|ui| {
-            ui.add(
+            let name = ui.add(
                 egui::TextEdit::singleline(&mut self.places.new_name)
                     .hint_text(lang.text("placemarks-name-placeholder"))
+                    .min_size(egui::vec2(0.0, 20.0))
                     .desired_width(110.0),
             );
+            super::widgets::name_widget(&name, lang.text("placemarks-name-placeholder"));
             if super::icons::button(ui, "point_tool", lang.text("placemarks-add-center-action"))
                 .clicked()
             {
@@ -294,7 +299,8 @@ impl App {
         }
         match action {
             Some(Action::Delete(id)) => {
-                self.places.items.remove(id);
+                self.places
+                    .delete(id, self.measure.paths.undo_steps(), false);
                 self.places.selection = None;
             }
             Some(Action::Move(id, parent)) => {
@@ -331,6 +337,7 @@ fn add_center_placemark(
         desc: String::new(),
         lat: center.0,
         lon: center.1,
+        time: None,
     });
     *selection = Some(node.id());
     places.insert(parent, node);

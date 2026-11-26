@@ -227,8 +227,8 @@ class NativePackagingTests(unittest.TestCase):
         self.assertEqual(flatpak["app-id"], tools.APP_ID)
         self.assertIn("--env=GLOBECRAFT_UPDATE_MODE=manual", flatpak["finish-args"])
         command = flatpak["modules"][0]["build-commands"][0]
-        # Everything but the GPU renderer: a bare --no-default-features would also
-        # leave out the updater, the assistant and the live feeds.
+        # Every optional part: a bare --no-default-features would leave out the
+        # updater, the assistant, the live feeds and the GPU renderer.
         for argument in ("--locked", "--offline", "--no-default-features --features standard"):
             self.assertIn(argument, command)
         snap = json.loads((release.ROOT / "packaging/snapcraft.json").read_text())

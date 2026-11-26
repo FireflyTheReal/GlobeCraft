@@ -8,6 +8,7 @@ pub mod layers;
 mod lenient;
 pub mod map_style;
 pub mod navigation;
+pub mod render_quality;
 pub mod screenshot;
 pub mod sidebar;
 pub mod sky;
@@ -91,14 +92,25 @@ pub struct Settings {
     pub uncap_fps: bool,
     /// Work offline: no request leaves GlobeCraft; tiles and data come from disk only.
     pub offline: bool,
+    /// Show the timeline's times in UTC instead of this computer's time zone.
+    pub utc_times: bool,
     /// Keep service and assistant keys in the system keychain (Settings › Keys).
     pub keys_in_keychain: bool,
     /// Lets the globe use the GPU renderer where it is on by default (Apple
     /// Silicon, beta); off keeps the CPU renderer. Read at startup.
     pub gpu_globe: bool,
-    /// The resolution a moving view renders at, as a share of the full one (0.2–1);
-    /// `None` chooses by the view (0.4, or 0.28 with relief).
+    /// How sharp the globe renders: the screen's pixels, HD or SD.
+    pub render_quality: render_quality::RenderQuality,
+    /// The resolution a moving view without relief renders at, as a share of the full
+    /// one (0.2–1); `None`: automatic (0.4).
     pub motion_resolution: Option<f32>,
+    /// The same for a view with 3D relief (it also applies while relief grows in);
+    /// `None`: automatic (0.28).
+    pub motion_resolution_relief: Option<f32>,
+    /// 3D terrain changes smoothly: heights and shading blend between detail
+    /// levels, arriving tiles grow in, and relief fades out from 100 to 200 km. Off:
+    /// each shows at once and relief stops at 150 km, for speed.
+    pub smooth_relief: bool,
     pub grid_numbers: bool,
     pub hide_navigation_controls: bool,
     /// Camera altitude (km) below which state/province lines and their names
@@ -174,9 +186,13 @@ impl Default for Settings {
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             offline: false,
+            utc_times: false,
             keys_in_keychain: false,
             gpu_globe: true,
+            render_quality: render_quality::RenderQuality::Screen,
             motion_resolution: None,
+            motion_resolution_relief: None,
+            smooth_relief: true,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,
@@ -211,7 +227,60 @@ fn migrate(value: &mut serde_json::Value) {
         map.entry("experience")
             .or_insert_with(|| serde_json::Value::from("advanced"));
     }
+    if let Some(workspace) = map.get("workspace").and_then(|w| w.as_object())
+        && !workspace.contains_key("pane_side")
+    {
+        let workspace = migrate_left_pane(workspace, map.get("sidebar"));
+        map.insert("workspace".to_owned(), workspace.into());
+    }
     map.insert("version".to_owned(), SETTINGS_VERSION.into());
+}
+
+/// Files from before the one side pane (2026-11-19) had a left pane of Layers and
+/// Places (`sidebar.open`, `sidebar.panel`): they become the side pane's first tabs.
+fn migrate_left_pane(
+    workspace: &serde_json::Map<String, serde_json::Value>,
+    sidebar: Option<&serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::Value;
+    let mut workspace = workspace.clone();
+    let left_open = sidebar
+        .and_then(|s| s.get("open"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let panel = match sidebar.and_then(|s| s.get("panel")).and_then(Value::as_str) {
+        Some("layers" | "data") => "layers",
+        _ => "places",
+    };
+    let mut open: Vec<Value> = if left_open {
+        vec!["layers".into(), "places".into()]
+    } else {
+        Vec::new()
+    };
+    for pane in workspace
+        .get("right_open")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if !open.contains(pane) {
+            open.push(pane.clone());
+        }
+    }
+    workspace.insert("right_open".to_owned(), open.into());
+    // The one pane takes the wider of the two it replaces.
+    let width = |value: Option<&Value>| value.and_then(Value::as_f64);
+    if left_open
+        && let Some(left) = width(sidebar.and_then(|s| s.get("width_points")))
+        && width(workspace.get("right_width_points")).is_none_or(|right| left > right)
+    {
+        workspace.insert("right_width_points".to_owned(), left.into());
+    }
+    if left_open && workspace.get("right_pane").is_none_or(Value::is_null) {
+        workspace.insert("right_pane".to_owned(), panel.into());
+    }
+    workspace.insert("pane_side".to_owned(), "right".into());
+    workspace
 }
 
 /// `settings.json.bak` beside `path`: the last settings file that loaded.
@@ -424,7 +493,7 @@ mod tests {
         running.set_layer_visible(MapLayer::Flights, true);
         running.set_layer_visible(MapLayer::Radar, true);
         running.workspace.ribbon_tab = globecraft_core::commands::Tab::Help;
-        running.workspace.open_right(workspace::RightPane::Legend);
+        running.workspace.open_right(workspace::PaneTab::Legend);
         running.coordinate_display.precision = 1;
         for settings in [Settings::default(), customised, running] {
             let saved = serde_json::to_value(&settings).unwrap();
@@ -524,8 +593,12 @@ mod tests {
                 .find(|(from, _)| old.as_str() == Some(from))
                 .map(|(_, to)| Value::from(*to))
         };
+        // Values read into another place on purpose (the left pane became the side
+        // pane's first tabs, 2026-11-19; see `migrate_left_pane`).
+        let moved = ["/sidebar/open", "/sidebar/panel", "/sidebar/width_points"];
         let lost: Vec<String> = old_leaves
             .iter()
+            .filter(|(path, _)| !moved.contains(&path.as_str()))
             .filter(|(path, value)| {
                 let expected = migrated(path, value).unwrap_or_else(|| value.clone());
                 new_leaves.get(path) != Some(&expected)
@@ -826,9 +899,13 @@ mod tests {
             map_style: map_style::MapStyle::default(),
             uncap_fps: false,
             offline: false,
+            utc_times: false,
             keys_in_keychain: false,
             gpu_globe: true,
+            render_quality: render_quality::RenderQuality::Screen,
             motion_resolution: None,
+            motion_resolution_relief: None,
+            smooth_relief: true,
             grid_numbers: false,
             hide_navigation_controls: false,
             state_max_altitude_km: STATE_MAX_ALTITUDE_DEFAULT_KM,

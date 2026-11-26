@@ -141,7 +141,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "fly",
         Explore,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.15..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"},"tilt_deg":{"type":"number","description":"View tilt from straight down, 0..80; default keeps the current tilt"}},"required":["lat","lon"]}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number","description":"Latitude in degrees, -90..90"},"lon":{"type":"number","description":"Longitude in degrees, -180..180"},"altitude_km":{"type":"number","description":"Camera altitude above the surface in km (0.03..40000); default keeps the current altitude"},"heading_deg":{"type":"number","description":"View heading clockwise from north"},"tilt_deg":{"type":"number","description":"View tilt from straight down, 0..85; default keeps the current tilt"}},"required":["lat","lon"]}"#
     ),
     command!(
         "camera.set",
@@ -149,7 +149,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "goto_xy",
         Explore,
         View,
-        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"},"tilt_deg":{"type":"number","description":"0 (straight down) .. 80"}}}"#
+        r#"{"type":"object","properties":{"lat":{"type":"number"},"lon":{"type":"number"},"altitude_km":{"type":"number"},"heading_deg":{"type":"number"},"tilt_deg":{"type":"number","description":"0 (straight down) .. 85"}}}"#
     ),
     command!(
         "search.place",
@@ -197,7 +197,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         "terrain",
         Explore,
         View,
-        r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..80 (less close to the ground)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
+        r#"{"type":"object","properties":{"tilt_deg":{"type":"number","description":"Tilt from straight down, 0..85 (less close to the ground and far out)"},"step":{"type":"number","description":"Degrees to add to the current tilt"}}}"#
+    ),
+    command!(
+        "camera.lookAround",
+        "camera-look-around",
+        "eye",
+        Explore,
+        View,
+        r#"{"type":"object","properties":{"turn_deg":{"type":"number","description":"Degrees to turn the view to the right (negative: left), about the camera. Without either angle the command switches look-around dragging on or off"},"raise_deg":{"type":"number","description":"Degrees to raise the view (negative: lower it), about the camera: past the horizon toward the sky"}}}"#
     ),
     command!(
         "camera.topDown",
@@ -490,6 +498,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"layer":{"type":"string","enum":["country_borders","state_borders","place_labels","municipal_borders","terrain","grid","grid_labels","time_zones","atmosphere","sunlight","stars","milky_way","radar","clouds","aurora","flights","vessels","satellites","roads","buildings","traffic","night_lights","railways","ferries","airports","points_of_interest","peaks","waters","sea_names","parks"]},"visible":{"type":"boolean","description":"Omit to toggle"}},"required":["layer"]}"#
     ),
     command!(
+        "layer.cloudResolution",
+        "layer-cloud-resolution",
+        "cloud",
+        Live,
+        View,
+        r#"{"type":"object","properties":{"pixels":{"type":"integer","enum":[2048,4096,8192],"description":"The cloud map's width: finer shows more detail close in, coarser loads and plays faster on the timeline"}},"required":["pixels"]}"#
+    ),
+    command!(
         "layer.opacity",
         "layer-opacity",
         "transparency",
@@ -605,6 +621,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         NO_PARAMS
     ),
     command!(
+        "ui.pane.side",
+        "ui-pane-side",
+        "pane",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"side":{"type":"string","enum":["left","right"],"description":"The side of the globe the side pane is on; omit to switch sides"}}}"#
+    ),
+    command!(
+        "ui.pane.moveTab",
+        "ui-pane-move-tab",
+        "pane",
+        View,
+        Interface,
+        r#"{"type":"object","properties":{"tab":{"type":"string","enum":["assistant","measure","legend","explorer","layers","places","flight","satellite","here"]},"to":{"type":"integer","minimum":0,"description":"The tab's new position, 0 first"}},"required":["tab","to"]}"#
+    ),
+    command!(
         "ui.navigationControls",
         "ui-navigation-controls",
         "nav_controls",
@@ -717,6 +749,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"hours":{"type":"number","description":"Timed points (earthquakes…) show when they happened within this many hours before the app's time; 0 shows all"}},"required":["hours"]}"#
     ),
     command!(
+        "time.range",
+        "time-range",
+        "history",
+        View,
+        View,
+        r#"{"type":"object","properties":{"days":{"type":"number","description":"How many days the timeline's track spans, 1 to 3650"}},"required":["days"]}"#
+    ),
+    command!(
+        "time.loop",
+        "time-loop",
+        "loop",
+        Live,
+        View,
+        r#"{"type":"object","properties":{"from":{"description":"The loop's start: an ISO 8601 date or seconds since 1970"},"to":{"description":"The loop's end"}},"description":"While playing, the time goes round from 'from' to 'to'; without both, the loop ends"}"#
+    ),
+    command!(
         "ui.tileDiagnostics",
         "ui-tile-diagnostics",
         "stats",
@@ -733,6 +781,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         r#"{"type":"object","properties":{"style":{"type":"string","enum":["globe","classic"],"description":"globe: mini globe in the rotation ring; classic: ring, move pad and zoom slider"}},"required":["style"]}"#
     ),
     command!("ui.ribbon", "ui-ribbon", "up", View, Interface, NO_PARAMS),
+    command!(
+        "ui.ribbonCompact",
+        "ui-ribbon-compact",
+        "minimize",
+        View,
+        Interface,
+        NO_PARAMS
+    ),
     command!(
         "ui.focusNext",
         "ui-focus-next",

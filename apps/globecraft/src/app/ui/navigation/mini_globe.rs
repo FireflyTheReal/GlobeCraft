@@ -91,19 +91,25 @@ impl MiniGlobe {
             rect.left_top(),
         ];
         let mut points = Vec::with_capacity(4 * VIEW_EDGE_SAMPLES);
+        let mut on_ground = false;
         for (i, &from) in corners.iter().enumerate() {
             let to = corners[(i + 1) % corners.len()];
             for step in 0..VIEW_EDGE_SAMPLES {
                 let screen = from + (to - from) * (step as f32 / VIEW_EDGE_SAMPLES as f32);
-                let ground = basis
-                    .pick(rect, screen)
-                    .or_else(|| horizon_point(basis, rect, screen));
+                let hit = basis.pick(rect, screen);
+                on_ground |= hit.is_some();
+                let ground = hit.or_else(|| horizon_point(basis, rect, screen));
                 if let Some((lat, lon)) = ground
                     && let Some(local) = self.local(ll_to_v3(lat, lon))
                 {
                     points.push(local);
                 }
             }
+        }
+        // A view of the sky alone shows no ground: its horizon points made a ring of
+        // the whole horizon (looking up past the ground, user 2026-11-19).
+        if !on_ground && basis.pick(rect, rect.center()).is_none() {
+            return Vec::new();
         }
         let hull = convex_hull(points);
         let mut outline = Vec::with_capacity(hull.len() * 2);
