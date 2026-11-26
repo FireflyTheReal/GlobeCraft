@@ -151,7 +151,8 @@ pub struct FrameRenderer {
 /// weigh more per pixel in a small one. Where the walk wins `RELIEF_SETTLED_WINS` checks in a row clearly
 /// (the frame without it taking `RELIEF_CLEAR_WIN` times as long or longer), the checks
 /// stop: since 2026-11-24 a frame without it took 4–6 times as long on an M1 (about
-/// 0.6–1 s at 1920×1200 against 0.14–0.18 s), a hitch every 20 relief frames.
+/// 0.6–1 s at 1920×1200 against 0.14–0.18 s), a hitch every 20 relief frames. One
+/// decisive win (`RELIEF_DECISIVE_WIN`) settles it at the first check.
 #[cfg(feature = "gpu")]
 #[derive(Default)]
 struct ReliefTiming {
@@ -197,6 +198,12 @@ const RELIEF_LOSSES: u32 = 3;
 const RELIEF_SETTLED_WINS: u32 = 3;
 #[cfg(feature = "gpu")]
 const RELIEF_CLEAR_WIN: f64 = 1.5;
+/// A win this clear (the frame without the walk taking this many times as long or
+/// longer) settles it at once: each check is a frame drawn without the walk, on an M1
+/// 106–124 ms at 616×386 against 23–46 with it, and its overlays without the drawn
+/// ground 53–68 ms more (2026-11-26).
+#[cfg(feature = "gpu")]
+const RELIEF_DECISIVE_WIN: f64 = 3.0;
 
 #[cfg(feature = "gpu")]
 impl ReliefTiming {
@@ -229,7 +236,8 @@ impl ReliefTiming {
         } else {
             0
         };
-        self.settled = self.wins >= RELIEF_SETTLED_WINS;
+        self.settled =
+            self.wins >= RELIEF_SETTLED_WINS || seconds_per_megapixel >= with * RELIEF_DECISIVE_WIN;
         if (self.losses >= RELIEF_LOSSES || seconds_per_megapixel * 2.0 < with) && !self.off {
             self.off = true;
             globecraft_data::log_line!(
@@ -583,10 +591,14 @@ mod relief_timing_tests {
         // Clear wins in a row: no more frames without the walk; a narrow win in
         // between starts the count again.
         let mut clear = ReliefTiming::default();
-        run(&mut clear, 0.1, &[0.6, 0.6, 0.12, 0.6, 0.6]);
+        run(&mut clear, 0.1, &[0.2, 0.2, 0.12, 0.2, 0.2]);
         assert!(!clear.settled);
-        run(&mut clear, 0.1, &[0.6]);
+        run(&mut clear, 0.1, &[0.2]);
         assert!(clear.settled);
+        // A decisive win settles it at the first check.
+        let mut decisive = ReliefTiming::default();
+        run(&mut decisive, 0.1, &[0.35]);
+        assert!(decisive.settled && decisive.frames == 3);
         for _ in 0..10 * RELIEF_CHECK_EVERY {
             assert!(clear.walks());
             clear.note(true, 0.1, PIXELS);

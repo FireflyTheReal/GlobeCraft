@@ -40,7 +40,11 @@ const POINT_FLY_ALTITUDE_RATIO: f64 = 0.35;
 const MIN_POINT_FLY_ALTITUDE_KM: f64 = 0.3;
 const AUTO_ROTATE_DEG_PER_SECOND: f64 = 6.0;
 // Lower resolution while interacting; recover full resolution after the idle delay.
-const IDLE_RENDER_DELAY: Duration = Duration::from_millis(250);
+// A drag held still keeps the lower resolution (`dragged`): the delay covers the gap
+// after a release, a scroll step or a key. 250 ms put the sharp frame half a second
+// after a turn over the Alps stopped on an M1 (250 + 230 ms to draw it); 150
+// (2026-11-26).
+const IDLE_RENDER_DELAY: Duration = Duration::from_millis(150);
 const OVERVIEW_WARMUP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 impl App {
