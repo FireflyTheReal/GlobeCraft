@@ -405,6 +405,7 @@ fn the_self_check_accepts_rounding_and_refuses_wrong_pictures() {
 #[test]
 #[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
 fn gpu_relief_march_keeps_the_cpu_picture() {
+    relief_variant();
     use std::sync::Mutex;
     let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
     let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
@@ -930,6 +931,7 @@ fn gpu_close_overview_matches_cpu() {
 #[ignore = "needs a native GPU adapter; run explicitly to verify relief parity"]
 fn gpu_relief_view_matches_cpu() {
     overview_variant();
+    relief_variant();
     use std::sync::Mutex;
     let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
     let tiles: Mutex<HashMap<TileKey, Arc<Tile>>> = Mutex::new(HashMap::new());
@@ -1438,9 +1440,26 @@ fn walk_ablation(name: &str) -> Vec<(String, String)> {
                 "fine_at = locate(level + 1, d, at.uv, &coarse_looked)",
             ),
         ],
+        // Not a doubling: under the maxima, a piece runs to its bilinear cell's edge
+        // and not also to the texel's, where the coarser level is not blended in (its
+        // cells end at this level's texel edges); within a cell the clearance is
+        // exact either way, so about half the pieces.
+        "cells" => vec![patch(
+            "            exit = min(min(exit, longest), min(leave(cell.x",
+            "            if !blends { exit = 3.4e38; }\n            exit = min(min(exit, longest), min(leave(cell.x",
+        )],
         other => panic!("unknown ablation {other}"),
     });
     patches
+}
+
+/// `GLOBECRAFT_RELIEF_ABLATION=<name>` in the parity tests: the walk's variant must
+/// keep the CPU's picture before it is timed.
+fn relief_variant() {
+    if let Ok(name) = std::env::var("GLOBECRAFT_RELIEF_ABLATION") {
+        *relief::SHADER_PATCH.lock().unwrap() = walk_ablation(&name);
+        println!("ABLATION {name}");
+    }
 }
 
 /// `GLOBECRAFT_OVERVIEW_VARIANT=<name>`: the overview shader with a variant, to time it
