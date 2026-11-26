@@ -90,6 +90,10 @@ pub(crate) struct GpuRenderer {
     relief_read: Vec<TileKey>,
     /// Elevation tiles the last walk uploaded first (`GLOBECRAFT_FRAME_TIMES`).
     pub(crate) relief_uploads: usize,
+    /// The last frame drawn: its passes (`MAX_RESIDENCY_PASSES`), their time on the
+    /// device with the readback, and the CPU's repair of what they left
+    /// (`GLOBECRAFT_FRAME_TIMES`).
+    pub(crate) last_draw: (usize, std::time::Duration, std::time::Duration),
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -258,6 +262,7 @@ impl GpuRenderer {
             relief_tiles: Vec::new(),
             relief_read: Vec::new(),
             relief_uploads: 0,
+            last_draw: Default::default(),
         })
     }
 
@@ -564,6 +569,7 @@ impl GpuRenderer {
             .filter(|key| ready.contains_key(key))
             .collect();
         let mut buffer = buffer;
+        self.last_draw = Default::default();
         for pass in 0..MAX_RESIDENCY_PASSES {
             if selected.len() > self.slots.len() {
                 return Err((
@@ -605,6 +611,9 @@ impl GpuRenderer {
                 &|key| cache.lookup(key),
                 buffer,
             )?;
+            self.last_draw.0 += 1;
+            self.last_draw.1 += frame.took.0;
+            self.last_draw.2 += frame.took.1;
             if let Some(error) = self
                 .failure
                 .lock()
