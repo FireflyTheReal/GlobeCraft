@@ -209,7 +209,10 @@ fn log_relief_frame(
     walk: std::time::Duration,
     total: std::time::Duration,
     uploads: usize,
-    draw: Option<(usize, std::time::Duration, std::time::Duration, usize)>,
+    draw: Option<(
+        (usize, std::time::Duration, std::time::Duration, usize),
+        f32,
+    )>,
 ) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if FRAME_TIMES.load(std::sync::atomic::Ordering::Relaxed)
@@ -217,14 +220,18 @@ fn log_relief_frame(
     {
         let ms = |time: std::time::Duration| time.as_secs_f64() * 1000.0;
         let pixels = (request.width * request.height).max(1);
-        let draw = draw.map_or_else(String::new, |(passes, device, repair, repaired)| {
-            format!(
-                " (colour: {passes} pass(es), {:.1} ms on the device with the readback, {:.1} ms CPU repair of {repaired} pixels, {:.1} %)",
-                ms(device),
-                ms(repair),
-                100.0 * repaired as f64 / pixels as f64
-            )
-        });
+        let draw = draw.map_or_else(
+            String::new,
+            |((passes, device, repair, repaired), sun_unknown)| {
+                format!(
+                    " (colour: {passes} pass(es), {:.1} ms on the device with the readback, {:.1} ms CPU repair of {repaired} pixels, {:.1} %; the walk's sun unknown at {:.0} % of its grounds)",
+                    ms(device),
+                    ms(repair),
+                    100.0 * repaired as f64 / pixels as f64,
+                    100.0 * sun_unknown
+                )
+            },
+        );
         globecraft_data::log_line!(
             "RELIEF FRAME {}x{} by the {drawn_by}: walk {:.1} ms ({uploads} tiles uploaded), whole {:.1} ms{draw}",
             request.width,
@@ -543,7 +550,7 @@ impl FrameRenderer {
                             walk_took,
                             started.elapsed(),
                             gpu.relief_uploads,
-                            Some(gpu.last_draw),
+                            Some((gpu.last_draw, gpu.relief_sun_unknown)),
                         );
                         self.depth = depth(starts);
                         return frame;
