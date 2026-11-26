@@ -135,7 +135,8 @@ pub(super) fn project(
     if opacity <= 0.0 {
         return BuildingMesh::default();
     }
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     let reach = view.rect.expand(VIEW_MARGIN_POINTS);
     // Which part of each wall and roof the sun reaches past the other blocks (C3b).
     let march = input

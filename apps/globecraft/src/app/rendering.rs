@@ -196,6 +196,7 @@ impl Renderer {
                         fading_out,
                         live_layers: request.live_layers.clone().map(|mut input| {
                             input.unix_secs = now_unix();
+                            input.depth = depth.clone();
                             live_preparer.prepare(input)
                         }),
                         aircraft: request.aircraft.clone().map(|mut input| {
