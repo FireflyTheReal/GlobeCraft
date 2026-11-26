@@ -11,7 +11,7 @@ pub mod clusters;
 pub mod grid;
 mod labels;
 mod occlusion;
-pub use occlusion::{DepthMap, TerrainVisibility, project_unhidden};
+pub use occlusion::{DepthMap, TerrainVisibility, project_unhidden, take_counts};
 mod picking;
 pub use picking::pick_on_ground;
 mod spatial;
@@ -137,6 +137,7 @@ impl Ground for GroundHeights<'_> {
         MAX_GROUND_M * self.to_world
     }
     fn height(&self, lat: f64, lon: f64) -> f64 {
+        occlusion::HEIGHTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.cache
             .loaded_elevation_m(lat, lon, self.zoom)
             .map_or(0.0, |metres| f64::from(metres) * self.to_world)

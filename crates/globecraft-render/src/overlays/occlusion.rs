@@ -68,6 +68,24 @@ impl DepthMap {
     }
 }
 
+/// Line-of-sight tests since `take_counts`: answered by the drawn ground, and by the
+/// line of elevation lookups (`GLOBECRAFT_FRAME_TIMES`).
+static BY_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static BY_LINE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Loaded-elevation lookups (`GroundHeights::height`) since `take_counts`.
+pub(super) static HEIGHTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Since the last call: the line-of-sight tests by the drawn ground and by the line,
+/// and the loaded-elevation lookups.
+pub fn take_counts() -> (usize, usize, usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        BY_DEPTH.swap(0, Relaxed),
+        BY_LINE.swap(0, Relaxed),
+        HEIGHTS.swap(0, Relaxed),
+    )
+}
+
 pub struct TerrainVisibility<'a> {
     basis: &'a Basis,
     ground: &'a dyn Ground,
@@ -107,8 +125,10 @@ impl<'a> TerrainVisibility<'a> {
         let target = super::ground_position(self.basis, Some(self.ground), lat, lon);
         let eye = self.basis.c;
         if let Some(visible) = self.visible_in_depth(target) {
+            BY_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return visible;
         }
+        BY_LINE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let geometry = self.basis.model.geometry();
         let ceiling = self.ground.max_height();
         // The target itself is not an occluder; stop one sample short of it so the
