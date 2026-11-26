@@ -11,7 +11,7 @@ pub mod clusters;
 pub mod grid;
 mod labels;
 mod occlusion;
-pub use occlusion::{TerrainVisibility, project_unhidden};
+pub use occlusion::{DepthMap, TerrainVisibility, project_unhidden};
 mod picking;
 pub use picking::pick_on_ground;
 mod spatial;
@@ -60,6 +60,8 @@ pub struct OverlayProjection<'a> {
     pub dashes: BorderDashes,
     /// Terrain heights under the overlays, when relief is drawn.
     pub ground: Option<&'a dyn Ground>,
+    /// The frame's drawn ground (`DepthMap`), for the line-of-sight test.
+    pub depth: Option<&'a DepthMap>,
 }
 
 impl OverlayProjection<'_> {
@@ -328,7 +330,8 @@ pub fn project_borders(
         }
     };
     let mut draw_line = |line: &[(f64, f64)], kind: BorderKind, max_step_deg: f64| {
-        let visibility = TerrainVisibility::new(view.basis, view.ground);
+        let visibility = TerrainVisibility::new(view.basis, view.ground)
+            .map(|visibility| visibility.with_depth(view.depth, rect));
         let project = |lat: f64, lon: f64| {
             let at = basis.project_precise(view.surface(lat, lon), rect)?;
             // Only points near the view are tested: what lies far off screen is cut
@@ -563,7 +566,8 @@ pub fn project_labels<'a>(
         return Vec::new();
     }
     let (basis, rect) = (view.basis, view.rect);
-    let visibility = TerrainVisibility::new(basis, view.ground);
+    let visibility = TerrainVisibility::new(basis, view.ground)
+        .map(|visibility| visibility.with_depth(view.depth, rect));
     let mut cands: Vec<(u8, u8, Pos2, &MapLabel, usize)> = Vec::new();
     for (source_index, label) in boundaries.labels.iter().enumerate() {
         // States are gated entirely here because their threshold is the app's
@@ -752,6 +756,7 @@ mod tests {
                 sun: None,
             },
             ground: None,
+            depth: None,
         };
         let names: Vec<(&str, u8)> = project_labels(&view, &data)
             .iter()
@@ -801,6 +806,7 @@ mod tests {
                     sun: None,
                 },
                 ground: None,
+                depth: None,
             };
             // Which kinds draw the lines at each latitude, by hundredths of a degree.
             let mut kinds = std::collections::BTreeSet::<(i64, &str)>::new();

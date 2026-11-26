@@ -54,6 +54,8 @@ pub struct OverlayInput {
     /// The border data shown before `data`, while its lines fade out and `data`'s fade
     /// in (the frontend prepares it with a second preparer; `prepare` ignores it).
     pub fading_out: Option<Arc<BoundaryData>>,
+    /// The frame's drawn ground, for hiding what lies behind the relief.
+    pub depth: Option<Arc<super::DepthMap>>,
 }
 
 #[derive(Default)]
@@ -106,6 +108,7 @@ impl OverlayPreparer {
             dashes: request.view.dashes,
             layers: request.view.layers,
             ground: ground_height,
+            depth: request.depth.as_deref(),
         };
         let mut borders = Vec::new();
         project_borders(
@@ -223,6 +226,7 @@ impl<T: Send + 'static> OverlayWorker<T> {
             view,
             data,
             fading_out: None,
+            depth: None,
         });
         self.shared.wake.notify_one();
     }
@@ -302,6 +306,7 @@ mod tests {
             dashes: view.dashes,
             layers: view.layers,
             ground: None,
+            depth: None,
         };
         let mut segments = Vec::new();
         project_borders(&projection, &data, None, |_, points| segments.push(points));
@@ -373,6 +378,7 @@ mod tests {
             dashes: view.dashes,
             layers: view.layers,
             ground: None,
+            depth: None,
         };
         let mut direct = Vec::new();
         project_borders(&projection, &data, None, |_, points| direct.push(points));
@@ -393,11 +399,13 @@ mod tests {
             view,
             data: data.clone(),
             fading_out: None,
+            depth: None,
         });
         let same = preparer.prepare(OverlayInput {
             view,
             data: data.clone(),
             fading_out: None,
+            depth: None,
         });
         assert!(
             Arc::ptr_eq(&first, &same),
@@ -414,6 +422,7 @@ mod tests {
             view: hidden,
             data: data.clone(),
             fading_out: None,
+            depth: None,
         });
         assert!(!Arc::ptr_eq(&first, &next));
         assert!(next.labels.is_empty());

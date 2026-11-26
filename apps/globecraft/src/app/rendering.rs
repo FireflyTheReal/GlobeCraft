@@ -27,6 +27,8 @@ struct PreparedFrame {
 /// The compare release's raster, handed from the render step to the prepare step of
 /// the same job.
 type CompareRaster = Arc<std::sync::Mutex<Option<(usize, usize, u16, Vec<u8>)>>>;
+/// The last relief frame's drawn ground (`FrameRenderer::take_depth`).
+type DepthSlot = Arc<std::sync::Mutex<Option<Arc<globecraft_render::overlays::DepthMap>>>>;
 
 pub(super) struct Renderer {
     worker: RenderWorker<PreparedFrame>,
@@ -76,6 +78,11 @@ impl Renderer {
         // the cache as one list, and a tile of either release wakes the next frame.
         let compare_raster = CompareRaster::default();
         let compare_out = compare_raster.clone();
+        // The relief frame's drawn ground, from the render step to the prepare step
+        // (both on the frame worker, one after the other): the overlays hide what lies
+        // behind the relief by it.
+        let depth_slot: DepthSlot = Arc::default();
+        let depth_out = depth_slot.clone();
         Self {
             worker: RenderWorker::with_prepare(
                 move |request, buffer| {
@@ -91,6 +98,10 @@ impl Renderer {
                         profile.values.tilt_decideg = (request.cam.tilt * 10.0) as usize;
                     }
                     let mut frame = backend.render(request, &cache, buffer);
+                    #[cfg(feature = "gpu")]
+                    if let Ok(mut slot) = depth_slot.lock() {
+                        *slot = backend.take_depth();
+                    }
                     if let Some(compare) = request.compare {
                         let size = |n: usize| ((n as f32 * compare.scale).round() as usize).max(1);
                         let compare_request = RenderRequest {
@@ -139,12 +150,14 @@ impl Renderer {
                     );
                     #[cfg(feature = "profiling")]
                     drop(conversion);
+                    let depth = depth_out.lock().ok().and_then(|mut slot| slot.take());
                     let geometry = request.overlays.as_ref().map(|input| {
                         let geometry =
                             overlay_preparer.prepare(globecraft_render::overlays::OverlayInput {
                                 view: input.view,
                                 data: input.data.clone(),
                                 fading_out: None,
+                                depth: depth.clone(),
                             });
                         super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_overlay,
@@ -160,6 +173,7 @@ impl Renderer {
                                 view: input.view,
                                 data,
                                 fading_out: None,
+                                depth: depth.clone(),
                             });
                         Some(super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_fading,
@@ -394,6 +408,8 @@ impl App {
                 },
                 data: self.borders.shown.clone(),
                 fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
+                // The frame worker adds the frame's drawn ground.
+                depth: None,
             }),
         });
     }

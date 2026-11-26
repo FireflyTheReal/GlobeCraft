@@ -129,6 +129,9 @@ pub struct FrameRenderer {
     start_marker: Option<std::path::PathBuf>,
     #[cfg(feature = "gpu")]
     relief_timing: ReliefTiming,
+    /// The last relief frame's drawn ground (`take_depth`).
+    #[cfg(feature = "gpu")]
+    depth: Option<std::sync::Arc<crate::overlays::DepthMap>>,
 }
 
 /// Whether the GPU's relief walk (`gpu::relief`) makes relief frames faster on this
@@ -255,6 +258,8 @@ impl FrameRenderer {
             start_marker: None,
             #[cfg(feature = "gpu")]
             relief_timing: ReliefTiming::default(),
+            #[cfg(feature = "gpu")]
+            depth: None,
         }
     }
     /// The renderer the settings ask for (`BackendPreference::from_environment`). When
@@ -363,12 +368,22 @@ impl FrameRenderer {
         });
     }
     /// Draws `request`'s frame, a motion frame sharpened (`sharpen::motion_frame`).
+    /// The drawn ground of the frame `render` just drew, when it was a relief frame
+    /// the GPU's walk went through (see `overlays::DepthMap`).
+    #[cfg(feature = "gpu")]
+    pub fn take_depth(&mut self) -> Option<std::sync::Arc<crate::overlays::DepthMap>> {
+        self.depth.take()
+    }
     pub fn render(
         &mut self,
         request: &RenderRequest,
         cache: &TileCache,
         buffer: Vec<u8>,
     ) -> RenderedView {
+        #[cfg(feature = "gpu")]
+        {
+            self.depth = None;
+        }
         let mut frame = self.draw(request, cache, buffer);
         crate::sharpen::motion_frame(
             &mut frame.pixels,
@@ -416,16 +431,25 @@ impl FrameRenderer {
                 };
             let walked = starts.is_some();
             let walk_took = started.elapsed();
+            // The walk's planes are also the frame's drawn ground, for the overlays.
+            let starts = starts.map(std::sync::Arc::new);
+            let depth = |planes: Option<std::sync::Arc<Vec<f32>>>| {
+                planes
+                    .and_then(|planes| {
+                        crate::overlays::DepthMap::new(request.width, request.height, planes)
+                    })
+                    .map(std::sync::Arc::new)
+            };
             // The GPU draws the frame from its walk where it can (roadmap D8, G4), the
             // CPU what it leaves. Also below `MIN_AUTO_GPU_PIXELS`, which is for flat
             // frames: relief frames while moving are that small (0.28 of the window),
             // and at 616×360 on an M1 the GPU drew them in 3–8 ms after the walk, the
             // CPU in 18–23 ms (2026-11-24).
             let mut buffer = buffer;
-            if let (Some(starts), Some(gpu)) = (starts.as_deref(), self.gpu.as_mut())
+            if let (Some(planes), Some(gpu)) = (starts.as_deref(), self.gpu.as_mut())
                 && crate::gpu::GpuRenderer::supports(request)
             {
-                match gpu_call(|| gpu.render_relief(request, cache, buffer, starts))
+                match gpu_call(|| gpu.render_relief(request, cache, buffer, planes))
                     .unwrap_or_else(|error| Err((error, Vec::new(), true)))
                 {
                     Ok((frame, held)) => {
@@ -445,6 +469,7 @@ impl FrameRenderer {
                             started.elapsed(),
                             gpu.relief_uploads,
                         );
+                        self.depth = depth(starts);
                         return frame;
                     }
                     Err((error, returned, permanent)) => {
@@ -463,8 +488,9 @@ impl FrameRenderer {
                 &request.cfg,
                 cache,
                 buffer,
-                starts.as_deref(),
+                starts.as_deref().map(Vec::as_slice),
             );
+            self.depth = depth(starts);
             log_relief_frame(
                 request,
                 if walked { "CPU from the walk" } else { "CPU" },
