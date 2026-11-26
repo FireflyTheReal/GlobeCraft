@@ -263,6 +263,7 @@ impl App {
         );
         ui.weak(lg.text("settings-frame-sync-help"));
         ui.add_space(8.0);
+        render_quality(ui, lg, &mut self.settings.render_quality);
         motion_resolution(
             ui,
             lg,
@@ -567,6 +568,32 @@ impl App {
         });
         ui.weak(lg.text("settings-startup-help"));
     }
+}
+
+/// How sharp the globe renders: the screen's pixels, HD or SD.
+fn render_quality(
+    ui: &mut egui::Ui,
+    lg: Lang,
+    setting: &mut globecraft_data::settings::render_quality::RenderQuality,
+) {
+    ui.horizontal(|ui| {
+        let label = ui.label(lg.text("settings-render-quality"));
+        let combo = egui::ComboBox::from_id_salt("settings-render-quality")
+            .selected_text(lg.text(&format!("settings-render-quality-{}", setting.code())))
+            .show_ui(ui, |ui| {
+                for quality in globecraft_data::settings::render_quality::RenderQuality::ALL {
+                    ui.selectable_value(
+                        setting,
+                        quality,
+                        lg.text(&format!("settings-render-quality-{}", quality.code())),
+                    );
+                }
+            });
+        combo
+            .response
+            .on_hover_text(lg.text("settings-render-quality-help"))
+            .labelled_by(label.id);
+    });
 }
 
 /// A share of the full resolution for moving frames: automatic (`None`) or set.

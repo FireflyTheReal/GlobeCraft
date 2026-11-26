@@ -379,6 +379,12 @@ fn above_fade(height_km: f64) -> f32 {
     smooth((height_km - CLOUD_FADE_KM.0) / (CLOUD_FADE_KM.1 - CLOUD_FADE_KM.0))
 }
 
+/// Whether the clouds show from below with the eye `height_km` up (`from_below`).
+#[cfg(feature = "gpu")]
+pub(crate) fn seen_from_below(height_km: f64) -> bool {
+    below_fade(height_km) > 0.0
+}
+
 /// How much of the clouds seen from below shows with the eye `height_km` up (0 to 1).
 fn below_fade(height_km: f64) -> f32 {
     smooth((CLOUD_LAYER_KM - height_km - BELOW_FADE_KM.0) / (BELOW_FADE_KM.1 - BELOW_FADE_KM.0))

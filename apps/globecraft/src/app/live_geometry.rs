@@ -158,6 +158,15 @@ impl App {
             poi: self.map_data.poi.shared_snapshot(),
             poi_layers: self.poi_layers(),
             poi_shown: Some(self.map_data.poi_shapes.shown()),
+            // The displayed frame's drawn ground, when these layers are for its view.
+            depth: self.frame.renderer.displayed_depth.clone().filter(|_| {
+                self.frame.renderer.displayed_rect() == Some(rect)
+                    && self
+                        .frame
+                        .renderer
+                        .displayed_view()
+                        .is_some_and(|(_, shown)| shown == basis)
+            }),
             unix_secs: now_unix(),
             scene_offset_secs: self.scene_offset_secs(),
             now: std::time::Instant::now(),
@@ -238,6 +247,7 @@ mod tests {
             poi: None,
             poi_layers: Default::default(),
             poi_shown: None,
+            depth: None,
             unix_secs: 1_700_000_000.0,
             scene_offset_secs: 0.0,
             now: std::time::Instant::now(),
@@ -309,6 +319,7 @@ mod tests {
             poi: None,
             poi_layers: Default::default(),
             poi_shown: None,
+            depth: None,
             unix_secs: 1_700_000_000.0,
             scene_offset_secs: 0.0,
             now: std::time::Instant::now(),

@@ -1,5 +1,6 @@
 //! GPU sampling and shading of overview frames, without egui dependencies.
 mod overview;
+mod relief;
 mod repair;
 mod shader;
 #[cfg(test)]
@@ -18,6 +19,14 @@ const MAX_ATLAS_LAYERS: u32 = GPU_TILE_BUDGET_BYTES / TILE_BYTES;
 const GLOBAL_RESIDENT_ZOOM: u8 = 3;
 const MAX_RESIDENCY_PASSES: usize = 2;
 const WORKGROUP_SIZE: u32 = 256;
+/// Workgroups along one dispatch axis at most (WebGPU's `maxComputeWorkgroupsPerDimension`).
+const MAX_WORKGROUPS_PER_AXIS: u32 = 65_535;
+/// Mean colours held per atlas tile (`Tile::means`: 8×8, 4×4, 2×2 and 1 blocks), for
+/// matching imagery levels' colours (`colour_match`).
+const MEANS_PER_TILE: usize = 85;
+
+/// Why the GPU did not draw a frame, the buffer back, and whether the device failed.
+type Refused = (String, Vec<u8>, bool);
 
 /// Waits up to `limit` for the device's submitted work. A wait the driver reports as
 /// timed out before `limit` has passed is waited again: on a PowerVR DXT-48-1536
@@ -62,6 +71,8 @@ pub(crate) struct GpuRenderer {
     overview: overview::Overview,
     atlas: wgpu::Texture,
     view: wgpu::TextureView,
+    /// Each atlas layer's tile's mean colours (`MEANS_PER_TILE`; w -1 without them).
+    means: wgpu::Buffer,
     slots: Vec<Option<Slot>>,
     preferred: Vec<TileKey>,
     failure: Arc<Mutex<Option<String>>>,
@@ -70,6 +81,15 @@ pub(crate) struct GpuRenderer {
     software: bool,
     /// The adapter's name and backend, for diagnostics.
     adapter: String,
+    /// The relief march (`relief`), made with the first relief frame; `None` inside
+    /// once it failed its check on this adapter.
+    relief: Option<Option<relief::ReliefMarch>>,
+    /// The elevation tiles for the next relief walk (`relief::next_tiles`), and the
+    /// ones the last walk read.
+    relief_tiles: Vec<TileKey>,
+    relief_read: Vec<TileKey>,
+    /// Elevation tiles the last walk uploaded first (`GLOBECRAFT_FRAME_TIMES`).
+    pub(crate) relief_uploads: usize,
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -96,9 +116,10 @@ impl GpuRenderer {
             .expect("poll destroyed device");
     }
     pub(crate) fn supports(request: &RenderRequest) -> bool {
-        // Relief and the unblended screenshot levels are the CPU's. So is a surface the
-        // shader has no kernel for (it has the unit sphere and ellipsoids).
-        if request.cfg.terrain.is_some() || !request.cfg.level_blend {
+        // The unblended screenshot levels are the CPU's. So is a surface the shader has
+        // no kernel for (it has the unit sphere and ellipsoids). Relief is the GPU's
+        // with its walk (`render`'s `walk`).
+        if !request.cfg.level_blend {
             return false;
         }
         use globecraft_core::{EARTH_RADIUS_KM, earth_model::SurfaceGeometry};
@@ -169,7 +190,12 @@ impl GpuRenderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("GlobeCraft compute renderer"),
-                required_features: wgpu::Features::empty(),
+                // Tests time the relief walk's passes on the device where it can.
+                required_features: if cfg!(test) {
+                    adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+                } else {
+                    wgpu::Features::empty()
+                },
                 required_limits: limits,
                 ..Default::default()
             })
@@ -205,6 +231,12 @@ impl GpuRenderer {
             view_formats: &[],
         });
         let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
+        let means = overview::buffer(
+            &device,
+            "GlobeCraft tile mean colours",
+            layers as usize * MEANS_PER_TILE * 16,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
         let overview = overview::Overview::new(&device);
         if let Some(error) = scope.pop().await {
             return Err(error.to_string());
@@ -228,6 +260,7 @@ impl GpuRenderer {
             overview,
             atlas,
             view,
+            means,
             slots: (0..layers).map(|_| None).collect(),
             preferred: Vec::new(),
             failure,
@@ -237,7 +270,70 @@ impl GpuRenderer {
                 adapter.get_info().name,
                 adapter.get_info().backend
             ),
+            relief: None,
+            relief_tiles: Vec::new(),
+            relief_read: Vec::new(),
+            relief_uploads: 0,
         })
+    }
+
+    /// What the GPU's walk found for each pixel (`relief::Walked::pixels`); `None`
+    /// until a relief frame told which elevation tiles it held (`relief_frame_held`),
+    /// or once the walk failed its check or a frame on this adapter (only a lost
+    /// device is an error: the GPU renderer goes with it).
+    pub(crate) fn relief_starts(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+    ) -> Result<Option<Vec<f32>>, String> {
+        if let Some(error) = self
+            .failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            return Err(error);
+        }
+        let (device, queue) = (&self.device, &self.queue);
+        let layers = self.slots.len() as u32;
+        let march = self.relief.get_or_insert_with(|| {
+            let mut march = relief::ReliefMarch::new(device, layers);
+            match march.self_check(device, queue) {
+                Ok(()) => Some(march),
+                Err(error) => {
+                    globecraft_data::log_line!("The CPU marches the relief alone: {error}");
+                    None
+                }
+            }
+        });
+        let Some(march) = march else {
+            return Ok(None);
+        };
+        let tiles = relief::grown_tiles(
+            &self.relief_tiles,
+            |key| cache.lookup(key),
+            std::time::Instant::now(),
+        );
+        if tiles.is_empty() {
+            return Ok(None);
+        }
+        match march.starts(device, queue, request, &tiles) {
+            Ok(walked) => {
+                self.relief_read = walked.read;
+                self.relief_uploads = walked.uploads;
+                Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
+            }
+            Err(error) => {
+                globecraft_data::log_line!("The CPU marches the relief alone: {error}");
+                self.relief = Some(None);
+                Ok(None)
+            }
+        }
+    }
+    /// The elevation tiles a relief frame held: with the ones the walk read, the
+    /// walk's for the next.
+    pub(crate) fn relief_frame_held(&mut self, tiles: Vec<TileKey>) {
+        self.relief_tiles = relief::next_tiles(tiles, &self.relief_read);
     }
 
     /// Draws one small view of a made-up tile on this adapter and on the CPU, and
@@ -313,6 +409,8 @@ impl GpuRenderer {
                     device: &self.device,
                     queue: &self.queue,
                     atlas: &self.view,
+                    means: &self.means,
+                    walk: None,
                 },
                 &request,
                 &slots,
@@ -408,6 +506,17 @@ impl GpuRenderer {
                     depth_or_array_layers: 1,
                 },
             );
+            let means: Vec<[f32; 4]> = match tile.means() {
+                means if means.len() == MEANS_PER_TILE => {
+                    means.iter().map(|mean| mean.to_array()).collect()
+                }
+                _ => vec![[0.0, 0.0, 0.0, -1.0]; MEANS_PER_TILE],
+            };
+            self.queue.write_buffer(
+                &self.means,
+                (layer as usize * MEANS_PER_TILE * 16) as u64,
+                bytemuck::cast_slice(&means),
+            );
             *slot = Some(Slot {
                 key: *key,
                 source: Arc::downgrade(tile),
@@ -422,6 +531,27 @@ impl GpuRenderer {
         cache: &TileCache,
         buffer: Vec<u8>,
     ) -> Result<RenderedView, (String, Vec<u8>, bool)> {
+        self.draw(request, cache, buffer, None)
+            .map(|(view, _)| view)
+    }
+    /// Draws a relief view from the walk just made for it (`relief_starts`, `walk` its
+    /// planes); and the elevation tiles the CPU's part held.
+    pub(crate) fn render_relief(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+        buffer: Vec<u8>,
+        walk: &[f32],
+    ) -> Result<(RenderedView, Vec<TileKey>), Refused> {
+        self.draw(request, cache, buffer, Some(walk))
+    }
+    fn draw(
+        &mut self,
+        request: &RenderRequest,
+        cache: &TileCache,
+        buffer: Vec<u8>,
+        walk: Option<&[f32]>,
+    ) -> Result<(RenderedView, Vec<TileKey>), Refused> {
         if let Some(error) = self
             .failure
             .lock()
@@ -477,11 +607,14 @@ impl GpuRenderer {
                 Ok(slots) => slots,
                 Err(error) => return Err((error, buffer, false)),
             };
+            let walked = walk.zip(self.relief.as_ref().and_then(Option::as_ref));
             let frame = self.overview.render(
                 overview::Context {
                     device: &self.device,
                     queue: &self.queue,
                     atlas: &self.view,
+                    means: &self.means,
+                    walk: walked.map(|(planes, march)| (march.output(), planes)),
                 },
                 request,
                 &slots,
@@ -505,7 +638,7 @@ impl GpuRenderer {
             let missing_ready = wanted.iter().any(|key| !slots.contains_key(key));
             self.preferred = frame.sampled;
             if !missing_ready {
-                return Ok(frame.view);
+                return Ok((frame.view, frame.relief_tiles));
             }
             buffer = frame.view.pixels;
             if pass + 1 == MAX_RESIDENCY_PASSES {

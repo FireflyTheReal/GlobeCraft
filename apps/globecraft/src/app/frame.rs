@@ -12,6 +12,12 @@ pub(super) struct FrameState {
     /// it (a new frame of the same view: tiles arrived, or the view came to rest).
     pub(super) fade_from: Option<egui::TextureHandle>,
     pub(super) fade_started: Option<Instant>,
+    /// How long the fade under way lasts: `globe::FRAME_FADE`, or while the time plays
+    /// about the time between frames (`playback_fade`).
+    pub(super) fade_length: std::time::Duration,
+    /// While the time plays: when the last frame came, and the time between frames
+    /// (a running mean, seconds).
+    pub(super) playback_frames: Option<(Instant, f32)>,
     /// Space behind the frame, at the screen's full resolution.
     pub(super) sky_layer: super::sky_layer::SkyLayer,
     /// The frame on screen as pixels.
@@ -61,6 +67,8 @@ impl FrameState {
             texture: None,
             fade_from: None,
             fade_started: None,
+            fade_length: super::globe::FRAME_FADE,
+            playback_frames: None,
             sky_layer: Default::default(),
             image: None,
             last_state: 0,

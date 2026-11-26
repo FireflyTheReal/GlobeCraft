@@ -44,6 +44,7 @@ pub(super) fn build(
         layers: style.layers,
         dashes: globecraft_render::overlays::BorderDashes::of(&style.map_style),
         ground: None,
+        depth: None,
     };
     let mut borders = Vec::new();
     globecraft_render::overlays::project_borders(&projection, boundaries, None, |kind, points| {

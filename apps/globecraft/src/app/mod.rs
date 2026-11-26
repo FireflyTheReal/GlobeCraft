@@ -651,24 +651,28 @@ impl eframe::App for App {
             self.chrome.styled_scale = Some(self.settings.ui_scale);
         }
         self.chrome.access = system_access::read();
+        let appearance = &self.settings.appearance;
+        // A monochrome colour of one's own replaces the accent everywhere, not only in icons.
+        let own = appearance
+            .mono_icons
+            .then_some(appearance.mono_icon_color)
+            .flatten()
+            .map(|c| {
+                let [r, g, b, _] = c.0;
+                egui::Color32::from_rgb(r, g, b)
+            });
         let look = ui::theme::Look {
             increase_contrast: self.chrome.access.increase_contrast,
             reduce_motion: self.reduce_motion(),
-            accent: self.chrome.access.accent,
+            accent: own.or(self.chrome.access.accent),
         };
         if self.chrome.styled_look != Some(look) {
             ui::theme::apply(ui, look);
             self.chrome.styled_look = Some(look);
         }
-        let appearance = &self.settings.appearance;
-        let mono = appearance.mono_icons.then(|| {
-            appearance
-                .mono_icon_color
-                .map_or(ui::theme::Tokens::get(ui).accent, |c| {
-                    let [r, g, b, _] = c.0;
-                    egui::Color32::from_rgb(r, g, b)
-                })
-        });
+        let mono = appearance
+            .mono_icons
+            .then(|| own.unwrap_or(ui::theme::Tokens::get(ui).accent));
         ui::icons::set_mono(ui, mono);
         // persist settings once a slider is released; frames with no input (animation)
         // check at most every SETTINGS_CHECK_INTERVAL, and quitting checks once more

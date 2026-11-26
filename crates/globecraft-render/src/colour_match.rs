@@ -11,14 +11,14 @@ use glam::Vec4;
 use globecraft_data::tiles::{Lookup, MEAN_CELLS, Provider, TileKey, make_key};
 
 /// The last level of the one source and the first of the other.
-const COARSE_LEVEL: i32 = 11;
-const FINE_LEVEL: i32 = 12;
+pub(crate) const COARSE_LEVEL: i32 = 11;
+pub(crate) const FINE_LEVEL: i32 = 12;
 /// From this level on the imagery keeps its own colours.
-const OWN_COLOURS_LEVEL: i32 = 16;
+pub(crate) const OWN_COLOURS_LEVEL: i32 = 16;
 /// Each colour is changed by no more than this factor either way.
-const MAX_GAIN: f32 = 1.7;
+pub(crate) const MAX_GAIN: f32 = 1.7;
 /// Keeps a nearly black block from asking for a huge gain (colour, 0 to 1).
-const DARK_FLOOR: f32 = 0.02;
+pub(crate) const DARK_FLOOR: f32 = 0.02;
 
 /// How much of level 11's colours a level takes on: all at 12, none from 16.
 fn weight(level: i32) -> f32 {

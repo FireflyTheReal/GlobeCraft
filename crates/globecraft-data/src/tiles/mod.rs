@@ -2,15 +2,20 @@ use crate::wayback::wayback_tile_url;
 use glam::Vec4;
 use globecraft_core::language::Lang;
 use std::hash::{BuildHasherDefault, Hasher};
-// Tile-key bit offsets/masks are part of the packed-key contract.
+// Tile-key bit offsets/masks are part of the packed-key contract (in memory only: the
+// disk cache keeps tiles by provider, release, zoom, x and y). Coordinates take 20
+// bits, so zoom 20 (Esri's finest) fits; until 2026-11-24 they took 19, and zoom
+// 20's tiles were asked for at the wrong place.
 const PROVIDER_SHIFT: u32 = 59;
 const ZOOM_SHIFT: u32 = 54;
-const RELEASE_SHIFT: u32 = 38;
-const X_SHIFT: u32 = 19;
+const RELEASE_SHIFT: u32 = 40;
+const X_SHIFT: u32 = 20;
 const PROVIDER_MASK: u64 = 31;
 const ZOOM_MASK: u64 = 31;
-const COORDINATE_MASK: u64 = 0x7FFFF;
-const RELEASE_MASK: u64 = 0xFFFF;
+const COORDINATE_MASK: u64 = 0xF_FFFF;
+const RELEASE_MASK: u64 = 0x3FFF;
+/// The most releases (or editions) a key holds.
+pub(crate) const MAX_RELEASES: usize = RELEASE_MASK as usize + 1;
 // Cache/network policy: preserve both the thresholds and the eviction strategy.
 
 // ───────────────────────────── Tiles ─────────────────────────────
@@ -122,6 +127,12 @@ pub type TileKey = u64;
 // `rel` is the index of the Wayback release, or of a dated source's edition (0 for
 // every other provider).
 pub fn make_key(p: Provider, z: u8, x: u32, y: u32, rel: u16) -> TileKey {
+    debug_assert!(
+        u64::from(z) <= ZOOM_MASK
+            && u64::from(x.max(y)) <= COORDINATE_MASK
+            && u64::from(rel) <= RELEASE_MASK,
+        "tile key out of range: {z}/{x}/{y} release {rel}"
+    );
     (p.id() << PROVIDER_SHIFT)
         | ((z as u64) << ZOOM_SHIFT)
         | ((rel as u64) << RELEASE_SHIFT)
@@ -169,16 +180,18 @@ pub struct Tile {
     /// there before (`grown`). Tiles made directly (fixtures) are fully grown.
     arrived: Option<std::time::Instant>,
     /// A colour tile's mean colour (0 to 1) over `MEAN_CELLS` × `MEAN_CELLS` blocks,
-    /// row by row: what one imagery level's colours are matched to another's by
-    /// (roadmap C6). Empty for elevation tiles.
-    means: Vec<[f32; 3]>,
+    /// row by row, then over blocks twice as wide, down to the whole tile: what one
+    /// imagery level's colours are matched to another's by (roadmap C6), read for
+    /// every pixel. Empty for elevation tiles.
+    means: Vec<Vec4>,
 }
 
 /// Blocks per side a colour tile's mean colours are kept for (`Tile::mean_colour`).
 pub const MEAN_CELLS: usize = 8;
 
-/// The mean colours of an RGBA picture over `MEAN_CELLS` × `MEAN_CELLS` blocks.
-fn block_means(w: usize, h: usize, px: &[u8]) -> Vec<[f32; 3]> {
+/// The mean colours of an RGBA picture over `MEAN_CELLS` × `MEAN_CELLS` blocks, then
+/// over each coarser grid of blocks twice as wide (`Tile::means`).
+fn block_means(w: usize, h: usize, px: &[u8]) -> Vec<Vec4> {
     if w < MEAN_CELLS || h < MEAN_CELLS || px.len() < w * h * 4 {
         return Vec::new();
     }
@@ -193,11 +206,25 @@ fn block_means(w: usize, h: usize, px: &[u8]) -> Vec<[f32; 3]> {
             sum[3] += 1;
         }
     }
-    sums.iter()
+    let mut means: Vec<Vec4> = sums
+        .iter()
         .map(|sum| {
-            std::array::from_fn(|channel| sum[channel] as f32 / (sum[3].max(1) as f32 * 255.0))
+            let mean = |channel: usize| sum[channel] as f32 / (sum[3].max(1) as f32 * 255.0);
+            Vec4::new(mean(0), mean(1), mean(2), 0.0)
         })
-        .collect()
+        .collect();
+    let (mut start, mut cells) = (0, MEAN_CELLS);
+    while cells > 1 {
+        let half = cells / 2;
+        for y in 0..half {
+            for x in 0..half {
+                let at = |dx: usize, dy: usize| means[start + (2 * y + dy) * cells + 2 * x + dx];
+                means.push((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1)) / 4.0);
+            }
+        }
+        (start, cells) = (start + cells * cells, half);
+    }
+    means
 }
 
 /// An elevation tile's relief grows in over this long instead of snapping to its
@@ -263,21 +290,21 @@ impl Tile {
     /// The tile's mean colour around `(u, v)` (0 to 1 across it) over blocks a
     /// `cells`-th of it wide (`cells` divides `MEAN_CELLS`), bilinear between their
     /// middles; `None` for a tile without mean colours.
+    /// The mean colours over every grid of blocks (`MEAN_CELLS` across, then half as
+    /// many, down to one), row by row; empty for elevation tiles.
+    pub fn means(&self) -> &[Vec4] {
+        &self.means
+    }
     pub fn mean_colour(&self, u: f64, v: f64, cells: usize) -> Option<Vec4> {
         if self.means.is_empty() || cells == 0 || !MEAN_CELLS.is_multiple_of(cells) {
             return None;
         }
-        let group = MEAN_CELLS / cells;
-        let block = |bx: usize, by: usize| {
-            let mut sum = Vec4::ZERO;
-            for y in by * group..(by + 1) * group {
-                for x in bx * group..(bx + 1) * group {
-                    let [r, g, b] = self.means[y * MEAN_CELLS + x];
-                    sum += Vec4::new(r, g, b, 0.0);
-                }
-            }
-            sum / (group * group) as f32
-        };
+        // The grid of `cells` comes after the finer ones.
+        let start: usize = std::iter::successors(Some(MEAN_CELLS), |&finer| Some(finer / 2))
+            .take_while(|&finer| finer > cells)
+            .map(|finer| finer * finer)
+            .sum();
+        let block = |bx: usize, by: usize| self.means[start + by * cells + bx];
         let last = (cells - 1) as f64;
         let x = (u * cells as f64 - 0.5).clamp(0.0, last);
         let y = (v * cells as f64 - 0.5).clamp(0.0, last);
@@ -417,8 +444,8 @@ pub mod source;
 pub use source::{Access, Prefetch, SourceKind, TileSource};
 mod elevation;
 pub use cache::{
-    CacheBudgets, DEFAULT_TILE_CACHE_BUDGET_BYTES, FINE_IMAGERY_ZOOM, Lookup, MAX_INFLIGHT,
-    SourceQueue, TileCache,
+    CacheBudgets, DEFAULT_TILE_CACHE_BUDGET_BYTES, FINE_IMAGERY_ZOOM, LoadedElevation, Lookup,
+    MAX_INFLIGHT, SourceQueue, TileCache,
 };
 pub use elevation::Elevation;
 mod warmup;
@@ -427,6 +454,64 @@ pub use warmup::TileWarmup;
 #[cfg(test)]
 mod sampling_tests {
     use super::*;
+
+    /// A tile black in its west quarter and white elsewhere: the mean over each grid
+    /// of blocks is that grid's own average.
+    #[test]
+    fn keys_hold_every_tile_to_zoom_20_and_every_release() {
+        for (z, x, y, rel) in [
+            (
+                20u8,
+                (1u32 << 20) - 1,
+                (1u32 << 20) - 1,
+                (MAX_RELEASES - 1) as u16,
+            ),
+            (20, 964_123, 629_456, 0),
+            (19, 524_288, 1, 7),
+            (0, 0, 0, 0),
+        ] {
+            for provider in [
+                Provider::Satellite,
+                Provider::Wayback,
+                Provider::NightLights,
+            ] {
+                assert_eq!(
+                    unkey(make_key(provider, z, x, y, rel)),
+                    (provider, z, x, y, rel)
+                );
+            }
+        }
+        assert!(Provider::Satellite.max_zoom() <= 20);
+    }
+
+    #[test]
+    fn mean_colours_hold_every_grid_of_blocks() {
+        let (w, h) = (64, 64);
+        let px: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let value = if i % w < w / 4 { 0 } else { 255 };
+                [value, value, value, 255]
+            })
+            .collect();
+        let tile = Tile {
+            w,
+            h,
+            means: block_means(w, h, &px),
+            px,
+            elevation: None,
+            arrived: None,
+        };
+        let red = |u: f64, cells: usize| tile.mean_colour(u, 0.5, cells).unwrap().x;
+        assert_eq!(red(0.01, MEAN_CELLS), 0.0);
+        assert_eq!(red(0.99, MEAN_CELLS), 1.0);
+        // Blocks of a quarter of the tile: black, then white.
+        assert_eq!(red(0.1, 4), 0.0);
+        assert_eq!(red(0.5, 4), 1.0);
+        // Blocks of half the tile: the west one half black.
+        assert_eq!(red(0.1, 2), 0.5);
+        assert_eq!(red(0.5, 1), 0.75);
+        assert!(tile.mean_colour(0.5, 0.5, 3).is_none());
+    }
     #[test]
     fn simd_sampling_preserves_pixel_centers_bilinear_weights_and_unused_lane() {
         let tile = Tile {

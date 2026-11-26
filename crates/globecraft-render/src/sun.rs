@@ -6,21 +6,21 @@
 use glam::{DVec3, Vec3};
 
 /// The sun's angular radius (radians).
-const SUN_RADIUS_RAD: f64 = 0.004_65;
+pub(crate) const SUN_RADIUS_RAD: f64 = 0.004_65;
 /// Its colour as drawn: white, a little warm.
-const SUN_COLOUR: Vec3 = Vec3::new(1.0, 0.97, 0.9);
+pub(crate) const SUN_COLOUR: Vec3 = Vec3::new(1.0, 0.97, 0.9);
 /// The glow around the disc, as an eye or a camera spreads a bright light: a bright
 /// near part and a faint wide one, each its light at the disc's edge and the angle
 /// (radians) over which it falls by e.
-const SUN_GLOW_NEAR: (f32, f64) = (0.5, 0.012);
-const SUN_GLOW_WIDE: (f32, f64) = (0.12, 0.09);
+pub(crate) const SUN_GLOW_NEAR: (f32, f64) = (0.5, 0.012);
+pub(crate) const SUN_GLOW_WIDE: (f32, f64) = (0.12, 0.09);
 /// Past this angle from the sun (radians) its glow is left out.
-const SUN_GLOW_REACH_RAD: f64 = 0.45;
+pub(crate) const SUN_GLOW_REACH_RAD: f64 = 0.45;
 /// The sun is far brighter than anything else on the screen: the light that crosses
 /// the air still fills the screen's range many times over. Each colour is drawn as
 /// this many times what arrives of it, at most full: white when high, yellow, orange
 /// and red as the air between grows and takes first blue, then green.
-const SUN_BRIGHTNESS: f32 = 8.0;
+pub(crate) const SUN_BRIGHTNESS: f32 = 8.0;
 
 /// The water's glint: its shine (0 to 1, `LiveMaps::water`) times a highlight around
 /// the sun's mirror image, broad as the waves make it (Blinn's half-vector form).

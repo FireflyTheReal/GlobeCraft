@@ -159,6 +159,7 @@ fn a_moving_camera_never_paints_a_blank_frame_when_a_patch_arrives() {
             view: geometry_view,
             data: old.clone(),
             fading_out: None,
+            depth: None,
         });
         cache.accept(PreparedOverlay::new(geometry, painter.ctx()));
         // Meanwhile a patch replaced the dataset.

@@ -126,6 +126,9 @@ pub struct LiveInput {
     pub poi_layers: PoiLayers,
     /// The place names on screen, which keep their places (`poi::PoiShown`).
     pub poi_shown: Option<Arc<poi::PoiShown>>,
+    /// The frame's drawn ground (`overlays::DepthMap`), for hiding what lies behind
+    /// the relief; the frame worker adds it.
+    pub depth: Option<Arc<crate::overlays::DepthMap>>,
     pub unix_secs: f64,
     /// The app's time less the wall clock (0 when live): satellites are drawn where
     /// they are at the app's time, so the timeline moves them; ships, reported
@@ -343,7 +346,8 @@ fn project_roads(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projecte
     let Some(roads) = &input.roads else {
         return Vec::new();
     };
-    let visibility = TerrainVisibility::new(&input.view.basis, ground);
+    let visibility = TerrainVisibility::new(&input.view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), input.view.rect));
     roads
         .iter()
         .enumerate()
@@ -399,7 +403,8 @@ fn project_vessels(input: &LiveInput, ground: Option<&dyn Ground>) -> Vec<Projec
         return Vec::new();
     };
     let view = input.view;
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     vessels
         .iter()
         .enumerate()

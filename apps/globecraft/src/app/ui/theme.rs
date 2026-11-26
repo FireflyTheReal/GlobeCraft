@@ -179,9 +179,12 @@ impl Tokens {
             surfaces.iter().all(|surface| contrast(c, *surface) >= 4.5)
         });
         let (checked, selection) = if self.dark { (0.2, 0.3) } else { (0.16, 0.22) };
+        let (hover, pressed) = if self.dark { (0.12, 0.2) } else { (0.1, 0.2) };
         Tokens {
             accent,
             accent_text,
+            hover: towards(self.ribbon, accent, hover),
+            pressed: towards(self.ribbon, accent, pressed),
             checked: towards(self.ribbon, accent, checked),
             selection: towards(self.ribbon, accent, selection),
             ..self
@@ -370,6 +373,15 @@ mod tests {
                 ("status_bar", t.status_bar),
                 ("menu", t.menu),
             ];
+            // Hover and pressed fills follow the accent; labels stay readable on them.
+            for (state, fill) in [("hover", t.hover), ("pressed", t.pressed)] {
+                let ratio = contrast(t.text, fill);
+                assert!(
+                    ratio >= 4.5,
+                    "text on {state} (dark: {}): {ratio:.2}:1",
+                    t.dark
+                );
+            }
             for (name, colour) in text {
                 for (surface, fill) in surfaces {
                     let border = contrast(t.increased_contrast().border, fill);

@@ -341,6 +341,11 @@ statusbar-cursor-elevation = Elevação: { $distance }
 
 
 settings-uncap-fps-toggle = FPS sem limite (requer reiniciar)
+settings-render-quality = Resolução do globo
+settings-render-quality-screen = Tamanho da tela
+settings-render-quality-hd = HD (1080p)
+settings-render-quality-sd = SD (720p)
+settings-render-quality-help = Quantos pixels o globo desenha. HD e SD desenham menos do que uma tela grande ou Retina tem e carregam blocos mais grossos: quadros mais leves, imagem mais suave. Os quadros em movimento continuam uma parte disso.
 settings-motion-resolution-auto = Quadros mais leves em movimento, vista plana (automático)
 settings-motion-resolution = Resolução em movimento, vista plana
 settings-motion-resolution-help = Enquanto a vista se move, os quadros são renderizados a uma parte da resolução total, para chegarem depressa. O automático usa 40 %. 100 % é o mais nítido e o mais lento.
@@ -768,7 +773,7 @@ settings-theme-light = Claro
 settings-reduce-motion-label = Reduzir movimento
 settings-reduce-motion-help = Chegar aos lugares sem voar até eles e impedir que o globo continue girando depois de arrastar. No Mac, Reduzir movimento nos Ajustes do Sistema também faz isso.
 settings-mono-icons-label = Ícones monocromáticos
-settings-mono-icons-help = Desenhar os ícones da faixa de opções e dos menus em uma só cor, a de destaque ou a sua, em vez das suas próprias cores.
+settings-mono-icons-help = Desenhar todos os ícones em uma só cor em vez das suas próprias cores: a de destaque, ou uma cor sua, que então substitui a de destaque em toda parte.
 settings-mono-icons-own-color-label = Cor própria em vez da de destaque
 settings-mono-icons-color-label = Cor dos ícones
 settings-utc-times-label = Mostrar horários em UTC

@@ -101,7 +101,8 @@ pub(super) fn project(input: &LiveInput, ground: Option<&dyn Ground>) -> Project
     };
     let layers = input.transport_layers;
     let view = input.view;
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     let clip = view
         .rect
         .expand(crate::overlays::SEGMENT_CLIP_MARGIN_POINTS);
@@ -171,7 +172,8 @@ fn airports(
     ground: Option<&dyn Ground>,
 ) -> Vec<ProjectedAirport> {
     let view = input.view;
-    let visibility = TerrainVisibility::new(&view.basis, ground);
+    let visibility = TerrainVisibility::new(&view.basis, ground)
+        .map(|visibility| visibility.with_depth(input.depth.as_deref(), view.rect));
     let mut seen = HashSet::new();
     let mut found: Vec<(u8, ProjectedAirport)> = Vec::new();
     for (tile_index, tile) in snapshot.tiles.iter().enumerate() {

@@ -341,6 +341,11 @@ statusbar-cursor-elevation = Elevation: { $distance }
 
 
 settings-uncap-fps-toggle = Uncap FPS (restart required)
+settings-render-quality = Globe resolution
+settings-render-quality-screen = Screen size
+settings-render-quality-hd = HD (1080p)
+settings-render-quality-sd = SD (720p)
+settings-render-quality-help = How many pixels the globe draws. HD and SD draw fewer than a large or Retina screen has and load coarser tiles: lighter frames, a softer picture. Moving frames stay a share of it.
 settings-motion-resolution-auto = Lighter frames while moving, flat view (automatic)
 settings-motion-resolution = Resolution while moving, flat view
 settings-motion-resolution-help = While the view moves, frames render at a share of the full resolution, so they come quickly. Automatic uses 40 %. 100 % is sharpest and slowest.
@@ -768,7 +773,7 @@ settings-theme-light = Light
 settings-reduce-motion-label = Reduce motion
 settings-reduce-motion-help = Arrive at places without flying there, and stop the globe from coasting after a drag. On a Mac, Reduce Motion in System Settings does this too.
 settings-mono-icons-label = Monochrome icons
-settings-mono-icons-help = Draw the ribbon’s and menus’ icons in one colour, the accent or your own, instead of their own colours.
+settings-mono-icons-help = Draw every icon in one colour instead of its own colours: the accent, or a colour of your own, which then takes the accent’s place everywhere.
 settings-mono-icons-own-color-label = Own colour instead of the accent
 settings-mono-icons-color-label = Icon colour
 settings-utc-times-label = Show times in UTC

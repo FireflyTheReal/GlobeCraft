@@ -22,17 +22,24 @@ struct PreparedFrame {
     fading_out: Option<super::overlays::PreparedOverlay>,
     aircraft: Option<Arc<globecraft_render::aircraft::AircraftGeometry>>,
     live_layers: Option<Arc<globecraft_render::live_layers::LiveGeometry>>,
+    /// The frame's drawn ground (relief frames the GPU's walk went through).
+    depth: Option<Arc<globecraft_render::overlays::DepthMap>>,
 }
 
 /// The compare release's raster, handed from the render step to the prepare step of
 /// the same job.
 type CompareRaster = Arc<std::sync::Mutex<Option<(usize, usize, u16, Vec<u8>)>>>;
+/// The last relief frame's drawn ground (`FrameRenderer::take_depth`).
+type DepthSlot = Arc<std::sync::Mutex<Option<Arc<globecraft_render::overlays::DepthMap>>>>;
 
 pub(super) struct Renderer {
     worker: RenderWorker<PreparedFrame>,
     displayed: Option<(Cam, Basis)>,
     displayed_rect: Option<egui::Rect>,
     displayed_grid_step: Option<f64>,
+    /// The displayed frame's drawn ground (`overlays::DepthMap`): layers projected for
+    /// its view hide what lies behind the relief by it.
+    pub(super) displayed_depth: Option<Arc<globecraft_render::overlays::DepthMap>>,
     /// The relief setting the displayed frame's overlays were projected with (`None`
     /// before the first frame). Drawing must use it: the live one carries the tile
     /// cache's generation, which moves with every arriving tile, so overlays prepared
@@ -76,6 +83,11 @@ impl Renderer {
         // the cache as one list, and a tile of either release wakes the next frame.
         let compare_raster = CompareRaster::default();
         let compare_out = compare_raster.clone();
+        // The relief frame's drawn ground, from the render step to the prepare step
+        // (both on the frame worker, one after the other): the overlays hide what lies
+        // behind the relief by it.
+        let depth_slot: DepthSlot = Arc::default();
+        let depth_out = depth_slot.clone();
         Self {
             worker: RenderWorker::with_prepare(
                 move |request, buffer| {
@@ -91,6 +103,10 @@ impl Renderer {
                         profile.values.tilt_decideg = (request.cam.tilt * 10.0) as usize;
                     }
                     let mut frame = backend.render(request, &cache, buffer);
+                    #[cfg(feature = "gpu")]
+                    if let Ok(mut slot) = depth_slot.lock() {
+                        *slot = backend.take_depth();
+                    }
                     if let Some(compare) = request.compare {
                         let size = |n: usize| ((n as f32 * compare.scale).round() as usize).max(1);
                         let compare_request = RenderRequest {
@@ -128,6 +144,7 @@ impl Renderer {
                     admission_cache.prioritize_view(&frame.required_tiles());
                 },
                 move |request, pixels| {
+                    let prepare_started = std::time::Instant::now();
                     #[cfg(feature = "profiling")]
                     let _prepare = globecraft_data::profiling::Span::new("frame.prepare");
                     #[cfg(feature = "profiling")]
@@ -138,12 +155,14 @@ impl Renderer {
                     );
                     #[cfg(feature = "profiling")]
                     drop(conversion);
+                    let depth = depth_out.lock().ok().and_then(|mut slot| slot.take());
                     let geometry = request.overlays.as_ref().map(|input| {
                         let geometry =
                             overlay_preparer.prepare(globecraft_render::overlays::OverlayInput {
                                 view: input.view,
                                 data: input.data.clone(),
                                 fading_out: None,
+                                depth: depth.clone(),
                             });
                         super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_overlay,
@@ -151,6 +170,7 @@ impl Renderer {
                             &overlay_ctx,
                         )
                     });
+                    let overlays_took = prepare_started.elapsed();
                     let fading_out = request.overlays.as_ref().and_then(|input| {
                         let data = input.fading_out.clone()?;
                         let geometry =
@@ -158,6 +178,7 @@ impl Renderer {
                                 view: input.view,
                                 data,
                                 fading_out: None,
+                                depth: depth.clone(),
                             });
                         Some(super::overlays::PreparedOverlay::reuse_or_new(
                             &mut last_fading,
@@ -173,24 +194,29 @@ impl Renderer {
                                 egui::ColorImage::from_rgba_premultiplied([width, height], &pixels);
                             (image, rel)
                         });
-                    PreparedFrame {
+                    let prepared = PreparedFrame {
                         image,
                         compare,
                         overlays: geometry,
                         fading_out,
                         live_layers: request.live_layers.clone().map(|mut input| {
                             input.unix_secs = now_unix();
+                            input.depth = depth.clone();
                             live_preparer.prepare(input)
                         }),
                         aircraft: request.aircraft.clone().map(|mut input| {
                             input.unix_secs = now_unix();
                             aircraft_preparer.prepare(input)
                         }),
-                    }
+                        depth,
+                    };
+                    log_prepare(request, overlays_took, prepare_started.elapsed());
+                    prepared
                 },
             )
             .expect("start frame renderer"),
             displayed: None,
+            displayed_depth: None,
             displayed_rect: None,
             displayed_grid_step: None,
             displayed_ground: None,
@@ -390,6 +416,8 @@ impl App {
                 },
                 data: self.borders.shown.clone(),
                 fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
+                // The frame worker adds the frame's drawn ground.
+                depth: None,
             }),
         });
     }
@@ -419,7 +447,9 @@ impl App {
             fading_out,
             aircraft,
             live_layers,
+            depth,
         } = frame.prepared;
+        self.frame.renderer.displayed_depth = depth;
         if let Some(geometry) = live_layers {
             self.live.geometry.accept(geometry);
         }
@@ -462,20 +492,42 @@ impl App {
         // 1.6). The two textures swap roles, so the old picture costs no upload.
         // A playing time replaces its frames as a moving camera does: faded, each one
         // trailed the last and the sun moved in jumps (user, 2026-11-19).
-        let same_view = self.time.speed() == 0.0
-            && same_view(
-                self.frame.texture.is_some(),
-                self.frame.renderer.displayed,
-                self.frame.renderer.displayed_rect,
-                frame.request.cam,
-                frame.request.overlays.as_ref().map(|input| input.view.rect),
-            );
+        let playing = self.time.speed() != 0.0;
+        let same_place = same_view(
+            self.frame.texture.is_some(),
+            self.frame.renderer.displayed,
+            self.frame.renderer.displayed_rect,
+            frame.request.cam,
+            frame.request.overlays.as_ref().map(|input| input.view.rect),
+        );
+        let same_view = !playing && same_place;
         let fading = self.frame.fade_from.is_some()
             && self
                 .frame
                 .fade_started
-                .is_some_and(|started| started.elapsed() < super::globe::FRAME_FADE);
-        if same_view && fading {
+                .is_some_and(|started| started.elapsed() < self.frame.fade_length);
+        if !playing {
+            self.frame.playback_frames = None;
+        }
+        if playing && same_place {
+            // While the time plays, each frame fades in over about the time until the
+            // next one comes: the light and the sun move on between frames instead
+            // of jumping a step each frame (user, 2026-11-24: "the sun's disc jumping
+            // in the sky, day and night shading moving in steps"). Faded over 250 ms,
+            // as at rest, each one trailed the last (user, 2026-11-19).
+            let now = std::time::Instant::now();
+            let interval = self.frame.playback_frames.map_or(
+                PLAYBACK_FADE_FIRST.as_secs_f32(),
+                |(last, mean)| {
+                    mean + PLAYBACK_INTERVAL_WEIGHT
+                        * (now.duration_since(last).as_secs_f32() - mean)
+                },
+            );
+            self.frame.playback_frames = Some((now, interval));
+            std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
+            self.frame.fade_started = Some(now);
+            self.frame.fade_length = playback_fade(interval);
+        } else if same_view && fading {
             // A fade under way goes on from the same picture toward this newer
             // one. Starting over from the half-shown picture showed the rest of it
             // at once: while relief and imagery loaded, a frame every tenth of a
@@ -483,6 +535,7 @@ impl App {
         } else if same_view {
             std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
             self.frame.fade_started = Some(std::time::Instant::now());
+            self.frame.fade_length = super::globe::FRAME_FADE;
         } else {
             self.frame.fade_started = None;
         }
@@ -562,6 +615,20 @@ impl App {
 }
 
 /// Two frames show the same view when their cameras and viewport rectangles match exactly.
+/// While the time plays: the fade before the time between frames is known…
+const PLAYBACK_FADE_FIRST: std::time::Duration = std::time::Duration::from_millis(30);
+/// …how fast the running mean of that time follows it…
+const PLAYBACK_INTERVAL_WEIGHT: f32 = 0.3;
+/// …and the longest fade: with frames further apart than this (3D terrain, tilted),
+/// a longer fade drags the light behind the time.
+const PLAYBACK_FADE_MAX: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// How long a frame of a playing time fades in: the time between frames (seconds),
+/// up to `PLAYBACK_FADE_MAX`.
+fn playback_fade(interval_secs: f32) -> std::time::Duration {
+    std::time::Duration::from_secs_f32(interval_secs.clamp(0.0, PLAYBACK_FADE_MAX.as_secs_f32()))
+}
+
 fn same_view(
     has_texture: bool,
     displayed: Option<(Cam, Basis)>,
@@ -574,17 +641,37 @@ fn same_view(
         && displayed_rect.is_some_and(|displayed| Some(displayed) == rect)
 }
 
-/// Two frames show the same camera when every camera value matches exactly.
+/// Two frames show the same camera when every camera value matches exactly. The
+/// look up counts too: without it, tilting past the horizon cross-faded each frame
+/// over the last as if tiles had arrived, and the ground and the sun showed twice
+/// (user, 2026-11-24).
 fn same_camera(a: Cam, b: Cam) -> bool {
-    [a.lat, a.lon, a.alt, a.heading, a.tilt]
+    [a.lat, a.lon, a.alt, a.heading, a.tilt, a.look_up]
         .iter()
-        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt])
+        .zip([b.lat, b.lon, b.alt, b.heading, b.tilt, b.look_up])
         .all(|(x, y)| x.to_bits() == y.to_bits())
 }
 
 // Input must describe the same globe as the frame being presented.
 fn displayed_basis(displayed: Option<(Cam, Basis)>, fallback: Basis) -> Basis {
     displayed.map_or(fallback, |(_, basis)| basis)
+}
+
+/// With `GLOBECRAFT_FRAME_TIMES` set: one log line per frame prepared after the globe
+/// was drawn (its overlays first, then the rest), as the renderer logs relief frames.
+fn log_prepare(request: &RenderRequest, overlays: std::time::Duration, whole: std::time::Duration) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
+        let [by_depth, by_line, off_frame, not_sure, heights] =
+            globecraft_render::overlays::take_counts();
+        globecraft_data::log_line!(
+            "FRAME PREPARE {}x{}: overlays {:.1} ms, whole {:.1} ms; hidden-point tests by the drawn ground {by_depth}, by the line {by_line} ({off_frame} off the frame, {not_sure} not sure); {heights} height lookups",
+            request.width,
+            request.height,
+            overlays.as_secs_f64() * 1000.0,
+            whole.as_secs_f64() * 1000.0
+        );
+    }
 }
 
 #[cfg(test)]
@@ -618,6 +705,14 @@ mod tests {
     }
 
     #[test]
+    fn a_playing_time_fades_each_frame_over_the_time_between_frames() {
+        let ms = |secs: f32| playback_fade(secs).as_secs_f64() * 1e3;
+        assert!((ms(0.022) - 22.0).abs() < 0.01);
+        assert!((ms(0.4) - PLAYBACK_FADE_MAX.as_secs_f64() * 1e3).abs() < 0.01);
+        assert_eq!(ms(-1.0), 0.0);
+    }
+
+    #[test]
     fn crossfade_requires_the_same_camera_and_viewport_rect() {
         let shown = Cam {
             lat: 20.0,
@@ -647,6 +742,19 @@ mod tests {
         assert!(!same_view(
             true,
             Some((Cam { lon: 31.0, ..shown }, basis)),
+            Some(rect),
+            shown,
+            Some(rect)
+        ));
+        assert!(!same_view(
+            true,
+            Some((
+                Cam {
+                    look_up: 12.0,
+                    ..shown
+                },
+                basis
+            )),
             Some(rect),
             shown,
             Some(rect)

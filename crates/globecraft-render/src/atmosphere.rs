@@ -14,11 +14,10 @@
 //! light that reaches a point after any number of bounces, isotropic, by height and
 //! sun angle (`multiple`). It keeps the twilight sky deep blue, lights the air in the
 //! Earth's shadow, and is folded into the scattering table, so the GPU reads it too.
-mod aerial;
+pub(crate) mod aerial;
 
 use glam::Vec4;
 use globecraft_core::EARTH_RADIUS_KM;
-use rayon::prelude::*;
 use std::sync::LazyLock;
 
 /// The ground and the top of the air, from the Earth's centre. The air is taken as a
@@ -52,9 +51,9 @@ const MIN_SUN_COSINE: f32 = -0.5;
 /// Table sizes. Transmittance: by height and by view angle. Scattering: by height,
 /// view angle (half for rays that reach the ground, half for rays that leave), sun
 /// angle and the angle between view and sun.
-const TRANSMITTANCE_HEIGHTS: usize = 64;
+pub(crate) const TRANSMITTANCE_HEIGHTS: usize = 64;
 pub(crate) const TRANSMITTANCE_ANGLES: usize = 256;
-const SCATTERING_HEIGHTS: usize = 16;
+pub(crate) const SCATTERING_HEIGHTS: usize = 16;
 pub(crate) const SCATTERING_VIEWS: usize = 64;
 pub(crate) const SCATTERING_SUNS: usize = 32;
 pub(crate) const SCATTERING_PHASES: usize = 8;
@@ -81,7 +80,7 @@ const ADAPT_FADE_KM: [f32; 2] = [20.0, 80.0];
 /// The air between the camera and the ground is integrated along the ray
 /// (`aerial`) with the camera below the first height (km), the tables' way above the
 /// second, a mix between.
-const AERIAL_FADE_KM: [f32; 2] = [15.0, 30.0];
+pub(crate) const AERIAL_FADE_KM: [f32; 2] = [15.0, 30.0];
 
 /// How bright scattered sunlight is drawn: radiance for a sun of irradiance one, times
 /// this, then compressed to the screen's range (`tone`).
@@ -162,6 +161,35 @@ pub(crate) fn ground_share(view_cosine: f32) -> f32 {
 
 /// The tables, computed on first use (a fraction of a second).
 pub(crate) static TABLES: LazyLock<Tables> = LazyLock::new(Tables::compute);
+
+/// `f` over `0..count`, in order, on plain threads. Not on rayon's: the tables are
+/// made inside `TABLES`' lock, and a rayon thread waiting there on its own parallel
+/// work picks up other jobs, such as a pixel row that waits on the same lock: the
+/// frame never came (black probe frames, 2026-11-22).
+fn spread<T: Send>(count: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let chunk = count.div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let parts: Vec<_> = (0..count)
+            .step_by(chunk)
+            .map(|start| {
+                let f = &f;
+                scope.spawn(move || {
+                    (start..(start + chunk).min(count))
+                        .map(f)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|part| {
+                part.join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
 
 /// The colour of the sunlight on the ground where the sun's cosine is `sun_cosine`
 /// (as `Air::sunlight`), for what is lit outside the raster (buildings).
@@ -290,39 +318,32 @@ impl Tables {
             scattering: Vec::new(),
             multiple: Vec::new(),
         };
-        tables.transmittance = (0..TRANSMITTANCE_HEIGHTS * TRANSMITTANCE_ANGLES)
-            .into_par_iter()
-            .map(|index| {
-                let rho = horizon * (index / TRANSMITTANCE_ANGLES) as f32
-                    / (TRANSMITTANCE_HEIGHTS - 1) as f32;
-                let r = (rho * rho + GROUND_KM * GROUND_KM).sqrt();
-                let (d_min, d_max) = (TOP_KM - r, rho + horizon);
-                let d = d_min
-                    + (d_max - d_min) * (index % TRANSMITTANCE_ANGLES) as f32
-                        / (TRANSMITTANCE_ANGLES - 1) as f32;
-                let mu = if d == 0.0 {
-                    1.0
-                } else {
-                    ((horizon * horizon - rho * rho - d * d) / (2.0 * r * d)).clamp(-1.0, 1.0)
-                };
-                optical_depth_to_top(r, mu)
-            })
-            .collect();
+        tables.transmittance = spread(TRANSMITTANCE_HEIGHTS * TRANSMITTANCE_ANGLES, |index| {
+            let rho = horizon * (index / TRANSMITTANCE_ANGLES) as f32
+                / (TRANSMITTANCE_HEIGHTS - 1) as f32;
+            let r = (rho * rho + GROUND_KM * GROUND_KM).sqrt();
+            let (d_min, d_max) = (TOP_KM - r, rho + horizon);
+            let d = d_min
+                + (d_max - d_min) * (index % TRANSMITTANCE_ANGLES) as f32
+                    / (TRANSMITTANCE_ANGLES - 1) as f32;
+            let mu = if d == 0.0 {
+                1.0
+            } else {
+                ((horizon * horizon - rho * rho - d * d) / (2.0 * r * d)).clamp(-1.0, 1.0)
+            };
+            optical_depth_to_top(r, mu)
+        });
         let noon = tables.transmittance[0];
         tables.noon = [noon.x / noon.y, noon.x / noon.z];
-        tables.multiple = (0..MULTIPLE_HEIGHTS * MULTIPLE_SUNS)
-            .into_par_iter()
-            .map(|index| {
-                let height =
-                    HEIGHT_KM * (index / MULTIPLE_SUNS) as f32 / (MULTIPLE_HEIGHTS - 1) as f32;
-                let mu_s = 2.0 * (index % MULTIPLE_SUNS) as f32 / (MULTIPLE_SUNS - 1) as f32 - 1.0;
-                tables.multiple_at(GROUND_KM + height, mu_s)
-            })
-            .collect();
+        tables.multiple = spread(MULTIPLE_HEIGHTS * MULTIPLE_SUNS, |index| {
+            let height = HEIGHT_KM * (index / MULTIPLE_SUNS) as f32 / (MULTIPLE_HEIGHTS - 1) as f32;
+            let mu_s = 2.0 * (index % MULTIPLE_SUNS) as f32 / (MULTIPLE_SUNS - 1) as f32 - 1.0;
+            tables.multiple_at(GROUND_KM + height, mu_s)
+        });
         let views = SCATTERING_VIEWS / 2;
-        tables.scattering = (0..SCATTERING_HEIGHTS * SCATTERING_VIEWS * SCATTERING_SUNS)
-            .into_par_iter()
-            .flat_map_iter(|index| {
+        tables.scattering = spread(
+            SCATTERING_HEIGHTS * SCATTERING_VIEWS * SCATTERING_SUNS,
+            |index| {
                 let rho = horizon * (index / (SCATTERING_VIEWS * SCATTERING_SUNS)) as f32
                     / (SCATTERING_HEIGHTS - 1) as f32;
                 let r = (rho * rho + GROUND_KM * GROUND_KM).sqrt();
@@ -353,16 +374,21 @@ impl Tables {
                 let tables = &tables;
                 let mu_s = tables
                     .sun_cosine((index % SCATTERING_SUNS) as f32 / (SCATTERING_SUNS - 1) as f32);
-                (0..SCATTERING_PHASES).map(move |phase| {
-                    // Only some angles between view and sun exist for a view and a sun
-                    // direction; the others take the nearest that does.
-                    let reach = ((1.0 - mu * mu) * (1.0 - mu_s * mu_s)).max(0.0).sqrt();
-                    let nu = (2.0 * phase as f32 / (SCATTERING_PHASES - 1) as f32 - 1.0)
-                        .clamp(mu * mu_s - reach, mu * mu_s + reach);
-                    tables.scattered_along(r, mu, mu_s, nu, to_ground)
-                })
-            })
-            .collect();
+                (0..SCATTERING_PHASES)
+                    .map(move |phase| {
+                        // Only some angles between view and sun exist for a view and a sun
+                        // direction; the others take the nearest that does.
+                        let reach = ((1.0 - mu * mu) * (1.0 - mu_s * mu_s)).max(0.0).sqrt();
+                        let nu = (2.0 * phase as f32 / (SCATTERING_PHASES - 1) as f32 - 1.0)
+                            .clamp(mu * mu_s - reach, mu * mu_s + reach);
+                        tables.scattered_along(r, mu, mu_s, nu, to_ground)
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .into_iter()
+        .flatten()
+        .collect();
         tables
     }
 
@@ -718,10 +744,17 @@ impl Tables {
         }
     }
 
-    /// The transmittance table's ground row: from the ground to space by view angle.
+    /// The transmittance table (`TRANSMITTANCE_HEIGHTS` rows of `TRANSMITTANCE_ANGLES`),
+    /// its first row from the ground to space by view angle.
     #[cfg(feature = "gpu")]
-    pub(crate) fn ground_transmittance(&self) -> &[Vec4] {
-        &self.transmittance[..TRANSMITTANCE_ANGLES]
+    pub(crate) fn transmittance_table(&self) -> &[Vec4] {
+        &self.transmittance
+    }
+    /// The whole scattering table (height, view, sun, phase), its last height layer
+    /// `top_scattering`.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn scattering_table(&self) -> &[Vec4] {
+        &self.scattering
     }
 
     /// The scattering table's top layer: rays entering the air from space.
@@ -817,7 +850,7 @@ struct Inside {
 
 /// Relief this close to sea level counts as the sea-level ground, where a ray that
 /// has arrived scatters nothing further.
-const SEA_LEVEL_SLACK_KM: f32 = 0.01;
+pub(crate) const SEA_LEVEL_SLACK_KM: f32 = 0.01;
 
 impl Frame {
     /// `radius` is the camera's distance from the centre in Earth radii, in the
@@ -906,6 +939,12 @@ impl Frame {
         }
     }
 
+    /// The camera's distance from the centre (km) and the sun's cosine there, as the
+    /// sky takes them (`sky`; the GPU's `sky_colour`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn camera_and_sun(&self) -> (f32, f32) {
+        (self.radius_km, self.sun_cosine)
+    }
     /// The cosine between a view direction and the sun; without a sun, as for one at
     /// right angles to the view.
     fn phase(&self, direction: glam::DVec3, mu: f32) -> f32 {
@@ -1031,6 +1070,38 @@ impl Frame {
                 None => Vec4::ONE,
             },
         }
+    }
+}
+
+/// What the GPU needs of a frame's air with the camera inside it (`Frame::inside_air`).
+#[cfg(feature = "gpu")]
+pub(crate) struct InsideAir<'a> {
+    pub(crate) radius_km: f32,
+    pub(crate) up: glam::DVec3,
+    pub(crate) sun_cosine: f32,
+    pub(crate) rho: f32,
+    /// `Inside::scattering` then `Inside::transmittance`.
+    pub(crate) scattering: &'a [Vec4],
+    pub(crate) transmittance: &'a [Vec4],
+    pub(crate) adapt: Vec4,
+    pub(crate) aerial: Option<&'a std::sync::Arc<aerial::Aerial>>,
+}
+
+#[cfg(feature = "gpu")]
+impl Frame {
+    /// The frame's air for the GPU, when the camera is inside it.
+    pub(crate) fn inside_air(&self) -> Option<InsideAir<'_>> {
+        let inside = self.inside.as_ref()?;
+        Some(InsideAir {
+            radius_km: self.radius_km,
+            up: self.up,
+            sun_cosine: self.sun_cosine,
+            rho: inside.rho,
+            scattering: &inside.scattering,
+            transmittance: &inside.transmittance,
+            adapt: self.adapt,
+            aerial: self.aerial.as_ref(),
+        })
     }
 }
 
@@ -1199,6 +1270,31 @@ mod tests {
             let air = low.ground(skim, distance, normal, 0.05);
             assert!(air.scattered.x >= last.x - 1e-6, "{distance} km: {air:?}");
             last = air.scattered;
+        }
+    }
+
+    /// Around the sun the integrated air follows the tables' way (sound well below the
+    /// horizon) at every azimuth: no seam where one column of the table took over
+    /// (a bright wedge 30° either side of the sun, Julien's recording of 2026-11-22).
+    #[test]
+    fn the_integrated_air_follows_the_tables_round_the_sun() {
+        let (height_km, sun_cosine, mu) = (5.0, 0.05, -0.2f64);
+        let integrated = frame(height_km, sun_cosine);
+        let mut tables = frame(height_km, sun_cosine);
+        tables.aerial = None;
+        for step in 0..=36 {
+            let azimuth = (f64::from(step) * 5.0).to_radians();
+            let across = (1.0 - mu * mu).sqrt();
+            let direction = DVec3::new(across * azimuth.cos(), across * azimuth.sin(), mu);
+            let (a, b) = (
+                integrated.ground(direction, 20.0, DVec3::Z, 0.2),
+                tables.ground(direction, 20.0, DVec3::Z, 0.2),
+            );
+            assert!(
+                (a.scattered - b.scattered).abs().max_element() <= 0.15 * b.scattered.max_element(),
+                "{}°: {a:?} {b:?}",
+                step * 5
+            );
         }
     }
 

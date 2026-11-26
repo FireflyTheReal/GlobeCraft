@@ -93,6 +93,8 @@ impl Globe {
     pub fn new(app_dir: std::path::PathBuf) -> std::io::Result<Self> {
         globecraft_data::use_app_dir(app_dir);
         globecraft_data::run_log::init();
+        // Phase 0 measures: every relief frame's time split goes to the shared log.
+        globecraft_render::backend::log_frame_times();
         let runtime = ServiceRuntime::new()?;
         let tiles_arrived = Arc::new(AtomicBool::new(true));
         let arrived = tiles_arrived.clone();
@@ -246,8 +248,8 @@ impl Globe {
     }
 
     /// A still frame's size relative to the screen's pixels: all of them when the GPU
-    /// draws, at most `MAX_CPU_FRAME_PIXELS` when the CPU does (no GPU, or relief,
-    /// which this branch's GPU renderer leaves to the CPU).
+    /// draws, at most `MAX_CPU_FRAME_PIXELS` when the CPU does, and with relief (the
+    /// GPU's walk costs per pixel too, and its cost on a phone is not measured yet).
     fn still_scale(&self) -> f32 {
         if globecraft_render::backend::status().adapter.is_some() && !self.relief {
             return 1.0;

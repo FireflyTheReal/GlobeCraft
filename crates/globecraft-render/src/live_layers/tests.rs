@@ -65,6 +65,7 @@ pub(super) fn input(model: EarthModel) -> LiveInput {
         poi: None,
         poi_layers: Default::default(),
         poi_shown: None,
+        depth: None,
         unix_secs: 1_700_000_000.0,
         scene_offset_secs: 0.0,
         now: std::time::Instant::now(),

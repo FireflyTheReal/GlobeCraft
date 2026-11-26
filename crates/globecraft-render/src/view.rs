@@ -49,6 +49,17 @@ pub fn raster_size(
         ((width as f32 * size_points.y / size_points.x) as usize).max(MIN_RENDER_HEIGHT_PX);
     (width, height)
 }
+/// The pixels per point a raster is drawn at: the screen's, or fewer so a frame of a
+/// view `size_points` large is at most `max_height_px` high (the quality setting).
+pub fn quality_pixels_per_point(
+    size_points: Vec2,
+    pixels_per_point: f32,
+    max_height_px: Option<f32>,
+) -> f32 {
+    max_height_px.map_or(pixels_per_point, |most| {
+        pixels_per_point.min(most / size_points.y.max(1.0))
+    })
+}
 /// Scale between this raster's pixels and the full-quality (idle) raster's, which
 /// sets the level of detail. While interacting, frames render at
 /// `ACTIVE_RENDER_SCALE`, but the level must follow the idle raster's density, or
@@ -185,6 +196,23 @@ impl RasterView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_quality_caps_the_frame_height_and_never_raises_it() {
+        let retina = Vec2::new(1440.0, 860.0);
+        let hd = quality_pixels_per_point(retina, 2.0, Some(1080.0));
+        assert!((1078..=1080).contains(&raster_size(retina, hd, true, false, None).1));
+        assert_eq!(quality_pixels_per_point(retina, 2.0, None), 2.0);
+        // A window already smaller than the cap keeps its pixels.
+        assert_eq!(
+            quality_pixels_per_point(Vec2::new(800.0, 500.0), 1.0, Some(720.0)),
+            1.0
+        );
+        // Moving frames stay the same share of the smaller frame at rest.
+        let sd = quality_pixels_per_point(retina, 2.0, Some(720.0));
+        assert_eq!(render_scale(retina, sd, true, true, None), 1.0);
+        assert!(raster_size(retina, sd, false, true, None).1 < 720 / 3);
+    }
     #[test]
     fn sky_changes_invalidate_presentation_even_without_sunlight() {
         let mut view = RasterView {

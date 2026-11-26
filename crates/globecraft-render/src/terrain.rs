@@ -64,12 +64,12 @@ pub const MIN_EXAGGERATION: f32 = 0.5;
 pub const MAX_EXAGGERATION: f32 = 3.0;
 
 /// Finest elevation zoom requested; finer imagery reuses its relief.
-const DEM_MAX_ZOOM: i32 = 15;
+pub(crate) const DEM_MAX_ZOOM: i32 = 15;
 /// Elevation texels per screen pixel along the ray: relief varies slowly, so a texel
 /// may cover two pixels.
-const DEM_PIXELS_PER_TEXEL: f64 = 2.0;
+pub(crate) const DEM_PIXELS_PER_TEXEL: f64 = 2.0;
 /// Above every summit (Everest 8,849 m): rays higher than this cannot hit the ground.
-const MAX_TERRAIN_M: f64 = 8_900.0;
+pub(crate) const MAX_TERRAIN_M: f64 = 8_900.0;
 /// Steps per ray before it gives up and keeps the ellipsoid (a safety bound; typical
 /// rays need tens).
 const MAX_MARCH_STEPS: usize = 512;
@@ -79,23 +79,28 @@ const BLOCK_EXIT_TEXELS: f64 = 1e-3;
 /// barely moves across the map (looking straight down) must not leap past the ground.
 const MAX_NUDGE: f64 = 1e-8;
 /// Elevation tiles are 512 texels across (Mapterhorn).
-const DEM_TILE_TEXELS: f64 = 512.0;
+pub(crate) const DEM_TILE_TEXELS: f64 = 512.0;
 /// Linear steps between exact measurements, in texels.
 const REANCHOR_TEXELS: f64 = 48.0;
+/// The same for `march_exact`: measured exactly every texel, as the GPU's walk measures
+/// every step (2026-11-24: of the grounds the GPU took past the frame's march's, three
+/// in four were the frame's linear steps between measurements).
+#[cfg(feature = "gpu")]
+const EXACT_REANCHOR_TEXELS: f64 = 1.0;
 /// Secant refinements of a hit between the last point above and the first below.
 const HIT_REFINEMENTS: usize = 3;
 /// Hill shading: light from the north-west and above, independent of real sunlight.
-const LIGHT_UP: f64 = 0.7;
-const LIGHT_NORTH: f64 = 0.55;
-const LIGHT_WEST: f64 = 0.45;
-const SHADE_BASE: f64 = 0.9;
-const SHADE_GAIN: f64 = 0.7;
-const MIN_SHADE: f64 = 0.58;
-const MAX_SHADE: f64 = 1.25;
+pub(crate) const LIGHT_UP: f64 = 0.7;
+pub(crate) const LIGHT_NORTH: f64 = 0.55;
+pub(crate) const LIGHT_WEST: f64 = 0.45;
+pub(crate) const SHADE_BASE: f64 = 0.9;
+pub(crate) const SHADE_GAIN: f64 = 0.7;
+pub(crate) const MIN_SHADE: f64 = 0.58;
+pub(crate) const MAX_SHADE: f64 = 1.25;
 /// Steepest slope (rise over run) the shading uses; cliffs beyond it shade the same.
-const MAX_SLOPE: f64 = 5.0;
+pub(crate) const MAX_SLOPE: f64 = 5.0;
 /// Keeps slope distances finite next to the poles.
-const MIN_LATITUDE_COSINE: f64 = 0.015;
+pub(crate) const MIN_LATITUDE_COSINE: f64 = 0.015;
 
 #[cfg(test)]
 thread_local! {
@@ -116,6 +121,16 @@ pub struct TerrainCfg {
 }
 
 impl TerrainCfg {
+    /// The exaggeration the heights stand at (after `fade`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn exaggeration(self) -> f64 {
+        self.exaggeration
+    }
+    /// Whether heights blend between levels (see `without_smoothing`).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn smooth(self) -> bool {
+        self.smooth
+    }
     /// Relief with the given vertical exaggeration (clamped to the accepted range),
     /// flattened by `fade` (0–1, `relief_fade`).
     pub fn new(exaggeration: f32, fade: f32) -> Self {
@@ -148,23 +163,23 @@ pub(super) enum March {
 
 /// The march toward the sun starts this high over the ground (metres, before
 /// exaggeration), so the slope it leaves does not shade itself.
-const SHADOW_LIFT_M: f64 = 20.0;
+pub(crate) const SHADOW_LIFT_M: f64 = 20.0;
 /// …and at least this many of the elevation texels it reads above it, times the
 /// exaggeration: a coarser level's heights stand above the finer ground on slopes.
-const SHADOW_LIFT_TEXELS: f64 = 1.5;
+pub(crate) const SHADOW_LIFT_TEXELS: f64 = 1.5;
 /// The march toward the sun reads the elevation this many times coarser than the
 /// view: the shadow's edge is soft anyway, and it reads fewer, smaller tiles.
-const SHADOW_DETAIL_COARSER: f64 = 4.0;
+pub(crate) const SHADOW_DETAIL_COARSER: f64 = 4.0;
 /// Tiles only the shadows need are asked for after the view's own.
 const SHADOW_REQUEST_PRIORITY: f32 = f32::MAX;
 /// The sun's angular radius: a ray this close to a ridge still sees part of the disc.
-const SUN_RADIUS_RAD: f64 = 0.004_65;
+pub(crate) const SUN_RADIUS_RAD: f64 = 0.004_65;
 /// How uncertain an elevation texel's height is, as a share of its width: a ray that
 /// clears the ground by less than this sees the sun only in part. With a hard edge,
 /// a low sun cast every far, coarse texel (200–400 m wide at sunrise) as a sharp
 /// strip of shadow kilometres long, which jumped from block to block as the sun
 /// rose (user's recording, 2026-11-20 22:48).
-const SHADOW_SOFT_TEXEL_SHARE: f64 = 0.3;
+pub(crate) const SHADOW_SOFT_TEXEL_SHARE: f64 = 0.3;
 
 /// What the march toward the sun learns on its way: the least clearance over the
 /// ground, as a share of the margin within which the sun is partly hidden there (the
@@ -215,8 +230,10 @@ pub(super) fn sun_light(
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
 ) -> f32 {
     let up = hit.normal;
-    // Below the horizon there is no direct light to hide.
-    if terrain.fade <= 0.0 || sun.dot(up) <= SUN_RISE_START_COSINE {
+    // Below the ground's own horizon there is no direct light to hide.
+    if terrain.fade <= 0.0
+        || sun.dot(up) + horizon_dip(hit, geometry, terrain) <= SUN_RISE_START_COSINE
+    {
         return 1.0;
     }
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
@@ -242,6 +259,7 @@ pub(super) fn sun_light(
         SHADOW_REQUEST_PRIORITY,
         loc,
         Some(&mut margin),
+        REANCHOR_TEXELS,
     ) {
         March::Hit(..) => 0.0,
         March::Floor | March::Miss => margin.light(),
@@ -283,6 +301,21 @@ impl Grid {
     }
     fn contains(&self, (x, y): (f64, f64)) -> bool {
         (0.0..self.size).contains(&x) && (0.0..self.size).contains(&y)
+    }
+    /// How far along the straight line from texel position `from` to `to` (inside this
+    /// tile) it enters the tile, as a share of the line: 0 when `from` is inside.
+    fn entry(&self, from: (f64, f64), to: (f64, f64)) -> f64 {
+        let axis = |a: f64, b: f64| {
+            let edge = if a < 0.0 {
+                0.0
+            } else if a >= self.size {
+                self.size
+            } else {
+                return 0.0;
+            };
+            ((edge - a) / (b - a)).clamp(0.0, 1.0)
+        };
+        axis(from.0, to.0).max(axis(from.1, to.1))
     }
     /// No bilinear height between `from` and `to` (`(u, v)` corners of a square no
     /// wider than this tile) is above this, in metres.
@@ -567,6 +600,144 @@ fn shell_span(
     (far > 0.0).then_some((near.max(0.0), far))
 }
 
+/// How far below the level horizon the horizon of the ground at `hit` lies (radians):
+/// from a height h over the sea it dips by √(2h/R), 2.9° from 8,000 m, so the peaks
+/// take the sun minutes before the plain (alpenglow). Real heights, not exaggerated
+/// ones; it fades with the relief.
+pub(super) fn horizon_dip(
+    hit: &rays::RaySample,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+) -> f64 {
+    let height = height_above(hit.point, geometry.inverse_axes_squared())
+        / terrain.exaggeration.max(f64::MIN_POSITIVE);
+    (2.0 * height.max(0.0)).sqrt() * f64::from(terrain.fade)
+}
+
+/// Where a march met the ground.
+struct Found {
+    t: f64,
+    point: DVec3,
+    normal: DVec3,
+    uv: (f64, f64),
+    latitude_cosine: f64,
+}
+
+/// The hit at `found` on `tile`: the ground's slope there, as the march shades it.
+fn hit_on(
+    ray: &rays::RaySample,
+    tile: DemTile,
+    found: Found,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> March {
+    let Found {
+        t,
+        point,
+        normal,
+        uv,
+        latitude_cosine,
+    } = found;
+    let to_world = terrain.exaggeration / EARTH_RADIUS_M;
+    let held = Held::of(loc);
+    let mut shade = if !terrain.smooth || tile.morph.is_none() {
+        slope(&tile.grid, tile.elevation(held.tiles), uv, normal, to_world)
+    } else {
+        tile.shade(held, uv, normal, to_world)
+    };
+    // A finer level steepens the slopes, so the shading darkened at once where the
+    // level changed, all over the view as it zoomed (user's recording, 2026-11-17).
+    // It comes in with the zoom instead: from the next coarser level's at the change to
+    // this level's one level on.
+    let level = tile.n.log2().round() as i32;
+    let toward = (dem_zoom_exact(t, pixel_angle, latitude_cosine, DEM_TILE_TEXELS)
+        - f64::from(level))
+    .clamp(0.0, 1.0) as f32;
+    if toward < 1.0
+        && terrain.smooth
+        && level > 0
+        && let Some(coarser) = dem_tile(loc, level - 1, uv, dist)
+    {
+        let held = Held::of(loc);
+        let before = coarser.shade(held, uv, normal, to_world);
+        shade = before.lerp(shade, f64::from(toward));
+    }
+    let shade = shade.faded(polar_fade(point) as f32);
+    March::Hit(
+        rays::RaySample {
+            distance: t,
+            point,
+            normal,
+            incidence: (-ray.direction.dot(normal)).max(0.0),
+            ..*ray
+        },
+        shade,
+    )
+}
+
+/// The hit where the GPU met the ground, `t` along `ray` from `origin`
+/// (`gpu::relief`), shaded as the march would shade it, without the march: `None`
+/// where the level for that distance is not held as itself (missing, or still growing
+/// in), and the march decides.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn met_at(
+    ray: &rays::RaySample,
+    t: f64,
+    origin: DVec3,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> Option<March> {
+    let point = origin + ray.direction * t;
+    if polar_fade(point) < 1.0 {
+        return None;
+    }
+    let normal = geometry.normal(point).normalize();
+    let latitude_cosine = normal.x.hypot(normal.y);
+    let zoom = (dem_zoom_exact(t, pixel_angle, latitude_cosine, DEM_TILE_TEXELS).floor() as i32)
+        .clamp(0, DEM_MAX_ZOOM);
+    let uv = mercator_uv(normal);
+    let tile = dem_tile(loc, zoom, uv, dist)?;
+    if tile.level() != zoom || (terrain.smooth && tile.morph.is_some()) {
+        return None;
+    }
+    let found = Found {
+        t,
+        point,
+        normal,
+        uv,
+        latitude_cosine,
+    };
+    Some(hit_on(ray, tile, found, terrain, pixel_angle, dist, loc))
+}
+
+/// Elevation tiles end at Web Mercator's limit (85.05°): past it each tile's edge row
+/// stood for all the land to the pole, as ridges along the meridians that cast long
+/// slabs of shadow (Julien's recording over Antarctica, 2026-11-22). Past the limit
+/// the relief eases down to the globe's surface over this much more of the latitude's
+/// sine (about 1.5°, 170 km: a slope of a degree under Antarctica's plateau), read from
+/// a coarse level (`POLAR_RELIEF_ZOOM`, a texel of about 1.5 km there) whose edge row
+/// changes slowly along the parallel; the polar caps' imagery lies there.
+const POLAR_RELIEF_FADE_SINE: f64 = 0.001_9;
+const POLAR_RELIEF_ZOOM: i32 = 2;
+
+/// How much of its height the relief at `point` stands at (see
+/// `POLAR_RELIEF_FADE_SINE`). Lower ground only: the block maxima still hold above it.
+fn polar_fade(point: DVec3) -> f64 {
+    let limit = WEB_MERCATOR_MAX_LATITUDE_DEG.to_radians().sin();
+    let past = (point.z.abs() / point.length() - limit) / POLAR_RELIEF_FADE_SINE;
+    if past <= 0.0 {
+        return 1.0;
+    }
+    let past = past.min(1.0);
+    // Just past the limit a little less than whole, so the coarse level takes over.
+    (1.0 - past * past * (3.0 - 2.0 * past)).min(1.0 - f64::EPSILON)
+}
+
 /// Height above the surface (world units) of `point`: the algebraic distance to the
 /// ellipsoid scaled to a height, within metres of the geodetic height at every
 /// elevation on Earth.
@@ -690,7 +861,7 @@ impl ZoomTrack {
 /// level's: over the zoom of about 15 % more distance. Blending over the whole level
 /// made relief frames twice as slow; 0.3 cost 12–21 % in tilted views, 0.15 4–12 %
 /// (`terrain_views`, 2026-11-17).
-const HEIGHT_BLEND_LEVELS: f64 = 0.2;
+pub(crate) const HEIGHT_BLEND_LEVELS: f64 = 0.2;
 
 /// The elevation zoom for a point `t` away, before it is rounded down to a level:
 /// texels of about `DEM_PIXELS_PER_TEXEL` pixels, given the angle per pixel
@@ -773,6 +944,37 @@ pub(super) fn march(
         dist,
         loc,
         None,
+        REANCHOR_TEXELS,
+    )
+}
+
+/// `march` measured exactly at every texel (`EXACT_REANCHOR_TEXELS`): slower, for the
+/// checks of the grounds the GPU found (`relief_hits` with `HitMarch::Exact`).
+#[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn march_exact(
+    ray: &rays::RaySample,
+    start: f64,
+    hits_surface: bool,
+    origin: DVec3,
+    geometry: SurfaceGeometry,
+    terrain: TerrainCfg,
+    pixel_angle: f64,
+    dist: f32,
+    loc: &mut Local<impl Fn(TileKey) -> Lookup>,
+) -> March {
+    march_near(
+        ray,
+        start,
+        hits_surface,
+        origin,
+        geometry,
+        terrain,
+        pixel_angle,
+        dist,
+        loc,
+        None,
+        EXACT_REANCHOR_TEXELS,
     )
 }
 
@@ -790,6 +992,7 @@ fn march_near(
     dist: f32,
     loc: &mut Local<impl Fn(TileKey) -> Lookup>,
     mut margin: Option<&mut SunMargin>,
+    reanchor_texels: f64,
 ) -> March {
     let direction = ray.direction;
     let to_world = terrain.exaggeration / EARTH_RADIUS_M;
@@ -832,6 +1035,12 @@ fn march_near(
         }
         let (zoom, weight) = levels.at(t, pixel_angle, anchor.latitude_cosine);
         let weight = if terrain.smooth { weight } else { 1.0 };
+        // Past Web Mercator's limit only a coarse level's edge row stands for the land.
+        let (zoom, weight) = if polar_fade(point) < 1.0 {
+            (zoom.min(POLAR_RELIEF_ZOOM), 1.0)
+        } else {
+            (zoom, weight)
+        };
         let mut uv = anchor.uv(t);
         // Keep the tile while it covers the point and the wanted zoom holds (it may be
         // a coarser stand-in for a missing tile); look again otherwise.
@@ -876,7 +1085,7 @@ fn march_near(
         );
         let speed = (vx * vx + vy * vy).sqrt().max(1e-12);
         // Linear texel positions drift on long jumps: measure exactly again.
-        if (t - anchor.t) * speed > REANCHOR_TEXELS {
+        if (t - anchor.t) * speed > reanchor_texels {
             anchor = Anchor::at(geometry, origin, direction, t);
             uv = anchor.uv;
         }
@@ -944,49 +1153,48 @@ fn march_near(
                     }
                     None => own_m(uv),
                 };
-                let ground = f64::from(ground_m(uv)) * to_world;
+                let ground = f64::from(ground_m(uv)) * to_world * polar_fade(point);
                 if height <= ground {
-                    let t = refine(above, t, height - ground, |t| {
-                        height_above(origin + direction * t, q)
-                            - f64::from(ground_m(anchor.uv(t))) * to_world
+                    // Toward the sun only whether it is hidden counts: no exact hit,
+                    // no slope (a fifth of that march's cost).
+                    if margin.is_some() {
+                        return March::Hit(*ray, Slope::FLAT);
+                    }
+                    let clearance = |t: f64| {
+                        let point = origin + direction * t;
+                        height_above(point, q)
+                            - f64::from(ground_m(anchor.uv(t))) * to_world * polar_fade(point)
+                    };
+                    // The last point above may lie in the tile before, where this tile's
+                    // heights stand only as its edge row: the ground is looked for from
+                    // where the ray enters this tile (the stretch before it was clear).
+                    // Refined across the edge, rays met the ground in mid-air before
+                    // a seam (found by the GPU's walk, 2026-11-23).
+                    let entered = above.map(|(from, clear)| {
+                        let share =
+                            tile.entry(tile.texel(anchor.uv(from)), tile.texel(anchor.uv(t)));
+                        let entry = from + (t - from) * share;
+                        if share > 0.0 {
+                            (entry, clearance(entry))
+                        } else {
+                            (from, clear)
+                        }
                     });
+                    let t = match entered {
+                        Some((entry, clear)) if clear <= 0.0 => entry,
+                        _ => refine(entered, t, height - ground, clearance),
+                    };
                     let point = origin + direction * t;
                     let normal = geometry.normal(point).normalize();
                     let uv = anchor.uv(t);
-                    let mut shade = if grown {
-                        slope(&tile.grid, elevation, uv, normal, to_world)
-                    } else {
-                        tile.shade(held, uv, normal, to_world)
+                    let found = Found {
+                        t,
+                        point,
+                        normal,
+                        uv,
+                        latitude_cosine: anchor.latitude_cosine,
                     };
-                    // A finer level steepens the slopes, so the shading darkened at
-                    // once where the level changed, all over the view as it zoomed
-                    // (user's recording, 2026-11-17). It comes in with the zoom
-                    // instead: from the next coarser level's at the change to this
-                    // level's one level on.
-                    let level = tile.n.log2().round() as i32;
-                    let toward =
-                        (dem_zoom_exact(t, pixel_angle, anchor.latitude_cosine, DEM_TILE_TEXELS)
-                            - f64::from(level))
-                        .clamp(0.0, 1.0) as f32;
-                    if toward < 1.0
-                        && terrain.smooth
-                        && level > 0
-                        && let Some(coarser) = dem_tile(loc, level - 1, uv, dist)
-                    {
-                        let held = Held::of(loc);
-                        let before = coarser.shade(held, uv, normal, to_world);
-                        shade = before.lerp(shade, f64::from(toward));
-                    }
-                    return March::Hit(
-                        rays::RaySample {
-                            distance: t,
-                            point,
-                            normal,
-                            incidence: (-direction.dot(normal)).max(0.0),
-                            ..*ray
-                        },
-                        shade,
-                    );
+                    return hit_on(ray, tile, found, terrain, pixel_angle, dist, loc);
                 }
                 above = Some((t, height - ground));
                 if let Some(margin) = margin.as_deref_mut() {
@@ -1297,6 +1505,61 @@ mod march_tests {
         }
     }
 
+    /// A ray that meets the ground just past a tile's edge meets it there, not in
+    /// mid-air over the tile before: east of 90° E (a tile edge at every level) the
+    /// ground stands 1,000 m high, west of it at sea level, and the ray crosses the edge
+    /// 500 m up. Refined with the second tile's heights, which outside it stand as its
+    /// edge row, the hit lay kilometres before the edge (2026-11-23).
+    #[test]
+    fn a_ray_meets_the_ground_past_a_tile_edge_at_the_edge() {
+        let geometry = EarthModel::PerfectSphere.geometry();
+        let lookup = |key: TileKey| {
+            let (provider, z, tx, _, _) = crate::unkey(key);
+            if provider != Provider::TerrainDem {
+                return Lookup::Absent;
+            }
+            let high = f64::from(tx) / f64::from(1u32 << z) >= 0.75;
+            Lookup::Ready(Arc::new(Tile::from_elevation(Elevation::from_heights(
+                64,
+                vec![if high { 1_000.0 } else { 0.0 }; 64 * 64],
+            ))))
+        };
+        let km = 1.0 / globecraft_core::EARTH_RADIUS_KM;
+        let (lat, lon) = (30.0, 90.0 - 9.6 / (111.32 * 30f64.to_radians().cos()));
+        let up = globecraft_core::math::ll_to_v3(lat, lon);
+        let east = DVec3::Z.cross(up).normalize();
+        let origin = geometry.position(lat, lon) + up * km;
+        let direction = (east * 9.6 - up * 0.5).normalize();
+        let mut loc = Local {
+            lookup: &lookup,
+            map: HashMap::<_, _, KeyBuild>::default(),
+            dem: Vec::new(),
+            dem_placed: Vec::new(),
+            dem_index: HashMap::default(),
+            now: std::time::Instant::now(),
+        };
+        let (ray, hits) = ray_from(origin, direction, geometry);
+        let hit = match march(
+            &ray,
+            0.0,
+            hits,
+            origin,
+            geometry,
+            TerrainCfg::new(1.0, 1.0),
+            1e-3,
+            0.0,
+            &mut loc,
+        ) {
+            March::Hit(hit, _) => hit,
+            _ => panic!("no ground"),
+        };
+        let (_, hit_lon) = globecraft_core::math::v3_to_ll(hit.point.normalize());
+        assert!(
+            (hit_lon - 90.0).abs() < 1e-3,
+            "met the ground at {hit_lon}° E"
+        );
+    }
+
     #[test]
     fn a_cliff_shades_the_ground_before_it_from_a_sun_behind_it() {
         let geometry = EarthModel::PerfectSphere.geometry();
@@ -1533,6 +1796,45 @@ mod march_tests {
                 assert!((km - ground_km).abs() < 0.01, "{with_stand_in}: {km}");
             }
         }
+    }
+
+    /// Past Web Mercator's limit the plateau eases down to the globe's surface instead
+    /// of standing on its tiles' edge row; just inside it stands at its height.
+    #[test]
+    fn relief_eases_down_past_the_mercator_limit() {
+        let geometry = EarthModel::Wgs84.geometry();
+        let lookup = flat_world(2_000.0);
+        let mut loc = Local {
+            lookup: &lookup,
+            map: HashMap::<_, _, KeyBuild>::default(),
+            dem: Vec::new(),
+            dem_placed: Vec::new(),
+            dem_index: HashMap::default(),
+            now: std::time::Instant::now(),
+        };
+        let mut down_at = |lat: f64| {
+            let up = globecraft_core::math::ll_to_v3(lat, 160.0);
+            let origin =
+                geometry.position(lat, 160.0) + up * (10.0 / globecraft_core::EARTH_RADIUS_KM);
+            let (ray, hits) = ray_from(origin, -up, geometry);
+            match march(
+                &ray,
+                0.0,
+                hits,
+                origin,
+                geometry,
+                TerrainCfg::new(1.0, 1.0),
+                1e-3,
+                0.0,
+                &mut loc,
+            ) {
+                March::Hit(ground, _) => ground.distance * globecraft_core::EARTH_RADIUS_KM,
+                March::Floor => ray.distance * globecraft_core::EARTH_RADIUS_KM,
+                March::Miss => f64::NAN,
+            }
+        };
+        assert!((down_at(-84.0) - 8.0).abs() < 0.05);
+        assert!((down_at(-87.0) - 10.0).abs() < 0.05);
     }
 
     #[test]

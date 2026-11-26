@@ -17,6 +17,31 @@ pub(super) fn source() -> String {
         ("AIR_VIEWS", air::SCATTERING_VIEWS),
         ("AIR_SUNS", air::SCATTERING_SUNS),
         ("AIR_PHASES", air::SCATTERING_PHASES),
+        ("COLOUR_COARSE", crate::colour_match::COARSE_LEVEL as usize),
+        ("COLOUR_FINE", crate::colour_match::FINE_LEVEL as usize),
+        (
+            "OWN_COLOURS",
+            crate::colour_match::OWN_COLOURS_LEVEL as usize,
+        ),
+        ("MEAN_CELLS", globecraft_data::tiles::MEAN_CELLS),
+        ("MEANS_PER_TILE", super::MEANS_PER_TILE),
+        ("AIR_TRANSMITTANCE_HEIGHTS", air::TRANSMITTANCE_HEIGHTS),
+        ("AIR_SCATTERING_HEIGHTS", air::SCATTERING_HEIGHTS),
+        ("AERIAL_VIEWS", air::aerial::VIEWS),
+        ("AERIAL_AZIMUTHS", air::aerial::AZIMUTHS),
+        ("AERIAL_DISTANCES", air::aerial::DISTANCES),
+        ("AIR_SCATTERING_AT", super::overview::AIR_SCATTERING_AT),
+        ("AIR_INSIDE_AT", super::overview::AIR_INSIDE_AT),
+        ("AERIAL_AT", super::overview::AERIAL_AT),
+        (
+            "UNDRAWN",
+            u32::from_le_bytes(super::overview::UNDRAWN) as usize,
+        ),
+        ("MAP_ZOOM", usize::from(super::overview::MAX_TRACKED_ZOOM)),
+        (
+            "GLOBAL_MAX_LEVEL",
+            usize::from(super::overview::GLOBAL_MAX_LEVEL),
+        ),
     ] {
         source = source.replace(&format!("__{name}__"), &value.to_string());
     }
@@ -55,6 +80,15 @@ pub(super) fn source() -> String {
         ("AURORA_NIGHT_COSINE", crate::aurora::NIGHT_COSINE),
         ("AURORA_SAMPLE_KM", crate::aurora::SAMPLE_KM),
         ("AURORA_MAX_SAMPLES", crate::aurora::MAX_SAMPLES as f32),
+        ("COLOUR_MAX_GAIN", crate::colour_match::MAX_GAIN),
+        ("COLOUR_DARK_FLOOR", crate::colour_match::DARK_FLOOR),
+        ("AIR_SEA_LEVEL_SLACK", air::SEA_LEVEL_SLACK_KM),
+        ("SUN_BRIGHTNESS", crate::sun::SUN_BRIGHTNESS),
+        ("SUN_NEAR_LIGHT", crate::sun::SUN_GLOW_NEAR.0),
+        ("SUN_WIDE_LIGHT", crate::sun::SUN_GLOW_WIDE.0),
+        ("SUN_RED", crate::sun::SUN_COLOUR.x),
+        ("SUN_GREEN", crate::sun::SUN_COLOUR.y),
+        ("SUN_BLUE", crate::sun::SUN_COLOUR.z),
     ] {
         source = source.replace(&format!("__{name}__"), &format!("{value:?}"));
     }
@@ -77,6 +111,17 @@ pub(super) fn source() -> String {
             "MAX_SAMPLE_STRIDE",
             globecraft_data::tiles::Tile::MAX_SAMPLE_STRIDE,
         ),
+        ("LIGHT_UP", crate::terrain::LIGHT_UP),
+        ("LIGHT_NORTH", crate::terrain::LIGHT_NORTH),
+        ("LIGHT_WEST", crate::terrain::LIGHT_WEST),
+        ("CHART_BASE", crate::terrain::SHADE_BASE),
+        ("CHART_GAIN", crate::terrain::SHADE_GAIN),
+        ("CHART_MIN", crate::terrain::MIN_SHADE),
+        ("CHART_MAX", crate::terrain::MAX_SHADE),
+        ("SUN_DISC", crate::sun::SUN_RADIUS_RAD),
+        ("SUN_NEAR_FALL", crate::sun::SUN_GLOW_NEAR.1),
+        ("SUN_WIDE_FALL", crate::sun::SUN_GLOW_WIDE.1),
+        ("SUN_REACH", crate::sun::SUN_GLOW_REACH_RAD),
         ("TWILIGHT_OFFSET", tuning::TWILIGHT_OFFSET),
         ("TWILIGHT_WIDTH", tuning::TWILIGHT_WIDTH),
         ("NIGHT_BRIGHTNESS", tuning::NIGHT_BRIGHTNESS as f64),
@@ -109,5 +154,24 @@ pub(super) fn source() -> String {
             &format!("vec3<f32>({r:?}, {g:?}, {b:?})"),
         );
     }
+    #[cfg(test)]
+    let source = SHADER_PATCH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .fold(source, |source, (from, to)| {
+            assert!(
+                source.contains(from.as_str()),
+                "shader patch anchor missing: {from}"
+            );
+            source.replacen(from.as_str(), to, 1)
+        });
     source
 }
+
+/// Test only: text replacements in the overview shader before it is compiled (timing
+/// a variant against the shader as it is: `GLOBECRAFT_OVERVIEW_VARIANT` in the GPU
+/// parity tests).
+#[cfg(test)]
+pub(super) static SHADER_PATCH: std::sync::Mutex<Vec<(String, String)>> =
+    std::sync::Mutex::new(Vec::new());

@@ -23,6 +23,20 @@ const MAX_TILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ZOOM: u8 = 22;
 /// Web Mercator ends here.
 const MAX_MERCATOR_LAT: f64 = 85.051_128_78;
+/// The whole world is asked for at the layer's coarsest level when it is this few
+/// tiles, so the globe is covered past the tiles round the view.
+const MAX_COVER_TILES: u32 = 16;
+/// The largest answer to GIBS's list of a layer's days (it is under a kilobyte).
+const MAX_DOMAINS_BYTES: u64 = 256 * 1024;
+const GIBS_WMTS: &str = "https://gibs.earthdata.nasa.gov/wmts/";
+/// GIBS sometimes answers a tile with garbage (2026-11-24: the same OMPS ozone tile
+/// came back as its true picture, a palette PNG, or as an RGBA PNG of noise or of
+/// flat colour, differently each time; RGBA four times in seven over the Arctic).
+/// Once a layer has sent a palette PNG, an RGBA one is garbage; before that, one with
+/// more than this share of partly transparent pixels is (its maps have none)…
+const DAMAGED_PARTLY_TRANSPARENT_SHARE: f64 = 0.01;
+/// …and is asked for again this soon.
+const DAMAGED_RETRY: Duration = Duration::from_secs(2);
 
 enum Entry {
     Loading,
@@ -47,6 +61,22 @@ struct Shared {
     day: u64,
     /// The tiles of earlier days, shown where the current day's have not arrived.
     previous: HashMap<TileKey, Arc<RgbaImage>>,
+    /// For a GIBS layer's newest day (`gibs_domains_url`): the day shown instead.
+    gibs_day: GibsDay,
+    /// The GIBS RGBA PNGs shown before any palette PNG came, dropped when one does.
+    rgba: std::collections::HashSet<TileKey>,
+}
+
+/// The day a GIBS template's `default` stands for.
+#[derive(Default)]
+enum GibsDay {
+    #[default]
+    NotAsked,
+    Asking,
+    /// The day before GIBS's newest.
+    Known(String),
+    /// GIBS did not say: its `default` stays.
+    Unknown,
 }
 
 /// The loaded tiles of one view, read without locking while the overlay is drawn.
@@ -54,12 +84,23 @@ pub struct RasterSnapshot {
     tiles: HashMap<TileKey, Arc<RgbaImage>>,
     zoom: u8,
     min_zoom: u8,
+    /// The next maps, seen through this day's gaps (`RasterTiles::under`).
+    under: Option<Arc<RasterSnapshot>>,
 }
 
 impl RasterSnapshot {
     /// The colour at a point: from the finest loaded tile there, `None` where no tile
     /// covers it (or outside Web Mercator).
     pub fn sample(&self, lat: f64, lon: f64) -> Option<[u8; 4]> {
+        let own = self.sample_own(lat, lon);
+        match (&self.under, own) {
+            (Some(under), None) => under.sample(lat, lon),
+            (Some(under), Some(colour)) if colour[3] == 0 => under.sample(lat, lon).or(own),
+            _ => own,
+        }
+    }
+
+    fn sample_own(&self, lat: f64, lon: f64) -> Option<[u8; 4]> {
         if lat.abs() > MAX_MERCATOR_LAT {
             return None;
         }
@@ -93,6 +134,10 @@ impl RasterSnapshot {
     }
 }
 
+/// What a snapshot was built from: the tiles' revision and the day before's
+/// snapshot (its address, 0 for none).
+type SnapshotSource = (u64, usize);
+
 /// One web map layer's tiles.
 pub struct RasterTiles {
     template: String,
@@ -103,8 +148,22 @@ pub struct RasterTiles {
     tile_px: u16,
     /// The day `{date}` stands for (`YYYY-MM-DD`).
     date: String,
+    /// A GIBS layer has sent a palette PNG: its RGBA PNGs are garbage. One flag for
+    /// all the days of a layer (`under`): GIBS's newest day sent almost only garbage
+    /// and seldom a palette PNG, so on its own it kept striped garbage on screen
+    /// (2026-11-24).
+    palette_seen: Arc<std::sync::atomic::AtomicBool>,
+    /// Where GIBS lists the days of a template asking for its newest day.
+    gibs_domains: Option<String>,
+    /// For such a template, the days round the day shown: a daily map from orbits
+    /// leaves a strip between its first and last orbit (near the date line), filled
+    /// from the next day (GIBS's newest, whose first orbits are there) and then from
+    /// the day before (2026-11-24: the day before alone left a slit).
+    under: Option<Box<RasterTiles>>,
     shared: Arc<Mutex<Shared>>,
-    snapshot: Option<(Vec<TileKey>, u64, Arc<RasterSnapshot>)>,
+    /// The last snapshot: the tiles wanted, the revision and the day before's
+    /// snapshot it was built from.
+    snapshot: Option<(Vec<TileKey>, SnapshotSource, Arc<RasterSnapshot>)>,
 }
 
 impl RasterTiles {
@@ -118,6 +177,9 @@ impl RasterTiles {
             max_zoom: max_zoom.clamp(min_zoom.min(MAX_ZOOM), MAX_ZOOM),
             tile_px: tile_px.max(64),
             date: super::day_before(globecraft_core::math::now_unix()),
+            gibs_domains: gibs_domains_url(template),
+            palette_seen: Arc::default(),
+            under: None,
             shared: Arc::default(),
             snapshot: None,
         }
@@ -173,17 +235,90 @@ impl RasterTiles {
             .round()
             .clamp(f64::from(self.min_zoom), f64::from(self.max_zoom)) as u8;
         let radius = view_radius_deg(altitude_km, tilt_deg);
-        let wanted = loop {
+        let mut wanted = loop {
             let tiles = around(zoom, lat, lon, radius);
             if tiles.len() <= MAX_WANTED || zoom <= self.min_zoom {
                 break tiles.into_iter().take(MAX_WANTED).collect::<Vec<_>>();
             }
             zoom -= 1;
         };
+        // The world at the coarsest level first, when it is a few tiles: the tiles
+        // round the view left the rest of the globe empty from far away.
+        let side = 1u32 << self.min_zoom;
+        if side * side <= MAX_COVER_TILES {
+            let cover: Vec<TileKey> = (0..side)
+                .flat_map(|y| (0..side).map(move |x| (x, y)))
+                .map(|(x, y)| TileKey {
+                    z: self.min_zoom,
+                    x,
+                    y,
+                })
+                .filter(|key| !wanted.contains(key))
+                .collect();
+            wanted.splice(0..0, cover);
+        }
         let now = Instant::now();
         let Ok(mut shared) = self.shared.lock() else {
             return None;
         };
+        // GIBS's newest day is often only partly in (a few orbits of a daily map):
+        // the day before it, once GIBS has said which that is.
+        let template = match (&self.gibs_domains, &shared.gibs_day) {
+            (None, _) | (Some(_), GibsDay::Unknown) => self.template.clone(),
+            (Some(_), GibsDay::Known(day)) => {
+                if self.under.is_none()
+                    && let (Some(newest), Some(before)) =
+                        (shifted_day(day, 1), shifted_day(day, -1))
+                {
+                    let of = |day: &str| {
+                        RasterTiles::new(
+                            &self.template.replacen(
+                                "/default/default/",
+                                &format!("/default/{day}/"),
+                                1,
+                            ),
+                            self.min_zoom,
+                            self.max_zoom,
+                            self.tile_px,
+                        )
+                    };
+                    let (mut next, mut earlier) = (of(&newest), of(&before));
+                    next.palette_seen = self.palette_seen.clone();
+                    earlier.palette_seen = self.palette_seen.clone();
+                    next.under = Some(Box::new(earlier));
+                    self.under = Some(Box::new(next));
+                }
+                self.template
+                    .replacen("/default/default/", &format!("/default/{day}/"), 1)
+            }
+            (Some(_), GibsDay::Asking) => return None,
+            (Some(url), GibsDay::NotAsked) => {
+                shared.gibs_day = GibsDay::Asking;
+                let (state, url, repaint) = (self.shared.clone(), url.clone(), repaint.clone());
+                runtime.spawn(async move {
+                    let day = gibs_day_before_newest(url).await;
+                    if let Ok(mut shared) = state.lock() {
+                        shared.gibs_day = day.map_or(GibsDay::Unknown, GibsDay::Known);
+                    }
+                    repaint();
+                });
+                return None;
+            }
+        };
+        let under = self
+            .under
+            .as_mut()
+            .and_then(|under| under.update(runtime, view, repaint.clone()));
+        let gibs = template.starts_with(GIBS_WMTS);
+        let palette_seen = self.palette_seen.load(std::sync::atomic::Ordering::Relaxed);
+        if palette_seen && !shared.rgba.is_empty() {
+            // Another day of the layer has sent a palette PNG since.
+            let shown: Vec<TileKey> = shared.rgba.drain().collect();
+            for earlier in shown {
+                shared.tiles.insert(earlier, retry_soon());
+            }
+            shared.revision += 1;
+        }
         let mut inflight = shared
             .tiles
             .values()
@@ -203,14 +338,17 @@ impl RasterTiles {
             }
             shared.tiles.insert(*key, Entry::Loading);
             inflight += 1;
-            let url = super::tile_url(&self.template, key.z, key.x, key.y, &self.date);
+            let url = super::tile_url(&template, key.z, key.x, key.y, &self.date);
             let (state, key, repaint) = (self.shared.clone(), *key, repaint.clone());
             let archive = self.archive.clone();
+            let palette = self.palette_seen.clone();
             let day = shared.day;
             runtime.spawn(async move {
                 let result = match archive {
-                    Some(archive) => archive_tile(&archive, key).await,
-                    None => fetch_tile(url).await.map(Some),
+                    Some(archive) => archive_tile(&archive, key)
+                        .await
+                        .map(|image| image.map(|image| (image, false))),
+                    None => fetch_tile_png_rgba(url).await.map(Some),
                 };
                 if let Ok(mut shared) = state.lock() {
                     if shared.day != day {
@@ -224,7 +362,25 @@ impl RasterTiles {
                                 .tiles
                                 .insert(key, Entry::Failed { at: Instant::now() });
                         }
-                        Ok(Some(image)) => {
+                        Ok(Some((image, rgba)))
+                            if gibs
+                                && rgba
+                                && (palette.load(std::sync::atomic::Ordering::Relaxed)
+                                    || damaged(&image)) =>
+                        {
+                            shared.tiles.insert(key, retry_soon());
+                        }
+                        Ok(Some((image, rgba))) => {
+                            if gibs && rgba {
+                                shared.rgba.insert(key);
+                            } else if gibs
+                                && !palette.swap(true, std::sync::atomic::Ordering::Relaxed)
+                            {
+                                let shown: Vec<TileKey> = shared.rgba.drain().collect();
+                                for earlier in shown {
+                                    shared.tiles.insert(earlier, retry_soon());
+                                }
+                            }
                             shared.tiles.insert(
                                 key,
                                 Entry::Loaded {
@@ -249,9 +405,12 @@ impl RasterTiles {
             });
         }
         let revision = shared.revision;
+        let under_ptr = under
+            .as_ref()
+            .map_or(0, |under| Arc::as_ptr(under) as usize);
         if let Some((keys, built, snapshot)) = &self.snapshot
             && *keys == wanted
-            && *built == revision
+            && *built == (revision, under_ptr)
         {
             return Some(snapshot.clone());
         }
@@ -279,8 +438,9 @@ impl RasterTiles {
             tiles,
             zoom,
             min_zoom: self.min_zoom,
+            under,
         });
-        self.snapshot = Some((wanted, revision, snapshot.clone()));
+        self.snapshot = Some((wanted, (revision, under_ptr), snapshot.clone()));
         Some(snapshot)
     }
 
@@ -318,6 +478,67 @@ fn evict(tiles: &mut HashMap<TileKey, Entry>) {
     }
 }
 
+/// GIBS's list of a layer's days (DescribeDomains) for a template asking for its
+/// newest day (`…/best/{layer}/default/default/{matrix set}/{z}/{y}/{x}.png`).
+fn gibs_domains_url(template: &str) -> Option<String> {
+    if !template.starts_with("https://gibs.earthdata.nasa.gov/wmts/") {
+        return None;
+    }
+    let (before, after) = template.split_once("/default/default/")?;
+    let (base, layer) = before.rsplit_once('/')?;
+    let matrix_set = after.split('/').next()?;
+    Some(format!(
+        "{base}/1.0.0/{layer}/default/{matrix_set}/all/all.xml"
+    ))
+}
+
+/// Whether a GIBS tile is garbage (`DAMAGED_PARTLY_TRANSPARENT_SHARE`).
+fn damaged(image: &RgbaImage) -> bool {
+    let partly = image
+        .pixels()
+        .filter(|pixel| !matches!(pixel.0[3], 0 | 255))
+        .count();
+    partly as f64 > DAMAGED_PARTLY_TRANSPARENT_SHARE * f64::from(image.width() * image.height())
+}
+
+/// The day `days` from `day` (`YYYY-MM-DD`).
+fn shifted_day(day: &str, days: i32) -> Option<String> {
+    let secs = globecraft_core::time::parse_iso(day)?;
+    Some(globecraft_core::time::date_utc(
+        secs + f64::from(days) * globecraft_core::time::DAY_SECS,
+    ))
+}
+
+/// The day before the newest in GIBS's list of a layer's days, or the newest when it
+/// stands alone.
+fn day_before_newest(domains: &str) -> Option<String> {
+    let start = domains.find("<Domain>")? + "<Domain>".len();
+    let end = start + domains[start..].find("</Domain>")?;
+    let last = domains[start..end].split(',').next_back()?.trim();
+    let mut parts = last.split('/');
+    let (first, newest) = match (parts.next(), parts.next()) {
+        (Some(first), Some(newest)) => (first, newest),
+        (Some(only), None) => (only, only),
+        _ => return None,
+    };
+    let newest_secs = globecraft_core::time::parse_iso(newest.get(..10)?)?;
+    let first_secs = globecraft_core::time::parse_iso(first.get(..10)?)?;
+    let before = newest_secs - globecraft_core::time::DAY_SECS;
+    Some(globecraft_core::time::date_utc(if before >= first_secs {
+        before
+    } else {
+        newest_secs
+    }))
+}
+
+async fn gibs_day_before_newest(url: String) -> Option<String> {
+    let client = crate::http::client(crate::http::Policy::UserData).ok()?;
+    let bytes = crate::http::body(client.get(&url), MAX_DOMAINS_BYTES)
+        .await
+        .ok()?;
+    day_before_newest(&String::from_utf8_lossy(&bytes))
+}
+
 async fn archive_tile(
     archive: &super::archive::TileArchive,
     key: TileKey,
@@ -331,12 +552,33 @@ async fn archive_tile(
 }
 
 async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
+    fetch_tile_png_rgba(url).await.map(|(image, _)| image)
+}
+
+/// A tile, and whether it came as an RGBA PNG (colour type 6).
+async fn fetch_tile_png_rgba(url: String) -> Result<(RgbaImage, bool), crate::Error> {
     let client = crate::http::client(crate::http::Policy::UserData)?;
     let url = crate::keys::fill(&url)?;
     let bytes = crate::http::body(client.get(&url), MAX_TILE_BYTES)
         .await
         .map_err(crate::keys::redact_error)?;
-    crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes)).await
+    let rgba = png_is_rgba(&bytes);
+    crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes))
+        .await
+        .map(|image| (image, rgba))
+}
+
+/// Whether bytes are a PNG of colour type 6 (RGBA), read from its header.
+fn png_is_rgba(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.get(25) == Some(&6)
+}
+
+/// A failed tile asked for again `DAMAGED_RETRY` from now.
+fn retry_soon() -> Entry {
+    let now = Instant::now();
+    Entry::Failed {
+        at: now.checked_sub(RETRY - DAMAGED_RETRY).unwrap_or(now),
+    }
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<RgbaImage, crate::Error> {
@@ -378,10 +620,100 @@ mod tests {
             tiles,
             zoom: 1,
             min_zoom: 0,
+            under: None,
         };
         assert_eq!(snapshot.sample(40.0, -90.0), Some([200; 4]));
         assert_eq!(snapshot.sample(-40.0, 90.0), Some([10; 4]));
         assert_eq!(snapshot.sample(89.0, 0.0), None);
+    }
+
+    #[test]
+    fn a_gibs_layers_newest_day_is_read_from_its_list_of_days() {
+        let template = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/\
+                        OMPS_Ozone_Total_Column/default/default/\
+                        GoogleMapsCompatible_Level6/{z}/{y}/{x}.png";
+        assert_eq!(
+            gibs_domains_url(template).as_deref(),
+            Some(
+                "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/1.0.0/\
+                 OMPS_Ozone_Total_Column/default/GoogleMapsCompatible_Level6/all/all.xml"
+            )
+        );
+        assert_eq!(
+            gibs_domains_url("https://gibs.earthdata.nasa.gov/wmts/x/{date}/{z}"),
+            None
+        );
+        assert_eq!(
+            gibs_domains_url("https://example.com/default/default/a/{z}"),
+            None
+        );
+        // As GIBS answered on 2026-11-24: the newest day held a few orbits.
+        let domains = "<Domains><DimensionDomain><ows:Identifier>time</ows:Identifier>\
+                       <Domain>2012-01-26/2012-01-28/P1D,2022-08-10/2026-07-10/P1D,\
+                       2026-07-17/2026-11-02/P1D</Domain></DimensionDomain></Domains>";
+        assert_eq!(day_before_newest(domains).as_deref(), Some("2026-11-01"));
+        let alone = "<Domain>2026-07-10/2026-07-10/P1D,2026-11-02</Domain>";
+        assert_eq!(day_before_newest(alone).as_deref(), Some("2026-11-02"));
+        assert_eq!(day_before_newest("no list"), None);
+        assert_eq!(shifted_day("2026-03-01", -1).as_deref(), Some("2026-02-28"));
+        assert_eq!(shifted_day("2026-12-31", 1).as_deref(), Some("2027-01-01"));
+    }
+
+    #[test]
+    fn garbage_from_gibs_is_told_from_its_maps() {
+        // A map: opaque colours and clear pixels.
+        let map = RgbaImage::from_fn(16, 16, |x, _| {
+            image::Rgba(if x < 8 {
+                [0, 0, 0, 0]
+            } else {
+                [210, 237, 156, 255]
+            })
+        });
+        assert!(!damaged(&map));
+        // RGB bytes read as RGBA, as GIBS sent them: the alpha is any byte.
+        let garbage = RgbaImage::from_fn(16, 16, |x, y| {
+            let n = (x + y * 16) as u8;
+            image::Rgba([63, 21, 39, n.wrapping_mul(37)])
+        });
+        assert!(damaged(&garbage));
+        // Colour type at byte 25 of the header: 3 palette, 6 RGBA.
+        let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x01\0\0\0\x01\0\x08\x06".to_vec();
+        assert!(png_is_rgba(&header));
+        header[25] = 3;
+        assert!(!png_is_rgba(&header));
+        assert!(!png_is_rgba(b"\xff\xd8\xff jpeg"));
+    }
+
+    #[test]
+    fn a_gap_in_a_day_shows_the_day_before() {
+        let tile = |colour: [u8; 4]| {
+            let mut tiles = HashMap::new();
+            tiles.insert(
+                TileKey { z: 0, x: 0, y: 0 },
+                Arc::new(RgbaImage::from_pixel(4, 4, image::Rgba(colour))),
+            );
+            tiles
+        };
+        let before = Arc::new(RasterSnapshot {
+            tiles: tile([10, 20, 30, 255]),
+            zoom: 0,
+            min_zoom: 0,
+            under: None,
+        });
+        let gap = RasterSnapshot {
+            tiles: tile([0, 0, 0, 0]),
+            zoom: 0,
+            min_zoom: 0,
+            under: Some(before.clone()),
+        };
+        assert_eq!(gap.sample(10.0, 10.0), Some([10, 20, 30, 255]));
+        let filled = RasterSnapshot {
+            tiles: tile([200, 0, 0, 255]),
+            zoom: 0,
+            min_zoom: 0,
+            under: Some(before),
+        };
+        assert_eq!(filled.sample(10.0, 10.0), Some([200, 0, 0, 255]));
     }
 
     #[test]

@@ -40,7 +40,11 @@ const POINT_FLY_ALTITUDE_RATIO: f64 = 0.35;
 const MIN_POINT_FLY_ALTITUDE_KM: f64 = 0.3;
 const AUTO_ROTATE_DEG_PER_SECOND: f64 = 6.0;
 // Lower resolution while interacting; recover full resolution after the idle delay.
-const IDLE_RENDER_DELAY: Duration = Duration::from_millis(250);
+// A drag held still keeps the lower resolution (`dragged`): the delay covers the gap
+// after a release, a scroll step or a key. 250 ms put the sharp frame half a second
+// after a turn over the Alps stopped on an M1 (250 + 230 ms to draw it); 150
+// (2026-11-26).
+const IDLE_RENDER_DELAY: Duration = Duration::from_millis(150);
 const OVERVIEW_WARMUP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 impl App {
@@ -144,9 +148,15 @@ impl App {
         } else {
             self.settings.motion_resolution
         };
-        let (w, h) = globecraft_render::view::raster_size(
+        // The quality setting draws the frame with fewer pixels than the screen's.
+        let raster_ppp = globecraft_render::view::quality_pixels_per_point(
             render_rect.size(),
             ppp,
+            self.settings.render_quality.max_height_px(),
+        );
+        let (w, h) = globecraft_render::view::raster_size(
+            render_rect.size(),
+            raster_ppp,
             idle,
             relief,
             motion_scale,
@@ -306,7 +316,7 @@ impl App {
             WakeOutcome::Submit => {
                 let lod_scale = globecraft_render::view::render_scale(
                     render_rect.size(),
-                    ppp,
+                    raster_ppp,
                     idle,
                     relief,
                     motion_scale,
@@ -365,7 +375,9 @@ impl App {
         let fade = self
             .frame
             .fade_started
-            .map(|started| started.elapsed().as_secs_f32() / FRAME_FADE.as_secs_f32())
+            .map(|started| {
+                started.elapsed().as_secs_f32() / self.frame.fade_length.as_secs_f32().max(1e-3)
+            })
             .filter(|&progress| progress < 1.0);
         if fade.is_none() {
             self.frame.fade_started = None;

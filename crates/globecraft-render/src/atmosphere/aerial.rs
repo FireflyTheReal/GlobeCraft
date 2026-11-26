@@ -14,10 +14,11 @@ use glam::{Vec3, Vec4};
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
-/// View cosines (closest round the horizon), azimuths from the sun, distances.
-const VIEWS: usize = 64;
-const AZIMUTHS: usize = 16;
-const DISTANCES: usize = 32;
+/// View cosines (closest round the horizon), azimuths from the sun (closest round
+/// it, where the haze's glow peaks), distances.
+pub(crate) const VIEWS: usize = 64;
+pub(crate) const AZIMUTHS: usize = 32;
+pub(crate) const DISTANCES: usize = 32;
 /// Steps between two distances.
 const SUBSTEPS: usize = 4;
 /// The table reaches this far past the camera's sea-level horizon: mountains beyond
@@ -28,7 +29,7 @@ const MIN_REACH_KM: f32 = 50.0;
 /// One frame's table: per view cosine, azimuth and distance, the light the air
 /// scatters toward the camera up to there and the share of the light from there that
 /// arrives. Both final (phase functions applied), before exposure.
-pub(super) struct Aerial {
+pub(crate) struct Aerial {
     radius_km: f32,
     sun_cosine: f32,
     horizon: f32,
@@ -36,24 +37,38 @@ pub(super) struct Aerial {
     cells: Vec<(Vec4, Vec4)>,
 }
 
-/// The last table made, kept while the camera's height and the sun stay the same.
+/// The last table made, kept while the camera's height and the sun stay about the
+/// same (`SAME_HEIGHT_SHARE`, `SAME_SUN_COSINE`): it costs a few milliseconds.
 static LAST: Mutex<Option<Arc<Aerial>>> = Mutex::new(None);
+const SAME_HEIGHT_SHARE: f32 = 0.01;
+const SAME_HEIGHT_KM: f32 = 0.01;
+const SAME_SUN_COSINE: f32 = 2e-4;
 
 impl Aerial {
     /// The table for a camera `radius_km` from the centre with the sun's cosine
     /// `sun_cosine` there: the last one when that is unchanged.
     pub(super) fn at(tables: &Tables, radius_km: f32, sun_cosine: f32) -> Arc<Self> {
-        let mut last = LAST
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(table) = last.as_ref()
-            && (table.radius_km - radius_km).abs() < 1e-3
-            && (table.sun_cosine - sun_cosine).abs() < 1e-5
-        {
-            return Arc::clone(table);
+        let lock = || {
+            LAST.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        let height = radius_km - GROUND_KM;
+        let kept = lock()
+            .as_ref()
+            .filter(|table| {
+                (table.radius_km - radius_km).abs()
+                    < (height * SAME_HEIGHT_SHARE).max(SAME_HEIGHT_KM)
+                    && (table.sun_cosine - sun_cosine).abs() < SAME_SUN_COSINE
+            })
+            .map(Arc::clone);
+        if let Some(table) = kept {
+            return table;
         }
+        // Made outside the lock: a thread holding it can pick up another row's work
+        // while it waits on its own parallel work, which then waits on the lock it
+        // holds (frames that never came, 2026-11-22).
         let table = Arc::new(Self::new(tables, radius_km, sun_cosine));
-        *last = Some(Arc::clone(&table));
+        *lock() = Some(Arc::clone(&table));
         table
     }
 
@@ -76,7 +91,7 @@ impl Aerial {
             .into_par_iter()
             .flat_map_iter(|ray| {
                 let mu = table.view_cosine(ray / AZIMUTHS);
-                let azimuth = 2.0 * (ray % AZIMUTHS) as f32 / (AZIMUTHS - 1) as f32 - 1.0;
+                let azimuth = azimuth_of(ray % AZIMUTHS).cos();
                 let nu = mu * sun_cosine + (1.0 - mu * mu).max(0.0).sqrt() * sun_across * azimuth;
                 let (air_phase, haze_phase) = phases(nu);
                 let (mut light, mut crossed) = (Vec3::ZERO, Vec3::ONE);
@@ -145,6 +160,12 @@ impl Aerial {
 
     /// The air's light and transmittance for a ray at view cosine `mu` and cosine `nu`
     /// to the sun, to `distance_km`.
+    /// The table for the GPU: its horizon's sine, reach, sun cosine and cells (light
+    /// and the share crossed, by view row, azimuth column and distance slice).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn parts(&self) -> (f32, f32, f32, &[(Vec4, Vec4)]) {
+        (self.horizon, self.reach_km, self.sun_cosine, &self.cells)
+    }
     pub(super) fn sample(&self, mu: f32, nu: f32, distance_km: f32) -> (Vec4, Vec4) {
         let sun_across = (1.0 - self.sun_cosine * self.sun_cosine).max(0.0).sqrt();
         let across = (1.0 - mu * mu).max(0.0).sqrt() * sun_across;
@@ -154,8 +175,7 @@ impl Aerial {
             1.0
         };
         let row = self.view_row(mu).clamp(0.0, (VIEWS - 1) as f32);
-        let column =
-            ((azimuth + 1.0) * 0.5 * (AZIMUTHS - 1) as f32).clamp(0.0, (AZIMUTHS - 1) as f32);
+        let column = column_of(azimuth.acos());
         let slice = ((distance_km / self.reach_km).clamp(0.0, 1.0).sqrt() * (DISTANCES - 1) as f32)
             .clamp(0.0, (DISTANCES - 1) as f32);
         let corner = |at: f32, count: usize| {
@@ -182,6 +202,18 @@ impl Aerial {
         }
         (light, crossed)
     }
+}
+
+/// The azimuth from the sun (radians) of column `index`: columns crowd round the sun.
+fn azimuth_of(index: usize) -> f32 {
+    let share = index as f32 / (AZIMUTHS - 1) as f32;
+    std::f32::consts::PI * share * share
+}
+
+/// The (fractional) column of azimuth `angle` (radians from the sun).
+fn column_of(angle: f32) -> f32 {
+    ((angle / std::f32::consts::PI).clamp(0.0, 1.0).sqrt() * (AZIMUTHS - 1) as f32)
+        .clamp(0.0, (AZIMUTHS - 1) as f32)
 }
 
 #[cfg(test)]

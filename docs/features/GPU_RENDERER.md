@@ -32,21 +32,72 @@ pixels; small frames keep CPU rendering because complete GPU/CPU timings were si
 at 512×384 on the baseline adapter. `GLOBECRAFT_RENDERER=gpu` also uses it for small
 supported frames. `GLOBECRAFT_RENDERER=cpu` never creates a GPU device.
 
-GPU rendering requires an altitude of at least 1,000 km, no geographic grid, no
-relief, the screen's level blending (not the sharper screenshot modes), at most
-4 million pixels, and a checked LOD bound of zoom 10 or lower. Close views and exact
-grid rendering use the double-precision CPU renderer. Within that range it draws both
+GPU rendering requires the eye above the ground, no geographic grid, the screen's
+level blending (not the sharper screenshot modes) and at most 4 million pixels; exact
+grid rendering uses the double-precision CPU renderer. Relief views are the GPU's
+too since 2026-11-24 (roadmap D8, G4) when its relief walk (`gpu::relief`) answers
+most rays: the walk also gives the slope at each ground it found as the CPU would
+shade it (`terrain::hit_on`: the level for the distance, blended from the next
+coarser one's), and the overview draws that ground from the walk's buffer on the
+device with the CPU's light (the sun on the slope, the share of it the walk saw, the
+sun rising earlier over high ground, hill shading without the sun). Every pixel it
+does not take (the sky, grounds the CPU would march for, a level or the next coarser
+one not held) the CPU draws in the repair, marched from the walk's starts. A level not
+held yet (round a camera that moved into new tiles) is stood in for by the finest held
+level up to six coarser, as the CPU's march does, but over the open air only and
+250 m higher for each level: with the near camera's level-15 tile missing the walk
+gave up on four of five rays of a tilted view and the CPU drew 14 of 15 frames of a
+turn; with the stand-in it gives up on under 5 % (2026-11-24). The walk
+runs in five passes: first a cone for each 8×8 block of pixels walks the maxima as
+wide as the block's rays (the GPU's form of the CPU's `terrain::beam`), and the
+block's rays start their own walks where it ended; then the view's rays; then the
+share of the sun at their grounds, walked at every other pixel of every other row,
+then taken by the even columns' other rows from above and below and by the odd
+columns from left and right where both neighbours are wholly lit or wholly in shadow
+at the same depth (the rest are walked, gathered per workgroup). A group of 32
+threads takes as long as its slowest: the ground's refinement runs after the walk's
+loop, not inside it, and square blocks walk more alike than rows. On an M1 at
+1920×1200 the four views of `gpu_relief_walk_timing` walked in 56–94 ms on the
+device, from 117–192 ms before these four changes (2026-11-24; the sun's quarter
+alone 5–13 ms, the same shares summed). Under the maxima the view's ray meets the
+heights exactly in each bilinear cell (the ground along the ray there is a quadratic;
+its first root is bracketed for the refinement), and every ground it meets is the
+CPU's: the self-check and the march test compare those grounds with the CPU's march
+measured exactly at every texel (`HitMarch::Exact`). On the M1 the walk then took
+68–103 ms (more rays met the ground: in a top view 99.9 % from 91 %), and the
+frame after it 26–44 ms instead of 47–107 ms: the CPU's part fell from 2.5–9.1 % of
+the pixels (19–80 ms) to 0.1–1.1 % (2–7 ms); a tilted view at 16 km takes about
+140 ms in all, from about 200. Since 2026-11-24 every level a
+map has, to zoom 20, is the GPU's: to level 13 a point's place on the map is an f32
+map coordinate (an eighth of a texel there); past it, where that is a texel or
+coarser, it comes from the point's f32 offset from the camera on the map near the
+camera (`relief::NearMap` in zoom-20 texels: the camera's texel in integers and its
+first, second and third derivatives, within a fiftieth of a texel of the exact place
+at the finest level a pixel there can take, out as far as level 14 can reach in a
+2,000-pixel view). The ray meets the ground through the root form that does not
+subtract two values of about one, with the camera's height term from f64. The tiles a frame needs
+are kept in a hash set of 16,384 packed keys (zoom and offset from the camera's tile
+there); levels 12 to 15 of Esri's imagery are matched to level 11's colours from each
+atlas tile's mean colours, as the CPU's `colour_match`. Within that range it draws both
 Earth models (a sphere is the ellipsoid whose axes are all one), every provider and
-historical release, sunlight, the air in front of the ground (`atmosphere`: two small
-read-only tables, the transmittance table's ground row and the scattering table's top
-layer, and the same sums as the CPU) and night lights (their tiles share the atlas and
-the tile table, with their own block of tile needs). Camera operations,
-picking and overlay projection remain double precision. The sky, a narrow horizon
-strip, tile-seam strips and the polar caps (latitudes past 83° under satellite
-imagery, which have their own projection, tiles and colour matching) are left by the
-shader and drawn by the shared precise CPU calculations ("repair"), retaining
-deterministic stars and avoiding floating-point changes in tile-edge selection. A
-view that is mostly polar cap is therefore mostly CPU work.
+historical release, sunlight, the air in front of the ground (`atmosphere`, the same
+sums as the CPU, from one read-only buffer: the whole transmittance and scattering
+tables; with the camera inside the air, since 2026-11-23, also the tables narrowed to
+its height and sun, written each frame, and below 30 km the air integrated along the
+camera's rays, `atmosphere::aerial`, written when it changes) and night lights (their tiles share the atlas and
+the tile table, their needs marked in their keys). Camera operations,
+picking and overlay projection remain double precision. Since 2026-11-24 (roadmap
+D8, G5) the shader also draws the sky when it is drawn behind the frame
+(`RenderCfg::sky_behind`, as the app does; the stars are the app's layer behind):
+the air's glow seen from inside the air or from space (`atmosphere::Frame::sky`,
+`Air::behind`), the sun through it and the aurora; with clouds seen from below the
+sky stays the CPU's. Pixels the shader leaves are marked `overview::UNDRAWN`
+(magenta with no alpha, which a drawn pixel never is): a horizon strip (where the
+discriminant is under a hundredth of the ray's reach squared, or under 0.01), tile-seam
+strips, the polar caps (latitudes past 83° under satellite imagery, which have their
+own projection, tiles and colour matching), the sky drawn into the frame, and with
+relief every ray the walk did not answer; the shared precise CPU calculations draw
+them ("repair"). A view that is mostly polar cap is therefore mostly CPU work.
 
 Four guards make an untested adapter safe to try:
 
