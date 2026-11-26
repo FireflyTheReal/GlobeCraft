@@ -1,0 +1,8 @@
+app.globecraft.mobile.app-pngs-0 /home/claude/globecraft/mobile/android/app/build/generated/res/pngs/release
+app.globecraft.mobile.app-updated_navigation_xml-1 /home/claude/globecraft/mobile/android/app/build/generated/updated_navigation_xml/release
+app.globecraft.mobile.app-packageReleaseResources-2 /home/claude/globecraft/mobile/android/app/build/intermediates/incremental/release/packageReleaseResources/merged.dir
+app.globecraft.mobile.app-packageReleaseResources-3 /home/claude/globecraft/mobile/android/app/build/intermediates/incremental/release/packageReleaseResources/stripped.dir
+app.globecraft.mobile.app-release-4 /home/claude/globecraft/mobile/android/app/build/intermediates/merged_res/release/mergeReleaseResources
+app.globecraft.mobile.app-main-5 /home/claude/globecraft/mobile/android/app/src/main/res
+app.globecraft.mobile.app-release-6 /home/claude/globecraft/mobile/android/app/src/release/res
+gradleHome-0 /root/.gradle

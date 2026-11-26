@@ -1,0 +1,6 @@
+int mipmap ic_launcher 0x7f010000
+int string app_name 0x7f020000
+int string globe_description 0x7f020001
+int string relief 0x7f020002
+int style Theme_GlobeCraft 0x7f030000
+int xml network_security_config 0x7f040000

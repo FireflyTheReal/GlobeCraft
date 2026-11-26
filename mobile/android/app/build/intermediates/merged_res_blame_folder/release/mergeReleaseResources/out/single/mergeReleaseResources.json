@@ -1,0 +1,22 @@
+[
+    {
+        "merged": "app.globecraft.mobile.app-release-3:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "app.globecraft.mobile.app-main-4:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "app.globecraft.mobile.app-release-3:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "app.globecraft.mobile.app-main-4:/mipmap-xxxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "app.globecraft.mobile.app-release-3:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "app.globecraft.mobile.app-main-4:/mipmap-xxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "app.globecraft.mobile.app-release-3:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "app.globecraft.mobile.app-main-4:/mipmap-xhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "app.globecraft.mobile.app-release-3:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "app.globecraft.mobile.app-main-4:/mipmap-mdpi/ic_launcher.png"
+    }
+]

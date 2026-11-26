@@ -672,11 +672,7 @@ impl ReliefMarch {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(overview::FRAME_WAIT_LIMIT),
-            })
+        super::wait_for_device(device, overview::FRAME_WAIT_LIMIT)
             .map_err(|error| format!("GPU relief march not finished: {error}"))?;
         #[cfg(test)]
         let (waited, copying) = (submitted.elapsed(), std::time::Instant::now());
@@ -1078,12 +1074,7 @@ impl Timing {
     ) -> [std::time::Duration; TIMED_PASSES] {
         let slice = self.staging.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(overview::FRAME_WAIT_LIMIT),
-            })
-            .unwrap();
+        super::wait_for_device(device, overview::FRAME_WAIT_LIMIT).unwrap();
         let ticks: Vec<u64> = bytemuck::cast_slice(&slice.get_mapped_range().unwrap()).to_vec();
         self.staging.unmap();
         let period = f64::from(queue.get_timestamp_period());
