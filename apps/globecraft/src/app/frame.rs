@@ -21,10 +21,6 @@ pub(super) struct FrameState {
     /// The sun of the frame on screen (`RenderCfg::sun`): a frame whose sun moved
     /// while the time does not play (a dragged timeline) replaces it unfaded.
     pub(super) shown_sun: Option<glam::DVec3>,
-    /// How many times wider than the screen's view the frame on screen, and the one it
-    /// fades from, were drawn (`Basis::widening`): the screen is their middle part.
-    pub(super) widening: f32,
-    pub(super) fade_from_widening: f32,
     /// Space behind the frame, at the screen's full resolution.
     pub(super) sky_layer: super::sky_layer::SkyLayer,
     /// The frame on screen as pixels.
@@ -77,8 +73,6 @@ impl FrameState {
             fade_length: super::globe::FRAME_FADE,
             playback_frames: None,
             shown_sun: None,
-            widening: 1.0,
-            fade_from_widening: 1.0,
             sky_layer: Default::default(),
             image: None,
             last_state: 0,

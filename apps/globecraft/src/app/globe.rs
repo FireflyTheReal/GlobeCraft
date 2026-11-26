@@ -377,40 +377,6 @@ impl App {
         // Until a matching frame arrives, clip the previous view at its original
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
-        // A moving frame is drawn wider than the screen's view (`MOTION_FRAME_WIDENING`),
-        // over its rectangle grown about the centre; the screen shows its middle.
-        let frame_rect =
-            |widening: f32| Rect::from_center_size(rect.center(), rect.size() * widening);
-        // Until the frame for the camera now arrives, the shown one with its map
-        // layers moves to where the camera now sees its ground (a pan or a zoom), so
-        // input shows on the next screen refresh (`frame_shift`); only as far as it
-        // still covers the globe's area, so zooming in shows at once and a pan or a
-        // zoom out never leaves black beside it.
-        let shift = self
-            .frame
-            .renderer
-            .displayed_view()
-            .filter(|_| self.explorer.on_earth() && self.frame.texture.is_some())
-            .and_then(|(_, shown)| {
-                // A relief frame moves by its drawn ground, so one without it (the
-                // CPU's) stays.
-                let depth = self.frame.renderer.displayed_depth.as_deref();
-                if relief && depth.is_none() {
-                    return None;
-                }
-                globecraft_render::frame_shift::frame_shift(&shown, &basis, rect, depth)
-            })
-            .and_then(|shift| {
-                shift.covering(frame_rect(self.frame.widening), rect.intersect(viewport))
-            })
-            .map(|shift| egui::emath::TSTransform::new(shift.offset, shift.scale));
-        // Clipped so that, moved, it stays inside the globe's area.
-        let globe_painter = match shift {
-            Some(shift) => {
-                painter.with_clip_rect(shift.inverse().mul_rect(rect.intersect(viewport)))
-            }
-            None => painter.clone(),
-        };
         let fade = self
             .frame
             .fade_started
@@ -421,15 +387,9 @@ impl App {
         if fade.is_none() {
             self.frame.fade_started = None;
         }
-        // The sky behind stays: the moved frame's own sky lets it through.
         if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
             self.frame.sky_layer.draw(ui.ctx(), &painter, rect, sky);
         }
-        let shifted_from = ui.ctx().graphics(|graphics| {
-            graphics
-                .get(painter.layer_id())
-                .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
-        });
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         if let (Some(progress), Some(from)) = (fade, &self.frame.fade_from) {
             ui.ctx().request_repaint();
@@ -441,30 +401,24 @@ impl App {
                 // glow over the sky layer added up and the air flashed at every
                 // fade (user, 2026-11-17).
                 let (old, new) = ((255.0 * (1.0 - alpha)) as u8, (255.0 * alpha) as u8);
-                globe_painter.image(
+                painter.image(
                     from.id(),
-                    frame_rect(self.frame.fade_from_widening),
+                    rect,
                     whole,
                     Color32::from_rgba_premultiplied(old, old, old, 255),
                 );
                 // Alpha 0: added on top, it hides nothing.
-                globe_painter.image(
+                painter.image(
                     tex.id(),
-                    frame_rect(self.frame.widening),
+                    rect,
                     whole,
                     Color32::from_rgba_premultiplied(new, new, new, 0),
                 );
             } else {
-                let from_rect = frame_rect(self.frame.fade_from_widening);
-                globe_painter.image(from.id(), from_rect, whole, Color32::WHITE);
+                painter.image(from.id(), rect, whole, Color32::WHITE);
             }
         } else if let Some(tex) = &self.frame.texture {
-            globe_painter.image(
-                tex.id(),
-                frame_rect(self.frame.widening),
-                whole,
-                Color32::WHITE,
-            );
+            painter.image(tex.id(), rect, whole, Color32::WHITE);
         }
         // The swipe compare: the compare release's frame, right of the split.
         if let (Some(compare), Some((texture, _))) = (
@@ -475,8 +429,8 @@ impl App {
                 .filter(|(_, shown)| *shown == compare_release(self)),
         ) {
             let x = rect.left() + rect.width() * compare.split;
-            let right = globe_painter
-                .with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max));
+            let right =
+                painter.with_clip_rect(Rect::from_min_max(Pos2::new(x, rect.top()), rect.max));
             // Its sky is left to the sky layer too: drawn straight over the main
             // frame, the air's glow of both added up right of the split.
             if let Some(sky) = &self.frame.renderer.displayed_sky_behind {
@@ -486,18 +440,18 @@ impl App {
             right.image(texture.id(), rect, whole, Color32::WHITE);
         }
         if !self.explorer.on_earth() {
-            globe_painter.rect_filled(rect, 0.0, Color32::BLACK);
+            painter.rect_filled(rect, 0.0, Color32::BLACK);
             if let Some(sky) = self
                 .explorer
                 .sky
                 .as_ref()
                 .filter(|_| self.explorer.active == globecraft_core::body::Body::Custom)
             {
-                globe_painter.image(sky.id(), rect, whole, Color32::WHITE);
+                painter.image(sky.id(), rect, whole, Color32::WHITE);
             }
             if let Some(body) = self.explorer.active_texture() {
                 draw_planet(
-                    &globe_painter,
+                    &painter,
                     rect,
                     body,
                     self.cam.lat,
@@ -514,14 +468,7 @@ impl App {
             .displayed_view()
             .unwrap_or((self.cam, basis));
         if self.explorer.on_earth() {
-            self.paint_map_layers(&globe_painter, rect, display_basis, display_cam);
-        }
-        if let Some(shift) = shift {
-            ui.ctx().graphics_mut(|graphics| {
-                let list = graphics.entry(painter.layer_id());
-                let end = list.next_idx();
-                list.transform_range(shifted_from, end, shift);
-            });
+            self.paint_map_layers(&painter, rect, display_basis, display_cam);
         }
 
         // Google Earth style navigation controls (rotate / move / zoom)

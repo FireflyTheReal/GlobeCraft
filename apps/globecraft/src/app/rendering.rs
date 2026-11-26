@@ -387,7 +387,7 @@ impl App {
         pixels_per_point: f32,
     ) {
         let basis = self.view_basis(aspect);
-        let mut cfg = self.frame_config(size.width, size.height, size.lod_scale);
+        let cfg = self.frame_config(size.width, size.height, size.lod_scale);
         let grid_step = cfg.grid_step;
         // While the camera moves the compare side renders at a lower resolution, so it
         // costs a quarter of the main frame; at rest it is full size.
@@ -408,24 +408,6 @@ impl App {
         // of a tilted relief view takes a few hundred milliseconds, and a gesture that
         // began meanwhile caught up only after it (Julien, 2026-11-26).
         let still = size.lod_scale >= 1.0;
-        // A moving frame is drawn past the screen's edges, so the frame on screen has
-        // picture to move into while it follows a pan or a zoom out until the next
-        // one comes (`frame_shift`). Its level of detail stays the screen's.
-        let widening = if !still
-            && compare.is_none()
-            && self.explorer.on_earth()
-            && size.lod_scale * MOTION_FRAME_WIDENING < 1.0
-        {
-            MOTION_FRAME_WIDENING
-        } else {
-            1.0
-        };
-        cfg.lod_scale *= widening;
-        let (width, height) = (
-            (size.width as f32 * widening).round() as usize,
-            (size.height as f32 * widening).round() as usize,
-        );
-        let frame_basis = basis.widened(f64::from(widening));
         let preempt = !still && self.frame.renderer.submitted_still;
         self.frame.renderer.submitted_still = still;
         let submit = |worker: &RenderWorker<PreparedFrame>, request| {
@@ -438,10 +420,10 @@ impl App {
         submit(
             &self.frame.renderer.worker,
             RenderRequest {
-                width,
-                height,
+                width: size.width,
+                height: size.height,
                 cam: self.cam,
-                basis: frame_basis,
+                basis,
                 cfg,
                 compare,
                 presentation,
@@ -512,9 +494,6 @@ impl App {
             depth,
         } = frame.prepared;
         self.frame.renderer.displayed_depth = depth;
-        // The view of the screen's part of the frame: everything shown with the frame
-        // (layers, sky, the move after the camera) is placed by it.
-        let shown_basis = frame.request.basis.widened(1.0);
         if let Some(geometry) = live_layers {
             self.live.geometry.accept(geometry);
         }
@@ -597,7 +576,6 @@ impl App {
             );
             self.frame.playback_frames = Some((now, interval));
             std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
-            std::mem::swap(&mut self.frame.widening, &mut self.frame.fade_from_widening);
             self.frame.fade_started = Some(now);
             self.frame.fade_length = playback_fade(interval);
         } else if same_view && fading {
@@ -607,7 +585,6 @@ impl App {
             // second, each one popped in (user, 2026-11-16).
         } else if same_view {
             std::mem::swap(&mut self.frame.texture, &mut self.frame.fade_from);
-            std::mem::swap(&mut self.frame.widening, &mut self.frame.fade_from_widening);
             self.frame.fade_started = Some(std::time::Instant::now());
             self.frame.fade_length = super::globe::FRAME_FADE;
         } else {
@@ -623,7 +600,6 @@ impl App {
                     Some(ctx.load_texture("globe", img, egui::TextureOptions::LINEAR))
             }
         }
-        self.frame.widening = frame.request.basis.widening() as f32;
         if let Some(previous) = self.frame.image.replace(super::frame::Frame {
             width: w,
             height: h,
@@ -654,7 +630,7 @@ impl App {
         let cfg = &frame.request.cfg;
         self.frame.renderer.displayed_sky_behind =
             cfg.sky_behind.then(|| super::sky_layer::SkyBehind {
-                basis: shown_basis,
+                basis: frame.request.basis,
                 backdrop: cfg.sky.clone(),
                 stars: cfg.stars,
             });
@@ -685,7 +661,7 @@ impl App {
                 .displayed_credits
                 .push_str("; https://svs.gsfc.nasa.gov/4851/; GlobeCraft SDR derivative");
         }
-        self.frame.renderer.displayed = Some((frame.request.cam, shown_basis));
+        self.frame.renderer.displayed = Some((frame.request.cam, frame.request.basis));
     }
 }
 
@@ -693,13 +669,6 @@ impl App {
 /// the older unfaded (degrees): a dragged timeline lands on whole minutes (0.25°); the
 /// live time moves it this far in about 5 s, so tiles arriving still fade in.
 const SUN_STEP_UNFADED: f64 = 0.02;
-
-/// How many times wider than the screen's view a moving frame is drawn (each side
-/// 12.5 % past the screen's edge): room for the frame on screen to follow a pan or a
-/// zoom out until the next one comes, for 1.56 times the pixels. Below it (a still
-/// frame, the swipe compare, other bodies, a moving frame at nearly full size) the
-/// screen's view.
-const MOTION_FRAME_WIDENING: f32 = 1.25;
 
 /// Two frames show the same view when their cameras and viewport rectangles match exactly.
 /// While the time plays: the fade before the time between frames is known…

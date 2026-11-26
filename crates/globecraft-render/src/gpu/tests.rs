@@ -963,13 +963,11 @@ fn gpu_relief_view_matches_cpu() {
         })
         .unwrap_or((320, 200));
     let mut failures = Vec::new();
-    // The last view is drawn wider than the screen's, as a moving frame (`widened`).
-    for (name, alt, tilt, heading, widening) in [
-        ("top-16km", 16.0, 0.0, 0.0, 1.0),
-        ("tilt-16km", 16.0, 70.0, 0.0, 1.0),
-        ("tilt-52km", 52.0, 75.0, 0.0, 1.0),
-        ("tilt-6km", 6.0, 72.0, 30.0, 1.0),
-        ("tilt-16km widened", 16.0, 70.0, 0.0, 1.25),
+    for (name, alt, tilt, heading) in [
+        ("top-16km", 16.0, 0.0, 0.0),
+        ("tilt-16km", 16.0, 70.0, 0.0),
+        ("tilt-52km", 52.0, 75.0, 0.0),
+        ("tilt-6km", 6.0, 72.0, 30.0),
     ] {
         for (light, sun, exaggeration, fade) in [
             (
@@ -1006,17 +1004,14 @@ fn gpu_relief_view_matches_cpu() {
             cfg.sun = sun;
             // The sky behind the frame, as the app draws it (the GPU's, G5).
             cfg.sky_behind = true;
-            cfg.lod_scale *= widening as f32;
             let request = RenderRequest {
                 width,
                 height,
                 cam,
-                basis: cam
-                    .basis_for_model(
-                        width as f64 / height as f64,
-                        globecraft_core::earth_model::EarthModel::Wgs84,
-                    )
-                    .widened(widening),
+                basis: cam.basis_for_model(
+                    width as f64 / height as f64,
+                    globecraft_core::earth_model::EarthModel::Wgs84,
+                ),
                 cfg,
                 overlays: None,
                 aircraft: None,
@@ -1578,112 +1573,5 @@ fn a_kept_view_walks_toward_the_sun_as_a_whole_walk_does() {
             .zip(&whole.pixels)
             .all(|(a, b)| a.to_bits() == b.to_bits()),
         "the kept view's planes differ from a whole walk's"
-    );
-}
-
-/// A frame drawn wider than the screen (`Basis::widened`) on the GPU is the CPU's,
-/// as the screen's frame is: the shaders' rays follow the widening.
-#[test]
-#[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
-fn a_widened_gpu_frame_matches_the_cpus() {
-    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
-    let image = image::RgbaImage::from_fn(256, 256, |x, y| {
-        image::Rgba([x as u8, y as u8, (x ^ y) as u8, 255])
-    });
-    let mut bytes = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image)
-        .write_to(&mut bytes, image::ImageFormat::Png)
-        .unwrap();
-    let tile = Arc::new(Tile::decode(bytes.get_ref()).unwrap());
-    let key = make_key(Provider::Satellite, 0, 0, 0, 7);
-    let (w, h) = (80, 60);
-    let (mut channels, mut over_one) = (0usize, 0usize);
-    for (lat, lon, alt, tilt) in [(-15.0, -50.0, 14000.0, 0.0), (45.0, 9.0, 2500.0, 40.0)] {
-        let cam = Cam {
-            lat,
-            lon,
-            alt,
-            heading: 25.0,
-            tilt,
-            look_up: 0.0,
-        };
-        let request = RenderRequest {
-            width: w,
-            height: h,
-            cam,
-            basis: cam
-                .basis_for_model(
-                    w as f64 / h as f64,
-                    globecraft_core::earth_model::EarthModel::Wgs84,
-                )
-                .widened(1.25),
-            cfg: crate::RenderCfg {
-                sky: None,
-                provider: Provider::Satellite,
-                terrain: None,
-                rel: 7,
-                grid: false,
-                grid_step: 10.0,
-                atmo: true,
-                sun: Some(ll_to_v3(20.0, 45.0)),
-                lod_scale: 0.5 * 1.25,
-                level_blend: true,
-                fixed_level: None,
-                night_lights: None,
-                stars: None,
-                sky_behind: false,
-                clouds: None,
-                glint: None,
-                aurora: None,
-            },
-            overlays: None,
-            aircraft: None,
-            live_layers: None,
-            compare: None,
-            presentation: 0,
-        };
-        let slots = gpu.upload(&[(key, tile.clone())]).unwrap();
-        let lookup = |k| {
-            if k == key {
-                Lookup::Ready(tile.clone())
-            } else {
-                Lookup::Absent
-            }
-        };
-        let (cpu, _, _) = crate::render_pixels_tracked(w, h, &request.basis, &request.cfg, &lookup);
-        let rendered = gpu.overview.render(
-            overview::Context {
-                device: &gpu.device,
-                queue: &gpu.queue,
-                atlas: &gpu.view,
-                means: &gpu.means,
-                walk: None,
-            },
-            &request,
-            &slots,
-            &lookup,
-            Vec::new(),
-        );
-        let frame = match rendered {
-            Ok(frame) => frame.view,
-            Err((error, _, _)) if gpu.software => {
-                println!("FALLBACK ({lat},{lon}): {error}");
-                continue;
-            }
-            Err((error, _, _)) => panic!("{error}"),
-        };
-        channels += cpu.len();
-        over_one += frame
-            .pixels
-            .iter()
-            .zip(&cpu)
-            .filter(|(a, e)| a.abs_diff(**e) > 1)
-            .count();
-    }
-    println!("widened: {over_one} of {channels} channels over one level");
-    assert!(channels > 0, "no frame was drawn on the GPU");
-    assert!(
-        (over_one as f64) < channels as f64 * PARITY_SHARE_OVER_ONE,
-        "{over_one} of {channels} channels off by more than one"
     );
 }
