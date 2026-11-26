@@ -21,6 +21,11 @@ const RELIEF_FADE_STEP: Duration = Duration::from_millis(40);
 /// A window resize is over once the size has held still this long: then one frame of
 /// the new size is rendered.
 const WINDOW_RESIZE_SETTLE: Duration = Duration::from_millis(120);
+/// While the window is resized, without the screen's size: frames this many times as
+/// wide as the globe's area.
+const RESIZE_RENDER_WIDTH: f32 = 2.0;
+/// The shown frame covers the globe's area when it falls short by no more than this.
+const COVERED_SLACK_POINTS: f32 = 0.5;
 pub(super) const FRAME_FADE: Duration = Duration::from_millis(250);
 const DRAG_HEADING_DEG_PER_POINT: f64 = 0.3;
 /// Right-drag or Shift+drag up and down tilts the view.
@@ -92,25 +97,20 @@ impl App {
         // fixed, so that one frame is exact for every narrower width, and the slide
         // or the drag needs no new frame (user, 2026-11-21: a new frame came too late
         // for a 0.2 s slide, and black bars showed until it did).
-        let render_rect = if self.frame.pane_moving {
-            let full = ui.ctx().content_rect().width().max(viewport.width());
-            Rect::from_center_size(viewport.center(), egui::vec2(full, viewport.height()))
-        } else {
-            viewport
-        };
-        let resized = render_rect.size() != self.frame.last_viewport;
-        if resized && !self.frame.pane_moving && self.frame.texture.is_some() {
+        let window_resized =
+            viewport.size() != self.frame.last_globe_size && !self.frame.pane_moving;
+        self.frame.last_globe_size = viewport.size();
+        if window_resized && self.frame.texture.is_some() {
             self.frame.window_resized_at = Some(Instant::now());
         }
-        self.frame.last_viewport = render_rect.size();
-        if interacting || resp.dragged() || resized {
-            self.touch();
-        }
-        // While the window is being resized no frame is rendered: the last one is
-        // shown scaled to the new size (`shown_rect`), and one frame follows once the
-        // size holds still. A frame for every step of the resize (each a new size,
-        // read back from the graphics card and uploaded again) made the resize lag
-        // (user, 2026-11-21).
+        // While the window is being resized the last frame is shown scaled to the new
+        // size (`shown_rect`), and one frame of the new size follows once the size
+        // holds still. A frame for every step of the resize (each a new size, read
+        // back from the graphics card and uploaded again) made the resize lag (user,
+        // 2026-11-21). A window growing wider then showed black at the sides until
+        // that frame came (Julien, 2026-11-26: laggy "mostly when expanding"): a frame
+        // as wide as the screen is drawn when the shown one no longer covers the
+        // globe, and the window grows into it as into the pane's.
         let window_resizing = self
             .frame
             .window_resized_at
@@ -119,6 +119,28 @@ impl App {
         if window_resizing.is_none() {
             self.frame.window_resized_at = None;
         }
+        let render_rect = if self.frame.pane_moving {
+            let full = ui.ctx().content_rect().width().max(viewport.width());
+            Rect::from_center_size(viewport.center(), egui::vec2(full, viewport.height()))
+        } else if window_resizing.is_some() {
+            let screen = ui
+                .ctx()
+                .input(|input| input.viewport().monitor_size)
+                .map_or(viewport.width() * RESIZE_RENDER_WIDTH, |size| size.x);
+            let wide = screen.max(viewport.width());
+            Rect::from_center_size(viewport.center(), egui::vec2(wide, viewport.height()))
+        } else {
+            viewport
+        };
+        let resized = render_rect.size() != self.frame.last_viewport;
+        self.frame.last_viewport = render_rect.size();
+        if interacting || resp.dragged() || resized {
+            self.touch();
+        }
+        // The shown frame covers the globe's area across: a resize waits for the size
+        // to hold still.
+        let covered = rect.min.x <= viewport.min.x + COVERED_SLACK_POINTS
+            && rect.max.x >= viewport.max.x - COVERED_SLACK_POINTS;
 
         let basis = self.view_basis(aspect);
         // ── rendering
@@ -314,7 +336,9 @@ impl App {
             Some(self.frame.last_render.elapsed()),
         );
         let outcome = match (outcome, window_resizing) {
-            (WakeOutcome::Submit, Some(since)) => WakeOutcome::Defer(WINDOW_RESIZE_SETTLE - since),
+            (WakeOutcome::Submit, Some(since)) if covered => {
+                WakeOutcome::Defer(WINDOW_RESIZE_SETTLE - since)
+            }
             (outcome, _) => outcome,
         };
         match outcome {

@@ -33,11 +33,14 @@ pub(super) struct FrameState {
     /// The globe's size last frame: a pane dragged wider or narrower renders like a
     /// moving camera, so the view follows the edge at once.
     pub(super) last_viewport: egui::Vec2,
+    /// The globe's area on screen last frame, whatever size was rendered.
+    pub(super) last_globe_size: egui::Vec2,
     /// The side pane slides open or shut, or its edge is dragged, this frame
     /// (`ui::panes`): the globe renders at the width it has with the pane shut.
     pub(super) pane_moving: bool,
     /// When the globe's size last changed other than by the side pane (the window
-    /// resized): no frames are rendered until it has held still for a moment.
+    /// resized): frames are rendered only while the one shown leaves the globe's
+    /// area uncovered, as wide as the screen (`App::globe_view`).
     pub(super) window_resized_at: Option<Instant>,
     pub(super) scale_bar: globecraft_render::scale_bar::ScaleBarCache,
     /// A high-quality screenshot rendering in the background.
@@ -80,6 +83,7 @@ impl FrameState {
             last_render: Instant::now(),
             last_interact: Instant::now(),
             last_viewport: egui::Vec2::ZERO,
+            last_globe_size: egui::Vec2::ZERO,
             pane_moving: false,
             window_resized_at: None,
             scale_bar: Default::default(),
