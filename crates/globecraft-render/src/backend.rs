@@ -192,16 +192,18 @@ fn log_relief_frame(
     walk: std::time::Duration,
     total: std::time::Duration,
     uploads: usize,
-    draw: Option<(usize, std::time::Duration, std::time::Duration)>,
+    draw: Option<(usize, std::time::Duration, std::time::Duration, usize)>,
 ) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
         let ms = |time: std::time::Duration| time.as_secs_f64() * 1000.0;
-        let draw = draw.map_or_else(String::new, |(passes, device, repair)| {
+        let pixels = (request.width * request.height).max(1);
+        let draw = draw.map_or_else(String::new, |(passes, device, repair, repaired)| {
             format!(
-                " (colour: {passes} pass(es), {:.1} ms on the device with the readback, {:.1} ms CPU repair)",
+                " (colour: {passes} pass(es), {:.1} ms on the device with the readback, {:.1} ms CPU repair of {repaired} pixels, {:.1} %)",
                 ms(device),
-                ms(repair)
+                ms(repair),
+                100.0 * repaired as f64 / pixels as f64
             )
         });
         globecraft_data::log_line!(
@@ -546,9 +548,21 @@ impl FrameRenderer {
                 starts.as_deref().map(Vec::as_slice),
             );
             self.depth = depth(starts);
+            let gave_up = self
+                .gpu
+                .as_ref()
+                .filter(|gpu| walks && !walked && gpu.relief_ran)
+                .map(|gpu| {
+                    format!(
+                        "CPU after a walk that did not help ({:.0} % of its rays without their tiles)",
+                        100.0 * gpu.relief_untrusted
+                    )
+                });
             log_relief_frame(
                 request,
-                if walked { "CPU from the walk" } else { "CPU" },
+                gave_up
+                    .as_deref()
+                    .unwrap_or(if walked { "CPU from the walk" } else { "CPU" }),
                 walk_took,
                 started.elapsed(),
                 self.gpu.as_ref().map_or(0, |gpu| gpu.relief_uploads),

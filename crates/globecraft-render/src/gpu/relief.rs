@@ -1112,13 +1112,17 @@ fn made_up_mountains(z: u8, x: u32, y: u32) -> Tile {
 /// it gave up on more (a camera low among the relief starts every ray at levels too
 /// fine for f32 map coordinates), the CPU's own cones start the rays further on.
 pub(super) fn helps(pixels: &[f32]) -> bool {
+    untrusted_share(pixels) <= 0.5
+}
+
+/// The share of the walk's rays that gave up (without the tiles they needed).
+pub(super) fn untrusted_share(pixels: &[f32]) -> f32 {
     let count = pixels.len() / READ_PLANES;
-    pixels[3 * count..4 * count]
+    let untrusted = pixels[3 * count..4 * count]
         .iter()
         .filter(|&&trusted| trusted < 0.0)
-        .count()
-        * 2
-        <= count
+        .count();
+    untrusted as f32 / count.max(1) as f32
 }
 
 /// The elevation tiles to hold for the next frame: the ones the CPU's frame held
