@@ -94,6 +94,8 @@ pub(crate) struct GpuRenderer {
     /// of its rays that gave up.
     pub(crate) relief_ran: bool,
     pub(crate) relief_untrusted: f32,
+    /// The share of the last walk's grounds whose sun it did not know.
+    pub(crate) relief_sun_unknown: f32,
     /// The last frame drawn: its passes (`MAX_RESIDENCY_PASSES`), their time on the
     /// device with the readback, the CPU's repair of what they left, and the pixels
     /// it repaired in the last pass (`GLOBECRAFT_FRAME_TIMES`).
@@ -268,6 +270,7 @@ impl GpuRenderer {
             relief_uploads: 0,
             relief_ran: false,
             relief_untrusted: 0.0,
+            relief_sun_unknown: 0.0,
             last_draw: Default::default(),
         })
     }
@@ -317,6 +320,11 @@ impl GpuRenderer {
             Ok(walked) => {
                 self.relief_ran = true;
                 self.relief_untrusted = relief::untrusted_share(&walked.pixels);
+                self.relief_sun_unknown = if request.cfg.sun.is_some() {
+                    relief::sun_unknown_share(&walked.pixels)
+                } else {
+                    0.0
+                };
                 self.relief_read = walked.read;
                 self.relief_uploads = walked.uploads;
                 Ok(relief::helps(&walked.pixels).then_some(walked.pixels))

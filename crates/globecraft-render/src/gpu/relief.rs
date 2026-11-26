@@ -1115,6 +1115,23 @@ pub(super) fn helps(pixels: &[f32]) -> bool {
     untrusted_share(pixels) <= 0.5
 }
 
+/// The share of the walk's grounds whose sun it does not know (the walk toward the
+/// sun without the tiles it needed): with the sun, the GPU leaves those to the CPU.
+pub(super) fn sun_unknown_share(pixels: &[f32]) -> f32 {
+    let count = pixels.len() / READ_PLANES;
+    let (mut hits, mut unknown) = (0usize, 0usize);
+    for (hit, seen) in pixels[count..2 * count]
+        .iter()
+        .zip(&pixels[2 * count..3 * count])
+    {
+        if *hit >= 0.0 {
+            hits += 1;
+            unknown += usize::from(*seen < 0.0);
+        }
+    }
+    unknown as f32 / hits.max(1) as f32
+}
+
 /// The share of the walk's rays that gave up (without the tiles they needed).
 pub(super) fn untrusted_share(pixels: &[f32]) -> f32 {
     let count = pixels.len() / READ_PLANES;
