@@ -382,8 +382,10 @@ impl Overview {
         let near = super::relief::NearMap::at(request.basis.c, q, NEAR_SIDE, near_range(request));
         let view = View {
             camera: v4(request.basis.c, request.basis.aspect_ratio() as f32),
-            right: v4(rotation.x_axis, 0.0),
-            up: v4(rotation.y_axis, 0.0),
+            // Scaled by the view's widening: the shaders' rays use the screen's field
+            // of view (`Basis::widened`).
+            right: v4(rotation.x_axis * request.basis.widening(), 0.0),
+            up: v4(rotation.y_axis * request.basis.widening(), 0.0),
             forward: v4(rotation.z_axis, 0.0),
             sun: v4(
                 request.cfg.sun.unwrap_or_default(),

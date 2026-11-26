@@ -377,6 +377,10 @@ impl App {
         // Until a matching frame arrives, clip the previous view at its original
         // size rather than stretching its texture and projected overlays.
         let painter = ui.painter_at(rect);
+        // A moving frame is drawn wider than the screen's view (`MOTION_FRAME_WIDENING`),
+        // over its rectangle grown about the centre; the screen shows its middle.
+        let frame_rect =
+            |widening: f32| Rect::from_center_size(rect.center(), rect.size() * widening);
         // Until the frame for the camera now arrives, the shown one with its map
         // layers moves to where the camera now sees its ground (a pan or a zoom), so
         // input shows on the next screen refresh (`frame_shift`); only as far as it
@@ -396,12 +400,14 @@ impl App {
                 }
                 globecraft_render::frame_shift::frame_shift(&shown, &basis, rect, depth)
             })
-            .and_then(|shift| shift.covering(rect, rect.intersect(viewport)))
+            .and_then(|shift| {
+                shift.covering(frame_rect(self.frame.widening), rect.intersect(viewport))
+            })
             .map(|shift| egui::emath::TSTransform::new(shift.offset, shift.scale));
         // Clipped so that, moved, it stays inside the globe's area.
         let globe_painter = match shift {
             Some(shift) => {
-                painter.with_clip_rect(rect.intersect(shift.inverse().mul_rect(viewport)))
+                painter.with_clip_rect(shift.inverse().mul_rect(rect.intersect(viewport)))
             }
             None => painter.clone(),
         };
@@ -437,22 +443,28 @@ impl App {
                 let (old, new) = ((255.0 * (1.0 - alpha)) as u8, (255.0 * alpha) as u8);
                 globe_painter.image(
                     from.id(),
-                    rect,
+                    frame_rect(self.frame.fade_from_widening),
                     whole,
                     Color32::from_rgba_premultiplied(old, old, old, 255),
                 );
                 // Alpha 0: added on top, it hides nothing.
                 globe_painter.image(
                     tex.id(),
-                    rect,
+                    frame_rect(self.frame.widening),
                     whole,
                     Color32::from_rgba_premultiplied(new, new, new, 0),
                 );
             } else {
-                globe_painter.image(from.id(), rect, whole, Color32::WHITE);
+                let from_rect = frame_rect(self.frame.fade_from_widening);
+                globe_painter.image(from.id(), from_rect, whole, Color32::WHITE);
             }
         } else if let Some(tex) = &self.frame.texture {
-            globe_painter.image(tex.id(), rect, whole, Color32::WHITE);
+            globe_painter.image(
+                tex.id(),
+                frame_rect(self.frame.widening),
+                whole,
+                Color32::WHITE,
+            );
         }
         // The swipe compare: the compare release's frame, right of the split.
         if let (Some(compare), Some((texture, _))) = (

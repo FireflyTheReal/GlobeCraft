@@ -49,6 +49,9 @@ pub struct Basis {
     world_from_view: DMat3,
     projection: DMat4,
     aspect: f64,
+    /// Tangent of half the vertical field of view: `VERTICAL_FOV_HALF_TAN`, or wider
+    /// for a frame drawn past the screen's edges (`widened`).
+    fov_half_tan: f64,
 }
 
 impl Cam {
@@ -102,11 +105,36 @@ impl Cam {
                 PROJECTION_NEAR_EARTH_RADII,
             ),
             aspect,
+            fov_half_tan: VERTICAL_FOV_HALF_TAN,
         }
     }
 }
 
 impl Basis {
+    /// Tangent of half the vertical field of view.
+    pub fn fov_half_tan(&self) -> f64 {
+        self.fov_half_tan
+    }
+    /// How many times wider than the screen's this view sees (1: the screen's).
+    pub fn widening(&self) -> f64 {
+        self.fov_half_tan / VERTICAL_FOV_HALF_TAN
+    }
+    /// The same camera seeing `factor` times as far each way from the centre (the
+    /// screen's view for 1). Drawn into its rectangle grown `factor` times about the
+    /// centre, it shows every point where this view shows it in its own rectangle,
+    /// with a margin beyond.
+    pub fn widened(&self, factor: f64) -> Basis {
+        let fov_half_tan = VERTICAL_FOV_HALF_TAN * factor;
+        Basis {
+            projection: rh::proj::directx::perspective_infinite(
+                2.0 * fov_half_tan.atan(),
+                self.aspect,
+                PROJECTION_NEAR_EARTH_RADII,
+            ),
+            fov_half_tan,
+            ..*self
+        }
+    }
     /// The ground point at the centre of the view.
     pub fn geographic_center(&self) -> (f64, f64) {
         self.center
@@ -125,8 +153,8 @@ impl Basis {
     }
     pub fn dir(&self, nx: f64, ny: f64) -> DVec3 {
         let view_ray = DVec3::new(
-            nx * self.aspect * VERTICAL_FOV_HALF_TAN,
-            ny * VERTICAL_FOV_HALF_TAN,
+            nx * self.aspect * self.fov_half_tan,
+            ny * self.fov_half_tan,
             -1.0,
         );
         (self.world_from_view * view_ray).normalize()
@@ -677,6 +705,36 @@ mod tests {
     use super::*;
     use crate::math::haversine_km;
     use emath::Vec2;
+
+    /// A widened view drawn into its rectangle grown about the centre shows every
+    /// point where the screen's view shows it, and its rays through a point agree.
+    #[test]
+    fn a_widened_view_in_a_grown_rectangle_matches_the_screens() {
+        let cam = Cam {
+            lat: 46.5,
+            lon: 8.0,
+            heading: 30.0,
+            alt: 12.0,
+            tilt: 70.0,
+            look_up: 0.0,
+        };
+        let rect = Rect::from_min_size(emath::pos2(10.0, 20.0), Vec2::new(900.0, 600.0));
+        let basis = cam.basis_for_model(1.5, EarthModel::Wgs84);
+        let wide = basis.widened(1.25);
+        let grown = Rect::from_center_size(rect.center(), rect.size() * 1.25);
+        assert!((wide.widening() - 1.25).abs() < 1e-12);
+        for at in [rect.center(), rect.min + Vec2::new(100.0, 400.0), rect.max] {
+            let (ray, wide_ray) = (basis.ray(rect, at), wide.ray(grown, at));
+            assert!((ray - wide_ray).length() < 1e-6, "{ray} {wide_ray}");
+            if let Some(ground) = basis.model.geometry().intersect(basis.c, ray) {
+                let (a, b) = (
+                    basis.project_precise(ground, rect).unwrap(),
+                    wide.project_precise(ground, grown).unwrap(),
+                );
+                assert!((a - b).length() < 1e-3, "{a} {b}");
+            }
+        }
+    }
 
     #[test]
     fn zooming_far_out_levels_the_view() {

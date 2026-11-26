@@ -212,6 +212,36 @@ mod tests {
             (drawn.offset - plain.offset).length() < 2.0,
             "{drawn:?} {plain:?}"
         );
+        // Drawn 1.25 times wider than the screen's view, the same ground.
+        let (wide, grown) = (
+            shown.widened(1.25),
+            Rect::from_center_size(RECT.center(), RECT.size() * 1.25),
+        );
+        let mut wide_planes = vec![0.0f32; 4 * width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let at = Pos2::new(
+                    grown.min.x + (x as f32 + 0.5) / width as f32 * grown.width(),
+                    grown.min.y + (y as f32 + 0.5) / height as f32 * grown.height(),
+                );
+                let ray = wide.ray(grown, at);
+                let ground = wide.model.geometry().intersect(wide.c, ray).unwrap();
+                let i = y * width + x;
+                wide_planes[width * height + i] = (ground - wide.c).length() as f32;
+                wide_planes[3 * width * height + i] = 1.0;
+            }
+        }
+        let wide_depth = crate::overlays::DepthMap::new(width, height, wide_planes.into())
+            .map(|depth| depth.widened(1.25));
+        let from_wide = frame_shift(&shown, &now, RECT, wide_depth.as_ref()).unwrap();
+        assert!(
+            (from_wide.scale - plain.scale).abs() < 0.01,
+            "{from_wide:?}"
+        );
+        assert!(
+            (from_wide.offset - plain.offset).length() < 2.0,
+            "{from_wide:?}"
+        );
         planes[3 * width * height..].fill(-1.0);
         let unsure = crate::overlays::DepthMap::new(width, height, planes.into());
         assert_eq!(frame_shift(&shown, &now, RECT, unsure.as_ref()), None);

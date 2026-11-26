@@ -37,6 +37,9 @@ pub struct DepthMap {
     width: usize,
     height: usize,
     planes: std::sync::Arc<Vec<f32>>,
+    /// How many times wider than the screen's the frame's view was (`Basis::widening`):
+    /// the screen's rectangle is its middle part.
+    widening: f64,
 }
 
 impl DepthMap {
@@ -46,14 +49,30 @@ impl DepthMap {
             width,
             height,
             planes,
+            widening: 1.0,
         })
+    }
+    /// The planes of a frame drawn `widening` times wider than the screen's view.
+    pub fn widened(self, widening: f64) -> Self {
+        Self { widening, ..self }
+    }
+    /// The frame's pixel (fractional) at screen point `at`, with the screen's view
+    /// drawn in `rect`.
+    fn pixel_of(&self, rect: Rect, at: glam::DVec2) -> (f64, f64) {
+        let share = |at: f64, min: f32, size: f32| {
+            0.5 + ((at - f64::from(min)) / f64::from(size) - 0.5) / self.widening
+        };
+        (
+            share(at.x, rect.min.x, rect.width()) * self.width as f64,
+            share(at.y, rect.min.y, rect.height()) * self.height as f64,
+        )
     }
     /// How far along its ray the frame (drawn in `rect`) met the ground at screen
     /// point `at` (mean Earth radii), where the walk was sure of it.
     pub fn ground_at(&self, rect: Rect, at: emath::Pos2) -> Option<f64> {
-        let x = ((at.x - rect.min.x) / rect.width() * self.width as f32).floor();
-        let y = ((at.y - rect.min.y) / rect.height() * self.height as f32).floor();
-        if !(0.0..self.width as f32).contains(&x) || !(0.0..self.height as f32).contains(&y) {
+        let (x, y) = self.pixel_of(rect, glam::DVec2::new(f64::from(at.x), f64::from(at.y)));
+        let (x, y) = (x.floor(), y.floor());
+        if !(0.0..self.width as f64).contains(&x) || !(0.0..self.height as f64).contains(&y) {
             return None;
         }
         let (count, i) = (
@@ -188,8 +207,7 @@ impl<'a> TerrainVisibility<'a> {
     fn visible_in_depth(&self, target: glam::DVec3) -> Option<bool> {
         let (depth, rect) = self.depth?;
         let at = self.basis.project_precise(target, rect)?;
-        let x = (at.x - f64::from(rect.min.x)) / f64::from(rect.width()) * depth.width as f64;
-        let y = (at.y - f64::from(rect.min.y)) / f64::from(rect.height()) * depth.height as f64;
+        let (x, y) = depth.pixel_of(rect, at);
         if !(0.0..depth.width as f64).contains(&x) || !(0.0..depth.height as f64).contains(&y) {
             count(&OFF_FRAME);
             return None;

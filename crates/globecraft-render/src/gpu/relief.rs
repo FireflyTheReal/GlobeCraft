@@ -538,8 +538,10 @@ impl ReliefMarch {
         let to_world = relief.exaggeration() / EARTH_RADIUS_M;
         let view = View {
             camera: v4(request.basis.c, request.basis.aspect_ratio()),
-            right: v4(rotation.x_axis, 0.0),
-            up: v4(rotation.y_axis, 0.0),
+            // Scaled by the view's widening: the shaders' rays use the screen's field
+            // of view (`Basis::widened`).
+            right: v4(rotation.x_axis * request.basis.widening(), 0.0),
+            up: v4(rotation.y_axis * request.basis.widening(), 0.0),
             forward: v4(rotation.z_axis, 0.0),
             q: v4(geometry.inverse_axes_squared(), 0.0),
             axes: v4(geometry.axes(), terrain::MAX_TERRAIN_M * to_world),

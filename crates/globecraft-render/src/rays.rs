@@ -1,8 +1,6 @@
 //! Independent f64 ray lanes; geographic/trigonometric sampling stays scalar.
 use glam::{DMat3, DVec3};
-use globecraft_core::{
-    EARTH_RADIUS_KM, VERTICAL_FOV_HALF_TAN, camera::Basis, earth_model::SurfaceGeometry,
-};
+use globecraft_core::{EARTH_RADIUS_KM, camera::Basis, earth_model::SurfaceGeometry};
 use wide::f64x4;
 
 pub(super) const RAY_LANES: usize = 4;
@@ -10,6 +8,8 @@ pub(super) const RAY_LANES: usize = 4;
 pub(super) struct RayCaster {
     rotation: DMat3,
     aspect: f64,
+    /// Tangent of half the vertical field of view (`Basis::fov_half_tan`).
+    fov_half_tan: f64,
     camera: DVec3,
     geometry: SurfaceGeometry,
     inverse_axes_squared: DVec3,
@@ -55,6 +55,7 @@ impl RayCaster {
         Self {
             rotation: basis.rotation_from_view(),
             aspect: basis.aspect_ratio(),
+            fov_half_tan: basis.fov_half_tan(),
             camera: basis.c,
             geometry,
             inverse_axes_squared,
@@ -84,8 +85,8 @@ impl RayCaster {
         let nx = (x as f64 + 0.5) / self.width * 2.0 - 1.0;
         let ny = 1.0 - (y as f64 + 0.5) / self.height * 2.0;
         let view = DVec3::new(
-            nx * self.aspect * VERTICAL_FOV_HALF_TAN,
-            ny * VERTICAL_FOV_HALF_TAN,
+            nx * self.aspect * self.fov_half_tan,
+            ny * self.fov_half_tan,
             -1.0,
         );
         (self.rotation * view).normalize()
@@ -99,8 +100,8 @@ impl RayCaster {
         let nx = f64x4::new(std::array::from_fn(|lane| (first_x + lane) as f64));
         let nx = (nx + 0.5) / self.width * 2.0 - 1.0;
         let ny = 1.0 - (y as f64 + 0.5) / self.height * 2.0;
-        let vx = nx * self.aspect * VERTICAL_FOV_HALF_TAN;
-        let vy = ny * VERTICAL_FOV_HALF_TAN;
+        let vx = nx * self.aspect * self.fov_half_tan;
+        let vy = ny * self.fov_half_tan;
         let m = self.rotation;
         // Preserve glam's column accumulation and scalar normalize order. No FMA
         // helpers, reciprocal approximations or reduced geographic precision.

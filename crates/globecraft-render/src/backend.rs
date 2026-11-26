@@ -514,6 +514,7 @@ impl FrameRenderer {
                     .and_then(|planes| {
                         crate::overlays::DepthMap::new(request.width, request.height, planes)
                     })
+                    .map(|depth| depth.widened(request.basis.widening()))
                     .map(std::sync::Arc::new)
             };
             // The GPU draws the frame from its walk where it can (roadmap D8, G4), the
