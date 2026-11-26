@@ -263,7 +263,16 @@ impl ReliefTiming {
         }
         !(self.frames == 2 || (self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY))
     }
-    fn note(&mut self, walked: bool, seconds_per_megapixel: f64, pixels: usize) {
+    /// Times a relief frame: `walked` with the walk, `kept_view` when the walk was the
+    /// last one's with only the sun's part walked again (a timeline moved, `relief::
+    /// Walked::kept_view`). Such a frame costs about a tenth of a walk, so it says
+    /// nothing about the walk's cost: timed, it made a CPU check frame look three times
+    /// as slow, settling the walk for good where the CPU was faster (a phone over flat
+    /// land, 2026-11-26 audit).
+    fn note(&mut self, walked: bool, kept_view: bool, seconds_per_megapixel: f64, pixels: usize) {
+        if walked && kept_view {
+            return;
+        }
         self.frames += 1;
         if walked {
             self.walked += 1;
@@ -499,6 +508,12 @@ impl FrameRenderer {
                 };
             let walked = starts.is_some();
             let walk_took = started.elapsed();
+            // A walk that finished is the device working: the start marker goes, also in
+            // a session of relief frames only (it stayed, and the next start kept to the
+            // CPU, 2026-11-26 audit).
+            if walks && self.gpu.as_ref().is_some_and(|gpu| gpu.relief_ran) {
+                self.clear_start_marker();
+            }
             // A gesture overtook this frame during its walk: nobody will see it.
             if crate::cancel::cancelled() {
                 return RenderedView {
@@ -529,13 +544,15 @@ impl FrameRenderer {
                     .unwrap_or_else(|error| Err((error, Vec::new(), true)))
                 {
                     Ok((frame, held)) => {
-                        gpu.relief_frame_held(held);
                         let pixels = request.width * request.height;
                         let megapixels = pixels as f64 / 1e6;
-                        // An abandoned frame's time says nothing about the walk.
+                        // An abandoned frame's time says nothing about the walk, and the
+                        // tiles it held are only those of the part it drew.
                         if !crate::cancel::cancelled() {
+                            gpu.relief_frame_held(held);
                             self.relief_timing.note(
                                 true,
+                                gpu.relief_kept_view,
                                 started.elapsed().as_secs_f64() / megapixels.max(1e-6),
                                 pixels,
                             );
@@ -593,7 +610,10 @@ impl FrameRenderer {
                 }),
                 None,
             );
-            if let Some(gpu) = &mut self.gpu {
+            if let Some(gpu) = self.gpu.as_mut().filter(|_| !crate::cancel::cancelled()) {
+                // An abandoned frame held only the tiles of the part it drew: the walk
+                // keeps its set (the gesture's first frame walked without the rest and
+                // fell to the CPU, 2026-11-26 audit).
                 gpu.relief_frame_held(held);
                 // A walk that ran but did not help (more than half its rays without
                 // the tiles they needed) is what trying the walk cost here: the CPU
@@ -602,11 +622,12 @@ impl FrameRenderer {
                 // before 60–110 ms of CPU, and uncounted, the walk was tried every
                 // frame (2026-11-26). Frames before the walk had tiles say nothing.
                 let tried = walked || (walks && gpu.relief_ran);
-                if (tried || !walks) && !crate::cancel::cancelled() {
+                if tried || !walks {
                     let pixels = request.width * request.height;
                     let megapixels = pixels as f64 / 1e6;
                     self.relief_timing.note(
                         tried,
+                        walked && gpu.relief_kept_view,
                         started.elapsed().as_secs_f64() / megapixels.max(1e-6),
                         pixels,
                     );
@@ -670,7 +691,7 @@ mod relief_timing_tests {
     fn drive(timing: &mut ReliefTiming, with: f64, without: f64, frames: u32, pixels: usize) {
         for _ in 0..frames {
             let walks = timing.walks(pixels);
-            timing.note(walks, if walks { with } else { without }, pixels);
+            timing.note(walks, false, if walks { with } else { without }, pixels);
         }
     }
 
@@ -734,6 +755,25 @@ mod relief_timing_tests {
         assert!(software.cpu_for_now && software.walked == 2);
     }
 
+    /// Frames whose walk was kept (only the sun moved: a tenth of a walk's cost) are not
+    /// timed: set against them, a CPU check frame looked three times as slow and
+    /// settled the walk where the CPU was faster.
+    #[test]
+    fn a_kept_walk_is_not_the_walks_cost() {
+        let mut timing = ReliefTiming::default();
+        drive(&mut timing, 0.245, 0.075, 3, PIXELS);
+        assert!(timing.cpu_for_now);
+        let mut kept = ReliefTiming::default();
+        kept.note(true, false, 0.245, PIXELS);
+        kept.note(true, false, 0.245, PIXELS);
+        for _ in 0..RELIEF_CHECK_EVERY {
+            kept.note(true, true, 0.025, PIXELS);
+        }
+        assert_eq!(kept.walk_cost(PIXELS), Some(0.245));
+        kept.note(false, false, 0.075, PIXELS);
+        assert!(kept.cpu_for_now && !kept.settled);
+    }
+
     /// The first walked frame (the walk's setup) is not timed, nor is a frame set
     /// against the walk at another size; a size without a timed walk walks to learn
     /// it, without leaving the CPU.
@@ -742,21 +782,21 @@ mod relief_timing_tests {
         // M1, 2026-11-24: the first walked frame 1238 ms per megapixel with the setup,
         // the frame without the walk 580; the walk itself 4–6 times faster after it.
         let mut fresh = ReliefTiming::default();
-        fresh.note(true, 1.238, PIXELS);
+        fresh.note(true, false, 1.238, PIXELS);
         assert!(fresh.walks(PIXELS) && fresh.walk_cost(PIXELS).is_none());
-        fresh.note(true, 0.12, PIXELS);
+        fresh.note(true, false, 0.12, PIXELS);
         assert!(!fresh.walks(PIXELS));
-        fresh.note(false, 0.58, PIXELS);
+        fresh.note(false, false, 0.58, PIXELS);
         assert!(!fresh.cpu_for_now && fresh.wins == 1);
         let small = 616 * 386;
         let mut sizes = ReliefTiming::default();
-        sizes.note(true, 0.2, PIXELS);
-        sizes.note(true, 0.2, PIXELS);
-        sizes.note(false, 0.05, small);
+        sizes.note(true, false, 0.2, PIXELS);
+        sizes.note(true, false, 0.2, PIXELS);
+        sizes.note(false, false, 0.05, small);
         assert!(!sizes.cpu_for_now && sizes.wins == 0);
-        sizes.note(false, 0.05, PIXELS);
+        sizes.note(false, false, 0.05, PIXELS);
         assert!(sizes.cpu_for_now && sizes.walks(small));
-        sizes.note(true, 0.3, small);
+        sizes.note(true, false, 0.3, small);
         assert!(sizes.cpu_for_now && !sizes.walks(PIXELS));
     }
 }
