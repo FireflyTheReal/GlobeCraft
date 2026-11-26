@@ -128,6 +128,7 @@ impl Renderer {
                     admission_cache.prioritize_view(&frame.required_tiles());
                 },
                 move |request, pixels| {
+                    let prepare_started = std::time::Instant::now();
                     #[cfg(feature = "profiling")]
                     let _prepare = globecraft_data::profiling::Span::new("frame.prepare");
                     #[cfg(feature = "profiling")]
@@ -151,6 +152,7 @@ impl Renderer {
                             &overlay_ctx,
                         )
                     });
+                    let overlays_took = prepare_started.elapsed();
                     let fading_out = request.overlays.as_ref().and_then(|input| {
                         let data = input.fading_out.clone()?;
                         let geometry =
@@ -173,7 +175,7 @@ impl Renderer {
                                 egui::ColorImage::from_rgba_premultiplied([width, height], &pixels);
                             (image, rel)
                         });
-                    PreparedFrame {
+                    let prepared = PreparedFrame {
                         image,
                         compare,
                         overlays: geometry,
@@ -186,7 +188,9 @@ impl Renderer {
                             input.unix_secs = now_unix();
                             aircraft_preparer.prepare(input)
                         }),
-                    }
+                    };
+                    log_prepare(request, overlays_took, prepare_started.elapsed());
+                    prepared
                 },
             )
             .expect("start frame renderer"),
@@ -625,6 +629,21 @@ fn same_camera(a: Cam, b: Cam) -> bool {
 // Input must describe the same globe as the frame being presented.
 fn displayed_basis(displayed: Option<(Cam, Basis)>, fallback: Basis) -> Basis {
     displayed.map_or(fallback, |(_, basis)| basis)
+}
+
+/// With `GLOBECRAFT_FRAME_TIMES` set: one log line per frame prepared after the globe
+/// was drawn (its overlays first, then the rest), as the renderer logs relief frames.
+fn log_prepare(request: &RenderRequest, overlays: std::time::Duration, whole: std::time::Duration) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
+        globecraft_data::log_line!(
+            "FRAME PREPARE {}x{}: overlays {:.1} ms, whole {:.1} ms",
+            request.width,
+            request.height,
+            overlays.as_secs_f64() * 1000.0,
+            whole.as_secs_f64() * 1000.0
+        );
+    }
 }
 
 #[cfg(test)]
