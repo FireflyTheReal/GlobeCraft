@@ -55,6 +55,8 @@ pub(crate) struct GpuRenderer {
     /// ones the last walk read.
     relief_tiles: Vec<TileKey>,
     relief_read: Vec<TileKey>,
+    /// Elevation tiles the last walk uploaded first (`GLOBECRAFT_FRAME_TIMES`).
+    pub(crate) relief_uploads: usize,
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -222,6 +224,7 @@ impl GpuRenderer {
             relief: None,
             relief_tiles: Vec::new(),
             relief_read: Vec::new(),
+            relief_uploads: 0,
         })
     }
 
@@ -268,6 +271,7 @@ impl GpuRenderer {
         match march.starts(device, queue, request, &tiles) {
             Ok(walked) => {
                 self.relief_read = walked.read;
+                self.relief_uploads = walked.uploads;
                 Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
             }
             Err(error) => {

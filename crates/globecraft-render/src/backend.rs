@@ -165,6 +165,29 @@ struct ReliefTiming {
 }
 #[cfg(feature = "gpu")]
 const RELIEF_CHECK_EVERY: u32 = 20;
+
+/// With `GLOBECRAFT_FRAME_TIMES` set: one log line per relief frame, its size, who
+/// drew it, the walk's time (and the elevation tiles it uploaded first) and the whole
+/// frame's, to find where a slow frame's time goes.
+#[cfg(feature = "gpu")]
+fn log_relief_frame(
+    request: &RenderRequest,
+    drawn_by: &str,
+    walk: std::time::Duration,
+    total: std::time::Duration,
+    uploads: usize,
+) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
+        globecraft_data::log_line!(
+            "RELIEF FRAME {}x{} by the {drawn_by}: walk {:.1} ms ({uploads} tiles uploaded), whole {:.1} ms",
+            request.width,
+            request.height,
+            walk.as_secs_f64() * 1000.0,
+            total.as_secs_f64() * 1000.0
+        );
+    }
+}
 #[cfg(feature = "gpu")]
 const RELIEF_LOSSES: u32 = 3;
 #[cfg(feature = "gpu")]
@@ -392,6 +415,7 @@ impl FrameRenderer {
                     None => None,
                 };
             let walked = starts.is_some();
+            let walk_took = started.elapsed();
             // The GPU draws the frame from its walk where it can (roadmap D8, G4), the
             // CPU what it leaves. Also below `MIN_AUTO_GPU_PIXELS`, which is for flat
             // frames: relief frames while moving are that small (0.28 of the window),
@@ -414,6 +438,13 @@ impl FrameRenderer {
                             pixels,
                         );
                         update_status(|status| status.gpu_frames += 1);
+                        log_relief_frame(
+                            request,
+                            "GPU",
+                            walk_took,
+                            started.elapsed(),
+                            gpu.relief_uploads,
+                        );
                         return frame;
                     }
                     Err((error, returned, permanent)) => {
@@ -433,6 +464,13 @@ impl FrameRenderer {
                 cache,
                 buffer,
                 starts.as_deref(),
+            );
+            log_relief_frame(
+                request,
+                if walked { "CPU from the walk" } else { "CPU" },
+                walk_took,
+                started.elapsed(),
+                self.gpu.as_ref().map_or(0, |gpu| gpu.relief_uploads),
             );
             if let Some(gpu) = &mut self.gpu {
                 gpu.relief_frame_held(held);

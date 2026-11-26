@@ -118,7 +118,6 @@ pub(crate) struct Walked {
     /// spared the march, no longer reads them itself.
     pub(super) read: Vec<TileKey>,
     /// How many tiles this walk uploaded first.
-    #[cfg(test)]
     pub(super) uploads: usize,
     /// How long each pass took on the device (the cones, the view's walk, the sun's
     /// quarter, other rows and odd columns; where the adapter can time them), and the wait for the device
@@ -487,7 +486,7 @@ impl ReliefMarch {
         let Some(relief) = request.cfg.terrain else {
             return Err("No relief in this view".into());
         };
-        let (slots, _uploads) = self.hold(queue, tiles);
+        let (slots, uploads) = self.hold(queue, tiles);
         let count = request.width * request.height;
         let layers = self.slots.len();
         // The pixels' planes, then the cones' starts.
@@ -709,8 +708,7 @@ impl ReliefMarch {
         Ok(Walked {
             pixels,
             read,
-            #[cfg(test)]
-            uploads: _uploads,
+            uploads,
             #[cfg(test)]
             took,
         })
