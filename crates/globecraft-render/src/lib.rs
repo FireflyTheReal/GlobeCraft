@@ -7,6 +7,7 @@ pub mod cancel;
 pub mod celestial;
 mod colour_match;
 pub mod diagnostics;
+pub mod frame_shift;
 #[cfg(feature = "gpu")]
 mod gpu;
 pub mod overlays;

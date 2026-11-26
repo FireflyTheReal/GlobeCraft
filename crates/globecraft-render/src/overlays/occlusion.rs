@@ -48,6 +48,21 @@ impl DepthMap {
             planes,
         })
     }
+    /// How far along its ray the frame (drawn in `rect`) met the ground at screen
+    /// point `at` (mean Earth radii), where the walk was sure of it.
+    pub fn ground_at(&self, rect: Rect, at: emath::Pos2) -> Option<f64> {
+        let x = ((at.x - rect.min.x) / rect.width() * self.width as f32).floor();
+        let y = ((at.y - rect.min.y) / rect.height() * self.height as f32).floor();
+        if !(0.0..self.width as f32).contains(&x) || !(0.0..self.height as f32).contains(&y) {
+            return None;
+        }
+        let (count, i) = (
+            self.width * self.height,
+            y as usize * self.width + x as usize,
+        );
+        let (hit, trusted) = (self.planes[count + i], self.planes[3 * count + i]);
+        (hit >= 0.0 && trusted > 0.5).then_some(f64::from(hit))
+    }
     /// The farthest drawn ground among pixel `(x, y)` and its eight neighbours (a point
     /// at a ridge's edge falls between them), or `None` where any of them has no
     /// ground the walk was sure of.
