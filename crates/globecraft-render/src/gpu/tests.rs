@@ -1449,40 +1449,11 @@ fn overview_variant() {
     let Ok(name) = std::env::var("GLOBECRAFT_OVERVIEW_VARIANT") else {
         return;
     };
-    let patch = |from: &str, to: &str| (from.to_string(), to.to_string());
+    // A variant is a list of (from, to) replacements in the shader's source; none
+    // is kept now (the air lookup's loop and the area average's order were timed,
+    // 2026-11-26).
     *super::shader::SHADER_PATCH.lock().unwrap() = match name.as_str() {
         "none" => vec![],
-        // The air's scattering table read corner by corner in a loop the compiler
-        // cannot unroll (its bound is the table's length): fewer of its 16 reads in
-        // flight at once, fewer registers.
-        "airloop" => vec![patch(
-            "    let h = u32(height.x);
-    if height.y == 0.0 { return air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
-    if height.y == 1.0 { return air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
-    return air_lerp(
-        air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase),
-        air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase),
-        height.y);
-}",
-            "    let h = u32(height.x);
-    var sum = vec4<f32>(0.0);
-    for (var k = 0u; k < min(8u, arrayLength(&air_tables)); k++) {
-        let dh = k >> 2u; let dv = (k >> 1u) & 1u; let ds = k & 1u;
-        let w = select(1.0 - height.y, height.y, dh == 1u) * select(1.0 - view.y, view.y, dv == 1u) * select(1.0 - sun.y, sun.y, ds == 1u);
-        if w > 0.0 { sum += air_at(h + dh, u32(view.x) + dv, u32(sun.x) + ds, phase) * w; }
-    }
-    return sum;
-}",
-        )],
-        // The area average computed for every pixel and dropped where bilinear
-        // sampling is taken (the shader before 25 Nov).
-        "oldarea" => vec![patch(
-            "            var colour: vec3<f32>;
-            if stride <= 1.0 { colour = sample_tile(local,layer); }
-            else { colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE)); }",
-            "            var colour = sample_area(local,layer,min(stride,MAX_SAMPLE_STRIDE));
-            if stride <= 1.0 { colour = sample_tile(local,layer); }",
-        )],
         other => panic!("unknown overview variant {other}"),
     };
     println!("OVERVIEW VARIANT {name}");

@@ -592,23 +592,27 @@ fn air_scattering_at(r: f32, mu: f32, mu_s: f32, nu: f32, to_ground: bool) -> ve
     let height = air_cell(rho / AIR_HORIZON * f32(AIR_SCATTERING_HEIGHTS - 1u), AIR_SCATTERING_HEIGHTS);
     let sun = air_cell(sun_coordinate(mu_s) * f32(AIR_SUNS - 1u), AIR_SUNS);
     let phase = air_cell((nu + 1.0) * 0.5 * f32(AIR_PHASES - 1u), AIR_PHASES);
+    // The eight corners around the entry (height, view, sun), each weighted, in a
+    // loop the compiler cannot unroll (its bound is the table's length, always
+    // larger): unrolled, its 16 reads in flight at once held the whole overview to
+    // 384 threads a group on an M1; looped 576, the overview 28.3 → 24.7 ms at
+    // 1920 × 1200 (2026-11-26). A corner weighted 0 is not read, as before.
     let h = u32(height.x);
-    if height.y == 0.0 { return air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
-    if height.y == 1.0 { return air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase); }
-    return air_lerp(
-        air_layer(h, u32(view.x), view.y, u32(sun.x), sun.y, phase),
-        air_layer(h + 1u, u32(view.x), view.y, u32(sun.x), sun.y, phase),
-        height.y);
+    var sum = vec4<f32>(0.0);
+    for (var k = 0u; k < min(AIR_CORNERS, arrayLength(&air_tables)); k++) {
+        let dh = k >> 2u; let dv = (k >> 1u) & 1u; let ds = k & 1u;
+        let w = select(1.0 - height.y, height.y, dh == 1u)
+            * select(1.0 - view.y, view.y, dv == 1u)
+            * select(1.0 - sun.y, sun.y, ds == 1u);
+        if w > 0.0 { sum += air_at(h + dh, u32(view.x) + dv, u32(sun.x) + ds, phase) * w; }
+    }
+    return sum;
 }
+// The corners of the scattering table's cell around an entry: height, view and sun.
+const AIR_CORNERS: u32 = 8u;
 fn air_at(height: u32, view: u32, sun: u32, phase: vec2<f32>) -> vec4<f32> {
     let first = ((height * AIR_VIEWS + view) * AIR_SUNS + sun) * AIR_PHASES + u32(phase.x);
     return air_lerp(air_tables[AIR_SCATTERING_AT + first], air_tables[AIR_SCATTERING_AT + first + 1u], phase.y);
-}
-fn air_layer(height: u32, view: u32, view_step: f32, sun: u32, sun_step: f32, phase: vec2<f32>) -> vec4<f32> {
-    return air_lerp(
-        air_lerp(air_at(height, view, sun, phase), air_at(height, view, sun + 1u, phase), sun_step),
-        air_lerp(air_at(height, view + 1u, sun, phase), air_at(height, view + 1u, sun + 1u, phase), sun_step),
-        view_step);
 }
 // The sunlight's colour after crossing the air (`Tables::sunlight`).
 fn air_sunlight(transmitted: vec4<f32>) -> vec3<f32> {
