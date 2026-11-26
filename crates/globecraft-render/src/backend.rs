@@ -137,10 +137,15 @@ pub struct FrameRenderer {
 /// Every `RELIEF_CHECK_EVERY`th relief frame is drawn without it and set against the
 /// frame drawn with it just before (the same view, a moment apart); after
 /// `RELIEF_LOSSES` such pairs in a row where the frame without it took less time per
-/// pixel, the walk goes off for good. The second relief frame is the first check, and
+/// pixel, the walk goes off for good. The third relief frame is the first check, and
 /// a frame without the walk in under half the time turns it off at once: on an M1 at
 /// 1920×1200 the walk made frames twice as slow, and three checks took 60 such frames
-/// (2026-11-23). Where the walk wins `RELIEF_SETTLED_WINS` checks in a row clearly
+/// (2026-11-23). The first walked frame is never compared: it carries the walk's
+/// setup (its pipelines, Metal compiling them after a fresh build, the self-check, the
+/// first tiles), and set against the frame after it, it once turned the walk off for
+/// a whole session on an M1 (1238 against 580 ms per megapixel, 2026-11-24). Nor are
+/// frames of different sizes (a motion frame and a sharp one): a frame's fixed costs
+/// weigh more per pixel in a small one. Where the walk wins `RELIEF_SETTLED_WINS` checks in a row clearly
 /// (the frame without it taking `RELIEF_CLEAR_WIN` times as long or longer), the checks
 /// stop: since 2026-11-24 a frame without it took 4–6 times as long on an M1 (about
 /// 0.6–1 s at 1920×1200 against 0.14–0.18 s), a hitch every 20 relief frames.
@@ -148,8 +153,10 @@ pub struct FrameRenderer {
 #[derive(Default)]
 struct ReliefTiming {
     frames: u32,
-    /// The last frame with the walk: seconds per megapixel.
-    with: Option<f64>,
+    /// Frames drawn with the walk.
+    walked: u32,
+    /// The last frame with the walk: seconds per megapixel, and its pixels.
+    with: Option<(f64, usize)>,
     losses: u32,
     wins: u32,
     off: bool,
@@ -170,15 +177,20 @@ impl ReliefTiming {
     fn walks(&self) -> bool {
         !self.off
             && (self.settled
-                || (self.frames != 1 && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)))
+                || (self.frames != 2 && !(self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY)))
     }
-    fn note(&mut self, walked: bool, seconds_per_megapixel: f64) {
+    fn note(&mut self, walked: bool, seconds_per_megapixel: f64, pixels: usize) {
         self.frames += 1;
         if walked {
-            self.with = Some(seconds_per_megapixel);
+            self.walked += 1;
+            self.with = (self.walked > 1).then_some((seconds_per_megapixel, pixels));
             return;
         }
-        let Some(with) = self.with.take() else {
+        let Some(with) = self
+            .with
+            .take()
+            .and_then(|(with, size)| (size == pixels).then_some(with))
+        else {
             return;
         };
         self.losses = if seconds_per_megapixel < with {
@@ -394,9 +406,13 @@ impl FrameRenderer {
                 {
                     Ok((frame, held)) => {
                         gpu.relief_frame_held(held);
-                        let megapixels = (request.width * request.height) as f64 / 1e6;
-                        self.relief_timing
-                            .note(true, started.elapsed().as_secs_f64() / megapixels.max(1e-6));
+                        let pixels = request.width * request.height;
+                        let megapixels = pixels as f64 / 1e6;
+                        self.relief_timing.note(
+                            true,
+                            started.elapsed().as_secs_f64() / megapixels.max(1e-6),
+                            pixels,
+                        );
                         update_status(|status| status.gpu_frames += 1);
                         return frame;
                     }
@@ -422,10 +438,12 @@ impl FrameRenderer {
                 gpu.relief_frame_held(held);
                 // Frames before the walk had tiles say nothing about it.
                 if walked || !walks {
-                    let megapixels = (request.width * request.height) as f64 / 1e6;
+                    let pixels = request.width * request.height;
+                    let megapixels = pixels as f64 / 1e6;
                     self.relief_timing.note(
                         walked,
                         started.elapsed().as_secs_f64() / megapixels.max(1e-6),
+                        pixels,
                     );
                 }
             }
@@ -480,6 +498,8 @@ impl FrameRenderer {
 mod relief_timing_tests {
     use super::*;
 
+    const PIXELS: usize = 1920 * 1200;
+
     /// Frames without the walk come every `RELIEF_CHECK_EVERY`; the walk goes off once
     /// they beat the frame before them `RELIEF_LOSSES` times in a row (or take under
     /// half its time), and stays on when one loss is followed by a win.
@@ -488,9 +508,9 @@ mod relief_timing_tests {
         let run = |timing: &mut ReliefTiming, with: f64, without: &[f64]| {
             for &without in without {
                 while timing.walks() {
-                    timing.note(true, with);
+                    timing.note(true, with, PIXELS);
                 }
-                timing.note(false, without);
+                timing.note(false, without, PIXELS);
             }
         };
         let mut paying = ReliefTiming::default();
@@ -505,15 +525,36 @@ mod relief_timing_tests {
         assert!(clear.settled);
         for _ in 0..10 * RELIEF_CHECK_EVERY {
             assert!(clear.walks());
-            clear.note(true, 0.1);
+            clear.note(true, 0.1, PIXELS);
         }
         let mut slow = ReliefTiming::default();
         run(&mut slow, 0.3, &[0.2, 0.2, 0.2]);
         assert!(slow.off && !slow.walks());
-        // Twice as slow with the walk: off at the second relief frame.
+        // Twice as slow with the walk: off at the third relief frame.
         let mut much_slower = ReliefTiming::default();
         run(&mut much_slower, 1.5, &[0.6]);
-        assert!(much_slower.off && much_slower.frames == 2);
+        assert!(much_slower.off && much_slower.frames == 3);
+    }
+
+    /// The first walked frame (the walk's setup) and a frame of another size are not
+    /// set against a frame without the walk.
+    #[test]
+    fn the_walks_setup_and_other_sizes_are_not_compared() {
+        // M1, 2026-11-24: the first walked frame 1238 ms per megapixel with the setup,
+        // the frame without the walk 580; the walk itself 4–6 times faster after it.
+        let mut fresh = ReliefTiming::default();
+        fresh.note(true, 1.238, PIXELS);
+        assert!(fresh.walks());
+        fresh.note(true, 0.12, PIXELS);
+        assert!(!fresh.walks());
+        fresh.note(false, 0.58, PIXELS);
+        assert!(!fresh.off && fresh.wins == 1);
+        // A sharp frame with the walk, then a motion frame without it.
+        let mut sizes = ReliefTiming::default();
+        sizes.note(true, 0.2, PIXELS);
+        sizes.note(true, 0.2, PIXELS);
+        sizes.note(false, 0.05, 616 * 386);
+        assert!(!sizes.off && sizes.losses == 0 && sizes.walks());
     }
 }
 
