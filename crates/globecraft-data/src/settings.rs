@@ -545,6 +545,10 @@ mod tests {
     fn settings_written_by_v0_4_0_keep_every_value() {
         keeps_every_value(include_bytes!("../tests/fixtures/settings-v0.4.0.json"));
     }
+    #[test]
+    fn settings_written_by_v0_5_0_keep_every_value() {
+        keeps_every_value(include_bytes!("../tests/fixtures/settings-v0.5.0.json"));
+    }
     fn keeps_every_value(old_bytes: &[u8]) {
         use serde_json::Value;
         fn leaves(path: &str, value: &Value, out: &mut Vec<(String, Value)>) {
