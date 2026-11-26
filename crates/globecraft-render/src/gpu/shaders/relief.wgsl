@@ -433,6 +433,12 @@ fn walk(rel: vec3<f32>, dir: vec3<f32>, start: f32, end: f32, angle: f32, safe: 
         last = vec2<f32>(t, h - ground_world);
         if !over_top {
             let cell = own.at - vec2<f32>(0.5) - floor(own.at - vec2<f32>(0.5));
+            // Within a cell the clearance is exact, so a piece runs to the cell's edge
+            // only, not also to the texel's inside it: about half the pieces (M1 at
+            // 1920 × 1200: view pass 47.2 → 44.7 ms top-down, 73.2 → 67.3 tilted,
+            // 2026-11-26). Not where the coarser level is blended in: its cells end at
+            // this level's texel edges.
+            if !blends { exit = 3.4e38; }
             exit = min(min(exit, longest), min(leave(cell.x, rate.x, 1.0), leave(cell.y, rate.y, 1.0)));
             // A ray going down ends the piece where it would reach the ground's height
             // here: a ray straight down crosses no cell.

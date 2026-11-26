@@ -1440,14 +1440,6 @@ fn walk_ablation(name: &str) -> Vec<(String, String)> {
                 "fine_at = locate(level + 1, d, at.uv, &coarse_looked)",
             ),
         ],
-        // Not a doubling: under the maxima, a piece runs to its bilinear cell's edge
-        // and not also to the texel's, where the coarser level is not blended in (its
-        // cells end at this level's texel edges); within a cell the clearance is
-        // exact either way, so about half the pieces.
-        "cells" => vec![patch(
-            "            exit = min(min(exit, longest), min(leave(cell.x",
-            "            if !blends { exit = 3.4e38; }\n            exit = min(min(exit, longest), min(leave(cell.x",
-        )],
         other => panic!("unknown ablation {other}"),
     });
     patches
