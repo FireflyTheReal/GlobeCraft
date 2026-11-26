@@ -22,6 +22,8 @@ struct PreparedFrame {
     fading_out: Option<super::overlays::PreparedOverlay>,
     aircraft: Option<Arc<globecraft_render::aircraft::AircraftGeometry>>,
     live_layers: Option<Arc<globecraft_render::live_layers::LiveGeometry>>,
+    /// The frame's drawn ground (relief frames the GPU's walk went through).
+    depth: Option<Arc<globecraft_render::overlays::DepthMap>>,
 }
 
 /// The compare release's raster, handed from the render step to the prepare step of
@@ -35,6 +37,9 @@ pub(super) struct Renderer {
     displayed: Option<(Cam, Basis)>,
     displayed_rect: Option<egui::Rect>,
     displayed_grid_step: Option<f64>,
+    /// The displayed frame's drawn ground (`overlays::DepthMap`): layers projected for
+    /// its view hide what lies behind the relief by it.
+    pub(super) displayed_depth: Option<Arc<globecraft_render::overlays::DepthMap>>,
     /// The relief setting the displayed frame's overlays were projected with (`None`
     /// before the first frame). Drawing must use it: the live one carries the tile
     /// cache's generation, which moves with every arriving tile, so overlays prepared
@@ -203,6 +208,7 @@ impl Renderer {
                             input.unix_secs = now_unix();
                             aircraft_preparer.prepare(input)
                         }),
+                        depth,
                     };
                     log_prepare(request, overlays_took, prepare_started.elapsed());
                     prepared
@@ -210,6 +216,7 @@ impl Renderer {
             )
             .expect("start frame renderer"),
             displayed: None,
+            displayed_depth: None,
             displayed_rect: None,
             displayed_grid_step: None,
             displayed_ground: None,
@@ -440,7 +447,9 @@ impl App {
             fading_out,
             aircraft,
             live_layers,
+            depth,
         } = frame.prepared;
+        self.frame.renderer.displayed_depth = depth;
         if let Some(geometry) = live_layers {
             self.live.geometry.accept(geometry);
         }
