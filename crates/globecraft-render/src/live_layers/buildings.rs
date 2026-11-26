@@ -7,6 +7,8 @@
 //! Faces are ordered by their middles, walls cut into pieces of at most
 //! `WALL_PIECE_M` and roofs drawn triangle by triangle, so a long wall no longer
 //! covers a nearer block beside it.
+//! Shaped roofs (`ShapedRoof`, D3) are drawn triangle by triangle, each lit by its
+//! slope, and walls under them rise to the roof, cut where it creases.
 //! shortcut: roofs triangulate into long slivers on big buildings, and a sliver's
 //! middle can still sort wrongly; a depth buffer (the GPU path) is the real fix.
 use super::{LiveInput, altitude_fade};
@@ -14,7 +16,7 @@ use crate::overlays::{Ground, TerrainVisibility};
 use emath::{Pos2, Rect};
 use glam::DVec3;
 use globecraft_core::VERTICAL_FOV_HALF_TAN;
-use globecraft_data::buildings::{Building, MAX_ALTITUDE_KM};
+use globecraft_data::buildings::{Building, MAX_ALTITUDE_KM, WallBend};
 use globecraft_data::tiles::TileCache;
 use rayon::prelude::*;
 
@@ -263,6 +265,9 @@ struct Scratch {
     top: Vec<DVec3>,
     base_on_screen: Vec<Option<Corner>>,
     top_on_screen: Vec<Option<Corner>>,
+    /// A shaped roof's points and where they are on screen.
+    roof: Vec<DVec3>,
+    roof_on_screen: Vec<Option<Corner>>,
     shadow: ShadowScratch,
 }
 
@@ -365,8 +370,13 @@ fn block(
             )
         })
     };
-    for &(lat, lon) in building.rings.iter().flatten() {
+    let shaped = building.shaped.as_deref();
+    for (index, &(lat, lon)) in building.rings.iter().flatten().enumerate() {
         let surface = basis.surface_position(lat, lon);
+        // Under a shaped roof each wall's top is the roof's height there.
+        let top_lift = shaped.map_or(top_lift, |roof| {
+            floor + f64::from(roof.tops_m[index]) / METRES_PER_RADIUS
+        });
         let (base, top) = (surface + up * base_lift, surface + up * top_lift);
         let (base_at, top_at) = (on_screen(base), on_screen(top));
         for (at, _) in [base_at, top_at].into_iter().flatten() {
@@ -450,10 +460,13 @@ fn block(
     }
     // Walls: each faces the right-hand side of its edge (outlines run anticlockwise,
     // courtyards clockwise, seen from above), and only those facing the camera show.
-    // Their pieces are counted through `sunlit.walls` in the march's order.
+    // Their pieces are counted through `sunlit.walls` in the march's order; under a
+    // shaped roof a piece is cut again where the roof above it creases.
     let mut first = 0;
     let mut piece_index = 0;
     let (base_m, top_m) = (f64::from(building.base_m), f64::from(building.top_m));
+    let all_bends = shaped.map_or(&[][..], |roof| &roof.bends[..]);
+    let mut bend_from = 0;
     for (ring, walls) in building.rings.iter().zip(&building.walls) {
         let n = ring.len();
         let turn = super::sun_march::wall_turn(ring, first == 0);
@@ -465,6 +478,20 @@ fn block(
             let pieces = super::sun_march::wall_pieces(ring[index], ring[(index + 1) % n]);
             let lit_from = piece_index;
             piece_index += pieces;
+            // This edge's bends: the bends run edge by edge.
+            while all_bends
+                .get(bend_from)
+                .is_some_and(|bend| (bend.edge as usize) < a)
+            {
+                bend_from += 1;
+            }
+            let bend_to = bend_from
+                + all_bends[bend_from..]
+                    .iter()
+                    .take_while(|bend| bend.edge as usize == a)
+                    .count();
+            let bends = &all_bends[bend_from..bend_to];
+            bend_from = bend_to;
             let normal = (scratch.base[b] - scratch.base[a])
                 .cross(up)
                 .normalize_or_zero()
@@ -476,91 +503,209 @@ fn block(
             }
             let lit = colour(wall, light.on(normal, up, 1.0), alpha);
             let dark = colour(wall, light.on(normal, up, 0.0), alpha);
-            // Each piece's corners: its ends at the base and the top, on screen.
-            let end = |piece: usize| {
-                if piece == 0 {
-                    return (
-                        scratch.base[a],
-                        scratch.top[a],
-                        scratch.base_on_screen[a],
-                        scratch.top_on_screen[a],
-                    );
-                }
-                if piece == pieces {
-                    return (
-                        scratch.base[b],
-                        scratch.top[b],
-                        scratch.base_on_screen[b],
-                        scratch.top_on_screen[b],
-                    );
-                }
-                let share = piece as f64 / pieces as f64;
-                let base = scratch.base[a].lerp(scratch.base[b], share);
-                let top = scratch.top[a].lerp(scratch.top[b], share);
-                (base, top, on_screen(base), on_screen(top))
-            };
-            let mut start = end(0);
-            for piece in 1..=pieces {
-                let stop = end(piece);
-                // The share of the piece's height up from which the sun reaches it.
-                let lit_share = sunlit.as_ref().map_or(0.0, |sunlit| {
-                    let lit_m = sunlit.walls[lit_from + piece - 1];
-                    ((lit_m - base_m) / (top_m - base_m)).clamp(0.0, 1.0)
-                });
-                let mut quad = |from: f64, to: f64, colour: [u8; 4]| {
-                    let corner = |base: DVec3, top: DVec3, at: f64| base.lerp(top, at);
-                    let world = [
-                        corner(start.0, start.1, from),
-                        corner(stop.0, stop.1, from),
-                        corner(stop.0, stop.1, to),
-                        corner(start.0, start.1, to),
-                    ];
-                    let seen = if from == 0.0 && to == 1.0 {
-                        [start.2, stop.2, stop.3, start.3]
+            let tops_m = shaped.map_or((top_m, top_m), |roof| {
+                (f64::from(roof.tops_m[a]), f64::from(roof.tops_m[b]))
+            });
+            // A point along the edge at its base and its top, on screen too.
+            let end = |share: f64| {
+                if share == 0.0 || share == 1.0 {
+                    let (at, top_m) = if share == 0.0 {
+                        (a, tops_m.0)
                     } else {
-                        world.map(on_screen)
+                        (b, tops_m.1)
                     };
-                    let middle = world.iter().sum::<DVec3>() / 4.0;
-                    face(
-                        out,
-                        basis,
-                        rect,
-                        (middle - camera).length_squared(),
-                        &world,
-                        &seen,
-                        colour,
-                    );
-                };
-                // In the shade below that height, in the sun above it.
-                if lit_share > 0.0 {
-                    quad(0.0, lit_share, dark);
+                    return WallEnd {
+                        base: scratch.base[at],
+                        top: scratch.top[at],
+                        base_seen: scratch.base_on_screen[at],
+                        top_seen: scratch.top_on_screen[at],
+                        top_m,
+                    };
                 }
-                if lit_share < 1.0 {
-                    quad(lit_share, 1.0, lit);
+                let base = scratch.base[a].lerp(scratch.base[b], share);
+                let height_m = wall_top_m(share, tops_m, bends);
+                let top = base + up * ((height_m - base_m) / METRES_PER_RADIUS);
+                WallEnd {
+                    base,
+                    top,
+                    base_seen: on_screen(base),
+                    top_seen: on_screen(top),
+                    top_m: height_m,
                 }
-                start = stop;
+            };
+            let mut start = end(0.0);
+            let mut next_bend = 0;
+            for piece in 1..=pieces {
+                // The height up from which the sun reaches the piece.
+                let lit_m = sunlit
+                    .as_ref()
+                    .map(|sunlit| sunlit.walls[lit_from + piece - 1]);
+                let piece_end = piece as f64 / pieces as f64;
+                loop {
+                    let share = match bends.get(next_bend) {
+                        Some(bend) if f64::from(bend.share) < piece_end => {
+                            next_bend += 1;
+                            f64::from(bend.share)
+                        }
+                        _ => piece_end,
+                    };
+                    let stop = end(share);
+                    // The share of each end's height in the shade, below `lit_m`.
+                    let shaded = |end: &WallEnd| {
+                        // A wall of no height (a roof down to the base) is all shade.
+                        lit_m.map_or(0.0, |lit_m| {
+                            ((lit_m - base_m) / (end.top_m - base_m).max(MIN_WALL_M))
+                                .clamp(0.0, 1.0)
+                        })
+                    };
+                    let shade = [shaded(&start), shaded(&stop)];
+                    let mut quad = |from: [f64; 2], to: [f64; 2], colour: [u8; 4]| {
+                        let world = [
+                            start.base.lerp(start.top, from[0]),
+                            stop.base.lerp(stop.top, from[1]),
+                            stop.base.lerp(stop.top, to[1]),
+                            start.base.lerp(start.top, to[0]),
+                        ];
+                        let seen = if from == [0.0; 2] && to == [1.0; 2] {
+                            [
+                                start.base_seen,
+                                stop.base_seen,
+                                stop.top_seen,
+                                start.top_seen,
+                            ]
+                        } else {
+                            world.map(on_screen)
+                        };
+                        let middle = world.iter().sum::<DVec3>() / 4.0;
+                        face(
+                            out,
+                            basis,
+                            rect,
+                            (middle - camera).length_squared(),
+                            &world,
+                            &seen,
+                            colour,
+                        );
+                    };
+                    // In the shade below that height, in the sun above it.
+                    if shade.iter().any(|&share| share > 0.0) {
+                        quad([0.0; 2], shade, dark);
+                    }
+                    if shade.iter().any(|&share| share < 1.0) {
+                        quad(shade, [1.0; 2], lit);
+                    }
+                    start = stop;
+                    if share == piece_end {
+                        break;
+                    }
+                }
             }
         }
         first += n;
     }
-    // The roof, when the camera is above it.
-    let roof_middle = scratch.top.iter().sum::<DVec3>() / scratch.top.len() as f64;
-    if (camera - roof_middle).dot(up) > 0.0 {
-        let shade = colour(roof, roof_light, alpha);
-        for triangle in building.roof.chunks_exact(3) {
-            let at = |corner: usize| triangle[corner] as usize;
-            let world = [scratch.top[at(0)], scratch.top[at(1)], scratch.top[at(2)]];
-            face(
-                out,
-                basis,
-                rect,
-                ((world[0] + world[1] + world[2]) / 3.0 - camera).length_squared(),
-                &world,
-                &[0, 1, 2].map(|corner| scratch.top_on_screen[at(corner)]),
-                shade,
-            );
+    match shaped {
+        Some(shaped) => {
+            let flat = light.on(up, up, roof_seen);
+            let (first_lat, first_lon) = outline[0];
+            scratch.roof.clear();
+            scratch
+                .roof
+                .extend(shaped.points.iter().map(|&[lat, lon, height_m]| {
+                    basis.surface_position(first_lat + f64::from(lat), first_lon + f64::from(lon))
+                        + up * (floor + f64::from(height_m) / METRES_PER_RADIUS)
+                }));
+            scratch.roof_on_screen.clear();
+            scratch
+                .roof_on_screen
+                .extend(scratch.roof.iter().map(|&point| on_screen(point)));
+            for triangle in shaped.triangles.chunks_exact(3) {
+                let at = |corner: usize| triangle[corner] as usize;
+                let world = [0, 1, 2].map(|corner| scratch.roof[at(corner)]);
+                let normal = (world[1] - world[0])
+                    .cross(world[2] - world[0])
+                    .normalize_or(up);
+                let normal = if normal.dot(up) < 0.0 {
+                    -normal
+                } else {
+                    normal
+                };
+                // Only slopes turned to the camera show.
+                if normal.dot(camera - world[0]) <= 0.0 {
+                    continue;
+                }
+                let on_slope = light.on(normal, up, roof_seen);
+                // Imagery is lit already: a slope takes only its light against a flat
+                // roof's.
+                let lighting: [f32; 3] = match photo {
+                    Some(_) => std::array::from_fn(|channel| {
+                        roof_light[channel] * on_slope[channel] / flat[channel].max(MIN_LIGHT)
+                    }),
+                    None => on_slope,
+                };
+                face(
+                    out,
+                    basis,
+                    rect,
+                    ((world[0] + world[1] + world[2]) / 3.0 - camera).length_squared(),
+                    &world,
+                    &[0, 1, 2].map(|corner| scratch.roof_on_screen[at(corner)]),
+                    colour(roof, lighting, alpha),
+                );
+            }
+        }
+        // A flat roof, when the camera is above it.
+        None => {
+            let roof_middle = scratch.top.iter().sum::<DVec3>() / scratch.top.len() as f64;
+            if (camera - roof_middle).dot(up) > 0.0 {
+                let shade = colour(roof, roof_light, alpha);
+                for triangle in building.roof.chunks_exact(3) {
+                    let at = |corner: usize| triangle[corner] as usize;
+                    let world = [scratch.top[at(0)], scratch.top[at(1)], scratch.top[at(2)]];
+                    face(
+                        out,
+                        basis,
+                        rect,
+                        ((world[0] + world[1] + world[2]) / 3.0 - camera).length_squared(),
+                        &world,
+                        &[0, 1, 2].map(|corner| scratch.top_on_screen[at(corner)]),
+                        shade,
+                    );
+                }
+            }
         }
     }
+}
+
+/// A wall's height is taken as at least this (metres) when splitting it into shade
+/// and sun.
+const MIN_WALL_M: f64 = 1e-3;
+/// Light below this (on a flat roof) is not divided by: a slope's light against it.
+const MIN_LIGHT: f32 = 1e-3;
+
+/// A point along a wall: at its base and its top, both on screen, and the top's
+/// height above the ground (metres).
+struct WallEnd {
+    base: DVec3,
+    top: DVec3,
+    base_seen: Option<Corner>,
+    top_seen: Option<Corner>,
+    top_m: f64,
+}
+
+/// A wall's top at `share` along its edge: straight between its ends' `tops_m` and
+/// the roof's `bends` over it (in order along the edge).
+fn wall_top_m(share: f64, tops_m: (f64, f64), bends: &[WallBend]) -> f64 {
+    let mut before = (0.0, tops_m.0);
+    for bend in bends
+        .iter()
+        .map(|bend| (f64::from(bend.share), f64::from(bend.height_m)))
+    {
+        if bend.0 >= share {
+            return before.1 + (bend.1 - before.1) * (share - before.0) / (bend.0 - before.0);
+        }
+        before = bend;
+    }
+    before.1 + (tops_m.1 - before.1) * (share - before.0) / (1.0 - before.0)
 }
 
 /// Below this sun height (sine of its elevation, about 3°) blocks cast no shadow:
@@ -716,9 +861,7 @@ fn face(
 ) {
     /// Two metres in front of the camera.
     const NEAR_RADII: f64 = 2.0 / METRES_PER_RADIUS;
-    /// A quadrilateral cut by a plane has at most five corners.
-    const FAN: [u32; 9] = [0, 1, 2, 0, 2, 3, 0, 3, 4];
-    let mut corners: Vec<Corner> = Vec::with_capacity(5);
+    let mut corners: Vec<Corner> = Vec::with_capacity(world.len() + 1);
     if seen.iter().all(Option::is_some) {
         corners.extend(seen.iter().flatten());
     } else {
@@ -745,24 +888,20 @@ fn face(
         }
     }
     if corners.len() >= 3 {
-        push(
-            out,
-            depth,
-            &corners,
-            &FAN[..(corners.len() - 2) * 3],
-            colour,
-        );
+        push(out, depth, &corners, colour);
     }
 }
 
-fn push(out: &mut Faces, depth: f64, corners: &[Corner], triangles: &[u32], colour: [u8; 4]) {
+/// Adds a convex face, as a fan of triangles from its first corner.
+fn push(out: &mut Faces, depth: f64, corners: &[Corner], colour: [u8; 4]) {
     let (point, triangle) = (out.points.len() as u32, out.triangles.len() as u32);
     out.points.extend_from_slice(corners);
-    out.triangles.extend_from_slice(triangles);
+    out.triangles
+        .extend((1..corners.len() as u32 - 1).flat_map(|corner| [0, corner, corner + 1]));
     out.faces.push(Face {
         depth,
         points: point..point + corners.len() as u32,
-        triangles: triangle..triangle + triangles.len() as u32,
+        triangles: triangle..out.triangles.len() as u32,
         colour,
     });
 }
@@ -902,6 +1041,7 @@ mod tests {
             top_m: 30.0,
             roof_colour: None,
             wall_colour: None,
+            shaped: None,
         }
     }
 
@@ -1111,6 +1251,71 @@ mod tests {
         // view's centre (seen in perspective; 22 m long, so two pieces of two
         // triangles); the block below shows no wall.
         assert_eq!(mesh.indices.len(), 3 * (2 * 2 + 2 * 2), "{mesh:?}");
+    }
+
+    /// `block_at` under a gable 10 m high, its ridge east–west.
+    fn gabled_at(lat: f64, lon: f64) -> Building {
+        let mut block = block_at(lat, lon);
+        let d = 0.0002_f32;
+        block.shaped = Some(Box::new(globecraft_data::buildings::ShapedRoof {
+            tops_m: vec![20.0; 4],
+            // The east and west walls rise to the ridge at their middles.
+            bends: [1, 3]
+                .map(|edge| WallBend {
+                    edge,
+                    share: 0.5,
+                    height_m: 30.0,
+                })
+                .to_vec(),
+            // From the first corner (south-west): the south slope, then the north.
+            points: vec![
+                [0.0, 0.0, 20.0],
+                [0.0, 2.0 * d, 20.0],
+                [d, 2.0 * d, 30.0],
+                [d, 0.0, 30.0],
+                [2.0 * d, 2.0 * d, 20.0],
+                [2.0 * d, 0.0, 20.0],
+            ],
+            triangles: vec![0, 1, 2, 0, 2, 3, 3, 2, 4, 3, 4, 5],
+        }));
+        block
+    }
+
+    #[test]
+    fn a_gabled_roof_shows_both_slopes_lit_apart_and_its_gable_ends() {
+        let mut input = view(0.0, 0.0);
+        input.buildings = tiles(vec![gabled_at(48.0, 11.0), block_at(48.001, 11.0)]);
+        let mesh = project(&input, None, None);
+        // Two slopes (two triangles each) for the flat roof's two triangles; the
+        // block north still shows its roof and its south wall.
+        assert_eq!(mesh.indices.len(), 3 * (2 * 2 + 2 + 2 * 2), "{mesh:?}");
+        // Lit from the north-west without the sun: the northern slope is the lighter.
+        let colours: std::collections::BTreeSet<[u8; 4]> =
+            mesh.vertices.iter().map(|vertex| vertex.colour).collect();
+        assert!(colours.len() >= 3, "{colours:?}");
+        // From the east and low, the gable end shows as a wall up to the ridge: its
+        // highest corner is above the eaves' corners on screen.
+        let mut input = view(80.0, 270.0);
+        input.buildings = tiles(vec![gabled_at(48.0, 11.0)]);
+        let flat = project(
+            &{
+                let mut flat = view(80.0, 270.0);
+                flat.buildings = tiles(vec![block_at(48.0, 11.0)]);
+                flat
+            },
+            None,
+            None,
+        );
+        let gabled = project(&input, None, None);
+        let highest = |mesh: &BuildingMesh| {
+            mesh.vertices
+                .iter()
+                .map(|vertex| vertex.at.y)
+                .fold(f32::INFINITY, f32::min)
+        };
+        // A gable 10 m under the flat block's 30 m top at the eaves still reaches it.
+        assert!((highest(&gabled) - highest(&flat)).abs() < 1.0);
+        assert!(gabled.indices.len() > flat.indices.len());
     }
 
     #[test]

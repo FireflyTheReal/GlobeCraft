@@ -12,6 +12,9 @@ use crate::mvt::{self, GeomType};
 use crate::vector_tiles::{Snapshot, Source, Spec, TileStream, View};
 use std::sync::Arc;
 
+mod roof;
+pub use roof::{ShapedRoof, WallBend};
+
 /// Above this the buildings are hidden: a zoom-14 tile is 1–2.4 km wide, and higher
 /// views would need more of them (each 140–880 KiB) than they show.
 pub const MAX_ALTITUDE_KM: f64 = 6.0;
@@ -60,6 +63,8 @@ pub struct Building {
     /// Colours mapped in OpenStreetMap, when given as `#rrggbb` or `#rgb`.
     pub roof_colour: Option<[u8; 3]>,
     pub wall_colour: Option<[u8; 3]>,
+    /// A roof that is not flat (D3); `roof` is then empty.
+    pub shaped: Option<Box<ShapedRoof>>,
 }
 
 /// One tile's buildings.
@@ -227,7 +232,14 @@ fn size_bytes(tile: &BuildingTile) -> usize {
                 .map(|ring| ring.capacity() * std::mem::size_of::<(f64, f64)>())
                 .sum();
             let walls: usize = building.walls.iter().map(Vec::capacity).sum();
-            std::mem::size_of::<Building>() + rings + walls + building.roof.capacity() * 4
+            let shaped = building.shaped.as_ref().map_or(0, |roof| {
+                std::mem::size_of::<ShapedRoof>()
+                    + roof.tops_m.capacity() * 4
+                    + roof.bends.capacity() * std::mem::size_of::<WallBend>()
+                    + roof.points.capacity() * std::mem::size_of::<[f32; 3]>()
+                    + roof.triangles.capacity() * 4
+            });
+            std::mem::size_of::<Building>() + rings + walls + building.roof.capacity() * 4 + shaped
         })
         .sum();
     std::mem::size_of::<BuildingTile>() + buildings + tile.heights.cells.capacity() * 2
@@ -400,9 +412,10 @@ fn on_tile_edge(a: (f64, f64), b: (f64, f64), extent: f64) -> bool {
 type TilePolygon = Vec<Vec<(f64, f64)>>;
 
 /// The polygons of a feature's rings: an outer ring starts one, the inner rings
-/// after it are its courtyards. Each ring is cut to the tile.
-fn polygons(parts: &[Vec<(f64, f64)>], extent: f64) -> Vec<TilePolygon> {
-    let mut polygons: Vec<TilePolygon> = Vec::new();
+/// after it are its courtyards. Each ring is cut to the tile; each polygon comes with
+/// its outline before the cut.
+fn polygons(parts: &[Vec<(f64, f64)>], extent: f64) -> Vec<(TilePolygon, &[(f64, f64)])> {
+    let mut polygons: Vec<(TilePolygon, &[(f64, f64)])> = Vec::new();
     for part in parts {
         // Rings repeat their first point (ClosePath).
         let open = match part.split_last() {
@@ -417,18 +430,23 @@ fn polygons(parts: &[Vec<(f64, f64)>], extent: f64) -> Vec<TilePolygon> {
         let area = signed_area(&ring).abs();
         if outer {
             // A clipped-away outline drops its courtyards too.
-            polygons.push(if area >= MIN_RING_AREA {
-                vec![ring]
-            } else {
-                Vec::new()
-            });
+            polygons.push((
+                if area >= MIN_RING_AREA {
+                    vec![ring]
+                } else {
+                    Vec::new()
+                },
+                open,
+            ));
         } else if area >= MIN_RING_AREA
-            && let Some(polygon) = polygons.last_mut().filter(|polygon| !polygon.is_empty())
+            && let Some((polygon, _)) = polygons
+                .last_mut()
+                .filter(|(polygon, _)| !polygon.is_empty())
         {
             polygon.push(ring);
         }
     }
-    polygons.retain(|polygon| !polygon.is_empty());
+    polygons.retain(|(polygon, _)| !polygon.is_empty());
     polygons
 }
 
@@ -437,6 +455,13 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
     let mut tile = BuildingTile::default();
     let mut triangulator = earcut::Earcut::new();
     let mut triangles: Vec<u32> = Vec::new();
+    // Tile units are as long across as down (Web Mercator) at the tile's middle.
+    let metres_per_unit_at = |extent: f64| {
+        let (lat, _) = key.point(0.5, 0.5);
+        std::f64::consts::TAU * globecraft_core::EARTH_RADIUS_M * lat.to_radians().cos()
+            / f64::from(1u32 << key.z)
+            / extent
+    };
     for layer in &layers {
         let extent = f64::from(layer.extent.max(1));
         for feature in &layer.features {
@@ -473,7 +498,13 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
                 text("roof_color").and_then(colour),
                 text("facade_color").and_then(colour),
             );
-            for polygon in polygons(&feature.parts, extent) {
+            let roof_tags = roof::RoofTags {
+                shape: text("roof_shape"),
+                height_m: number("roof_height"),
+                direction_deg: number("roof_direction"),
+                across: text("roof_orientation") == Some("across"),
+            };
+            for (polygon, outline) in polygons(&feature.parts, extent) {
                 let mut holes: Vec<u32> = Vec::new();
                 let mut count = 0;
                 for ring in &polygon[..polygon.len() - 1] {
@@ -488,7 +519,7 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
                 if triangles.is_empty() {
                     continue;
                 }
-                let walls = polygon
+                let walls: Vec<Vec<bool>> = polygon
                     .iter()
                     .map(|ring| {
                         (0..ring.len())
@@ -506,14 +537,31 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
                             .collect()
                     })
                     .collect();
+                let shaped = roof::shaped(
+                    &roof_tags,
+                    &roof::Footprint {
+                        outline,
+                        rings: &polygon,
+                        walls: &walls,
+                        metres_per_unit: metres_per_unit_at(extent),
+                    },
+                    (base_m, top_m),
+                    |(x, y)| key.point(x / extent, y / extent),
+                );
                 tile.buildings.push(Building {
                     rings,
                     walls,
-                    roof: triangles.clone(),
+                    // A shaped roof has its own triangles.
+                    roof: if shaped.is_some() {
+                        Vec::new()
+                    } else {
+                        triangles.clone()
+                    },
                     base_m,
                     top_m,
                     roof_colour,
                     wall_colour,
+                    shaped,
                 });
             }
         }
@@ -628,6 +676,57 @@ mod tests {
     }
 
     #[test]
+    fn roof_shapes_are_read_with_their_height_and_direction() {
+        let features = [
+            TestFeature {
+                tags: vec![
+                    ("height", TestValue::Int(12)),
+                    ("roof_shape", TestValue::Text("gabled")),
+                    ("roof_height", TestValue::Int(4)),
+                ],
+                kind: 3,
+                parts: vec![square(100, 100, 50)],
+            },
+            TestFeature {
+                tags: vec![
+                    ("height", TestValue::Int(12)),
+                    ("roof_shape", TestValue::Text("skillion")),
+                    ("roof_height", TestValue::Int(3)),
+                    ("roof_direction", TestValue::Int(180)),
+                ],
+                kind: 3,
+                parts: vec![square(300, 100, 50)],
+            },
+            TestFeature {
+                tags: vec![("roof_shape", TestValue::Text("flat"))],
+                kind: 3,
+                parts: vec![square(500, 100, 50)],
+            },
+        ];
+        let tile = decode(KEY, &tile(&[layer("building", 4096, &features)])).unwrap();
+        let gable = tile.buildings[0].shaped.as_deref().unwrap();
+        assert!(gable.tops_m.iter().all(|&top| (top - 8.0).abs() < 1e-4));
+        assert_eq!(gable.bends.len(), 2);
+        assert!(
+            gable
+                .bends
+                .iter()
+                .all(|bend| (bend.height_m - 12.0).abs() < 1e-4)
+        );
+        // Facing south: the southern corners (the larger tile y) are the low ones.
+        let skillion = tile.buildings[1].shaped.as_deref().unwrap();
+        let south = tile.buildings[1].rings[0]
+            .iter()
+            .map(|&(lat, _)| lat)
+            .fold(f64::INFINITY, f64::min);
+        for (&(lat, _), &top) in tile.buildings[1].rings[0].iter().zip(&skillion.tops_m) {
+            let expected = if lat == south { 9.0 } else { 12.0 };
+            assert!((top - expected).abs() < 1e-3, "{lat}: {top}");
+        }
+        assert!(tile.buildings[2].shaped.is_none());
+    }
+
+    #[test]
     fn courtyards_stay_open_and_tile_edges_are_no_walls() {
         // A block with a courtyard, and one that runs off the tile's west edge.
         let mut courtyard = square(150, 150, 100);
@@ -715,12 +814,22 @@ mod tests {
             let bytes = std::fs::read(&path).unwrap();
             let started = std::time::Instant::now();
             let tile = decode(key, &bytes).unwrap();
+            let shaped: Vec<&ShapedRoof> = tile
+                .buildings
+                .iter()
+                .filter_map(|b| b.shaped.as_deref())
+                .collect();
             println!(
-                "{name}: {} blocks, {} roof triangles, {:.0} KiB, {:?}",
+                "{name}: {} blocks, {} roof triangles, {} shaped roofs with {} triangles, {:.0} KiB, {:?}",
                 tile.buildings.len(),
                 tile.buildings
                     .iter()
                     .map(|b| b.roof.len() / 3)
+                    .sum::<usize>(),
+                shaped.len(),
+                shaped
+                    .iter()
+                    .map(|roof| roof.triangles.len() / 3)
                     .sum::<usize>(),
                 size_bytes(&tile) as f64 / 1024.0,
                 started.elapsed()

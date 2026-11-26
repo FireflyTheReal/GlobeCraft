@@ -302,6 +302,7 @@ mod tests {
             top_m,
             roof_colour: None,
             wall_colour: None,
+            shaped: None,
         }
     }
 
