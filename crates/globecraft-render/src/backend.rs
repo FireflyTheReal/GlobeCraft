@@ -144,8 +144,10 @@ pub struct FrameRenderer {
 /// cost at that size, and the CPU marches alone only while it beats that: every
 /// `RELIEF_CHECK_EVERY`th frame tries the CPU (the third relief frame first), and once
 /// it is faster the CPU draws until one of its frames is slower than the walk's, after
-/// which the next walks. A software adapter, ten times the CPU's whole frame
-/// (2026-11-23), so stays with the CPU. The first walked frame is never timed: it
+/// which the next walks; every `RELIEF_CHECK_EVERY`th it also tries the walk, unless
+/// that took `RELIEF_DECISIVE_WIN` times the CPU's time (a software adapter, ten
+/// times the CPU's whole frame, 2026-11-23, stays with the CPU). A walk that ran but
+/// did not help counts with the CPU's frame after it: that is what trying it cost. The first walked frame is never timed: it
 /// carries the walk's setup (its pipelines, Metal compiling them after a fresh build,
 /// the self-check, the first tiles; 1238 against 580 ms per megapixel on an M1 once
 /// turned the walk off for a session, 2026-11-24). Frames are only set against frames
@@ -169,8 +171,8 @@ struct ReliefTiming {
     settled: bool,
     /// The CPU marches alone for now.
     cpu_for_now: bool,
-    /// While `cpu_for_now`: its last frame took longer than the walk's, so the next walks.
-    cpu_slower: bool,
+    /// While `cpu_for_now`: its last frame's pixels and seconds per megapixel.
+    last_cpu: Option<(usize, f64)>,
 }
 /// Frame sizes whose walk costs are kept: the motion and the sharp frame's, and a
 /// window's last few sizes.
@@ -236,7 +238,14 @@ impl ReliefTiming {
             return true;
         }
         if self.cpu_for_now {
-            return self.cpu_slower || self.walk_cost(pixels).is_none();
+            let Some(walk) = self.walk_cost(pixels) else {
+                return true;
+            };
+            let check = (self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY);
+            return self
+                .last_cpu
+                .filter(|(size, _)| *size == pixels)
+                .is_some_and(|(_, cpu)| cpu > walk || (check && walk < cpu * RELIEF_DECISIVE_WIN));
         }
         !(self.frames == 2 || (self.frames + 1).is_multiple_of(RELIEF_CHECK_EVERY))
     }
@@ -249,8 +258,11 @@ impl ReliefTiming {
                 self.walk_costs.insert(0, (pixels, seconds_per_megapixel));
                 self.walk_costs.truncate(TIMED_SIZES);
             }
-            if self.cpu_for_now && self.cpu_slower {
-                (self.cpu_for_now, self.cpu_slower) = (false, false);
+            let beats_cpu = self
+                .last_cpu
+                .is_some_and(|(size, cpu)| size == pixels && seconds_per_megapixel < cpu);
+            if self.cpu_for_now && beats_cpu {
+                (self.cpu_for_now, self.last_cpu) = (false, None);
                 globecraft_data::log_line!(
                     "The GPU's relief walk is faster again here ({:.0} ms per megapixel); it walks",
                     seconds_per_megapixel * 1000.0
@@ -262,7 +274,7 @@ impl ReliefTiming {
             return;
         };
         if self.cpu_for_now {
-            self.cpu_slower = seconds_per_megapixel > walk;
+            self.last_cpu = Some((pixels, seconds_per_megapixel));
             return;
         }
         self.wins = if seconds_per_megapixel >= walk * RELIEF_CLEAR_WIN {
@@ -273,7 +285,7 @@ impl ReliefTiming {
         self.settled =
             self.wins >= RELIEF_SETTLED_WINS || seconds_per_megapixel >= walk * RELIEF_DECISIVE_WIN;
         if seconds_per_megapixel < walk {
-            self.cpu_for_now = true;
+            (self.cpu_for_now, self.last_cpu) = (true, Some((pixels, seconds_per_megapixel)));
             globecraft_data::log_line!(
                 "The CPU alone made relief frames faster here ({:.0} against {:.0} ms per megapixel with the walk); it marches alone while it stays faster",
                 seconds_per_megapixel * 1000.0,
@@ -544,12 +556,18 @@ impl FrameRenderer {
             );
             if let Some(gpu) = &mut self.gpu {
                 gpu.relief_frame_held(held);
-                // Frames before the walk had tiles say nothing about it.
-                if walked || !walks {
+                // A walk that ran but did not help (more than half its rays without
+                // the tiles they needed) is what trying the walk cost here: the CPU
+                // drew the frame after it. On a PowerVR phone over close mountains
+                // with tiles still arriving, that was most frames, 10–60 ms of walk
+                // before 60–110 ms of CPU, and uncounted, the walk was tried every
+                // frame (2026-11-26). Frames before the walk had tiles say nothing.
+                let tried = walked || (walks && gpu.relief_ran);
+                if tried || !walks {
                     let pixels = request.width * request.height;
                     let megapixels = pixels as f64 / 1e6;
                     self.relief_timing.note(
-                        walked,
+                        tried,
                         started.elapsed().as_secs_f64() / megapixels.max(1e-6),
                         pixels,
                     );
@@ -628,7 +646,10 @@ mod relief_timing_tests {
         assert!(timing.cpu_for_now && !timing.settled);
         let walked = timing.walked;
         drive(&mut timing, 0.245, 0.075, 10 * RELIEF_CHECK_EVERY, PIXELS);
-        assert_eq!(timing.walked, walked, "no walked frames over flat land");
+        assert_eq!(
+            timing.walked, walked,
+            "no walk three times the CPU's is tried"
+        );
         // Mountains: one CPU frame, then the walk.
         drive(&mut timing, 0.245, 0.7, 1, PIXELS);
         assert!(timing.cpu_for_now && timing.walks(PIXELS));
@@ -640,6 +661,22 @@ mod relief_timing_tests {
         assert!(timing.settled && timing.walked - walked >= 3 * RELIEF_CHECK_EVERY - 3);
         drive(&mut timing, 0.245, 0.075, 10 * RELIEF_CHECK_EVERY, PIXELS);
         assert!(!timing.cpu_for_now);
+    }
+
+    /// Close mountains with tiles arriving (a PowerVR phone, 2026-11-26): trying the
+    /// walk cost more than the CPU alone, so the CPU draws; every `RELIEF_CHECK_EVERY`th
+    /// frame tries the walk again, and once it got cheaper than the CPU, it walks.
+    #[test]
+    fn a_walk_that_got_cheaper_is_found() {
+        let mut timing = ReliefTiming::default();
+        drive(&mut timing, 0.45, 0.35, 3, PIXELS);
+        assert!(timing.cpu_for_now);
+        let walked = timing.walked;
+        drive(&mut timing, 0.45, 0.35, 5 * RELIEF_CHECK_EVERY, PIXELS);
+        assert!(timing.cpu_for_now);
+        assert_eq!(timing.walked - walked, 5, "one tried walk in each check");
+        drive(&mut timing, 0.2, 0.35, RELIEF_CHECK_EVERY, PIXELS);
+        assert!(!timing.cpu_for_now && timing.walks(PIXELS));
     }
 
     /// Where the walk pays everywhere (an M1), one decisive check settles it; a narrow
