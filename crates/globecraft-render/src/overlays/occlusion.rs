@@ -72,18 +72,24 @@ impl DepthMap {
 /// line of elevation lookups (`GLOBECRAFT_FRAME_TIMES`).
 static BY_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static BY_LINE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Of those by the line: off the frame, and on it where the ground was not sure.
+static OFF_FRAME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static NOT_SURE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 /// Loaded-elevation lookups (`GroundHeights::height`) since `take_counts`.
 pub(super) static HEIGHTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Since the last call: the line-of-sight tests by the drawn ground and by the line,
-/// and the loaded-elevation lookups.
-pub fn take_counts() -> (usize, usize, usize) {
+/// Since the last call: the line-of-sight tests by the drawn ground and by the line
+/// (of those, off the frame and where its ground was not sure), and the
+/// loaded-elevation lookups.
+pub fn take_counts() -> [usize; 5] {
     use std::sync::atomic::Ordering::Relaxed;
-    (
+    [
         BY_DEPTH.swap(0, Relaxed),
         BY_LINE.swap(0, Relaxed),
+        OFF_FRAME.swap(0, Relaxed),
+        NOT_SURE.swap(0, Relaxed),
         HEIGHTS.swap(0, Relaxed),
-    )
+    ]
 }
 
 pub struct TerrainVisibility<'a> {
@@ -159,9 +165,13 @@ impl<'a> TerrainVisibility<'a> {
         let x = (at.x - f64::from(rect.min.x)) / f64::from(rect.width()) * depth.width as f64;
         let y = (at.y - f64::from(rect.min.y)) / f64::from(rect.height()) * depth.height as f64;
         if !(0.0..depth.width as f64).contains(&x) || !(0.0..depth.height as f64).contains(&y) {
+            OFF_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return None;
         }
-        let ground = depth.ground_near(x as usize, y as usize)?;
+        let Some(ground) = depth.ground_near(x as usize, y as usize) else {
+            NOT_SURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        };
         Some((target - self.basis.c).length() <= ground * (1.0 + DEPTH_SLACK))
     }
 }

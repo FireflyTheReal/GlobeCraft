@@ -653,9 +653,10 @@ fn displayed_basis(displayed: Option<(Cam, Basis)>, fallback: Basis) -> Basis {
 fn log_prepare(request: &RenderRequest, overlays: std::time::Duration, whole: std::time::Duration) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some()) {
-        let (by_depth, by_line, heights) = globecraft_render::overlays::take_counts();
+        let [by_depth, by_line, off_frame, not_sure, heights] =
+            globecraft_render::overlays::take_counts();
         globecraft_data::log_line!(
-            "FRAME PREPARE {}x{}: overlays {:.1} ms, whole {:.1} ms; hidden-point tests by the drawn ground {by_depth}, by the line {by_line}; {heights} height lookups",
+            "FRAME PREPARE {}x{}: overlays {:.1} ms, whole {:.1} ms; hidden-point tests by the drawn ground {by_depth}, by the line {by_line} ({off_frame} off the frame, {not_sure} not sure); {heights} height lookups",
             request.width,
             request.height,
             overlays.as_secs_f64() * 1000.0,
