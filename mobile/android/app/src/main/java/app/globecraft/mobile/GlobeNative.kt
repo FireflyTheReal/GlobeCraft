@@ -23,4 +23,6 @@ object GlobeNative {
     /** One display refresh; returns whether to keep ticking. */
     external fun tick(handle: Long): Boolean
     external fun stats(handle: Long): String?
+    /** The run log's last part (up to 64 KB), to share in a bug report. */
+    external fun log(): String?
 }

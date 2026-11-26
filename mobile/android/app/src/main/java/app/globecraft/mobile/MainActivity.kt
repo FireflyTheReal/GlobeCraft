@@ -1,6 +1,7 @@
 package app.globecraft.mobile
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.util.TypedValue
@@ -44,6 +45,8 @@ class MainActivity : Activity() {
             setPadding(16, 8, 16, 8)
         }
         view.onStats = { stats.text = it }
+        // A tap on the statistics shares the run log (renderer, GPU checks, frame times).
+        stats.setOnClickListener { shareLog() }
         root.addView(stats, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -77,6 +80,15 @@ class MainActivity : Activity() {
             insets
         }
         setContentView(root)
+    }
+
+    private fun shareLog() {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "GlobeCraft log")
+            putExtra(Intent.EXTRA_TEXT, GlobeNative.log() ?: "No log.")
+        }
+        startActivity(Intent.createChooser(send, "Share the GlobeCraft log"))
     }
 
     override fun onPause() {

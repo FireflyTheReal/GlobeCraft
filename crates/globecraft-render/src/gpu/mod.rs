@@ -80,7 +80,14 @@ impl GpuRenderer {
     /// A renderer whose pictures match the CPU's on this adapter (`self_check`).
     pub(crate) fn new() -> Result<Self, String> {
         let mut renderer = pollster::block_on(Self::initialize())?;
-        renderer.self_check()?;
+        let started = std::time::Instant::now();
+        let checked = renderer.self_check();
+        globecraft_data::log_line!(
+            "GPU self-check (96×72) {} after {:.0} ms",
+            if checked.is_ok() { "passed" } else { "failed" },
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        checked?;
         Ok(renderer)
     }
     /// The adapter's name and backend.
@@ -104,6 +111,15 @@ impl GpuRenderer {
             })
             .await
             .map_err(|error| format!("No compatible GPU adapter: {error}"))?;
+        let info = adapter.get_info();
+        globecraft_data::log_line!(
+            "GPU adapter: {} ({:?}, {:?}), driver {} {}",
+            info.name,
+            info.backend,
+            info.device_type,
+            info.driver,
+            info.driver_info
+        );
         // A software rasterizer is slower than the CPU renderer; it is used only when
         // asked for, so the parity tests can run on machines without a GPU (CI).
         if adapter.get_info().device_type == wgpu::DeviceType::Cpu

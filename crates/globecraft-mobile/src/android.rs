@@ -324,3 +324,33 @@ pub extern "system" fn Java_app_globecraft_mobile_GlobeNative_stats(
         }
     }
 }
+
+/// The run log's last part, for sharing (`Globe::log_tail`).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_globecraft_mobile_GlobeNative_log(
+    env: *mut JNIEnv,
+    _class: jclass,
+) -> jstring {
+    // NewStringUTF reads modified UTF-8: no NUL bytes, and characters outside the
+    // basic plane (none expected in the log) replaced.
+    let text: String = Globe::log_tail()
+        .chars()
+        .map(|c| {
+            if c == '\0' || u32::from(c) > 0xFFFF {
+                '?'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let Ok(text) = CString::new(text) else {
+        return std::ptr::null_mut();
+    };
+    // SAFETY: `env` is the calling thread's environment, given by the JVM.
+    unsafe {
+        match (**env).NewStringUTF {
+            Some(new) => new(env, text.as_ptr()),
+            None => std::ptr::null_mut(),
+        }
+    }
+}

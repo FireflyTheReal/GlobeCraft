@@ -40,8 +40,14 @@ mod ffi;
 
 /// How long after the last gesture frames stay at motion resolution.
 const SETTLE: Duration = Duration::from_millis(150);
-/// Raster size while a gesture moves the globe, relative to the screen's pixels.
+/// Raster size while a gesture moves the globe, relative to a still frame's.
 const MOTION_SCALE: f32 = 0.5;
+/// Most pixels a still frame the CPU draws has; the host scales it to the screen.
+/// A phone's 1080 × 2404 (2.6 million) took the CPU 150–1,600 ms a frame on a
+/// PowerVR DXT-48-1536 phone, 540 × 1202 46–333 ms (2026-11-24).
+const MAX_CPU_FRAME_PIXELS: f32 = 650_000.0;
+/// The run log's last bytes the host can share ([`Globe::log_tail`]).
+const LOG_TAIL_BYTES: u64 = 64 * 1024;
 /// Phone budgets: decoded tiles in memory, and downloads kept on disk.
 /// shortcut: fixed numbers, until Phase 1 sizes them from the device's memory.
 const BUDGETS: CacheBudgets = CacheBudgets {
@@ -86,6 +92,7 @@ impl Globe {
     /// app's own writable folder (caches and settings go below it).
     pub fn new(app_dir: std::path::PathBuf) -> std::io::Result<Self> {
         globecraft_data::use_app_dir(app_dir);
+        globecraft_data::run_log::init();
         let runtime = ServiceRuntime::new()?;
         let tiles_arrived = Arc::new(AtomicBool::new(true));
         let arrived = tiles_arrived.clone();
@@ -238,9 +245,19 @@ impl Globe {
         }
     }
 
+    /// A still frame's size relative to the screen's pixels: all of them when the GPU
+    /// draws, at most `MAX_CPU_FRAME_PIXELS` when the CPU does.
+    fn still_scale(&self) -> f32 {
+        if globecraft_render::backend::status().adapter.is_some() {
+            return 1.0;
+        }
+        let pixels = (self.width * self.height) as f32;
+        (MAX_CPU_FRAME_PIXELS / pixels).sqrt().min(1.0)
+    }
+
     fn request(&mut self, now: Instant) {
         let moving = self.moving(now);
-        let lod_scale = if moving { MOTION_SCALE } else { 1.0 };
+        let lod_scale = self.still_scale() * if moving { MOTION_SCALE } else { 1.0 };
         let size = |n: usize| ((n as f32 * lod_scale).round() as usize).max(1);
         let (width, height) = (size(self.width), size(self.height));
         let unix = std::time::SystemTime::now()
@@ -300,6 +317,19 @@ impl Globe {
 
     pub fn frame(&self) -> &Frame {
         &self.frame
+    }
+
+    /// The run log's last part (`globecraft.log`), for the host to share.
+    pub fn log_tail() -> String {
+        use std::io::{Read, Seek, SeekFrom};
+        let Ok(mut file) = std::fs::File::open(globecraft_data::run_log::path()) else {
+            return "No run log yet.".to_owned();
+        };
+        let length = file.metadata().map_or(0, |meta| meta.len());
+        let _ = file.seek(SeekFrom::Start(length.saturating_sub(LOG_TAIL_BYTES)));
+        let mut bytes = Vec::new();
+        let _ = file.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 
     /// One line for the debug overlay: renderer, frame size and time, downloads.

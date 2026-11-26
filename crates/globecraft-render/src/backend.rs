@@ -66,6 +66,12 @@ fn update_status(update: impl FnOnce(&mut Status)) {
     );
 }
 
+/// GPU frames logged with their times from the start, and the time from which any is.
+#[cfg(feature = "gpu")]
+const LOGGED_GPU_FRAMES: u64 = 20;
+#[cfg(feature = "gpu")]
+const SLOW_GPU_FRAME: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// A failed GPU device (lost, an error, a frame that never finished) is replaced
 /// after this long, so a driver restart or a laptop waking up has settled…
 #[cfg(feature = "gpu")]
@@ -305,16 +311,40 @@ impl FrameRenderer {
         }
         #[cfg(feature = "gpu")]
         if let Some(gpu) = &mut self.gpu {
+            let started = std::time::Instant::now();
             let result = gpu_call(|| gpu.render(request, cache, buffer))
                 .unwrap_or_else(|error| Err((error, Vec::new(), true)));
+            let took = started.elapsed();
             match result {
                 Ok(frame) => {
                     self.capacity_warning = false;
                     self.clear_start_marker();
-                    update_status(|status| status.gpu_frames += 1);
+                    let frames = {
+                        let mut frames = 0;
+                        update_status(|status| {
+                            status.gpu_frames += 1;
+                            frames = status.gpu_frames;
+                        });
+                        frames
+                    };
+                    // The first frames, and any slow one, for bug reports.
+                    if frames <= LOGGED_GPU_FRAMES || took >= SLOW_GPU_FRAME {
+                        globecraft_data::log_line!(
+                            "GPU frame {frames}: {}×{} in {:.1} ms",
+                            request.width,
+                            request.height,
+                            took.as_secs_f64() * 1000.0
+                        );
+                    }
                     return frame;
                 }
                 Err((error, buffer, permanent)) => {
+                    globecraft_data::log_line!(
+                        "GPU frame {}×{} refused after {:.1} ms",
+                        request.width,
+                        request.height,
+                        took.as_secs_f64() * 1000.0
+                    );
                     if permanent {
                         self.device_failed(&error);
                     } else if !self.capacity_warning {
