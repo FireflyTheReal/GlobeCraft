@@ -90,6 +90,8 @@ pub(crate) struct GpuRenderer {
     relief_read: Vec<TileKey>,
     /// Elevation tiles the last walk uploaded first (`GLOBECRAFT_FRAME_TIMES`).
     pub(crate) relief_uploads: usize,
+    /// The last `relief_starts` walked, whether or not its walk helped.
+    pub(crate) relief_ran: bool,
     /// The last frame drawn: its passes (`MAX_RESIDENCY_PASSES`), their time on the
     /// device with the readback, and the CPU's repair of what they left
     /// (`GLOBECRAFT_FRAME_TIMES`).
@@ -278,6 +280,7 @@ impl GpuRenderer {
             relief_tiles: Vec::new(),
             relief_read: Vec::new(),
             relief_uploads: 0,
+            relief_ran: false,
             last_draw: Default::default(),
         })
     }
@@ -291,6 +294,7 @@ impl GpuRenderer {
         request: &RenderRequest,
         cache: &TileCache,
     ) -> Result<Option<Vec<f32>>, String> {
+        self.relief_ran = false;
         if let Some(error) = self
             .failure
             .lock()
@@ -324,6 +328,7 @@ impl GpuRenderer {
         }
         match march.starts(device, queue, request, &tiles) {
             Ok(walked) => {
+                self.relief_ran = true;
                 self.relief_read = walked.read;
                 self.relief_uploads = walked.uploads;
                 Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
