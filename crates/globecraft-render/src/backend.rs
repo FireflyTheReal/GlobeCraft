@@ -380,17 +380,18 @@ impl FrameRenderer {
             self.initialize_with(crate::gpu::GpuRenderer::new);
             let started = std::time::Instant::now();
             let walks = self.relief_timing.walks();
-            let starts =
-                match self.gpu.as_mut().filter(|_| walks).map(|gpu| {
-                    gpu_call(|| gpu.relief_starts(request, cache)).and_then(|result| result)
-                }) {
-                    Some(Ok(starts)) => starts,
-                    Some(Err(error)) => {
-                        self.device_failed(&error);
-                        None
-                    }
-                    None => None,
-                };
+            // A frame the GPU draws keeps the walk's planes there.
+            let on_device = crate::gpu::GpuRenderer::supports(request);
+            let starts = match self.gpu.as_mut().filter(|_| walks).map(|gpu| {
+                gpu_call(|| gpu.relief_starts(request, cache, on_device)).and_then(|result| result)
+            }) {
+                Some(Ok(starts)) => starts,
+                Some(Err(error)) => {
+                    self.device_failed(&error);
+                    None
+                }
+                None => None,
+            };
             let walked = starts.is_some();
             // The GPU draws the frame from its walk where it can (roadmap D8, G4), the
             // CPU what it leaves. Also below `MIN_AUTO_GPU_PIXELS`, which is for flat
@@ -398,8 +399,8 @@ impl FrameRenderer {
             // and at 616×360 on an M1 the GPU drew them in 3–8 ms after the walk, the
             // CPU in 18–23 ms (2026-11-24).
             let mut buffer = buffer;
-            if let (Some(starts), Some(gpu)) = (starts.as_deref(), self.gpu.as_mut())
-                && crate::gpu::GpuRenderer::supports(request)
+            if let (Some(starts), Some(gpu)) = (starts.as_ref(), self.gpu.as_mut())
+                && on_device
             {
                 match gpu_call(|| gpu.render_relief(request, cache, buffer, starts))
                     .unwrap_or_else(|error| Err((error, Vec::new(), true)))
@@ -425,6 +426,16 @@ impl FrameRenderer {
                 }
             }
             update_status(|status| status.cpu_frames += 1);
+            // The walk's planes, read now if they were left on the device.
+            let planes = match starts {
+                Some(crate::gpu::Starts::Read(planes)) => Some(planes),
+                Some(crate::gpu::Starts::OnDevice) => self
+                    .gpu
+                    .as_ref()
+                    .and_then(|gpu| gpu_call(|| gpu.walk_planes()).ok())
+                    .and_then(Result::ok),
+                None => None,
+            };
             let (frame, held) = crate::render_relief_view_into(
                 request.width,
                 request.height,
@@ -432,7 +443,7 @@ impl FrameRenderer {
                 &request.cfg,
                 cache,
                 buffer,
-                starts.as_deref(),
+                planes.as_deref(),
             );
             if let Some(gpu) = &mut self.gpu {
                 gpu.relief_frame_held(held);
