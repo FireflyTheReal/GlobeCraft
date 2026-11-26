@@ -1,6 +1,7 @@
 //! One active raster job, one replaceable pending view, and one completed frame.
 use crate::RenderCfg;
 use globecraft_core::camera::{Basis, Cam};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 pub struct RenderRequest {
@@ -47,6 +48,8 @@ struct Mailbox<T> {
     pending: Option<PendingRequest>,
     completed: Option<RenderedFrame<T>>,
     active: bool,
+    /// The active job's flag (`cancel`): `submit_preempting` abandons it.
+    cancel: Option<Arc<AtomicBool>>,
     stopped: bool,
     spare: Option<Vec<u8>>,
 }
@@ -83,6 +86,7 @@ impl<T: Send + 'static> RenderWorker<T> {
                 pending: None,
                 completed: None,
                 active: false,
+                cancel: None,
                 stopped: false,
                 spare: None,
             }),
@@ -108,6 +112,7 @@ impl<T: Send + 'static> RenderWorker<T> {
                             return;
                         }
                         mailbox.active = true;
+                        mailbox.cancel = Some(Arc::new(AtomicBool::new(false)));
                         (
                             mailbox.pending.take().unwrap(),
                             mailbox.spare.take().unwrap_or_default(),
@@ -120,14 +125,35 @@ impl<T: Send + 'static> RenderWorker<T> {
                         Default::default(),
                     );
                     let request = pending.request;
+                    let cancel = worker
+                        .mailbox
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .cancel
+                        .clone()
+                        .unwrap_or_default();
                     // Rasterization holds no mailbox lock. Admission is synchronized below.
-                    let frame = render(&request, buffer);
+                    let frame = crate::cancel::with_flag(&cancel, || render(&request, buffer));
+                    if cancel.load(Ordering::Relaxed) {
+                        // Abandoned for a newer request (`submit_preempting`): its pixels
+                        // are partly undrawn and nobody waits for them.
+                        let mut mailbox = worker
+                            .mailbox
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        (mailbox.active, mailbox.cancel) = (false, None);
+                        if mailbox.stopped {
+                            return;
+                        }
+                        mailbox.spare = Some(frame.pixels);
+                        continue;
+                    }
                     let prepared = prepare(&request, &frame.pixels);
                     let mut mailbox = worker
                         .mailbox
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    mailbox.active = false;
+                    (mailbox.active, mailbox.cancel) = (false, None);
                     if mailbox.stopped {
                         return;
                     }
@@ -180,6 +206,26 @@ impl<T: Send + 'static> RenderWorker<T> {
             #[cfg(feature = "profiling")]
             submitted: std::time::Instant::now(),
         });
+        self.shared.wake.notify_one();
+    }
+
+    /// Submits `request` and abandons the frame being drawn, if any: for the first
+    /// frame of a gesture, which must not wait for a still frame of the view before it.
+    pub fn submit_preempting(&self, request: RenderRequest) {
+        let mut mailbox = self
+            .shared
+            .mailbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cancel) = &mailbox.cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        mailbox.pending = Some(PendingRequest {
+            request,
+            #[cfg(feature = "profiling")]
+            submitted: std::time::Instant::now(),
+        });
+        drop(mailbox);
         self.shared.wake.notify_one();
     }
 

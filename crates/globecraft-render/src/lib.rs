@@ -3,6 +3,7 @@
 use glam::{DVec3, Vec2, Vec4};
 mod atmosphere;
 pub mod backend;
+pub mod cancel;
 pub mod celestial;
 mod colour_match;
 pub mod diagnostics;
@@ -1025,10 +1026,15 @@ pub(crate) fn render_pixels_with(
     let now = std::time::Instant::now();
     // The GPU's walk: four planes the march reads (`gpu::relief`), more after them.
     let starts = starts.filter(|starts| cfg.terrain.is_some() && starts.len() >= 4 * w * h);
+    // A frame abandoned on the way (`cancel`) leaves its remaining batches undrawn.
+    let cancel = cancel::flag();
     let per_batch: Vec<_> = buf
         .par_chunks_mut(row_bytes * ROWS_PER_TILE_BATCH)
         .enumerate()
         .map(|(batch, rows)| {
+            if cancel::set(&cancel) {
+                return (Vec::new(), Vec::new());
+            }
             // Neighboring rows share tiles. Keep handles only for this small batch,
             // avoiding repeated Moka reads without retaining tiles between frames.
             let mut loc = Local {

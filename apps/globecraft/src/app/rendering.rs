@@ -9,6 +9,7 @@ use globecraft_core::{
 use globecraft_render::RenderCfg;
 use globecraft_render::worker::{RenderRequest, RenderWorker};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Raster scale of the swipe compare's frame while the camera moves.
 const COMPARE_MOTION_SCALE: f32 = 0.5;
@@ -52,6 +53,13 @@ pub(super) struct Renderer {
     waiting: Vec<globecraft_data::tiles::TileKey>,
     required: Vec<globecraft_data::tiles::TileKey>,
     retry_at: Option<std::time::Instant>,
+    /// Microseconds the last frame took the renderer (`backend.render`).
+    render_us: Arc<AtomicU64>,
+    /// The last request was a still frame: the next moving one abandons it
+    /// (`RenderWorker::submit_preempting`).
+    submitted_still: bool,
+    /// Which of `view::MOTION_STEPS` moving relief frames are drawn at.
+    pub(super) motion_step: usize,
 }
 
 impl Renderer {
@@ -88,6 +96,8 @@ impl Renderer {
         // behind the relief by it.
         let depth_slot: DepthSlot = Arc::default();
         let depth_out = depth_slot.clone();
+        let render_us = Arc::new(AtomicU64::new(0));
+        let render_timing = render_us.clone();
         Self {
             worker: RenderWorker::with_prepare(
                 move |request, buffer| {
@@ -102,7 +112,12 @@ impl Renderer {
                         profile.values.altitude_m = (request.cam.alt * 1000.0) as usize;
                         profile.values.tilt_decideg = (request.cam.tilt * 10.0) as usize;
                     }
+                    let render_started = std::time::Instant::now();
                     let mut frame = backend.render(request, &cache, buffer);
+                    render_timing.store(
+                        render_started.elapsed().as_micros() as u64,
+                        Ordering::Relaxed,
+                    );
                     #[cfg(feature = "gpu")]
                     if let Ok(mut slot) = depth_slot.lock() {
                         *slot = backend.take_depth();
@@ -226,6 +241,9 @@ impl Renderer {
             waiting: Vec::new(),
             required: Vec::new(),
             retry_at: None,
+            render_us,
+            submitted_still: false,
+            motion_step: 0,
         }
     }
     pub(super) fn tiles_changed(&self, cache: &globecraft_data::tiles::TileCache) -> bool {
@@ -386,46 +404,72 @@ impl App {
         if compare.is_none() {
             self.wayback.compare_texture = None;
         }
-        self.frame.renderer.worker.submit(RenderRequest {
-            width: size.width,
-            height: size.height,
-            cam: self.cam,
-            basis,
-            cfg,
-            compare,
-            presentation,
-            aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
-                .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
-            live_layers: (self.layer(MapLayer::Roads)
-                || self.layer(MapLayer::Buildings)
-                || self.layer(MapLayer::Traffic)
-                || self.layer(MapLayer::Vessels)
-                || self.layer(MapLayer::Satellites)
-                || self.map_data_shown())
-            .then(|| self.live_layer_input(basis, rect, self.cam, pixels_per_point)),
-            overlays: Some(globecraft_render::overlays::OverlayInput {
-                view: globecraft_render::overlays::OverlayView {
-                    basis,
-                    rect,
-                    altitude_km: self.cam.alt,
-                    state_visible_max_km: self.settings.state_max_altitude_km,
-                    grid_step_deg: self.layer(MapLayer::GridLabels).then_some(grid_step),
-                    layers: self.overlay_layers(),
-                    dashes: globecraft_render::overlays::BorderDashes::of(&self.settings.map_style),
-                    ground: self.overlay_ground(),
-                },
-                data: self.borders.shown.clone(),
-                fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
-                // The frame worker adds the frame's drawn ground.
-                depth: None,
-            }),
-        });
+        // The first moving frame after a still one does not wait for it: a still frame
+        // of a tilted relief view takes a few hundred milliseconds, and a gesture that
+        // began meanwhile caught up only after it (Julien, 2026-11-26).
+        let still = size.lod_scale >= 1.0;
+        let preempt = !still && self.frame.renderer.submitted_still;
+        self.frame.renderer.submitted_still = still;
+        let submit = |worker: &RenderWorker<PreparedFrame>, request| {
+            if preempt {
+                worker.submit_preempting(request);
+            } else {
+                worker.submit(request);
+            }
+        };
+        submit(
+            &self.frame.renderer.worker,
+            RenderRequest {
+                width: size.width,
+                height: size.height,
+                cam: self.cam,
+                basis,
+                cfg,
+                compare,
+                presentation,
+                aircraft: (self.layer(MapLayer::Flights) && self.explorer.on_earth())
+                    .then(|| self.aircraft_input(basis, rect, self.cam.alt, pixels_per_point)),
+                live_layers: (self.layer(MapLayer::Roads)
+                    || self.layer(MapLayer::Buildings)
+                    || self.layer(MapLayer::Traffic)
+                    || self.layer(MapLayer::Vessels)
+                    || self.layer(MapLayer::Satellites)
+                    || self.map_data_shown())
+                .then(|| self.live_layer_input(basis, rect, self.cam, pixels_per_point)),
+                overlays: Some(globecraft_render::overlays::OverlayInput {
+                    view: globecraft_render::overlays::OverlayView {
+                        basis,
+                        rect,
+                        altitude_km: self.cam.alt,
+                        state_visible_max_km: self.settings.state_max_altitude_km,
+                        grid_step_deg: self.layer(MapLayer::GridLabels).then_some(grid_step),
+                        layers: self.overlay_layers(),
+                        dashes: globecraft_render::overlays::BorderDashes::of(
+                            &self.settings.map_style,
+                        ),
+                        ground: self.overlay_ground(),
+                    },
+                    data: self.borders.shown.clone(),
+                    fading_out: self.borders.arrivals.fading_out(std::time::Instant::now()),
+                    // The frame worker adds the frame's drawn ground.
+                    depth: None,
+                }),
+            },
+        );
     }
 
     pub(super) fn poll_render(&mut self, presentation: u64, ctx: &egui::Context) {
         let Some(frame) = self.frame.renderer.worker.take_completed(presentation) else {
             return;
         };
+        // Moving relief frames follow their time (`view::next_motion_step`).
+        if frame.request.cfg.terrain.is_some() && frame.request.cfg.lod_scale < 1.0 {
+            let took = std::time::Duration::from_micros(
+                self.frame.renderer.render_us.load(Ordering::Relaxed),
+            );
+            self.frame.renderer.motion_step =
+                globecraft_render::view::next_motion_step(self.frame.renderer.motion_step, took);
+        }
         #[cfg(feature = "profiling")]
         globecraft_data::profiling::Span::elapsed(
             "frame.delivery",
