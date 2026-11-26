@@ -135,7 +135,7 @@ impl Ground for GroundHeights<'_> {
         MAX_GROUND_M * self.to_world
     }
     fn height(&self, lat: f64, lon: f64) -> f64 {
-        occlusion::HEIGHTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        occlusion::count(&occlusion::HEIGHTS);
         self.heights
             .height_m(lat, lon)
             .map_or(0.0, |metres| f64::from(metres) * self.to_world)

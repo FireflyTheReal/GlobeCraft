@@ -68,6 +68,17 @@ impl DepthMap {
     }
 }
 
+/// Whether the counts below are kept (`GLOBECRAFT_FRAME_TIMES` set): shared counters
+/// bumped by every lookup cost threads that project in parallel.
+pub(super) static COUNTING: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var_os("GLOBECRAFT_FRAME_TIMES").is_some());
+/// Bumps `counter` when the counts are kept.
+pub(super) fn count(counter: &std::sync::atomic::AtomicUsize) {
+    if *COUNTING {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Line-of-sight tests since `take_counts`: answered by the drawn ground, and by the
 /// line of elevation lookups (`GLOBECRAFT_FRAME_TIMES`).
 static BY_DEPTH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -131,10 +142,10 @@ impl<'a> TerrainVisibility<'a> {
         let target = super::ground_position(self.basis, Some(self.ground), lat, lon);
         let eye = self.basis.c;
         if let Some(visible) = self.visible_in_depth(target) {
-            BY_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            count(&BY_DEPTH);
             return visible;
         }
-        BY_LINE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        count(&BY_LINE);
         let geometry = self.basis.model.geometry();
         let ceiling = self.ground.max_height();
         // The target itself is not an occluder; stop one sample short of it so the
@@ -165,11 +176,11 @@ impl<'a> TerrainVisibility<'a> {
         let x = (at.x - f64::from(rect.min.x)) / f64::from(rect.width()) * depth.width as f64;
         let y = (at.y - f64::from(rect.min.y)) / f64::from(rect.height()) * depth.height as f64;
         if !(0.0..depth.width as f64).contains(&x) || !(0.0..depth.height as f64).contains(&y) {
-            OFF_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            count(&OFF_FRAME);
             return None;
         }
         let Some(ground) = depth.ground_near(x as usize, y as usize) else {
-            NOT_SURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            count(&NOT_SURE);
             return None;
         };
         Some((target - self.basis.c).length() <= ground * (1.0 + DEPTH_SLACK))
