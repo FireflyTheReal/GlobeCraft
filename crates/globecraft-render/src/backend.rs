@@ -191,7 +191,7 @@ fn log_relief_frame(
     drawn_by: &str,
     walk: std::time::Duration,
     total: std::time::Duration,
-    uploads: usize,
+    (uploads, kept_view): (usize, bool),
     draw: Option<(
         (usize, std::time::Duration, std::time::Duration, usize),
         f32,
@@ -214,10 +214,15 @@ fn log_relief_frame(
             },
         );
         globecraft_data::log_line!(
-            "RELIEF FRAME {}x{} by the {drawn_by}: walk {:.1} ms ({uploads} tiles uploaded), whole {:.1} ms{draw}",
+            "RELIEF FRAME {}x{} by the {drawn_by}: walk {:.1} ms ({uploads} tiles uploaded{}), whole {:.1} ms{draw}",
             request.width,
             request.height,
             ms(walk),
+            if kept_view {
+                ", the view's walk kept"
+            } else {
+                ""
+            },
             ms(total)
         );
     }
@@ -541,7 +546,7 @@ impl FrameRenderer {
                             "GPU",
                             walk_took,
                             started.elapsed(),
-                            gpu.relief_uploads,
+                            (gpu.relief_uploads, gpu.relief_kept_view),
                             Some((gpu.last_draw, gpu.relief_sun_unknown)),
                         );
                         self.depth = depth(starts);
@@ -583,7 +588,9 @@ impl FrameRenderer {
                     .unwrap_or(if walked { "CPU from the walk" } else { "CPU" }),
                 walk_took,
                 started.elapsed(),
-                self.gpu.as_ref().map_or(0, |gpu| gpu.relief_uploads),
+                self.gpu.as_ref().map_or((0, false), |gpu| {
+                    (gpu.relief_uploads, walked && gpu.relief_kept_view)
+                }),
                 None,
             );
             if let Some(gpu) = &mut self.gpu {

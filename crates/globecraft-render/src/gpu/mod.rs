@@ -90,6 +90,8 @@ pub(crate) struct GpuRenderer {
     relief_read: Vec<TileKey>,
     /// Elevation tiles the last walk uploaded first (`GLOBECRAFT_FRAME_TIMES`).
     pub(crate) relief_uploads: usize,
+    /// The last walk kept the view's walk before it (`relief::Walked::kept_view`).
+    pub(crate) relief_kept_view: bool,
     /// The last `relief_starts` walked, whether or not its walk helped, and the share
     /// of its rays that gave up.
     pub(crate) relief_ran: bool,
@@ -268,6 +270,7 @@ impl GpuRenderer {
             relief_tiles: Vec::new(),
             relief_read: Vec::new(),
             relief_uploads: 0,
+            relief_kept_view: false,
             relief_ran: false,
             relief_untrusted: 0.0,
             relief_sun_unknown: 0.0,
@@ -327,6 +330,7 @@ impl GpuRenderer {
                 };
                 self.relief_read = walked.read;
                 self.relief_uploads = walked.uploads;
+                self.relief_kept_view = walked.kept_view;
                 Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
             }
             Err(error) => {

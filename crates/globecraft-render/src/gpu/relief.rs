@@ -105,7 +105,14 @@ pub(super) struct ReliefMarch {
     /// Per tile held, whether the last walk read it (`read_tiles` in the shader).
     read: wgpu::Buffer,
     slots: Vec<Option<Slot>>,
+    /// The last walk's view (`WalkedView`): the next one with the same walks only
+    /// toward the sun (`starts`).
+    last_view: Option<WalkedView>,
 }
+
+/// A walk's view: its uniform without the sun, the tiles it held (and where) and its
+/// output's size.
+type WalkedView = (View, Vec<(TileKey, u32)>, usize);
 
 /// What a walk found (`ReliefMarch::starts`).
 pub(crate) struct Walked {
@@ -119,6 +126,8 @@ pub(crate) struct Walked {
     pub(super) read: Vec<TileKey>,
     /// How many tiles this walk uploaded first.
     pub(super) uploads: usize,
+    /// The view's walk was the last one's: only the sun's was walked again.
+    pub(super) kept_view: bool,
     /// How long each pass took on the device (the cones, the view's walk, the sun's
     /// quarter, other rows and odd columns; where the adapter can time them), and the wait for the device
     /// and the copy of what it found.
@@ -471,7 +480,14 @@ impl ReliefMarch {
                 storage | wgpu::BufferUsages::COPY_SRC,
             ),
             slots: (0..layers).map(|_| None).collect(),
+            last_view: None,
         }
+    }
+
+    /// The next walk walks the view again (timings of whole walks).
+    #[cfg(test)]
+    pub(super) fn forget_view(&mut self) {
+        self.last_view = None;
     }
 
     /// Walks each pixel's ray over the elevation tiles `tiles` (the ones the last
@@ -562,9 +578,31 @@ impl ReliefMarch {
             }
             table[index] = [u32::from(z), x, y, layer];
         }
+        // The same view over the same tiles (a playing or dragged timeline: only the
+        // sun moves) meets the same ground: its walk, the frame's dearest part, stays
+        // in `output` from the last one, and only the sun's is walked again. The
+        // tiles read stay flagged from it.
+        let key = (
+            View {
+                sun: [0.0; 4],
+                ..view
+            },
+            slots,
+            output_bytes,
+        );
+        let kept_view = uploads == 0
+            && self.last_view.as_ref().is_some_and(|(last, slots, bytes)| {
+                bytemuck::bytes_of(last) == bytemuck::bytes_of(&key.0)
+                    && *slots == key.1
+                    && *bytes == key.2
+            });
+        let slots = key.1.clone();
+        self.last_view = Some(key);
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&view));
         queue.write_buffer(&self.table, 0, bytemuck::cast_slice(&table));
-        queue.write_buffer(&self.read, 0, &vec![0; layers * 4]);
+        if !kept_view {
+            queue.write_buffer(&self.read, 0, &vec![0; layers * 4]);
+        }
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GlobeCraft relief march"),
             layout: &self.layout,
@@ -640,6 +678,11 @@ impl ReliefMarch {
                 label: Some("GlobeCraft relief march"),
                 timestamp_writes,
             });
+            // A kept view walks only the sun's passes (its own stay empty, timed at
+            // nothing).
+            if kept_view && index < SUN_PASSES_FROM {
+                continue;
+            }
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(across.div_ceil(side), down.div_ceil(side), 1);
@@ -705,6 +748,7 @@ impl ReliefMarch {
             pixels,
             read,
             uploads,
+            kept_view,
             #[cfg(test)]
             took,
         })
@@ -1023,6 +1067,8 @@ pub(super) fn past_the_ground(starts: &[f32], hits: &[(f64, f32)]) -> usize {
 /// other rows and its odd columns.
 #[cfg(test)]
 pub(super) const TIMED_PASSES: usize = 5;
+/// The first of the walk's passes toward the sun (after the cones and the view's).
+const SUN_PASSES_FROM: usize = 2;
 /// A start and an end per pass.
 #[cfg(test)]
 const TIMESTAMP_BYTES: usize = 2 * TIMED_PASSES * 8;

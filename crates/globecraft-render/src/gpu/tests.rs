@@ -543,6 +543,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
         );
         let walked = std::time::Instant::now();
         let grown = relief::grown_tiles(&tiles, lookup, std::time::Instant::now());
+        march.forget_view();
         let timed = march
             .starts(&gpu.device, &gpu.queue, &request, &grown)
             .expect("relief march");
@@ -573,6 +574,7 @@ fn gpu_relief_march_keeps_the_cpu_picture() {
             ..request
         };
         let walked = std::time::Instant::now();
+        march.forget_view();
         let without_sun = march
             .starts(&gpu.device, &gpu.queue, &sunless, &grown)
             .expect("relief march")
@@ -1233,6 +1235,7 @@ fn gpu_relief_walk_timing() {
             .and_then(|runs| runs.parse().ok())
             .unwrap_or(8);
         for run in 0..runs {
+            march.forget_view();
             let walked = march
                 .starts(&gpu.device, &gpu.queue, &request, &grown)
                 .expect("relief march");
@@ -1468,4 +1471,107 @@ fn overview_variant() {
         other => panic!("unknown overview variant {other}"),
     };
     println!("OVERVIEW VARIANT {name}");
+}
+
+/// A walk that keeps the view's walk (only the sun moved, the tiles held the same)
+/// finds what a whole walk finds: the same planes, bit for bit.
+#[test]
+#[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
+fn a_kept_view_walks_toward_the_sun_as_a_whole_walk_does() {
+    let mut gpu = GpuRenderer::new().expect("native GPU adapter and validated shader");
+    let lookup = |key: TileKey| {
+        let (provider, z, x, y, _) = globecraft_data::tiles::unkey(key);
+        Lookup::Ready(if provider == Provider::TerrainDem {
+            crate::tests::probe_dem_tile(z, x, y)
+        } else {
+            crate::tests::probe_image_tile(z, x, y)
+        })
+    };
+    let (width, height) = (160, 100);
+    let cam = Cam {
+        lat: 30.3,
+        lon: 79.8,
+        heading: 0.0,
+        alt: 16.0,
+        tilt: 70.0,
+        look_up: 0.0,
+    };
+    let at = |sun_lon: f64| {
+        let mut cfg = crate::tests::batch_reference_config(Provider::Satellite);
+        cfg.grid = false;
+        cfg.terrain = Some(crate::TerrainCfg::new(1.0, 1.0));
+        cfg.sun = Some(globecraft_core::math::ll_to_v3(15.0, sun_lon));
+        RenderRequest {
+            width,
+            height,
+            cam,
+            basis: cam.basis_for_model(
+                width as f64 / height as f64,
+                globecraft_core::earth_model::EarthModel::Wgs84,
+            ),
+            cfg,
+            overlays: None,
+            aircraft: None,
+            live_layers: None,
+            presentation: 0,
+            compare: None,
+        }
+    };
+    let (morning, evening) = (at(-10.0), at(150.0));
+    let held = crate::render_pixels_with(
+        width,
+        height,
+        0..height,
+        &morning.basis,
+        &morning.cfg,
+        &lookup,
+        Vec::new(),
+        None,
+    )
+    .relief_tiles;
+    let march = gpu
+        .relief
+        .get_or_insert_with(|| Some(relief::ReliefMarch::new(&gpu.device, 128)))
+        .as_mut()
+        .unwrap();
+    let grown = relief::grown_tiles(&held, lookup, std::time::Instant::now());
+    // Until every tile is uploaded: then the walks hold the same ones.
+    for _ in 0..8 {
+        if march
+            .starts(&gpu.device, &gpu.queue, &morning, &grown)
+            .expect("relief march")
+            .uploads
+            == 0
+        {
+            break;
+        }
+    }
+    let kept = march
+        .starts(&gpu.device, &gpu.queue, &evening, &grown)
+        .expect("relief march");
+    assert!(kept.kept_view, "only the sun moved");
+    march.forget_view();
+    let whole = march
+        .starts(&gpu.device, &gpu.queue, &evening, &grown)
+        .expect("relief march");
+    assert!(!whole.kept_view);
+    let count = width * height;
+    let seen = |pixels: &[f32]| pixels[2 * count..3 * count].to_vec();
+    assert_ne!(
+        seen(&kept.pixels),
+        seen(
+            &march
+                .starts(&gpu.device, &gpu.queue, &morning, &grown)
+                .unwrap()
+                .pixels
+        ),
+        "the two suns light the relief differently"
+    );
+    assert!(
+        kept.pixels
+            .iter()
+            .zip(&whole.pixels)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "the kept view's planes differ from a whole walk's"
+    );
 }
