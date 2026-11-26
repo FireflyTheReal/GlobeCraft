@@ -19,6 +19,39 @@ const GLOBAL_RESIDENT_ZOOM: u8 = 3;
 const MAX_RESIDENCY_PASSES: usize = 2;
 const WORKGROUP_SIZE: u32 = 256;
 
+/// Waits up to `limit` for the device's submitted work. A wait the driver reports as
+/// timed out before `limit` has passed is waited again: on a PowerVR DXT-48-1536
+/// phone (Vulkan driver 26.1) it reported 5 s waits as timed out after 20–80 ms, and
+/// every such frame took the GPU renderer down (2026-11-26).
+pub(super) fn wait_for_device(
+    device: &wgpu::Device,
+    limit: std::time::Duration,
+) -> Result<(), wgpu::PollError> {
+    static EARLY_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let started = std::time::Instant::now();
+    loop {
+        let left = limit.saturating_sub(started.elapsed());
+        match device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(left),
+        }) {
+            Ok(_) => return Ok(()),
+            Err(wgpu::PollError::Timeout) if started.elapsed() < limit => {
+                if !EARLY_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    globecraft_data::log_line!(
+                        "GPU wait reported as timed out after {:.1} ms of {limit:?}; waiting on",
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+                std::thread::sleep(EARLY_TIMEOUT_PAUSE);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+/// The pause before waiting again after a wait the driver ended early.
+const EARLY_TIMEOUT_PAUSE: std::time::Duration = std::time::Duration::from_millis(1);
+
 struct Slot {
     key: TileKey,
     source: Weak<Tile>,

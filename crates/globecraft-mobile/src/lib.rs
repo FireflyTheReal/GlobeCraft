@@ -246,9 +246,10 @@ impl Globe {
     }
 
     /// A still frame's size relative to the screen's pixels: all of them when the GPU
-    /// draws, at most `MAX_CPU_FRAME_PIXELS` when the CPU does.
+    /// draws, at most `MAX_CPU_FRAME_PIXELS` when the CPU does (no GPU, or relief,
+    /// which this branch's GPU renderer leaves to the CPU).
     fn still_scale(&self) -> f32 {
-        if globecraft_render::backend::status().adapter.is_some() {
+        if globecraft_render::backend::status().adapter.is_some() && !self.relief {
             return 1.0;
         }
         let pixels = (self.width * self.height) as f32;

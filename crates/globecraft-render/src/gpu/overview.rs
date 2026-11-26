@@ -379,10 +379,7 @@ impl Overview {
         // must not stop the globe (the frame is then drawn on the CPU).
         // shortcut: bounds the wait for the frame only, not a driver call that never
         // returns; move GPU work to its own watched thread if such hangs are reported.
-        if let Err(error) = device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(FRAME_WAIT_LIMIT),
-        }) {
+        if let Err(error) = super::wait_for_device(device, FRAME_WAIT_LIMIT) {
             return Err((
                 format!("GPU frame not finished within {FRAME_WAIT_LIMIT:?}: {error}"),
                 pixels,
