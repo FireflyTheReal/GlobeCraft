@@ -38,6 +38,36 @@ impl FrameShift {
     pub fn apply(self, p: Pos2) -> Pos2 {
         Pos2::new(p.x * self.scale, p.y * self.scale) + self.offset
     }
+
+    /// This move held to one under which the frame (drawn in `frame`) still covers
+    /// `area`, or `None` when no move of its scale does (it would shrink inside
+    /// `area`). Zooming in moves as it should; a pan or a zoom out goes only as far as
+    /// the frame reaches, since past its edge there is nothing drawn and a moved frame
+    /// left the screen black around it until the next arrived (Julien, 26 Nov 18:57).
+    pub fn covering(self, frame: Rect, area: Rect) -> Option<FrameShift> {
+        let axis = |min: f32, max: f32, area_min: f32, area_max: f32, offset: f32| {
+            let (low, high) = (area_max - self.scale * max, area_min - self.scale * min);
+            (low <= high).then(|| offset.clamp(low, high))
+        };
+        let x = axis(
+            frame.min.x,
+            frame.max.x,
+            area.min.x,
+            area.max.x,
+            self.offset.x,
+        )?;
+        let y = axis(
+            frame.min.y,
+            frame.max.y,
+            area.min.y,
+            area.max.y,
+            self.offset.y,
+        )?;
+        Some(FrameShift {
+            scale: self.scale,
+            offset: Vec2::new(x, y),
+        })
+    }
 }
 
 /// How the frame drawn from `shown` (in `rect`) moves to show the ground as `now`
@@ -185,6 +215,40 @@ mod tests {
         planes[3 * width * height..].fill(-1.0);
         let unsure = crate::overlays::DepthMap::new(width, height, planes.into());
         assert_eq!(frame_shift(&shown, &now, RECT, unsure.as_ref()), None);
+    }
+
+    /// A held move never leaves part of the area uncovered: zooming in about a point
+    /// inside stays as it is, zooming out has no such move, and a pan stops at the
+    /// frame's edge.
+    #[test]
+    fn a_held_move_keeps_the_area_covered() {
+        let zoom_in = FrameShift {
+            scale: 1.5,
+            offset: Vec2::new(-100.0, -50.0),
+        };
+        assert_eq!(zoom_in.covering(RECT, RECT), Some(zoom_in));
+        let zoom_out = FrameShift {
+            scale: 0.8,
+            offset: Vec2::new(40.0, 30.0),
+        };
+        assert_eq!(zoom_out.covering(RECT, RECT), None);
+        let pan = FrameShift {
+            scale: 1.0,
+            offset: Vec2::new(25.0, -10.0),
+        };
+        assert_eq!(
+            pan.covering(RECT, RECT),
+            Some(FrameShift {
+                scale: 1.0,
+                offset: Vec2::ZERO,
+            })
+        );
+        let zoom_and_pan = FrameShift {
+            scale: 1.2,
+            offset: Vec2::new(30.0, 0.0),
+        };
+        let held = zoom_and_pan.covering(RECT, RECT).unwrap();
+        assert!(held.apply(RECT.min).x <= RECT.min.x && held.apply(RECT.max).x >= RECT.max.x);
     }
 
     /// Coming closer enlarges the frame; the same view and a turn leave it be.

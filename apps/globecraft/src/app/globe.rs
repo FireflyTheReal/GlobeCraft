@@ -379,7 +379,9 @@ impl App {
         let painter = ui.painter_at(rect);
         // Until the frame for the camera now arrives, the shown one with its map
         // layers moves to where the camera now sees its ground (a pan or a zoom), so
-        // input shows on the next screen refresh (`frame_shift`).
+        // input shows on the next screen refresh (`frame_shift`); only as far as it
+        // still covers the globe's area, so zooming in shows at once and a pan or a
+        // zoom out never leaves black beside it.
         let shift = self
             .frame
             .renderer
@@ -394,6 +396,7 @@ impl App {
                 }
                 globecraft_render::frame_shift::frame_shift(&shown, &basis, rect, depth)
             })
+            .and_then(|shift| shift.covering(rect, rect.intersect(viewport)))
             .map(|shift| egui::emath::TSTransform::new(shift.offset, shift.scale));
         // Clipped so that, moved, it stays inside the globe's area.
         let globe_painter = match shift {
