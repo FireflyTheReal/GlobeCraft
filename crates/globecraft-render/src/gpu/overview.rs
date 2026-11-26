@@ -111,7 +111,6 @@ pub(super) struct Frame {
     #[cfg(test)]
     pub repaired: usize,
     /// How long the frame took on the device with its readback, and the repair.
-    #[cfg(test)]
     pub took: (std::time::Duration, std::time::Duration),
 }
 pub(super) struct Overview {
@@ -574,7 +573,6 @@ impl Overview {
             (count * 4) as u64,
             ((dependencies + 1) * 4) as u64,
         );
-        #[cfg(test)]
         let submitted = std::time::Instant::now();
         queue.submit(Some(encoder.finish()));
         let slice = self
@@ -652,11 +650,9 @@ impl Overview {
             .chunks_exact(4)
             .filter(|pixel| **pixel == UNDRAWN[..])
             .count();
-        #[cfg(test)]
         let (on_device, repairing) = (submitted.elapsed(), std::time::Instant::now());
         let (repaired_needs, relief_tiles) =
             super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes));
-        #[cfg(test)]
         let took = (on_device, repairing.elapsed());
         for (key, distance) in repaired_needs {
             let distance = distance.unwrap_or(f32::MAX);
@@ -683,7 +679,6 @@ impl Overview {
             relief_tiles,
             #[cfg(test)]
             repaired,
-            #[cfg(test)]
             took,
         })
     }
