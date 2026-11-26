@@ -444,8 +444,8 @@ pub mod source;
 pub use source::{Access, Prefetch, SourceKind, TileSource};
 mod elevation;
 pub use cache::{
-    CacheBudgets, DEFAULT_TILE_CACHE_BUDGET_BYTES, FINE_IMAGERY_ZOOM, Lookup, MAX_INFLIGHT,
-    SourceQueue, TileCache,
+    CacheBudgets, DEFAULT_TILE_CACHE_BUDGET_BYTES, FINE_IMAGERY_ZOOM, LoadedElevation, Lookup,
+    MAX_INFLIGHT, SourceQueue, TileCache,
 };
 pub use elevation::Elevation;
 mod warmup;

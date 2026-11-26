@@ -174,6 +174,68 @@ struct Job {
 const IMAGERY_TILE_PX: f64 = 256.0;
 
 /// Web Mercator coordinates (0–1 across the world, `v` downward) of a point.
+/// A loaded elevation tile: its level, coordinates and the tile.
+type ElevationTile = (u8, u32, u32, Arc<Tile>);
+
+/// `TileCache::loaded_elevation_m` for many points at one `zoom`, each tile of that
+/// level looked up in the cache once: the points of a line or a line of sight mostly
+/// share a tile, and each cache lookup tries the levels down to a loaded one (the
+/// overlays of a view tilted 70° at 16 km made about 50,000 lookups a frame on an M1,
+/// 2026-11-26). The same heights, for as long as the cache holds the same tiles.
+pub struct LoadedElevation<'a> {
+    cache: &'a TileCache,
+    zoom: u8,
+    /// Direct-mapped by the zoom tile's coordinates: the tile and what it read.
+    memo: std::sync::Mutex<Vec<Option<MemoEntry>>>,
+}
+/// A zoom tile's coordinates and the loaded elevation tile its points read.
+type MemoEntry = ((u32, u32), Option<ElevationTile>);
+
+/// Entries of `LoadedElevation::memo`.
+const LOADED_ELEVATION_MEMO: usize = 256;
+
+impl<'a> LoadedElevation<'a> {
+    pub fn new(cache: &'a TileCache, zoom: u8) -> Self {
+        Self {
+            cache,
+            zoom: zoom.min(super::Provider::TerrainDem.max_zoom()),
+            memo: std::sync::Mutex::new(vec![None; LOADED_ELEVATION_MEMO]),
+        }
+    }
+    /// As `TileCache::loaded_elevation_m(lat, lon, zoom)`.
+    pub fn height_m(&self, lat: f64, lon: f64) -> Option<f32> {
+        let (u, v) = mercator(lat, lon);
+        let n = f64::from(1u32 << self.zoom);
+        let (x, y) = (
+            (u * n).floor().min(n - 1.0) as u32,
+            (v * n).floor().min(n - 1.0) as u32,
+        );
+        let slot = (x as usize).wrapping_mul(31).wrapping_add(y as usize) % LOADED_ELEVATION_MEMO;
+        let found = {
+            // Another thread on it (a layer projected in parallel): the cache itself.
+            let Ok(mut memo) = self.memo.try_lock() else {
+                return self.cache.loaded_elevation_m(lat, lon, self.zoom);
+            };
+            match &memo[slot] {
+                Some((at, found)) if *at == (x, y) => found.clone(),
+                _ => {
+                    let found = self.cache.loaded_elevation_tile(self.zoom, x, y);
+                    memo[slot] = Some(((x, y), found.clone()));
+                    found
+                }
+            }
+        };
+        let (level, tx, ty, tile) = found?;
+        let elevation = tile.elevation()?;
+        let n = f64::from(1u32 << level);
+        let size = elevation.size() as f64;
+        Some(elevation.height_m(
+            (u * n - f64::from(tx)) * size,
+            (v * n - f64::from(ty)) * size,
+        ))
+    }
+}
+
 fn mercator(lat: f64, lon: f64) -> (f64, f64) {
     let lat = lat.clamp(-85.05, 85.05);
     let u = ((lon + 180.0) / 360.0).rem_euclid(1.0);
@@ -350,6 +412,20 @@ impl TileCache {
     /// `elevation_m` without requesting anything: overlays follow what the frames load.
     pub fn loaded_elevation_m(&self, lat: f64, lon: f64, zoom: u8) -> Option<f32> {
         self.elevation_at(lat, lon, zoom, false)
+    }
+    /// The loaded elevation tile `loaded_elevation_m` reads for a point in tile
+    /// `(x, y)` of level `zoom` (every point of it reads the same one): its level, its
+    /// coordinates and the tile.
+    fn loaded_elevation_tile(&self, zoom: u8, x: u32, y: u32) -> Option<ElevationTile> {
+        for level in (0..=zoom).rev() {
+            let shift = zoom - level;
+            let (tx, ty) = (x >> shift, y >> shift);
+            let key = make_key(super::Provider::TerrainDem, level, tx, ty, 0);
+            if let Some(tile) = self.ready.get(&key) {
+                return tile.elevation().is_some().then_some((level, tx, ty, tile));
+            }
+        }
+        None
     }
     /// The colour (RGB, 0–1) of `provider`'s imagery around `(lat, lon)`, averaged
     /// over about `span_deg` of longitude, from the finest loaded tile not coarser

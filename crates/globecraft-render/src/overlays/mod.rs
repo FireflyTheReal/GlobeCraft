@@ -101,8 +101,7 @@ pub trait Ground: Sync {
 /// Terrain heights from the elevation tiles already loaded (overlays never request
 /// tiles: the frame that shows them does).
 pub struct GroundHeights<'a> {
-    cache: &'a TileCache,
-    zoom: u8,
+    heights: globecraft_data::tiles::LoadedElevation<'a>,
     to_world: f64,
 }
 
@@ -118,8 +117,7 @@ impl<'a> GroundHeights<'a> {
         let zoom =
             ((OVERLAY_GROUND_TILE_KM / altitude_km.max(0.05)).log2() + 1.0).clamp(0.0, 15.0) as u8;
         Some(Self {
-            cache,
-            zoom,
+            heights: globecraft_data::tiles::LoadedElevation::new(cache, zoom),
             to_world: f64::from(ground.exaggeration) / globecraft_core::EARTH_RADIUS_M,
         })
     }
@@ -138,8 +136,8 @@ impl Ground for GroundHeights<'_> {
     }
     fn height(&self, lat: f64, lon: f64) -> f64 {
         occlusion::HEIGHTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.cache
-            .loaded_elevation_m(lat, lon, self.zoom)
+        self.heights
+            .height_m(lat, lon)
             .map_or(0.0, |metres| f64::from(metres) * self.to_world)
     }
 }
