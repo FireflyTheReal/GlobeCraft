@@ -259,6 +259,18 @@ pub(super) async fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Updates are pinned to the release signer (roadmap D7): the key is built in, so an
+    /// archive without its signature is refused. A file emptied or cut short would
+    /// quietly drop back to checking by origin and SHA-256 alone.
+    #[test]
+    fn updates_are_pinned_to_the_release_signer() {
+        assert_eq!(
+            VERIFYING_KEY.len(),
+            32,
+            "release-signing.pub must hold the key"
+        );
+        assert!(<[u8; 32]>::try_from(VERIFYING_KEY).is_ok());
+    }
     #[test]
     fn cargo_debug_and_release_outputs_are_development_installations() {
         for path in [
