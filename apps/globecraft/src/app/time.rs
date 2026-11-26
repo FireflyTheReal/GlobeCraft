@@ -167,6 +167,13 @@ impl App {
     /// Runs a `time.*` command.
     pub(super) fn run_time(&mut self, command: TimeCommand) -> Result<Value, String> {
         let wall = now_unix();
+        // Moving the time by hand (dragging the timeline, its step buttons) draws like
+        // moving the camera: motion frames, the sharp one once it rests. Each step of a
+        // dragged handle drew a sharp frame (~230–320 ms on an M1 with tilted relief), and
+        // the timeline moved in steps with the sun cross-faded twice (Julien, 2026-11-26).
+        if matches!(command, TimeCommand::Set(_) | TimeCommand::Step(_)) {
+            self.touch();
+        }
         match command {
             TimeCommand::Set(p) => match p.time {
                 TimeValue::Text(text) if text.eq_ignore_ascii_case("now") => {

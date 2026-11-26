@@ -1308,9 +1308,14 @@ fn timeline_playback_frames() {
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(1.0);
-    h.state_mut()
-        .run("time.play", json!({"hours_per_second": speed}))
-        .expect("play");
+    // PROBE_SCRUB=1: the time moved step by step as the timeline's handle is dragged
+    // (each interface step `time.step` by the speed's share), not played.
+    let scrub = std::env::var("PROBE_SCRUB").is_ok_and(|v| v == "1");
+    if !scrub {
+        h.state_mut()
+            .run("time.play", json!({"hours_per_second": speed}))
+            .expect("play");
+    }
     let started_at = h.state().scene_unix();
     let shown_ptr = |h: &Harness<'static, App>| {
         h.state()
@@ -1324,6 +1329,11 @@ fn timeline_playback_frames() {
     let started = std::time::Instant::now();
     let (mut last_at, mut gaps, mut sizes) = (0.0, Vec::new(), std::collections::BTreeMap::new());
     for _ in 0..120 {
+        if scrub {
+            h.state_mut()
+                .run("time.step", json!({"hours": speed * 0.016}))
+                .expect("step");
+        }
         h.step();
         let shown = shown_ptr(&h);
         if shown != last {
