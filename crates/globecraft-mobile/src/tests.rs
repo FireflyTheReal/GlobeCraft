@@ -67,3 +67,22 @@ fn frames_arrive_at_full_and_motion_size() {
     }
     assert!(g.stats().contains("400×300"), "{}", g.stats());
 }
+
+/// Moving relief frames shrink a step while slower than the budget and grow back
+/// while well under it, within `MOTION_STEPS`.
+#[test]
+fn moving_relief_frames_follow_their_time() {
+    let ms = Duration::from_millis;
+    let mut step = 0;
+    for _ in 0..10 {
+        step = next_motion_step(step, ms(150));
+    }
+    assert_eq!(step, MOTION_STEPS.len() - 1);
+    assert_eq!(
+        next_motion_step(step, ms(45)),
+        step,
+        "near the budget it holds"
+    );
+    assert_eq!(next_motion_step(step, ms(15)), step - 1);
+    assert_eq!(next_motion_step(0, ms(5)), 0);
+}

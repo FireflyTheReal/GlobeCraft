@@ -42,6 +42,17 @@ mod ffi;
 const SETTLE: Duration = Duration::from_millis(150);
 /// Raster size while a gesture moves the globe, relative to a still frame's.
 const MOTION_SCALE: f32 = 0.5;
+/// Moving relief frames shrink by these steps (each side, of `MOTION_SCALE`'s size)
+/// while they take longer than `MOTION_BUDGET`, one step a frame, and grow back while
+/// well under it: a PowerVR phone took 11–18 ms a 270×601 relief frame over flat land
+/// and 60–190 ms over close mountains (2026-11-26).
+const MOTION_STEPS: [f32; 5] = [1.0, 0.85, 0.7, 0.6, 0.5];
+/// The moving relief frame's aim: 25 frames a second.
+const MOTION_BUDGET: Duration = Duration::from_millis(40);
+/// A step smaller above this share of `MOTION_BUDGET`, larger below the second: a
+/// step changes a frame's pixels by at most 1.45 times, so the two never alternate.
+const SHRINK_ABOVE: f64 = 1.25;
+const GROW_BELOW: f64 = 0.6;
 /// Most pixels a still frame the CPU draws has; the host scales it to the screen.
 /// A phone's 1080 × 2404 (2.6 million) took the CPU 150–1,600 ms a frame on a
 /// PowerVR DXT-48-1536 phone, 540 × 1202 46–333 ms (2026-11-24).
@@ -81,6 +92,8 @@ pub struct Globe {
     last_gesture: Option<Instant>,
     /// The last request was a motion frame, so a full one follows once gestures stop.
     motion_frame: bool,
+    /// Which of `MOTION_STEPS` moving relief frames are drawn at.
+    motion_step: usize,
     presentation: u64,
     frame: Frame,
     /// Microseconds the last frame took to render.
@@ -141,6 +154,7 @@ impl Globe {
             changed: true,
             last_gesture: None,
             motion_frame: false,
+            motion_step: 0,
             presentation: 0,
             frame: Frame::default(),
             render_us,
@@ -260,7 +274,13 @@ impl Globe {
 
     fn request(&mut self, now: Instant) {
         let moving = self.moving(now);
-        let lod_scale = self.still_scale() * if moving { MOTION_SCALE } else { 1.0 };
+        let motion = MOTION_SCALE
+            * if self.relief {
+                MOTION_STEPS[self.motion_step]
+            } else {
+                1.0
+            };
+        let lod_scale = self.still_scale() * if moving { motion } else { 1.0 };
         let size = |n: usize| ((n as f32 * lod_scale).round() as usize).max(1);
         let (width, height) = (size(self.width), size(self.height));
         let unix = std::time::SystemTime::now()
@@ -296,6 +316,10 @@ impl Globe {
         let Some(done) = self.worker.take_completed(self.presentation) else {
             return false;
         };
+        if self.relief && done.request.cfg.lod_scale < self.still_scale() * MOTION_SCALE * 1.01 {
+            let took = Duration::from_micros(self.render_us.load(Ordering::Relaxed));
+            self.motion_step = next_motion_step(self.motion_step, took);
+        }
         let previous = std::mem::replace(
             &mut self.frame,
             Frame {
@@ -354,6 +378,18 @@ impl Globe {
             self.cache.inflight(),
             self.cam.alt,
         )
+    }
+}
+
+/// The step of `MOTION_STEPS` after a moving relief frame drawn at `step` took `took`.
+fn next_motion_step(step: usize, took: Duration) -> usize {
+    let share = took.as_secs_f64() / MOTION_BUDGET.as_secs_f64();
+    if share > SHRINK_ABOVE {
+        (step + 1).min(MOTION_STEPS.len() - 1)
+    } else if share < GROW_BELOW {
+        step.saturating_sub(1)
+    } else {
+        step
     }
 }
 
