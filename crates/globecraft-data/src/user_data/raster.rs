@@ -31,9 +31,11 @@ const MAX_DOMAINS_BYTES: u64 = 256 * 1024;
 const GIBS_WMTS: &str = "https://gibs.earthdata.nasa.gov/wmts/";
 /// GIBS sometimes answers a tile with garbage (2026-11-24: the same OMPS ozone tile
 /// came back as its true picture, a palette PNG, or as an RGBA PNG of noise or of
-/// flat colour, differently each time; RGBA four times in seven over the Arctic).
-/// Once a layer has sent a palette PNG, an RGBA one is garbage; before that, one with
-/// more than this share of partly transparent pixels is (its maps have none)…
+/// flat colour, differently each time; RGBA four times in seven over the Arctic;
+/// 2026-11-26: also as grey-and-alpha PNGs of streaks, 14 of 144 Arctic tiles over
+/// three days). Once a layer has sent a palette PNG, any other is garbage; before
+/// that, one with more than this share of partly transparent pixels is (its maps have
+/// none)…
 const DAMAGED_PARTLY_TRANSPARENT_SHARE: f64 = 0.01;
 /// …and is asked for again this soon.
 const DAMAGED_RETRY: Duration = Duration::from_secs(2);
@@ -63,8 +65,9 @@ struct Shared {
     previous: HashMap<TileKey, Arc<RgbaImage>>,
     /// For a GIBS layer's newest day (`gibs_domains_url`): the day shown instead.
     gibs_day: GibsDay,
-    /// The GIBS RGBA PNGs shown before any palette PNG came, dropped when one does.
-    rgba: std::collections::HashSet<TileKey>,
+    /// The GIBS tiles other than palette PNGs shown before any palette PNG came,
+    /// dropped when one does.
+    not_palette: std::collections::HashSet<TileKey>,
 }
 
 /// The day a GIBS template's `default` stands for.
@@ -148,7 +151,7 @@ pub struct RasterTiles {
     tile_px: u16,
     /// The day `{date}` stands for (`YYYY-MM-DD`).
     date: String,
-    /// A GIBS layer has sent a palette PNG: its RGBA PNGs are garbage. One flag for
+    /// A GIBS layer has sent a palette PNG: its other PNGs are garbage. One flag for
     /// all the days of a layer (`under`): GIBS's newest day sent almost only garbage
     /// and seldom a palette PNG, so on its own it kept striped garbage on screen
     /// (2026-11-24).
@@ -311,9 +314,9 @@ impl RasterTiles {
             .and_then(|under| under.update(runtime, view, repaint.clone()));
         let gibs = template.starts_with(GIBS_WMTS);
         let palette_seen = self.palette_seen.load(std::sync::atomic::Ordering::Relaxed);
-        if palette_seen && !shared.rgba.is_empty() {
+        if palette_seen && !shared.not_palette.is_empty() {
             // Another day of the layer has sent a palette PNG since.
-            let shown: Vec<TileKey> = shared.rgba.drain().collect();
+            let shown: Vec<TileKey> = shared.not_palette.drain().collect();
             for earlier in shown {
                 shared.tiles.insert(earlier, retry_soon());
             }
@@ -348,7 +351,7 @@ impl RasterTiles {
                     Some(archive) => archive_tile(&archive, key)
                         .await
                         .map(|image| image.map(|image| (image, false))),
-                    None => fetch_tile_png_rgba(url).await.map(Some),
+                    None => fetch_tile_not_palette(url).await.map(Some),
                 };
                 if let Ok(mut shared) = state.lock() {
                     if shared.day != day {
@@ -362,21 +365,21 @@ impl RasterTiles {
                                 .tiles
                                 .insert(key, Entry::Failed { at: Instant::now() });
                         }
-                        Ok(Some((image, rgba)))
+                        Ok(Some((image, not_palette)))
                             if gibs
-                                && rgba
+                                && not_palette
                                 && (palette.load(std::sync::atomic::Ordering::Relaxed)
                                     || damaged(&image)) =>
                         {
                             shared.tiles.insert(key, retry_soon());
                         }
-                        Ok(Some((image, rgba))) => {
-                            if gibs && rgba {
-                                shared.rgba.insert(key);
+                        Ok(Some((image, not_palette))) => {
+                            if gibs && not_palette {
+                                shared.not_palette.insert(key);
                             } else if gibs
                                 && !palette.swap(true, std::sync::atomic::Ordering::Relaxed)
                             {
-                                let shown: Vec<TileKey> = shared.rgba.drain().collect();
+                                let shown: Vec<TileKey> = shared.not_palette.drain().collect();
                                 for earlier in shown {
                                     shared.tiles.insert(earlier, retry_soon());
                                 }
@@ -552,25 +555,25 @@ async fn archive_tile(
 }
 
 async fn fetch_tile(url: String) -> Result<RgbaImage, crate::Error> {
-    fetch_tile_png_rgba(url).await.map(|(image, _)| image)
+    fetch_tile_not_palette(url).await.map(|(image, _)| image)
 }
 
-/// A tile, and whether it came as an RGBA PNG (colour type 6).
-async fn fetch_tile_png_rgba(url: String) -> Result<(RgbaImage, bool), crate::Error> {
+/// A tile, and whether it came as anything but a palette PNG (colour type 3).
+async fn fetch_tile_not_palette(url: String) -> Result<(RgbaImage, bool), crate::Error> {
     let client = crate::http::client(crate::http::Policy::UserData)?;
     let url = crate::keys::fill(&url)?;
     let bytes = crate::http::body(client.get(&url), MAX_TILE_BYTES)
         .await
         .map_err(crate::keys::redact_error)?;
-    let rgba = png_is_rgba(&bytes);
+    let not_palette = !png_is_palette(&bytes);
     crate::cpu::run(crate::cpu::Service::Tiles, move || decode(&bytes))
         .await
-        .map(|image| (image, rgba))
+        .map(|image| (image, not_palette))
 }
 
-/// Whether bytes are a PNG of colour type 6 (RGBA), read from its header.
-fn png_is_rgba(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.get(25) == Some(&6)
+/// Whether bytes are a PNG of colour type 3 (palette), read from its header.
+fn png_is_palette(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.get(25) == Some(&3)
 }
 
 /// A failed tile asked for again `DAMAGED_RETRY` from now.
@@ -676,12 +679,15 @@ mod tests {
             image::Rgba([63, 21, 39, n.wrapping_mul(37)])
         });
         assert!(damaged(&garbage));
-        // Colour type at byte 25 of the header: 3 palette, 6 RGBA.
+        // Colour type at byte 25 of the header: 3 palette; 6 RGBA and 4 grey and
+        // alpha, both of which GIBS sent as garbage.
         let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x01\0\0\0\x01\0\x08\x06".to_vec();
-        assert!(png_is_rgba(&header));
+        assert!(!png_is_palette(&header));
+        header[25] = 4;
+        assert!(!png_is_palette(&header));
         header[25] = 3;
-        assert!(!png_is_rgba(&header));
-        assert!(!png_is_rgba(b"\xff\xd8\xff jpeg"));
+        assert!(png_is_palette(&header));
+        assert!(!png_is_palette(b"\xff\xd8\xff jpeg"));
     }
 
     #[test]
