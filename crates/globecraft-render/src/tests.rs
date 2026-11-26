@@ -969,3 +969,31 @@ fn required_tiles_put_elevation_first_at_each_level() {
         ]
     );
 }
+
+/// A frame abandoned before its rows were drawn (`cancel`) leaves them undrawn.
+#[test]
+fn an_abandoned_frame_skips_its_rows() {
+    let cam = Cam {
+        lat: 46.0,
+        lon: 8.0,
+        heading: 0.0,
+        alt: 20.0,
+        tilt: 60.0,
+        look_up: 0.0,
+    };
+    let (w, h) = (64, 48);
+    let cfg = batch_reference_config(globecraft_data::tiles::Provider::Satellite);
+    let basis = cam.basis_for_model(
+        w as f64 / h as f64,
+        globecraft_core::earth_model::EarthModel::Wgs84,
+    );
+    let lookup = |_key| Lookup::Unavailable;
+    let draw = || render_pixels_with(w, h, 0..h, &basis, &cfg, &lookup, Vec::new(), None).pixels;
+    assert!(draw().iter().any(|&channel| channel != 0));
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    assert!(
+        cancel::with_flag(&flag, draw)
+            .iter()
+            .all(|&channel| channel == 0)
+    );
+}

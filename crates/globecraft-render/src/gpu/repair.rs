@@ -17,10 +17,14 @@ pub(super) fn pixels(
     let rays = crate::rays::RayCaster::new(request.width, request.height, &request.basis);
     let air = crate::frame_air(&rays, &request.cfg);
     let now = std::time::Instant::now();
+    let cancel = crate::cancel::flag();
     let batches: Vec<_> = pixels
         .par_chunks_mut(request.width * 4 * tuning::ROWS_PER_TILE_BATCH)
         .enumerate()
         .map(|(batch, rows)| {
+            if crate::cancel::set(&cancel) {
+                return (Vec::new(), Vec::new());
+            }
             let mut local = crate::Local {
                 lookup,
                 map: HashMap::default(),

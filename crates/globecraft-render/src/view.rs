@@ -11,6 +11,35 @@ const ACTIVE_RENDER_SCALE: f32 = 0.4;
 const ACTIVE_RELIEF_RENDER_SCALE: f32 = 0.28;
 /// The lowest motion scale a setting may choose.
 pub const MIN_MOTION_SCALE: f32 = 0.2;
+/// Moving relief frames shrink by these steps (of each side of the default motion
+/// size) while they take longer than `MOTION_BUDGET`, one step a frame, and grow back
+/// while well under it: a PowerVR phone took 11–18 ms a 270×601 relief frame over
+/// flat land and 60–190 ms over close mountains, 28–60 ms at 135×301 (2026-11-26).
+pub const MOTION_STEPS: [f32; 5] = [1.0, 0.85, 0.7, 0.6, 0.5];
+/// The moving relief frame's aim: 25 frames a second.
+pub const MOTION_BUDGET: std::time::Duration = std::time::Duration::from_millis(40);
+/// A step smaller above this share of `MOTION_BUDGET`, larger below the second: a
+/// step changes a frame's pixels by at most 1.45 times, so the two never alternate.
+const MOTION_SHRINK_ABOVE: f64 = 1.25;
+const MOTION_GROW_BELOW: f64 = 0.6;
+
+/// The step of `MOTION_STEPS` after a moving relief frame drawn at `step` took `took`.
+pub fn next_motion_step(step: usize, took: std::time::Duration) -> usize {
+    let share = took.as_secs_f64() / MOTION_BUDGET.as_secs_f64();
+    if share > MOTION_SHRINK_ABOVE {
+        (step + 1).min(MOTION_STEPS.len() - 1)
+    } else if share < MOTION_GROW_BELOW {
+        step.saturating_sub(1)
+    } else {
+        step
+    }
+}
+
+/// The default motion scale of relief frames at `step` of `MOTION_STEPS` (a setting
+/// still clamps it to `MIN_MOTION_SCALE`).
+pub fn relief_motion_scale(step: usize) -> f32 {
+    ACTIVE_RELIEF_RENDER_SCALE * MOTION_STEPS[step.min(MOTION_STEPS.len() - 1)]
+}
 const MIN_RENDER_WIDTH_PX: usize = 64;
 const MAX_RENDER_WIDTH_PX: usize = 2000;
 const MIN_RENDER_HEIGHT_PX: usize = 32;
@@ -196,6 +225,27 @@ impl RasterView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Moving relief frames shrink a step while slower than the budget and grow back
+    /// while well under it, within `MOTION_STEPS`.
+    #[test]
+    fn moving_relief_frames_follow_their_time() {
+        let ms = std::time::Duration::from_millis;
+        let mut step = 0;
+        for _ in 0..10 {
+            step = next_motion_step(step, ms(150));
+        }
+        assert_eq!(step, MOTION_STEPS.len() - 1);
+        assert_eq!(
+            next_motion_step(step, ms(45)),
+            step,
+            "near the budget it holds"
+        );
+        assert_eq!(next_motion_step(step, ms(15)), step - 1);
+        assert_eq!(next_motion_step(0, ms(5)), 0);
+        assert_eq!(relief_motion_scale(0), ACTIVE_RELIEF_RENDER_SCALE);
+        assert!(relief_motion_scale(99) < relief_motion_scale(1));
+    }
 
     #[test]
     fn the_quality_caps_the_frame_height_and_never_raises_it() {

@@ -494,6 +494,14 @@ impl FrameRenderer {
                 };
             let walked = starts.is_some();
             let walk_took = started.elapsed();
+            // A gesture overtook this frame during its walk: nobody will see it.
+            if crate::cancel::cancelled() {
+                return RenderedView {
+                    pixels: buffer,
+                    waiting: Vec::new(),
+                    requests: Vec::new(),
+                };
+            }
             // The walk's planes are also the frame's drawn ground, for the overlays.
             let starts = starts.map(std::sync::Arc::new);
             let depth = |planes: Option<std::sync::Arc<Vec<f32>>>| {
@@ -519,11 +527,14 @@ impl FrameRenderer {
                         gpu.relief_frame_held(held);
                         let pixels = request.width * request.height;
                         let megapixels = pixels as f64 / 1e6;
-                        self.relief_timing.note(
-                            true,
-                            started.elapsed().as_secs_f64() / megapixels.max(1e-6),
-                            pixels,
-                        );
+                        // An abandoned frame's time says nothing about the walk.
+                        if !crate::cancel::cancelled() {
+                            self.relief_timing.note(
+                                true,
+                                started.elapsed().as_secs_f64() / megapixels.max(1e-6),
+                                pixels,
+                            );
+                        }
                         update_status(|status| status.gpu_frames += 1);
                         log_relief_frame(
                             request,
@@ -584,7 +595,7 @@ impl FrameRenderer {
                 // before 60–110 ms of CPU, and uncounted, the walk was tried every
                 // frame (2026-11-26). Frames before the walk had tiles say nothing.
                 let tried = walked || (walks && gpu.relief_ran);
-                if tried || !walks {
+                if (tried || !walks) && !crate::cancel::cancelled() {
                     let pixels = request.width * request.height;
                     let megapixels = pixels as f64 / 1e6;
                     self.relief_timing.note(

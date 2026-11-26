@@ -275,3 +275,24 @@ fn frame_preparation_runs_off_ui_and_is_published_with_its_pixels() {
     let frame = worker.take_completed(7).unwrap();
     assert_eq!(frame.prepared, (25.0, frame.pixels.clone()));
 }
+
+#[test]
+fn a_preempting_request_abandons_the_frame_being_drawn() {
+    let test = ControlledWorker::new();
+    test.worker.submit(request(1.0, 7));
+    test.start();
+    test.worker.submit_preempting(request(2.0, 7));
+    test.release.send(()).unwrap();
+    assert_eq!(test.start().0, 2.0);
+    assert!(
+        test.worker.take_completed(7).is_none(),
+        "the abandoned frame is never shown"
+    );
+    test.finish();
+    assert_eq!(test.worker.take_completed(7).unwrap().request.cam.lon, 2.0);
+    assert_eq!(test.admitted.recv_timeout(TEST_TIMEOUT).unwrap(), 2);
+    assert!(
+        test.admitted.try_recv().is_err(),
+        "an abandoned frame admits no downloads"
+    );
+}

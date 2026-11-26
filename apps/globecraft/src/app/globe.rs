@@ -143,8 +143,13 @@ impl App {
             && self.time.speed() == 0.0
             && relief_step == 0;
         let render_aspect = (render_rect.width() / render_rect.height()) as f64;
+        // Without a setting, moving relief frames shrink while slow, as on the phone.
         let motion_scale = if relief {
-            self.settings.motion_resolution_relief
+            self.settings.motion_resolution_relief.or_else(|| {
+                Some(globecraft_render::view::relief_motion_scale(
+                    self.frame.renderer.motion_step,
+                ))
+            })
         } else {
             self.settings.motion_resolution
         };
