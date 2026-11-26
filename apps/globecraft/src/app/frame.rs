@@ -18,6 +18,9 @@ pub(super) struct FrameState {
     /// While the time plays: when the last frame came, and the time between frames
     /// (a running mean, seconds).
     pub(super) playback_frames: Option<(Instant, f32)>,
+    /// The sun of the frame on screen (`RenderCfg::sun`): a frame whose sun moved
+    /// while the time does not play (a dragged timeline) replaces it unfaded.
+    pub(super) shown_sun: Option<glam::DVec3>,
     /// Space behind the frame, at the screen's full resolution.
     pub(super) sky_layer: super::sky_layer::SkyLayer,
     /// The frame on screen as pixels.
@@ -69,6 +72,7 @@ impl FrameState {
             fade_started: None,
             fade_length: super::globe::FRAME_FADE,
             playback_frames: None,
+            shown_sun: None,
             sky_layer: Default::default(),
             image: None,
             last_state: 0,

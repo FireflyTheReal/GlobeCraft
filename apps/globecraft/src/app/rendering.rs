@@ -544,7 +544,14 @@ impl App {
             frame.request.cam,
             frame.request.overlays.as_ref().map(|input| input.view.rect),
         );
-        let same_view = !playing && same_place;
+        // A dragged timeline moves the sun between frames of the same view: faded in
+        // over 250 ms, each frame trailed the last and the sun showed twice (Julien,
+        // 2026-11-26 19:17: "chopped/double"), so it replaces the last one at once.
+        let shown_sun = std::mem::replace(&mut self.frame.shown_sun, frame.request.cfg.sun);
+        let sun_moved = shown_sun
+            .zip(frame.request.cfg.sun)
+            .is_some_and(|(shown, now)| shown.angle_between(now) > SUN_STEP_UNFADED.to_radians());
+        let same_view = !playing && same_place && !sun_moved;
         let fading = self.frame.fade_from.is_some()
             && self
                 .frame
@@ -657,6 +664,11 @@ impl App {
         self.frame.renderer.displayed = Some((frame.request.cam, frame.request.basis));
     }
 }
+
+/// The least the sun moves between two frames of a view for the newer one to replace
+/// the older unfaded (degrees): a dragged timeline lands on whole minutes (0.25°); the
+/// live time moves it this far in about 5 s, so tiles arriving still fade in.
+const SUN_STEP_UNFADED: f64 = 0.02;
 
 /// Two frames show the same view when their cameras and viewport rectangles match exactly.
 /// While the time plays: the fade before the time between frames is known…
