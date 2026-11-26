@@ -398,18 +398,20 @@ impl TileCache {
             let n = f64::from(1u32 << level);
             let (tx, ty) = ((u * n).floor().min(n - 1.0), (v * n).floor().min(n - 1.0));
             let key = make_key(super::Provider::TerrainDem, level, tx as u32, ty as u32, 0);
-            match self.lookup(key) {
-                Lookup::Ready(tile) => {
-                    let elevation = tile.elevation()?;
-                    let size = elevation.size() as f64;
-                    return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
-                }
-                Lookup::Absent if request && level == zoom => {
-                    // Admitted like a load ahead of need: the view's own admission
-                    // (which may not sample this tile) must not stop it.
-                    self.request_under_limit(key, MAX_INFLIGHT - 1);
-                }
-                _ => {}
+            if let Some(tile) = self.ready.get(&key) {
+                let elevation = tile.elevation()?;
+                let size = elevation.size() as f64;
+                return Some(elevation.height_m((u * n - tx) * size, (v * n - ty) * size));
+            }
+            // Only a lookup that may request asks the request table (behind a lock the
+            // frames take for every tile they ask for): the overlays' terrain test
+            // makes 16 lookups a point, each trying the levels down to a loaded one,
+            // and in a view tilted 70° at 16 km on an M1 it took 36–77 ms a frame
+            // (2026-11-26).
+            if request && level == zoom && matches!(self.lookup(key), Lookup::Absent) {
+                // Admitted like a load ahead of need: the view's own admission
+                // (which may not sample this tile) must not stop it.
+                self.request_under_limit(key, MAX_INFLIGHT - 1);
             }
         }
         None
