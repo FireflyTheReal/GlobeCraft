@@ -105,8 +105,6 @@ pub(super) struct ReliefMarch {
     /// Per tile held, whether the last walk read it (`read_tiles` in the shader).
     read: wgpu::Buffer,
     slots: Vec<Option<Slot>>,
-    /// The last walk's width and height: what `output` holds.
-    walked_size: (usize, usize),
 }
 
 /// What a walk found (`ReliefMarch::starts`).
@@ -474,41 +472,17 @@ impl ReliefMarch {
                 storage | wgpu::BufferUsages::COPY_SRC,
             ),
             slots: (0..layers).map(|_| None).collect(),
-            walked_size: (0, 0),
         }
     }
 
     /// Walks each pixel's ray over the elevation tiles `tiles` (the ones the last
-    /// relief frame held), and reads its planes back.
+    /// relief frame held).
     pub(super) fn starts(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         request: &RenderRequest,
         tiles: &[(TileKey, Arc<Tile>)],
-    ) -> Result<Walked, String> {
-        self.walk(device, queue, request, tiles, true)
-    }
-    /// As `starts`, the planes left on the device (`Walked::pixels` empty) for the
-    /// overview, which reads them there; the CPU reads the rows it draws
-    /// (`read_rows`). The planes are 16 bytes a pixel: 37 MB at 1920 × 1200, copied
-    /// and read back for the 0.1–1 % of pixels the CPU draws (1.3–4.4 ms on an M1).
-    pub(super) fn walk_on_device(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        request: &RenderRequest,
-        tiles: &[(TileKey, Arc<Tile>)],
-    ) -> Result<Walked, String> {
-        self.walk(device, queue, request, tiles, false)
-    }
-    fn walk(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        request: &RenderRequest,
-        tiles: &[(TileKey, Arc<Tile>)],
-        read_planes: bool,
     ) -> Result<Walked, String> {
         let Some(relief) = request.cfg.terrain else {
             return Err("No relief in this view".into());
@@ -526,9 +500,7 @@ impl ReliefMarch {
             self.output =
                 overview::buffer(device, "GlobeCraft relief starts", output_bytes, storage);
         }
-        // The planes read back (or none), then the tiles read.
-        let planes_bytes = if read_planes { count * READ_BYTES } else { 0 };
-        let read_bytes = planes_bytes + layers * 4;
+        let read_bytes = count * READ_BYTES + layers * 4;
         if read_bytes as u64 > self.staging.size() {
             self.staging = overview::buffer(
                 device,
@@ -677,21 +649,26 @@ impl ReliefMarch {
         if let Some(timing) = &timing {
             timing.resolve(&mut encoder);
         }
-        if read_planes {
-            encoder.copy_buffer_to_buffer(&self.output, 0, &self.staging, 0, planes_bytes as u64);
-        }
+        encoder.copy_buffer_to_buffer(
+            &self.output,
+            0,
+            &self.staging,
+            0,
+            (count * READ_BYTES) as u64,
+        );
         encoder.copy_buffer_to_buffer(
             &self.read,
             0,
             &self.staging,
-            planes_bytes as u64,
+            (count * READ_BYTES) as u64,
             (layers * 4) as u64,
         );
-        self.walked_size = (request.width, request.height);
         #[cfg(test)]
         let submitted = std::time::Instant::now();
         queue.submit(Some(encoder.finish()));
-        let slice = self.staging.slice(..read_bytes as u64);
+        let slice = self
+            .staging
+            .slice(..(count * READ_BYTES + layers * 4) as u64);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
@@ -711,7 +688,7 @@ impl ReliefMarch {
             let mapped = slice
                 .get_mapped_range()
                 .map_err(|error| error.to_string())?;
-            let (pixels, read) = mapped.split_at(planes_bytes);
+            let (pixels, read) = mapped.split_at(count * READ_BYTES);
             (
                 bytemuck::cast_slice::<u8, f32>(pixels).to_vec(),
                 bytemuck::cast_slice::<u8, u32>(read).to_vec(),
@@ -1123,93 +1100,6 @@ impl ReliefMarch {
     /// The last walk's planes on the device (`starts` in the shader), for the overview.
     pub(super) fn output(&self) -> &wgpu::Buffer {
         &self.output
-    }
-    /// The last walk's width and height.
-    pub(super) fn walked_size(&self) -> (usize, usize) {
-        self.walked_size
-    }
-    /// The last walk's planes (`Walked::pixels`' layout) on the rows marked in `rows`;
-    /// zero on the others (the vector's pages untouched there).
-    pub(super) fn read_rows(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        rows: &[bool],
-    ) -> Result<Vec<f32>, String> {
-        let (width, height) = self.walked_size;
-        let count = width * height;
-        let mut planes = vec![0.0f32; READ_PLANES * count];
-        if rows.len() != height {
-            return Err("Rows asked of another walk".into());
-        }
-        // Runs of rows marked, as (first row, rows).
-        let mut runs: Vec<(usize, usize)> = Vec::new();
-        for (y, _) in rows.iter().enumerate().filter(|(_, marked)| **marked) {
-            match runs.last_mut() {
-                Some((first, length)) if *first + *length == y => *length += 1,
-                _ => runs.push((y, 1)),
-            }
-        }
-        let floats: usize =
-            runs.iter().map(|(_, length)| length * width).sum::<usize>() * READ_PLANES;
-        if floats == 0 {
-            return Ok(planes);
-        }
-        let staging = overview::buffer(
-            device,
-            "GlobeCraft relief rows readback",
-            floats * 4,
-            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        );
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("GlobeCraft relief rows"),
-        });
-        let mut at = 0;
-        for plane in 0..READ_PLANES {
-            for &(first, length) in &runs {
-                let from = plane * count + first * width;
-                encoder.copy_buffer_to_buffer(
-                    &self.output,
-                    (from * 4) as u64,
-                    &staging,
-                    (at * 4) as u64,
-                    (length * width * 4) as u64,
-                );
-                at += length * width;
-            }
-        }
-        queue.submit(Some(encoder.finish()));
-        let slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(overview::FRAME_WAIT_LIMIT),
-            })
-            .map_err(|error| format!("GPU relief rows not read: {error}"))?;
-        rx.recv()
-            .map_err(|error| error.to_string())
-            .and_then(|result| result.map_err(|error| error.to_string()))?;
-        {
-            let mapped = slice
-                .get_mapped_range()
-                .map_err(|error| error.to_string())?;
-            let read: &[f32] = bytemuck::cast_slice(&mapped);
-            let mut at = 0;
-            for plane in 0..READ_PLANES {
-                for &(first, length) in &runs {
-                    let from = plane * count + first * width;
-                    planes[from..from + length * width]
-                        .copy_from_slice(&read[at..at + length * width]);
-                    at += length * width;
-                }
-            }
-        }
-        staging.unmap();
-        Ok(planes)
     }
 }
 

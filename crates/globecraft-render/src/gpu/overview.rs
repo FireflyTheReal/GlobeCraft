@@ -97,17 +97,9 @@ pub(super) struct Context<'a> {
     /// The atlas tiles' mean colours (`GpuRenderer::means`).
     pub means: &'a wgpu::Buffer,
     /// With the relief: the GPU's walk for this view (`relief::ReliefMarch::starts`),
-    /// on the device (`relief::PLANES` planes), and its first `relief::READ_PLANES`
-    /// for the CPU.
-    pub walk: Option<(&'a wgpu::Buffer, Planes<'a>)>,
-}
-/// The walk's planes the CPU draws its pixels from.
-#[derive(Clone, Copy)]
-pub(super) enum Planes<'a> {
-    /// Read back whole.
-    Read(&'a [f32]),
-    /// Left on the device: the rows the CPU draws are read after the frame.
-    OnDevice(&'a super::relief::ReliefMarch),
+    /// on the device (`relief::PLANES` planes) and read back (the first
+    /// `relief::READ_PLANES`).
+    pub walk: Option<(&'a wgpu::Buffer, &'a [f32])>,
 }
 pub(super) struct Frame {
     pub view: RenderedView,
@@ -285,14 +277,7 @@ impl Overview {
         // The walk is for this view: planes of one value per pixel.
         let walk = walk.filter(|(_, planes)| {
             request.cfg.terrain.is_some()
-                && match planes {
-                    Planes::Read(planes) => {
-                        planes.len() == super::relief::READ_PLANES * request.width * request.height
-                    }
-                    Planes::OnDevice(march) => {
-                        march.walked_size() == (request.width, request.height)
-                    }
-                }
+                && planes.len() == super::relief::READ_PLANES * request.width * request.height
         });
         if request.cfg.terrain.is_some() && walk.is_none() {
             return Err((
@@ -670,27 +655,10 @@ impl Overview {
             .chunks_exact(4)
             .filter(|pixel| **pixel == UNDRAWN[..])
             .count();
-        // The walk's planes on the rows with pixels the CPU draws.
-        let rows_read;
-        let planes = match walk {
-            None => None,
-            Some((_, Planes::Read(planes))) => Some(planes),
-            Some((_, Planes::OnDevice(march))) => {
-                let rows: Vec<bool> = pixels
-                    .chunks_exact(request.width * 4)
-                    .map(|row| row.chunks_exact(4).any(|pixel| *pixel == UNDRAWN[..]))
-                    .collect();
-                rows_read = match march.read_rows(device, queue, &rows) {
-                    Ok(planes) => planes,
-                    Err(error) => return Err((error, pixels, true)),
-                };
-                Some(&rows_read[..])
-            }
-        };
         #[cfg(test)]
         let (on_device, repairing) = (submitted.elapsed(), std::time::Instant::now());
         let (repaired_needs, relief_tiles) =
-            super::repair::pixels(request, &mut pixels, lookup, planes);
+            super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes));
         #[cfg(test)]
         let took = (on_device, repairing.elapsed());
         for (key, distance) in repaired_needs {

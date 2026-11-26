@@ -28,15 +28,6 @@ const MEANS_PER_TILE: usize = 85;
 /// Why the GPU did not draw a frame, the buffer back, and whether the device failed.
 type Refused = (String, Vec<u8>, bool);
 
-/// What the GPU's walk left for a relief frame (`GpuRenderer::relief_starts`).
-pub(crate) enum Starts {
-    /// Its planes read back (`relief::Walked::pixels`): for a frame the CPU draws.
-    Read(Vec<f32>),
-    /// Its planes on the device: for a frame the GPU draws, the CPU reading only the
-    /// rows it draws.
-    OnDevice,
-}
-
 struct Slot {
     key: TileKey,
     source: Weak<Tile>,
@@ -237,14 +228,12 @@ impl GpuRenderer {
     /// What the GPU's walk found for each pixel (`relief::Walked::pixels`); `None`
     /// until a relief frame told which elevation tiles it held (`relief_frame_held`),
     /// or once the walk failed its check or a frame on this adapter (only a lost
-    /// device is an error: the GPU renderer goes with it). `on_device`: for a frame the
-    /// GPU draws (`render_relief`), the planes stay there (`Starts::OnDevice`).
+    /// device is an error: the GPU renderer goes with it).
     pub(crate) fn relief_starts(
         &mut self,
         request: &RenderRequest,
         cache: &TileCache,
-        on_device: bool,
-    ) -> Result<Option<Starts>, String> {
+    ) -> Result<Option<Vec<f32>>, String> {
         if let Some(error) = self
             .failure
             .lock()
@@ -276,21 +265,10 @@ impl GpuRenderer {
         if tiles.is_empty() {
             return Ok(None);
         }
-        let walked = if on_device {
-            march.walk_on_device(device, queue, request, &tiles)
-        } else {
-            march.starts(device, queue, request, &tiles)
-        };
-        match walked {
-            // The GPU draws what the walk answered; the CPU, from the walk's starts,
-            // the rest.
-            Ok(walked) if on_device => {
-                self.relief_read = walked.read;
-                Ok(Some(Starts::OnDevice))
-            }
+        match march.starts(device, queue, request, &tiles) {
             Ok(walked) => {
                 self.relief_read = walked.read;
-                Ok(relief::helps(&walked.pixels).then_some(Starts::Read(walked.pixels)))
+                Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
             }
             Err(error) => {
                 globecraft_data::log_line!("The CPU marches the relief alone: {error}");
@@ -510,27 +488,16 @@ impl GpuRenderer {
         request: &RenderRequest,
         cache: &TileCache,
         buffer: Vec<u8>,
-        walk: &Starts,
+        walk: &[f32],
     ) -> Result<(RenderedView, Vec<TileKey>), Refused> {
         self.draw(request, cache, buffer, Some(walk))
-    }
-    /// The last walk's planes, all of them (`relief::Walked::pixels`): for the CPU's
-    /// frame when the GPU's was refused after a walk left them on the device.
-    pub(crate) fn walk_planes(&self) -> Result<Vec<f32>, String> {
-        let march = self
-            .relief
-            .as_ref()
-            .and_then(Option::as_ref)
-            .ok_or("No relief walk")?;
-        let rows = vec![true; march.walked_size().1];
-        march.read_rows(&self.device, &self.queue, &rows)
     }
     fn draw(
         &mut self,
         request: &RenderRequest,
         cache: &TileCache,
         buffer: Vec<u8>,
-        walk: Option<&Starts>,
+        walk: Option<&[f32]>,
     ) -> Result<(RenderedView, Vec<TileKey>), Refused> {
         if let Some(error) = self
             .failure
@@ -594,15 +561,7 @@ impl GpuRenderer {
                     queue: &self.queue,
                     atlas: &self.view,
                     means: &self.means,
-                    walk: walked.map(|(starts, march)| {
-                        (
-                            march.output(),
-                            match starts {
-                                Starts::Read(planes) => overview::Planes::Read(planes),
-                                Starts::OnDevice => overview::Planes::OnDevice(march),
-                            },
-                        )
-                    }),
+                    walk: walked.map(|(planes, march)| (march.output(), planes)),
                 },
                 request,
                 &slots,

@@ -1048,20 +1048,6 @@ fn gpu_relief_view_matches_cpu() {
                 held = relief::next_tiles(render(Some(&walked.pixels)).relief_tiles, &walked.read);
                 planes = walked.pixels;
             }
-            // The planes left on the device read back row by row as they were whole;
-            // rows not asked for stay zero.
-            let rows: Vec<bool> = (0..height).map(|y| y % 3 == 0).collect();
-            let some = march
-                .read_rows(&gpu.device, &gpu.queue, &rows)
-                .expect("rows read back");
-            for (i, (&read, &whole)) in some.iter().zip(&planes).enumerate() {
-                let y = i % (width * height) / width;
-                assert_eq!(
-                    read.to_bits(),
-                    if rows[y] { whole } else { 0.0 }.to_bits(),
-                    "{name}"
-                );
-            }
             asked.lock().unwrap().clear();
             let cpu = render(Some(&planes)).pixels;
             let used: Vec<_> = {
@@ -1080,8 +1066,7 @@ fn gpu_relief_view_matches_cpu() {
                         queue: &gpu.queue,
                         atlas: &gpu.view,
                         means: &gpu.means,
-                        // As the app's frames: the CPU reads the rows it draws.
-                        walk: Some((march.output(), overview::Planes::OnDevice(march))),
+                        walk: Some((march.output(), &planes)),
                     },
                     &request,
                     &slots,
@@ -1258,26 +1243,6 @@ fn gpu_relief_walk_timing() {
             }
             planes = walked.pixels;
         }
-        // The whole walk as a frame takes it, alternately with its planes read back and
-        // left on the device (the GPU's frames): the fastest of each.
-        let (mut read_back, mut on_device) = (std::time::Duration::MAX, std::time::Duration::MAX);
-        for _ in 0..runs.max(2) {
-            let started = std::time::Instant::now();
-            march
-                .starts(&gpu.device, &gpu.queue, &request, &grown)
-                .expect("relief march");
-            read_back = read_back.min(started.elapsed());
-            let started = std::time::Instant::now();
-            march
-                .walk_on_device(&gpu.device, &gpu.queue, &request, &grown)
-                .expect("relief march");
-            on_device = on_device.min(started.elapsed());
-        }
-        println!(
-            "WALK {name}: the whole walk {:.2} ms with its planes read back, {:.2} ms with them left on the device",
-            read_back.as_secs_f64() * 1000.0,
-            on_device.as_secs_f64() * 1000.0
-        );
         let count = width * height;
         let hits: Vec<f64> = planes[count..2 * count]
             .iter()
