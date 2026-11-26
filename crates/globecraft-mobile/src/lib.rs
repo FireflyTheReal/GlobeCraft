@@ -254,7 +254,12 @@ impl Globe {
             fixed_level: None,
             night_lights: None,
             stars: None,
-            sky_behind: false,
+            // Sky pixels carry the air's glow over transparency, drawn over the hosts'
+            // black (Android's surface, iOS's `backgroundColor`): the same picture,
+            // but the GPU draws it. Without, the CPU drew every sky pixel after the
+            // GPU's frame, 17–48 % of a tilted phone frame, 15–60 ms of a 135×301
+            // one on a PowerVR phone (2026-11-26).
+            sky_behind: true,
             clouds: None,
             glint: None,
             aurora: None,
