@@ -1449,20 +1449,11 @@ fn overview_variant() {
     let Ok(name) = std::env::var("GLOBECRAFT_OVERVIEW_VARIANT") else {
         return;
     };
-    // A variant is a list of (from, to) replacements in the shader's source (the air
-    // lookup's loop and the area average's order were timed, 2026-11-26).
-    let patch = |from: &str, to: &str| (from.to_string(), to.to_string());
+    // A variant is a list of (from, to) replacements in the shader's source; none is
+    // kept now (the air tables' loops and the area average's order were timed,
+    // 2026-11-26).
     *super::shader::SHADER_PATCH.lock().unwrap() = match name.as_str() {
         "none" => vec![],
-        // The integrated table's eight corners (camera inside the air) in one loop the
-        // compiler cannot unroll, as the scattering lookup's.
-        "aerialloop" => vec![patch(
-            "    for (var dr = 0u; dr < 2u; dr++) {
-        for (var dc = 0u; dc < 2u; dc++) {
-            for (var ds = 0u; ds < 2u; ds++) {",
-            "    for (var k = 0u; k < min(AIR_CORNERS, arrayLength(&air_tables)); k++) {
-        let dr = k >> 2u; let dc = (k >> 1u) & 1u; let ds = k & 1u; {{",
-        )],
         other => panic!("unknown overview variant {other}"),
     };
     println!("OVERVIEW VARIANT {name}");
