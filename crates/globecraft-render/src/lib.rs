@@ -827,7 +827,10 @@ pub struct RenderedView {
 }
 
 impl RenderedView {
-    /// New misses and already-pending dependencies, in coarse-first order.
+    /// New misses and already-pending dependencies, in coarse-first order, the
+    /// elevation first at each level: without it the GPU's walk gives up on its rays
+    /// and the CPU draws the relief (a PowerVR phone over the Alps with 30–48 imagery
+    /// downloads running: most walks gave up, 2026-11-26).
     pub fn required_tiles(&self) -> Vec<TileKey> {
         let mut keys = self.requests.clone();
         let admitted: std::collections::HashSet<_> = keys.iter().copied().collect();
@@ -837,7 +840,13 @@ impl RenderedView {
                 .copied()
                 .filter(|key| !admitted.contains(key)),
         );
-        keys.sort_by_key(|&key| unkey(key).1);
+        keys.sort_by_key(|&key| {
+            let (provider, zoom, ..) = unkey(key);
+            (
+                zoom,
+                provider != globecraft_data::tiles::Provider::TerrainDem,
+            )
+        });
         keys
     }
 }

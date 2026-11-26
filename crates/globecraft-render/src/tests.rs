@@ -945,3 +945,27 @@ fn relief_switch_on_probe() {
             .unwrap();
     }
 }
+
+/// Required tiles come coarse first, and at each level the elevation before the
+/// imagery.
+#[test]
+fn required_tiles_put_elevation_first_at_each_level() {
+    use globecraft_data::tiles::{Provider, make_key};
+    let imagery = |z| make_key(Provider::Satellite, z, 1, 1, 0);
+    let elevation = |z| make_key(Provider::TerrainDem, z, 1, 1, 0);
+    let view = RenderedView {
+        pixels: Vec::new(),
+        waiting: vec![imagery(9), elevation(12)],
+        requests: vec![imagery(12), elevation(9), imagery(14)],
+    };
+    assert_eq!(
+        view.required_tiles(),
+        [
+            elevation(9),
+            imagery(9),
+            elevation(12),
+            imagery(12),
+            imagery(14)
+        ]
+    );
+}

@@ -108,7 +108,6 @@ pub(super) struct Frame {
     pub relief_tiles: Vec<TileKey>,
     /// The pixels the shader left to the CPU (sky, horizon, seams, polar caps, levels
     /// past the near map).
-    #[cfg(test)]
     pub repaired: usize,
     /// How long the frame took on the device with its readback, and the repair.
     pub took: (std::time::Duration, std::time::Duration),
@@ -645,14 +644,16 @@ impl Overview {
             .into_iter()
             .filter(|(key, _)| !slots.contains_key(key))
             .collect();
-        #[cfg(test)]
         let repaired = pixels
             .chunks_exact(4)
             .filter(|pixel| **pixel == UNDRAWN[..])
             .count();
         let (on_device, repairing) = (submitted.elapsed(), std::time::Instant::now());
-        let (repaired_needs, relief_tiles) =
-            super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes));
+        let (repaired_needs, relief_tiles) = if repaired == 0 {
+            Default::default()
+        } else {
+            super::repair::pixels(request, &mut pixels, lookup, walk.map(|(_, planes)| planes))
+        };
         let took = (on_device, repairing.elapsed());
         for (key, distance) in repaired_needs {
             let distance = distance.unwrap_or(f32::MAX);
@@ -677,7 +678,6 @@ impl Overview {
             },
             sampled,
             relief_tiles,
-            #[cfg(test)]
             repaired,
             took,
         })

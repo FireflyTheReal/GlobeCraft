@@ -90,12 +90,14 @@ pub(crate) struct GpuRenderer {
     relief_read: Vec<TileKey>,
     /// Elevation tiles the last walk uploaded first (`GLOBECRAFT_FRAME_TIMES`).
     pub(crate) relief_uploads: usize,
-    /// The last `relief_starts` walked, whether or not its walk helped.
+    /// The last `relief_starts` walked, whether or not its walk helped, and the share
+    /// of its rays that gave up.
     pub(crate) relief_ran: bool,
+    pub(crate) relief_untrusted: f32,
     /// The last frame drawn: its passes (`MAX_RESIDENCY_PASSES`), their time on the
-    /// device with the readback, and the CPU's repair of what they left
-    /// (`GLOBECRAFT_FRAME_TIMES`).
-    pub(crate) last_draw: (usize, std::time::Duration, std::time::Duration),
+    /// device with the readback, the CPU's repair of what they left, and the pixels
+    /// it repaired in the last pass (`GLOBECRAFT_FRAME_TIMES`).
+    pub(crate) last_draw: (usize, std::time::Duration, std::time::Duration, usize),
 }
 /// The share of colour channels that may differ from the CPU renderer by more than one
 /// level (of 255): the shader's f32 trigonometry moves a few texel lookups by a
@@ -281,6 +283,7 @@ impl GpuRenderer {
             relief_read: Vec::new(),
             relief_uploads: 0,
             relief_ran: false,
+            relief_untrusted: 0.0,
             last_draw: Default::default(),
         })
     }
@@ -329,6 +332,7 @@ impl GpuRenderer {
         match march.starts(device, queue, request, &tiles) {
             Ok(walked) => {
                 self.relief_ran = true;
+                self.relief_untrusted = relief::untrusted_share(&walked.pixels);
                 self.relief_read = walked.read;
                 self.relief_uploads = walked.uploads;
                 Ok(relief::helps(&walked.pixels).then_some(walked.pixels))
@@ -635,6 +639,7 @@ impl GpuRenderer {
             self.last_draw.0 += 1;
             self.last_draw.1 += frame.took.0;
             self.last_draw.2 += frame.took.1;
+            self.last_draw.3 = frame.repaired;
             if let Some(error) = self
                 .failure
                 .lock()
