@@ -1,5 +1,0 @@
-int mipmap ic_launcher 0x0
-int string app_name 0x0
-int string globe_description 0x0
-int string relief 0x0
-int style Theme_GlobeCraft 0x0

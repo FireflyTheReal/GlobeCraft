@@ -1,6 +1,0 @@
-app.globecraft.mobile
-mipmap ic_launcher
-string app_name
-string globe_description
-string relief
-style Theme_GlobeCraft

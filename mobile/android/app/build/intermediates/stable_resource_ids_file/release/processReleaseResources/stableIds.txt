@@ -1,6 +1,0 @@
-app.globecraft.mobile:string/globe_description = 0x7f020001
-app.globecraft.mobile:string/relief = 0x7f020002
-app.globecraft.mobile:string/app_name = 0x7f020000
-app.globecraft.mobile:xml/network_security_config = 0x7f040000
-app.globecraft.mobile:style/Theme.GlobeCraft = 0x7f030000
-app.globecraft.mobile:mipmap/ic_launcher = 0x7f010000
