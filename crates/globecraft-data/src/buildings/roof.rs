@@ -236,47 +236,67 @@ pub(super) fn shaped(
         }
         first += ring.len();
     }
-    // Each plane's part: the footprint where it is the lowest, triangulated.
-    let first_point = to_lat_lon(*footprint.rings.first()?.first()?);
+    // Each plane's part: the footprint where it is the lowest. Cutting is exact for a
+    // convex outline, so a footprint that is not one (with a courtyard, or a reflex
+    // corner) is cut triangle by triangle; every part is then convex, a fan.
+    let &first = footprint.rings.first()?.first()?;
+    // Latitude and longitude change evenly across a block (to well under a millimetre).
+    let first_point = to_lat_lon(first);
+    let (east, south) = (
+        to_lat_lon((first.0 + 1.0, first.1)),
+        to_lat_lon((first.0, first.1 + 1.0)),
+    );
+    let offset = |point: DVec2| {
+        let (x, y) = tile(point);
+        let (dx, dy) = (x - first.0, y - first.1);
+        (
+            dx * (east.0 - first_point.0) + dy * (south.0 - first_point.0),
+            dx * (east.1 - first_point.1) + dy * (south.1 - first_point.1),
+        )
+    };
     let rings: Vec<Vec<DVec2>> = footprint
         .rings
         .iter()
         .map(|ring| ring.iter().map(|&p| local(p)).collect())
         .collect();
-    let mut triangulator = earcut::Earcut::new();
-    let (mut flat, mut holes, mut triangles) = (Vec::new(), Vec::new(), Vec::new());
-    for (index, &plane) in planes.iter().enumerate() {
-        let Some(part) = part(&rings, &planes, index) else {
-            continue;
-        };
-        flat.clear();
-        holes.clear();
-        for ring in &part {
+    let shapes: Vec<Vec<DVec2>> = if rings.len() == 1 && convex(&rings[0]) {
+        rings
+    } else {
+        let (mut flat, mut holes, mut triangles) = (Vec::new(), Vec::new(), Vec::new());
+        for ring in &rings {
             if !flat.is_empty() {
                 holes.push(flat.len() as u32);
             }
             flat.extend(ring.iter().copied());
         }
-        triangulator.earcut(
+        earcut::Earcut::new().earcut(
             flat.iter().map(|point| [point.x, point.y]),
             &holes,
             &mut triangles,
         );
-        let start = roof.points.len() as u32;
-        for &point in &flat {
-            let (lat, lon) = to_lat_lon(tile(point));
-            roof.points.push([
-                (lat - first_point.0) as f32,
-                (lon - first_point.1) as f32,
-                height_m(plane.at(point)),
-            ]);
-        }
-        for triangle in triangles.chunks_exact(3) {
-            let corners = [0, 1, 2].map(|corner| flat[triangle[corner] as usize]);
-            // Zero-width bridges along a cut leave triangles without area.
-            if area(&corners) > 0.0 {
+        triangles
+            .chunks_exact(3)
+            .map(|triangle| {
+                [0, 1, 2]
+                    .map(|corner| flat[triangle[corner] as usize])
+                    .to_vec()
+            })
+            .collect()
+    };
+    for index in 0..planes.len() {
+        for shape in &shapes {
+            let Some(part) = part(shape, &planes, index) else {
+                continue;
+            };
+            let start = roof.points.len() as u32;
+            for &point in &part {
+                let (lat, lon) = offset(point);
+                roof.points
+                    .push([lat as f32, lon as f32, height_m(planes[index].at(point))]);
+            }
+            for corner in 1..part.len() as u32 - 1 {
                 roof.triangles
-                    .extend(triangle.iter().map(|&corner| start + corner));
+                    .extend([start, start + corner, start + corner + 1]);
             }
         }
     }
@@ -286,11 +306,26 @@ pub(super) fn shaped(
     Some(Box::new(roof))
 }
 
-/// The footprint (`rings`, outline first) where plane `index` is the lowest, as an
-/// outline and courtyards; none where it never is.
-fn part(rings: &[Vec<DVec2>], planes: &[Plane], index: usize) -> Option<Vec<Vec<DVec2>>> {
+/// Whether `ring` turns one way only.
+fn convex(ring: &[DVec2]) -> bool {
+    let mut turns = (false, false);
+    for (index, &point) in ring.iter().enumerate() {
+        let (next, after) = (
+            ring[(index + 1) % ring.len()],
+            ring[(index + 2) % ring.len()],
+        );
+        let turn = (next - point).perp_dot(after - next);
+        turns.0 |= turn > 0.0;
+        turns.1 |= turn < 0.0;
+    }
+    !(turns.0 && turns.1)
+}
+
+/// The convex `shape` where plane `index` is the lowest; none where it never is (or
+/// only along a crease).
+fn part(shape: &[DVec2], planes: &[Plane], index: usize) -> Option<Vec<DVec2>> {
     let plane = planes[index];
-    let mut part: Vec<Vec<DVec2>> = rings.to_vec();
+    let mut part = shape.to_vec();
     for (other_index, &other) in planes.iter().enumerate() {
         if other_index == index {
             continue;
@@ -304,18 +339,12 @@ fn part(rings: &[Vec<DVec2>], planes: &[Plane], index: usize) -> Option<Vec<Vec<
             }
             continue;
         }
-        let mut cut = Vec::with_capacity(part.len());
-        for (ring_index, ring) in part.iter().enumerate() {
-            let below = below(ring, |point| plane.at(point) - other.at(point));
-            if area(&below) >= MIN_PART_M2 {
-                cut.push(below);
-            } else if ring_index == 0 {
-                return None;
-            }
+        part = below(&part, |point| plane.at(point) - other.at(point));
+        if area(&part) < MIN_PART_M2 {
+            return None;
         }
-        part = cut;
     }
-    Some(part)
+    (area(&part) >= MIN_PART_M2).then_some(part)
 }
 
 /// The rectangle the roof is laid over: turned to its mapped direction, else the
@@ -408,9 +437,27 @@ fn planes(shape: Shape, frame: &Frame, outline: &[DVec2], rise: f64) -> Vec<Plan
             }
         }
         Shape::Pyramidal => {
-            gable(&mut planes);
-            for side in [-1.0, 1.0] {
-                planes.push(frame.plane(side * rise / half_along, 0.0, rise));
+            // A face from each side of the outline's hull up to its middle, so a
+            // spire over an octagon or a circle comes to a point from every side.
+            let hull = hull(outline);
+            let apex = centroid(&hull).unwrap_or(frame.middle);
+            for (index, &from) in hull.iter().enumerate() {
+                let to = hull[(index + 1) % hull.len()];
+                let Some(along) = (to - from).try_normalize() else {
+                    continue;
+                };
+                let inward = DVec2::new(-along.y, along.x);
+                let reach = inward.dot(apex - from);
+                if reach > 0.0 {
+                    let slope = inward * (rise / reach);
+                    planes.push(Plane {
+                        slope,
+                        at_origin: -slope.dot(from),
+                    });
+                }
+            }
+            if planes.is_empty() {
+                planes.push(frame.plane(0.0, 0.0, rise));
             }
         }
         Shape::Gambrel | Shape::Mansard => {
@@ -488,6 +535,49 @@ fn planes(shape: Shape, frame: &Frame, outline: &[DVec2], rise: f64) -> Vec<Plan
     planes
 }
 
+/// The convex hull of `points`, anticlockwise (Andrew's monotone chain).
+fn hull(points: &[DVec2]) -> Vec<DVec2> {
+    let mut sorted = points.to_vec();
+    sorted.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    sorted.dedup();
+    if sorted.len() < 3 {
+        return sorted;
+    }
+    let mut hull: Vec<DVec2> = Vec::with_capacity(sorted.len() + 1);
+    for pass in [false, true] {
+        let start = hull.len();
+        let ordered: Box<dyn Iterator<Item = &DVec2>> = if pass {
+            Box::new(sorted.iter().rev())
+        } else {
+            Box::new(sorted.iter())
+        };
+        for &point in ordered {
+            while hull.len() >= start + 2
+                && (hull[hull.len() - 1] - hull[hull.len() - 2])
+                    .perp_dot(point - hull[hull.len() - 2])
+                    <= 0.0
+            {
+                hull.pop();
+            }
+            hull.push(point);
+        }
+        hull.pop();
+    }
+    hull
+}
+
+/// A polygon's centre of area; none for one without area.
+fn centroid(polygon: &[DVec2]) -> Option<DVec2> {
+    let (mut sum, mut twice_area) = (DVec2::ZERO, 0.0);
+    for (index, &from) in polygon.iter().enumerate() {
+        let to = polygon[(index + 1) % polygon.len()];
+        let cross = from.perp_dot(to);
+        sum += (from + to) * cross;
+        twice_area += cross;
+    }
+    (twice_area.abs() > 0.0).then(|| sum / (3.0 * twice_area))
+}
+
 /// Where the roof creases over the edge from `a` to `b`: (share along it, roof height
 /// over the eaves there), in order. The roof along an edge is the lowest of the
 /// planes, so each bend hands over to a plane falling faster along it.
@@ -530,8 +620,7 @@ fn bends(a: DVec2, b: DVec2, planes: &[Plane]) -> Vec<(f64, f64)> {
     out
 }
 
-/// The part of `polygon` where `side` is at most zero (Sutherland–Hodgman: a
-/// concave polygon may keep zero-width bridges along the cut).
+/// The part of the convex `polygon` where `side` is at most zero (Sutherland–Hodgman).
 fn below(polygon: &[DVec2], side: impl Fn(DVec2) -> f64) -> Vec<DVec2> {
     let mut below = Vec::with_capacity(polygon.len() + 2);
     for (index, &from) in polygon.iter().enumerate() {
@@ -662,6 +751,28 @@ mod tests {
                 && top.contains(&15.0)
                 && top.iter().all(|e| (5.0..=15.0).contains(e))
         );
+    }
+
+    #[test]
+    fn a_spire_over_an_octagon_rises_from_every_side_to_its_middle() {
+        let octagon: Vec<(f64, f64)> = (0..8)
+            .map(|k| {
+                let angle = std::f64::consts::TAU * f64::from(k) / 8.0;
+                (4.0 * angle.cos(), -4.0 * angle.sin())
+            })
+            .collect();
+        let spire = roof("pyramidal", &octagon, Some((8.0, -1.0, false)));
+        assert!(spire.tops_m.iter().all(|&top| (top - 2.0).abs() < 1e-3));
+        assert!(spire.bends.is_empty());
+        let points = corners(&spire);
+        // The faces meet at the top over the middle: offsets from the first corner,
+        // 4 m east of it.
+        assert!(
+            points.iter().any(|&(x, y, h)| (x + 4.0).abs() < 1e-3
+                && y.abs() < 1e-3
+                && (h - 10.0).abs() < 1e-3)
+        );
+        assert!((covered(&spire) - 32.0 * 2f64.sqrt()).abs() < 1e-3);
     }
 
     #[test]
