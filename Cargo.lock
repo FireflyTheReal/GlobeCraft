@@ -2030,6 +2030,7 @@ dependencies = [
  "image",
  "muda",
  "objc2-app-kit 0.3.2",
+ "pollster 1.0.1",
  "raw-window-handle",
  "rfd",
  "rstar",

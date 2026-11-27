@@ -32,17 +32,25 @@ pub struct BuildingMesh {
 }
 
 /// A corner for a GPU: clip position (x and y, -1 to 1, y up), nearness, colour
-/// premultiplied. Sixteen bytes.
+/// premultiplied, and where the frame's picture shows the ground under a roof
+/// (`BuildingVertex::photo`; `NO_PHOTO` elsewhere). Twenty bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuCorner {
     clip: [f32; 3],
     colour: [u8; 4],
+    photo: [u16; 2],
 }
 
+/// A corner's `photo` where it takes its colour alone: walls, shadows, and roofs
+/// where the frame is no photograph. Real ones reach at most `PHOTO_SCALE`.
+pub const NO_PHOTO: [u16; 2] = [u16::MAX; 2];
+/// `BuildingVertex::photo` at the frame's right or bottom edge.
+pub const PHOTO_SCALE: f32 = (u16::MAX - 1) as f32;
+
 impl BuildingMesh {
-    /// The corners' bytes for a vertex buffer (`GpuCorner`: three `f32`, then four
-    /// colour bytes).
+    /// The corners' bytes for a vertex buffer (`GpuCorner`: three `f32`, four colour
+    /// bytes, then two `u16` of the photo's place).
     pub fn gpu_vertex_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(&self.gpu)
     }
@@ -67,6 +75,14 @@ pub struct BuildingVertex {
     /// compares, so a renderer with one need not trust the order of the faces.
     pub nearness: f32,
     pub colour: [u8; 4],
+    /// A roof's corner on an imagery basemap: where the frame's picture shows the
+    /// ground under it, from its left and top (0) to its right and bottom
+    /// (`PHOTO_SCALE`); `NO_PHOTO` elsewhere. A renderer that can sample the frame
+    /// draws the roof as that photograph, times `tint`, in place of `colour`.
+    pub photo: [u16; 2],
+    /// The light on a photographed roof (dusk and the sun are in the frame already:
+    /// only the shade of other blocks and the slope), with the block's opacity.
+    pub tint: [u8; 4],
 }
 
 /// A projected corner: where it is on screen and the inverse of its depth.
@@ -119,6 +135,8 @@ struct Face {
     points: std::ops::Range<u32>,
     triangles: std::ops::Range<u32>,
     colour: [u8; 4],
+    /// A photographed roof's light (`BuildingVertex::tint`).
+    tint: [u8; 4],
 }
 
 /// The blocks of `input` on screen; with `imagery`, roofs and walls take the colours
@@ -202,13 +220,17 @@ pub(super) fn project(
     let vertices: Vec<BuildingVertex> = faces
         .par_iter()
         .flat_map_iter(|&(run, face)| {
-            runs[run as usize].points[face.points.start as usize..face.points.end as usize]
-                .iter()
-                .map(|&(at, nearness)| BuildingVertex {
+            let range = face.points.start as usize..face.points.end as usize;
+            let run = &runs[run as usize];
+            run.points[range.clone()].iter().zip(&run.photo[range]).map(
+                |(&(at, nearness), &photo)| BuildingVertex {
                     at,
                     nearness,
                     colour: face.colour,
-                })
+                    photo,
+                    tint: face.tint,
+                },
+            )
         })
         .collect();
     let indices: Vec<u32> = faces
@@ -244,7 +266,12 @@ pub(super) fn project(
                 1.0 - (vertex.at.y - min.y) / span.y * 2.0,
                 vertex.nearness,
             ],
-            colour: premultiplied(vertex.colour),
+            colour: premultiplied(if vertex.photo == NO_PHOTO {
+                vertex.colour
+            } else {
+                vertex.tint
+            }),
+            photo: vertex.photo,
         })
         .collect();
     mesh
@@ -255,6 +282,8 @@ pub(super) fn project(
 struct Faces {
     faces: Vec<Face>,
     points: Vec<Corner>,
+    /// Each point's place in the frame's picture (`BuildingVertex::photo`).
+    photo: Vec<[u16; 2]>,
     triangles: Vec<u32>,
 }
 
@@ -268,6 +297,10 @@ struct Scratch {
     /// A shaped roof's points and where they are on screen.
     roof: Vec<DVec3>,
     roof_on_screen: Vec<Option<Corner>>,
+    /// The ground under each point of the rings, then of a shaped roof: where a
+    /// photographed roof's corner takes its picture from.
+    ground: Vec<DVec3>,
+    roof_ground: Vec<DVec3>,
     shadow: ShadowScratch,
 }
 
@@ -358,6 +391,7 @@ fn block(
     }
     scratch.base.clear();
     scratch.top.clear();
+    scratch.ground.clear();
     scratch.base_on_screen.clear();
     scratch.top_on_screen.clear();
     let mut box_min = Pos2::new(f32::INFINITY, f32::INFINITY);
@@ -378,6 +412,7 @@ fn block(
             floor + f64::from(roof.tops_m[index]) / METRES_PER_RADIUS
         });
         let (base, top) = (surface + up * base_lift, surface + up * top_lift);
+        scratch.ground.push(surface + up * floor);
         let (base_at, top_at) = (on_screen(base), on_screen(top));
         for (at, _) in [base_at, top_at].into_iter().flatten() {
             box_min = box_min.min(at);
@@ -428,6 +463,12 @@ fn block(
     let roof_seen = match &sunlit {
         Some(sunlit) if !sunlit.roof => 0.0,
         _ => 1.0,
+    };
+    // A photographed roof shows the frame, lit as the ground is: only the shade of
+    // other blocks is its own.
+    let shaded: [f32; 3] = {
+        let (shade, sun) = (light.on_imagery(roof_seen), light.on_imagery(1.0));
+        std::array::from_fn(|channel| shade[channel] / sun[channel].max(MIN_LIGHT))
     };
     // The imagery is already lit by the sun of its day; only dusk dims it.
     let (roof, roof_light) = match photo {
@@ -584,7 +625,7 @@ fn block(
                             (middle - camera).length_squared(),
                             &world,
                             &seen,
-                            colour,
+                            colour.into(),
                         );
                     };
                     // In the shade below that height, in the sun above it.
@@ -618,6 +659,17 @@ fn block(
             scratch
                 .roof_on_screen
                 .extend(scratch.roof.iter().map(|&point| on_screen(point)));
+            scratch.roof_ground.clear();
+            if photo.is_some() {
+                scratch
+                    .roof_ground
+                    .extend(shaped.points.iter().map(|&[lat, lon, _]| {
+                        basis.surface_position(
+                            first_lat + f64::from(lat),
+                            first_lon + f64::from(lon),
+                        ) + up * floor
+                    }));
+            }
             for triangle in shaped.triangles.chunks_exact(3) {
                 let at = |corner: usize| triangle[corner] as usize;
                 let world = [0, 1, 2].map(|corner| scratch.roof[at(corner)]);
@@ -642,6 +694,10 @@ fn block(
                     }),
                     None => on_slope,
                 };
+                let ground = photo.map(|_| [0, 1, 2].map(|corner| scratch.roof_ground[at(corner)]));
+                let tint: [f32; 3] = std::array::from_fn(|channel| {
+                    shaded[channel] * on_slope[channel] / flat[channel].max(MIN_LIGHT)
+                });
                 face(
                     out,
                     basis,
@@ -649,7 +705,13 @@ fn block(
                     ((world[0] + world[1] + world[2]) / 3.0 - camera).length_squared(),
                     &world,
                     &[0, 1, 2].map(|corner| scratch.roof_on_screen[at(corner)]),
-                    colour(roof, lighting, alpha),
+                    Paint {
+                        colour: colour(roof, lighting, alpha),
+                        photo: ground.as_ref().map(|ground| Photo {
+                            ground,
+                            tint: colour([1.0; 3], tint, alpha),
+                        }),
+                    },
                 );
             }
         }
@@ -658,9 +720,11 @@ fn block(
             let roof_middle = scratch.top.iter().sum::<DVec3>() / scratch.top.len() as f64;
             if (camera - roof_middle).dot(up) > 0.0 {
                 let shade = colour(roof, roof_light, alpha);
+                let tint = colour([1.0; 3], shaded, alpha);
                 for triangle in building.roof.chunks_exact(3) {
                     let at = |corner: usize| triangle[corner] as usize;
                     let world = [scratch.top[at(0)], scratch.top[at(1)], scratch.top[at(2)]];
+                    let ground = photo.map(|_| [0, 1, 2].map(|corner| scratch.ground[at(corner)]));
                     face(
                         out,
                         basis,
@@ -668,7 +732,10 @@ fn block(
                         ((world[0] + world[1] + world[2]) / 3.0 - camera).length_squared(),
                         &world,
                         &[0, 1, 2].map(|corner| scratch.top_on_screen[at(corner)]),
-                        shade,
+                        Paint {
+                            colour: shade,
+                            photo: ground.as_ref().map(|ground| Photo { ground, tint }),
+                        },
                     );
                 }
             }
@@ -788,7 +855,15 @@ fn shadow(
             points[hull[index + 1]],
         ];
         let seen = [seen[0], seen[index], seen[index + 1]];
-        face(out, basis, rect, depth, &world, &seen, [0, 0, 0, shade]);
+        face(
+            out,
+            basis,
+            rect,
+            depth,
+            &world,
+            &seen,
+            [0, 0, 0, shade].into(),
+        );
     }
 }
 
@@ -857,13 +932,19 @@ fn face(
     depth: f64,
     world: &[DVec3],
     seen: &[Option<Corner>],
-    colour: [u8; 4],
+    paint: Paint<'_>,
 ) {
+    let Paint { colour, photo } = paint;
     /// Two metres in front of the camera.
     const NEAR_RADII: f64 = 2.0 / METRES_PER_RADIUS;
     let mut corners: Vec<Corner> = Vec::with_capacity(world.len() + 1);
+    // The ground under each corner kept, where the face is photographed.
+    let mut ground: Vec<DVec3> = Vec::new();
     if seen.iter().all(Option::is_some) {
         corners.extend(seen.iter().flatten());
+        if let Some(photo) = &photo {
+            ground.extend_from_slice(photo.ground);
+        }
     } else {
         let project = |point: DVec3| -> Option<Corner> {
             let at = basis.project_precise(point, rect)?;
@@ -873,27 +954,90 @@ fn face(
             ))
         };
         for (index, &from) in world.iter().enumerate() {
-            let to = world[(index + 1) % world.len()];
+            let next = (index + 1) % world.len();
+            let to = world[next];
             let (ahead_from, ahead_to) = (
                 basis.view_depth(from) - NEAR_RADII,
                 basis.view_depth(to) - NEAR_RADII,
             );
-            if ahead_from >= 0.0 {
-                corners.extend(project(from));
+            if ahead_from >= 0.0
+                && let Some(corner) = project(from)
+            {
+                corners.push(corner);
+                if let Some(photo) = &photo {
+                    ground.push(photo.ground[index]);
+                }
             }
             if (ahead_from >= 0.0) != (ahead_to >= 0.0) {
-                let cut = from.lerp(to, ahead_from / (ahead_from - ahead_to));
-                corners.extend(project(cut));
+                let share = ahead_from / (ahead_from - ahead_to);
+                if let Some(corner) = project(from.lerp(to, share)) {
+                    corners.push(corner);
+                    if let Some(photo) = &photo {
+                        ground.push(photo.ground[index].lerp(photo.ground[next], share));
+                    }
+                }
             }
         }
     }
-    if corners.len() >= 3 {
-        push(out, depth, &corners, colour);
+    if corners.len() < 3 {
+        return;
+    }
+    // Where the frame shows each corner's ground; a corner whose ground is behind the
+    // camera leaves the face to its colour.
+    let places: Option<Vec<[u16; 2]>> = photo.and_then(|_| {
+        ground
+            .iter()
+            .map(|&point| {
+                let at = basis.project_precise(point, rect)?;
+                let share = |at: f64, min: f32, size: f32| {
+                    (((at - f64::from(min)) / f64::from(size).max(1.0)).clamp(0.0, 1.0) as f32
+                        * PHOTO_SCALE)
+                        .round() as u16
+                };
+                Some([
+                    share(at.x, rect.min.x, rect.width()),
+                    share(at.y, rect.min.y, rect.height()),
+                ])
+            })
+            .collect()
+    });
+    let tint = photo.map_or(colour, |photo| photo.tint);
+    match places {
+        Some(places) => out.photo.extend(places),
+        None => out
+            .photo
+            .extend(std::iter::repeat_n(NO_PHOTO, corners.len())),
+    }
+    push(out, depth, &corners, colour, tint);
+}
+
+/// A face's colour, and for a roof drawn as the frame's photograph, the photo.
+#[derive(Clone, Copy)]
+struct Paint<'a> {
+    colour: [u8; 4],
+    photo: Option<Photo<'a>>,
+}
+
+impl From<[u8; 4]> for Paint<'_> {
+    fn from(colour: [u8; 4]) -> Self {
+        Self {
+            colour,
+            photo: None,
+        }
     }
 }
 
-/// Adds a convex face, as a fan of triangles from its first corner.
-fn push(out: &mut Faces, depth: f64, corners: &[Corner], colour: [u8; 4]) {
+/// A roof face drawn as the frame's photograph: the ground under each of its
+/// corners (`face`'s `world`, in order) and its light.
+#[derive(Clone, Copy)]
+struct Photo<'a> {
+    ground: &'a [DVec3],
+    tint: [u8; 4],
+}
+
+/// Adds a convex face, as a fan of triangles from its first corner; its points'
+/// photo places are already in `out.photo`.
+fn push(out: &mut Faces, depth: f64, corners: &[Corner], colour: [u8; 4], tint: [u8; 4]) {
     let (point, triangle) = (out.points.len() as u32, out.triangles.len() as u32);
     out.points.extend_from_slice(corners);
     out.triangles
@@ -903,6 +1047,7 @@ fn push(out: &mut Faces, depth: f64, corners: &[Corner], colour: [u8; 4]) {
         points: point..point + corners.len() as u32,
         triangles: triangle..out.triangles.len() as u32,
         colour,
+        tint,
     });
 }
 
@@ -1231,7 +1376,7 @@ mod tests {
         let input = view(60.0, 0.0);
         let mesh = project(&input, None, None);
         assert_eq!(mesh.gpu.len(), mesh.vertices.len());
-        assert_eq!(mesh.gpu_vertex_bytes().len(), 16 * mesh.vertices.len());
+        assert_eq!(mesh.gpu_vertex_bytes().len(), 20 * mesh.vertices.len());
         assert_eq!(mesh.index_bytes().len(), 4 * mesh.indices.len());
         let rect = input.view.rect;
         for (corner, vertex) in mesh.gpu.iter().zip(&mesh.vertices) {
@@ -1239,6 +1384,8 @@ mod tests {
             let y = rect.min.y + (1.0 - corner.clip[1]) / 2.0 * rect.height();
             assert!((x - vertex.at.x).abs() < 1e-3 && (y - vertex.at.y).abs() < 1e-3);
             assert_eq!(corner.clip[2], vertex.nearness);
+            // Without imagery nothing is photographed.
+            assert_eq!(corner.photo, NO_PHOTO);
         }
         assert_eq!(premultiplied([200, 100, 50, 128]), [100, 50, 25, 128]);
         assert_eq!(premultiplied([200, 100, 50, 255]), [200, 100, 50, 255]);
@@ -1316,6 +1463,68 @@ mod tests {
         // A gable 10 m under the flat block's 30 m top at the eaves still reaches it.
         assert!((highest(&gabled) - highest(&flat)).abs() < 1.0);
         assert!(gabled.indices.len() > flat.indices.len());
+    }
+
+    #[test]
+    fn a_photographed_roof_takes_the_frame_where_its_ground_is_shown() {
+        let input = view(0.0, 0.0);
+        let (basis, rect) = (&input.view.basis, input.view.rect);
+        let ground: Vec<DVec3> = [(47.9998, 10.9998), (47.9998, 11.0002), (48.0002, 11.0002)]
+            .iter()
+            .map(|&(lat, lon)| basis.surface_position(lat, lon))
+            .collect();
+        let up = basis.surface_position(48.0, 11.0).normalize();
+        let roof: Vec<DVec3> = ground
+            .iter()
+            .map(|&point| point + up * (30.0 / METRES_PER_RADIUS))
+            .collect();
+        let seen: Vec<Option<Corner>> = roof
+            .iter()
+            .map(|&point| {
+                basis
+                    .project_precise(point, rect)
+                    .map(|at| (Pos2::new(at.x as f32, at.y as f32), 1.0))
+            })
+            .collect();
+        let mut out = Faces::default();
+        let tint = [200, 200, 200, 255];
+        let paint = Paint {
+            colour: [10, 20, 30, 255],
+            photo: Some(Photo {
+                ground: &ground,
+                tint,
+            }),
+        };
+        face(&mut out, basis, rect, 1.0, &roof, &seen, paint);
+        // Each corner takes the frame's pixel where its ground is drawn, not where
+        // the roof above it is.
+        for (place, &point) in out.photo.iter().zip(&ground) {
+            let at = basis.project_precise(point, rect).unwrap();
+            let expected = [
+                (at.x - f64::from(rect.min.x)) / f64::from(rect.width()),
+                (at.y - f64::from(rect.min.y)) / f64::from(rect.height()),
+            ];
+            for axis in 0..2 {
+                let share = f64::from(place[axis]) / f64::from(PHOTO_SCALE);
+                assert!(
+                    (share - expected[axis]).abs() < 1e-4,
+                    "{place:?} {expected:?}"
+                );
+            }
+        }
+        assert_eq!(out.faces[0].tint, tint);
+        // Walls and shadows keep their colour alone.
+        let mut out = Faces::default();
+        face(
+            &mut out,
+            basis,
+            rect,
+            1.0,
+            &roof,
+            &seen,
+            [1, 2, 3, 255].into(),
+        );
+        assert!(out.photo.iter().all(|&place| place == NO_PHOTO));
     }
 
     #[test]

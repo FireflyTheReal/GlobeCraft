@@ -6,7 +6,7 @@ mod transport;
 mod worker;
 use crate::motion;
 use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility};
-pub use buildings::{BuildingMesh, BuildingVertex};
+pub use buildings::{BuildingMesh, BuildingVertex, NO_PHOTO, PHOTO_SCALE};
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
