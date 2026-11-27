@@ -388,6 +388,12 @@ impl TileCache {
             .collect()
     }
 
+    /// `key`'s tile when it is loaded; nothing is requested and the request table's
+    /// lock is not taken, so a frame's many lookups of loaded tiles stay cheap.
+    pub fn ready_tile(&self, key: TileKey) -> Option<Arc<Tile>> {
+        self.ready.get(&key)
+    }
+
     pub fn lookup(&self, key: TileKey) -> Lookup {
         if let Some(tile) = self.ready.get(&key) {
             return Lookup::Ready(tile);

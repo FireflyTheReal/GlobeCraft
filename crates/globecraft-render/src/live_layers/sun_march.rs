@@ -303,6 +303,7 @@ mod tests {
             roof_colour: None,
             wall_colour: None,
             shaped: None,
+            open_roof: 2,
         }
     }
 

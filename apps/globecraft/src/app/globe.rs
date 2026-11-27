@@ -967,20 +967,9 @@ impl App {
         if self.layer(MapLayer::Buildings)
             && let Some(geometry) = &live_geometry
         {
-            // The frame on screen, whose photograph the roofs show.
-            let frame = self
-                .frame
-                .texture
-                .as_ref()
-                .zip(self.frame.image.as_ref())
-                .map(|(texture, image)| super::buildings::ShownFrame {
-                    texture: texture.id(),
-                    pixels: std::sync::Arc::as_ptr(&image.pixels) as usize,
-                    size: [image.width as u32, image.height as u32],
-                });
             self.map_data
                 .buildings
-                .draw(painter, &geometry.buildings, &geometry.input.view, frame);
+                .draw(painter, &geometry.buildings, &geometry.input.view);
         }
         if self.layer(MapLayer::Traffic)
             && let Some(geometry) = &live_geometry

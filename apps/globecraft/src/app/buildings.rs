@@ -2,24 +2,32 @@
 //! live-layer worker (`globecraft_render::live_layers::BuildingMesh`). Where the
 //! interface is presented by wgpu the blocks are drawn into their own picture with a
 //! depth buffer, so a block behind never shows through one in front, and roofs on an
-//! imagery basemap show the frame's photograph of the ground under them (D3); the
-//! OpenGL fallback draws the faces far to near in their colours, which big roofs can
-//! get wrong.
+//! imagery basemap are drawn as the imagery tiles under them (D3), kept in an atlas
+//! on the GPU; the OpenGL fallback draws the faces far to near in their colours,
+//! which big roofs can get wrong.
 use eframe::egui;
 use globecraft_data::buildings::BuildingSnapshot;
-use globecraft_render::live_layers::{BuildingMesh, LiveView};
+use globecraft_data::tiles::TileKey;
+use globecraft_render::live_layers::{BuildingMesh, LiveView, ROOF_TILE_PX, RoofImagery};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Samples per pixel of the blocks' picture: smooth edges.
 const SAMPLES: u32 = 4;
 /// Not sRGB: egui takes a texture's values as the gamma bytes it draws with (an
-/// sRGB picture came out dark, 2026-11-16). egui's own textures are the same, so
-/// the frame's photograph is read as the bytes it shows.
+/// sRGB picture came out dark, 2026-11-16). The roofs' tiles are read as the bytes
+/// they hold, as the globe's are.
 const COLOUR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// A vertex in the buffer: clip position (two `f32`), nearness (`f32`), colour, the
-/// photo's place (two `u16`).
-const VERTEX_BYTES: u64 = 20;
+/// place in the roof's block (two `u16`), the block (`u32`).
+const VERTEX_BYTES: u64 = 24;
+/// Roof tiles held on the GPU at once: 64 MiB of 256-pixel tiles.
+const ROOF_TILES: u32 = 256;
+/// A block's cell with no tile in the atlas (`buildings_depth.wgsl`).
+const NO_TILE: u32 = u32::MAX;
+/// A block in the records the shader reads: its first tile and its four cells.
+const BLOCK_BYTES: usize = 24;
 
 #[derive(Default)]
 pub(super) struct BuildingOverlay {
@@ -30,46 +38,36 @@ pub(super) struct BuildingOverlay {
     /// The interface's GPU, when wgpu presents it.
     pub(super) gpu: Option<egui_wgpu::RenderState>,
     picture: Option<Picture>,
-    /// What the shape last drawn shows, and the shape.
-    drawn: Option<(Drawn, egui::Shape)>,
-}
-
-/// What the blocks' picture was drawn from: the mesh, and the frame whose
-/// photograph its roofs show (its texture and its pixels, which change in place).
-#[derive(Clone)]
-struct Drawn {
-    mesh: Arc<BuildingMesh>,
-    frame: Option<ShownFrame>,
-}
-
-impl Drawn {
-    fn same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.mesh, &other.mesh) && self.frame == other.frame
-    }
-}
-
-/// The globe's frame on screen: its texture, its pixels (whose address changes with
-/// each new frame) and its size.
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct ShownFrame {
-    pub(super) texture: egui::TextureId,
-    pub(super) pixels: usize,
-    pub(super) size: [u32; 2],
+    /// The mesh last drawn, and the shape made from it.
+    drawn: Option<(Arc<BuildingMesh>, egui::Shape)>,
 }
 
 /// The blocks' own picture on the GPU, shown as an egui texture.
 struct Picture {
     corners: KeptBuffer,
     triangles: KeptBuffer,
+    blocks: KeptBuffer,
     pipeline: wgpu::RenderPipeline,
+    atlas: RoofAtlas,
     sampler: wgpu::Sampler,
-    /// Sampled where there is no photograph: the roofs then keep their colours.
-    blank: wgpu::TextureView,
     size: [u32; 2],
     samples: wgpu::TextureView,
     depth: wgpu::TextureView,
     shown: wgpu::TextureView,
     id: egui::TextureId,
+}
+
+/// Imagery tiles the roofs are drawn from, one per layer, kept from mesh to mesh:
+/// each tile is uploaded once while meshes keep drawing it.
+struct RoofAtlas {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    layers: HashMap<TileKey, u32>,
+    /// The mesh that last drew each layer (`stamp`): the layer drawn longest ago
+    /// takes the next new tile.
+    used: Vec<u64>,
+    keys: Vec<Option<TileKey>>,
+    stamp: u64,
 }
 
 impl BuildingOverlay {
@@ -78,7 +76,6 @@ impl BuildingOverlay {
         painter: &egui::Painter,
         mesh: &Arc<BuildingMesh>,
         view: &LiveView,
-        frame: Option<ShownFrame>,
     ) {
         if mesh.indices.is_empty() {
             // The picture is as large as the window, several times over: not kept
@@ -89,52 +86,32 @@ impl BuildingOverlay {
             }
             return;
         }
-        let wanted = Drawn {
-            mesh: mesh.clone(),
-            frame,
-        };
         if self
             .drawn
             .as_ref()
-            .is_none_or(|(drawn, _)| !drawn.same(&wanted))
+            .is_none_or(|(old, _)| !Arc::ptr_eq(old, mesh))
         {
-            match &self.gpu {
+            let shape = match &self.gpu {
                 Some(gpu) => {
-                    match render(gpu, &mut self.picture, mesh, view, frame) {
-                        Some((pass, id)) => {
-                            // The pass runs when egui paints, after it has uploaded
-                            // this frame's pictures, so the roofs show the frame on
-                            // screen.
-                            painter.add(egui_wgpu::Callback::new_paint_callback(view.rect, pass));
-                            let whole =
-                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
-                            let shape =
-                                egui::Shape::image(id, view.rect, whole, egui::Color32::WHITE);
-                            self.drawn = Some((wanted, shape));
-                        }
-                        // The frame's picture is not on the GPU yet (a new or resized
-                        // frame is uploaded when egui paints): the picture before
-                        // stays a moment longer.
-                        None => painter.ctx().request_repaint(),
-                    }
+                    let id = render(gpu, &mut self.picture, mesh, view);
+                    let whole = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+                    egui::Shape::image(id, view.rect, whole, egui::Color32::WHITE)
                 }
-                None => {
-                    let shape = egui::Shape::mesh(egui::Mesh {
-                        vertices: mesh
-                            .vertices
-                            .iter()
-                            .map(|vertex| egui::epaint::Vertex {
-                                pos: vertex.at,
-                                uv: egui::epaint::WHITE_UV,
-                                color: premultiplied(vertex.colour),
-                            })
-                            .collect(),
-                        indices: mesh.indices.clone(),
-                        ..Default::default()
-                    });
-                    self.drawn = Some((wanted, shape));
-                }
-            }
+                None => egui::Shape::mesh(egui::Mesh {
+                    vertices: mesh
+                        .vertices
+                        .iter()
+                        .map(|vertex| egui::epaint::Vertex {
+                            pos: vertex.at,
+                            uv: egui::epaint::WHITE_UV,
+                            color: premultiplied(vertex.colour),
+                        })
+                        .collect(),
+                    indices: mesh.indices.clone(),
+                    ..Default::default()
+                }),
+            };
+            self.drawn = Some((mesh.clone(), shape));
         }
         if let Some((_, shape)) = &self.drawn {
             painter.add(shape.clone());
@@ -146,30 +123,15 @@ fn premultiplied([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
-/// Readies `mesh` for drawing into the picture (made, or made again at a new size):
-/// the pass to run when egui paints and the texture showing the picture. None
-/// while the frame's picture is not on the GPU at its size yet.
+/// Draws `mesh` into the picture (made, or made again at a new size) and returns
+/// the texture showing it.
 fn render(
     gpu: &egui_wgpu::RenderState,
     picture: &mut Option<Picture>,
     mesh: &BuildingMesh,
     view: &LiveView,
-    frame: Option<ShownFrame>,
-) -> Option<(BuildingPass, egui::TextureId)> {
+) -> egui::TextureId {
     let device = &gpu.device;
-    // The frame's texture as the GPU holds it, at the frame's size: one replaced
-    // this frame is still the old one until egui paints.
-    let photo = match frame {
-        Some(frame) => {
-            let renderer = gpu.renderer.read();
-            let texture = renderer.texture(&frame.texture)?.texture.clone()?;
-            if [texture.width(), texture.height()] != frame.size {
-                return None;
-            }
-            Some(texture.create_view(&Default::default()))
-        }
-        None => None,
-    };
     let limit = device.limits().max_texture_dimension_2d;
     let size = [view.rect.width(), view.rect.height()]
         .map(|points| ((points * view.pixels_per_point).round() as u32).clamp(1, limit));
@@ -191,101 +153,231 @@ fn render(
     picture
         .triangles
         .write(gpu, mesh.index_bytes(), wgpu::BufferUsages::INDEX);
-    let (Some(corners), Some(triangles)) = (&picture.corners.buffer, &picture.triangles.buffer)
-    else {
-        return None;
+    let blocks = picture.atlas.blocks(&gpu.queue, &mesh.roof_imagery);
+    picture
+        .blocks
+        .write(gpu, &blocks, wgpu::BufferUsages::STORAGE);
+    let (Some(corners), Some(triangles), Some(records)) = (
+        &picture.corners.buffer,
+        &picture.triangles.buffer,
+        &picture.blocks.buffer,
+    ) else {
+        return picture.id;
     };
-    let photograph = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let roofs = roof_bindings(
+        device,
+        &picture.pipeline,
+        &picture.atlas.view,
+        &picture.sampler,
+        records,
+    );
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("buildings"),
+    });
+    draw_pass(
+        &mut encoder,
+        &picture.pipeline,
+        &roofs,
+        Targets {
+            samples: &picture.samples,
+            depth: &picture.depth,
+            shown: &picture.shown,
+        },
+        Drawn {
+            corners: (corners, vertices.len() as u64),
+            triangles: (triangles, mesh.index_bytes().len() as u64),
+            count: mesh.indices.len() as u32,
+        },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    picture.id
+}
+
+/// The roofs' tiles and blocks bound for the pass.
+fn roof_bindings(
+    device: &wgpu::Device,
+    pipeline: &wgpu::RenderPipeline,
+    tiles: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    blocks: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("building roofs"),
-        layout: &picture.pipeline.get_bind_group_layout(0),
+        layout: &pipeline.get_bind_group_layout(0),
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    photo.as_ref().unwrap_or(&picture.blank),
-                ),
+                resource: wgpu::BindingResource::TextureView(tiles),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&picture.sampler),
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: blocks.as_entire_binding(),
             },
         ],
-    });
-    let pass = BuildingPass {
-        pipeline: picture.pipeline.clone(),
-        photograph,
-        corners: (corners.clone(), vertices.len() as u64),
-        triangles: (triangles.clone(), mesh.index_bytes().len() as u64),
-        count: mesh.indices.len() as u32,
-        samples: picture.samples.clone(),
-        depth: picture.depth.clone(),
-        shown: picture.shown.clone(),
-    };
-    Some((pass, picture.id))
+    })
 }
 
-/// The blocks drawn into their picture, run by egui as it paints.
-struct BuildingPass {
-    pipeline: wgpu::RenderPipeline,
-    photograph: wgpu::BindGroup,
-    /// The buffers and the bytes of them in use.
-    corners: (wgpu::Buffer, u64),
-    triangles: (wgpu::Buffer, u64),
+/// Where the blocks are drawn: the samples, their depth, the picture shown.
+struct Targets<'a> {
+    samples: &'a wgpu::TextureView,
+    depth: &'a wgpu::TextureView,
+    shown: &'a wgpu::TextureView,
+}
+
+/// What is drawn: the corners and triangles (each buffer with the bytes of it in
+/// use) and how many triangle corners.
+struct Drawn<'a> {
+    corners: (&'a wgpu::Buffer, u64),
+    triangles: (&'a wgpu::Buffer, u64),
     count: u32,
-    samples: wgpu::TextureView,
-    depth: wgpu::TextureView,
-    shown: wgpu::TextureView,
 }
 
-impl egui_wgpu::CallbackTrait for BuildingPass {
-    fn prepare(
-        &self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _screen: &egui_wgpu::ScreenDescriptor,
-        encoder: &mut wgpu::CommandEncoder,
-        _resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("buildings"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.samples,
-                depth_slice: None,
-                resolve_target: Some(&self.shown),
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Discard,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.depth,
-                // Greater is nearer: nothing is at zero.
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0.0),
-                    store: wgpu::StoreOp::Discard,
-                }),
-                stencil_ops: None,
+/// The blocks drawn into their picture.
+fn draw_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::RenderPipeline,
+    roofs: &wgpu::BindGroup,
+    targets: Targets<'_>,
+    drawn: Drawn<'_>,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("buildings"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: targets.samples,
+            depth_slice: None,
+            resolve_target: Some(targets.shown),
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Discard,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: targets.depth,
+            // Greater is nearer: nothing is at zero.
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0.0),
+                store: wgpu::StoreOp::Discard,
             }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, roofs, &[]);
+    pass.set_vertex_buffer(0, drawn.corners.0.slice(..drawn.corners.1));
+    pass.set_index_buffer(
+        drawn.triangles.0.slice(..drawn.triangles.1),
+        wgpu::IndexFormat::Uint32,
+    );
+    pass.draw_indexed(0..drawn.count, 0, 0..1);
+}
+
+impl RoofAtlas {
+    fn new(device: &wgpu::Device) -> Self {
+        let size = ROOF_TILE_PX as u32;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("roof tiles"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: ROOF_TILES,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: COLOUR_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.photograph, &[]);
-        pass.set_vertex_buffer(0, self.corners.0.slice(..self.corners.1));
-        pass.set_index_buffer(
-            self.triangles.0.slice(..self.triangles.1),
-            wgpu::IndexFormat::Uint32,
-        );
-        pass.draw_indexed(0..self.count, 0, 0..1);
-        Vec::new()
+        Self {
+            texture,
+            view,
+            layers: HashMap::new(),
+            used: vec![0; ROOF_TILES as usize],
+            keys: vec![None; ROOF_TILES as usize],
+            stamp: 0,
+        }
     }
 
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        _pass: &mut wgpu::RenderPass<'static>,
-        _resources: &egui_wgpu::CallbackResources,
-    ) {
-        // Drawn in `prepare`, into the picture egui shows as an image.
+    /// The mesh's blocks as the shader reads them (`BLOCK_BYTES` each), with its
+    /// tiles in the atlas: those it holds kept, new ones uploaded into the layers
+    /// drawn longest ago. A tile there is no room for (more than `ROOF_TILES` in one
+    /// mesh) leaves its cells to the roofs' colours.
+    fn blocks(&mut self, queue: &wgpu::Queue, roofs: &RoofImagery) -> Vec<u8> {
+        self.stamp += 1;
+        let stamp = self.stamp;
+        for (key, _) in &roofs.tiles {
+            if let Some(&layer) = self.layers.get(key) {
+                self.used[layer as usize] = stamp;
+            }
+        }
+        for (key, tile) in &roofs.tiles {
+            let (width, height, rgba) = tile.rgba();
+            if self.layers.contains_key(key) || width != ROOF_TILE_PX || height != ROOF_TILE_PX {
+                continue;
+            }
+            let Some(layer) = (0..ROOF_TILES)
+                .filter(|&layer| self.used[layer as usize] < stamp)
+                .min_by_key(|&layer| self.used[layer as usize])
+            else {
+                break;
+            };
+            if let Some(old) = self.keys[layer as usize].replace(*key) {
+                self.layers.remove(&old);
+            }
+            self.layers.insert(*key, layer);
+            self.used[layer as usize] = stamp;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * ROOF_TILE_PX as u32),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: ROOF_TILE_PX as u32,
+                    height: ROOF_TILE_PX as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        let mut bytes = Vec::with_capacity(BLOCK_BYTES * roofs.blocks.len().max(1));
+        for block in &roofs.blocks {
+            bytes.extend(block.x.to_le_bytes());
+            bytes.extend(block.y.to_le_bytes());
+            for cell in block.cells {
+                let entry = cell
+                    .and_then(|cell| {
+                        let layer = *self.layers.get(&cell.tile)?;
+                        Some(layer | (u32::from(cell.coarser) << 16))
+                    })
+                    .unwrap_or(NO_TILE);
+                bytes.extend(entry.to_le_bytes());
+            }
+        }
+        // A binding is never empty: one block of nothing.
+        if bytes.is_empty() {
+            bytes.resize(BLOCK_BYTES, 0xFF);
+        }
+        bytes
     }
 }
 
@@ -321,14 +413,13 @@ impl KeptBuffer {
 impl Picture {
     fn new(gpu: &egui_wgpu::RenderState, size: [u32; 2]) -> Self {
         let device = &gpu.device;
-        let pipeline = pipeline(device);
-        let texture = |label, format, sample_count, [width, height]: [u32; 2]| {
+        let texture = |label, format, sample_count| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
                     size: wgpu::Extent3d {
-                        width,
-                        height,
+                        width: size[0],
+                        height: size[1],
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
@@ -341,7 +432,7 @@ impl Picture {
                 })
                 .create_view(&Default::default())
         };
-        let shown = texture("buildings", COLOUR_FORMAT, 1, size);
+        let shown = texture("buildings", COLOUR_FORMAT, 1);
         let id =
             gpu.renderer
                 .write()
@@ -349,21 +440,28 @@ impl Picture {
         Self {
             corners: KeptBuffer::default(),
             triangles: KeptBuffer::default(),
-            pipeline,
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("building roofs"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
-            blank: texture("no photograph", COLOUR_FORMAT, 1, [1, 1]),
+            blocks: KeptBuffer::default(),
+            pipeline: pipeline(device),
+            atlas: RoofAtlas::new(device),
+            sampler: roof_sampler(device),
             size,
-            samples: texture("building samples", COLOUR_FORMAT, SAMPLES, size),
-            depth: texture("building depth", DEPTH_FORMAT, SAMPLES, size),
+            samples: texture("building samples", COLOUR_FORMAT, SAMPLES),
+            depth: texture("building depth", DEPTH_FORMAT, SAMPLES),
             shown,
             id,
         }
     }
+}
+
+/// Roof tiles filtered between texels; at a tile's edge the texels are held (the
+/// next cell's tile is another layer).
+fn roof_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("roof tiles"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    })
 }
 
 /// The pipeline drawing the blocks into their picture (`buildings_depth.wgsl`).
@@ -380,7 +478,7 @@ fn pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
                 array_stride: VERTEX_BYTES,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &wgpu::vertex_attr_array![
-                    0 => Float32x2, 1 => Float32, 2 => Unorm8x4, 3 => Uint16x2
+                    0 => Float32x2, 1 => Float32, 2 => Unorm8x4, 3 => Unorm16x2, 4 => Uint32
                 ],
             })],
         },
@@ -412,7 +510,7 @@ fn pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use globecraft_render::live_layers::{NO_PHOTO, PHOTO_SCALE};
+    use globecraft_render::live_layers::{NO_ROOF, ROOF_AT_SCALE, RoofBlock, RoofCell};
 
     /// A GPU to draw on (a software one will do), or none on a machine without.
     fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -425,20 +523,32 @@ mod tests {
     }
 
     /// A corner as `GpuCorner` lays it out.
-    fn corner(at: [f32; 2], colour: [u8; 4], photo: [u16; 2]) -> Vec<u8> {
+    fn corner(at: [f32; 2], colour: [u8; 4], roof_at: [u16; 2], roof: u32) -> Vec<u8> {
         let mut bytes = Vec::new();
         for value in [at[0], at[1], 0.5] {
             bytes.extend(value.to_le_bytes());
         }
         bytes.extend(colour);
-        for value in photo {
+        for value in roof_at {
             bytes.extend(value.to_le_bytes());
         }
+        bytes.extend(roof.to_le_bytes());
         bytes
     }
 
+    /// A tile of one colour.
+    fn tile(rgba: [u8; 4]) -> Arc<globecraft_data::tiles::Tile> {
+        let size = ROOF_TILE_PX as u32;
+        let picture = image::RgbaImage::from_pixel(size, size, image::Rgba(rgba));
+        let mut png = Vec::new();
+        picture
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        Arc::new(globecraft_data::tiles::Tile::decode(&png).unwrap())
+    }
+
     #[test]
-    fn photographed_roofs_show_the_frame_and_other_faces_their_colour() {
+    fn roofs_show_their_tiles_and_other_faces_their_colour() {
         let Some((device, queue)) = device() else {
             eprintln!("No GPU adapter: skipped");
             return;
@@ -460,38 +570,47 @@ mod tests {
                 view_formats: &[],
             })
         };
-        // The frame: one colour all over.
-        let frame = texture(
-            COLOUR_FORMAT,
-            1,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        // The roof's block: one tile in its first cell, three cells without. The
+        // left half of the picture is the roof (in that cell), the right half green.
+        let mut atlas = RoofAtlas::new(&device);
+        let key = globecraft_data::tiles::make_key(
+            globecraft_data::tiles::Provider::Satellite,
+            20,
+            10,
+            10,
+            0,
         );
-        let photo = [200u8, 100, 50, 255];
-        queue.write_texture(
-            frame.as_image_copy(),
-            &photo.repeat((SIZE * SIZE) as usize),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * SIZE),
-                rows_per_image: None,
-            },
-            frame.size(),
-        );
-        // The left half photographed at half light, the right half green.
-        let middle = (PHOTO_SCALE / 2.0) as u16;
+        let roofs = RoofImagery {
+            blocks: vec![RoofBlock {
+                x: 10,
+                y: 10,
+                cells: [
+                    Some(RoofCell {
+                        tile: key,
+                        coarser: 0,
+                    }),
+                    None,
+                    None,
+                    None,
+                ],
+            }],
+            tiles: vec![(key, tile([200, 100, 50, 255]))],
+        };
+        let blocks = atlas.blocks(&queue, &roofs);
+        let quarter = (ROOF_AT_SCALE / 4.0) as u16;
         let (half, green) = ([128, 128, 128, 255], [0, 255, 0, 255]);
         let mut corners = Vec::new();
-        for (at, colour, place) in [
-            ([-1.0, -1.0], half, [0, 0]),
-            ([0.0, -1.0], half, [middle, 0]),
-            ([0.0, 1.0], half, [middle, middle]),
-            ([-1.0, 1.0], half, [0, middle]),
-            ([0.0, -1.0], green, NO_PHOTO),
-            ([1.0, -1.0], green, NO_PHOTO),
-            ([1.0, 1.0], green, NO_PHOTO),
-            ([0.0, 1.0], green, NO_PHOTO),
+        for (at, colour, place, roof) in [
+            ([-1.0, -1.0], half, [0, 0], 0),
+            ([0.0, -1.0], half, [quarter, 0], 0),
+            ([0.0, 1.0], half, [quarter, quarter], 0),
+            ([-1.0, 1.0], half, [0, quarter], 0),
+            ([0.0, -1.0], green, [0, 0], NO_ROOF),
+            ([1.0, -1.0], green, [0, 0], NO_ROOF),
+            ([1.0, 1.0], green, [0, 0], NO_ROOF),
+            ([0.0, 1.0], green, [0, 0], NO_ROOF),
         ] {
-            corners.extend(corner(at, colour, place));
+            corners.extend(corner(at, colour, place, roof));
         }
         let triangles: Vec<u8> = [0u32, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]
             .iter()
@@ -508,55 +627,38 @@ mod tests {
             buffer
         };
         let pipeline = pipeline(&device);
-        let sampler = device.create_sampler(&Default::default());
-        let frame_view = frame.create_view(&Default::default());
-        let photograph = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&frame_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let records = buffer(&blocks, wgpu::BufferUsages::STORAGE);
+        let roofs = roof_bindings(
+            &device,
+            &pipeline,
+            &atlas.view,
+            &roof_sampler(&device),
+            &records,
+        );
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let samples = texture(COLOUR_FORMAT, SAMPLES, attachment).create_view(&Default::default());
         let depth = texture(DEPTH_FORMAT, SAMPLES, attachment).create_view(&Default::default());
         let shown = texture(COLOUR_FORMAT, 1, attachment | wgpu::TextureUsages::COPY_SRC);
-        let pass = BuildingPass {
-            pipeline,
-            photograph,
-            corners: (
-                buffer(&corners, wgpu::BufferUsages::VERTEX),
-                corners.len() as u64,
-            ),
-            triangles: (
-                buffer(&triangles, wgpu::BufferUsages::INDEX),
-                triangles.len() as u64,
-            ),
-            count: 12,
-            samples,
-            depth,
-            shown: shown.create_view(&Default::default()),
-        };
+        let shown_view = shown.create_view(&Default::default());
+        let (corner_buffer, triangle_buffer) = (
+            buffer(&corners, wgpu::BufferUsages::VERTEX),
+            buffer(&triangles, wgpu::BufferUsages::INDEX),
+        );
         let mut encoder = device.create_command_encoder(&Default::default());
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [SIZE; 2],
-            pixels_per_point: 1.0,
-        };
-        let mut resources = egui_wgpu::CallbackResources::default();
-        egui_wgpu::CallbackTrait::prepare(
-            &pass,
-            &device,
-            &queue,
-            &screen,
+        draw_pass(
             &mut encoder,
-            &mut resources,
+            &pipeline,
+            &roofs,
+            Targets {
+                samples: &samples,
+                depth: &depth,
+                shown: &shown_view,
+            },
+            Drawn {
+                corners: (&corner_buffer, corners.len() as u64),
+                triangles: (&triangle_buffer, triangles.len() as u64),
+                count: 12,
+            },
         );
         // Rows are copied in whole multiples of 256 bytes.
         let row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -586,11 +688,49 @@ mod tests {
             let at = (y * row + 4 * x) as usize;
             [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
         };
+        // The tile at half light.
         let left = pixel(1, 4);
         for (channel, expected) in [100, 50, 25].into_iter().enumerate() {
             assert!(left[channel].abs_diff(expected) <= 2, "{left:?}");
         }
         assert_eq!(left[3], 255);
         assert_eq!(pixel(6, 4), green);
+    }
+
+    #[test]
+    fn the_atlas_keeps_tiles_in_use_and_replaces_the_oldest() {
+        let Some((device, queue)) = device() else {
+            eprintln!("No GPU adapter: skipped");
+            return;
+        };
+        let mut atlas = RoofAtlas::new(&device);
+        let key = |x| {
+            globecraft_data::tiles::make_key(
+                globecraft_data::tiles::Provider::Satellite,
+                20,
+                x,
+                0,
+                0,
+            )
+        };
+        let one = tile([1, 2, 3, 255]);
+        let meshes = |range: std::ops::Range<u32>| RoofImagery {
+            blocks: Vec::new(),
+            tiles: range.map(|x| (key(x), one.clone())).collect(),
+        };
+        // A full atlas, then a mesh of its first tile and a new one: the new tile
+        // takes the layer drawn longest ago, never one this mesh draws.
+        atlas.blocks(&queue, &meshes(0..ROOF_TILES));
+        let mut next = meshes(0..1);
+        next.tiles.push((key(ROOF_TILES), one.clone()));
+        atlas.blocks(&queue, &next);
+        assert_eq!(atlas.layers.get(&key(0)), Some(&0));
+        assert_eq!(atlas.layers.len(), ROOF_TILES as usize);
+        assert!(atlas.layers.contains_key(&key(ROOF_TILES)));
+        // More tiles than layers: those beyond keep no layer, and an empty mesh
+        // still binds one block.
+        let crowded = atlas.blocks(&queue, &meshes(1000..1000 + ROOF_TILES + 5));
+        assert_eq!(crowded.len(), BLOCK_BYTES);
+        assert_eq!(atlas.layers.len(), ROOF_TILES as usize);
     }
 }

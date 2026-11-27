@@ -12,6 +12,7 @@ use crate::mvt::{self, GeomType};
 use crate::vector_tiles::{Snapshot, Source, Spec, TileStream, View};
 use std::sync::Arc;
 
+mod cover;
 mod roof;
 pub use roof::{ShapedRoof, WallBend};
 
@@ -65,6 +66,10 @@ pub struct Building {
     pub wall_colour: Option<[u8; 3]>,
     /// A roof that is not flat (D3); `roof` is then empty.
     pub shaped: Option<Box<ShapedRoof>>,
+    /// How many of the roof's triangles (`roof`, or a shaped roof's) are open to
+    /// the sky, first: the rest lie under a taller block of the tile, so imagery
+    /// shows that block there, not this roof.
+    pub open_roof: u32,
 }
 
 /// One tile's buildings.
@@ -562,11 +567,13 @@ pub(crate) fn decode(key: TileKey, bytes: &[u8]) -> Option<BuildingTile> {
                     roof_colour,
                     wall_colour,
                     shaped,
+                    open_roof: 0,
                 });
             }
         }
     }
     tile.heights = Heights::of(key.point(0.0, 0.0), key.point(1.0, 1.0), &tile.buildings);
+    cover::open_roofs(&mut tile.buildings);
     Some(tile)
 }
 

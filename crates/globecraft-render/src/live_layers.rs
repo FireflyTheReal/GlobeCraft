@@ -1,12 +1,13 @@
 //! Geographic preparation for roads, buildings, AIS, predicted satellites and traffic.
 mod buildings;
 mod poi;
+mod roof_imagery;
 mod sun_march;
 mod transport;
 mod worker;
 use crate::motion;
 use crate::overlays::{Ground, GroundHeights, OverlayGround, TerrainVisibility};
-pub use buildings::{BuildingMesh, BuildingVertex, NO_PHOTO, PHOTO_SCALE};
+pub use buildings::{BuildingMesh, BuildingVertex};
 use emath::{Pos2, Rect, Vec2};
 use globecraft_core::{camera::Basis, math::destination};
 use globecraft_data::{
@@ -14,6 +15,7 @@ use globecraft_data::{
     traffic::TrafficTiles, vessels::Vessel,
 };
 pub use poi::{PoiKey, PoiLayers, PoiShown, ProjectedPoi, ProjectedPoiLabel, ProjectedPoiLine};
+pub use roof_imagery::{NO_ROOF, ROOF_AT_SCALE, ROOF_TILE_PX, RoofBlock, RoofCell, RoofImagery};
 use std::sync::Arc;
 pub use transport::{
     ProjectedAirport, ProjectedTransport, ProjectedTransportLine, TransportLayers,
